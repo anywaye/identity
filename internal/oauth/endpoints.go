@@ -69,7 +69,7 @@ type EndpointError struct {
 }
 
 func (e *EndpointError) Error() string {
-	return fmt.Sprintf("oauth endpoint override for %s: %s: %v", e.Provider, e.Field, e.Reason)
+	return fmt.Sprintf("the %s endpoint override %s is not usable: %v", e.Provider, e.Field, e.Reason)
 }
 
 // Unwrap exposes both ErrInvalidEndpoint and the underlying reason, so
