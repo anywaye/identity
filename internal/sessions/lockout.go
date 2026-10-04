@@ -17,7 +17,7 @@ const (
 	// The trade-off, stated because it is a real one: this policy is per account
 	// and not per source address, so an attacker who knows a victim's address
 	// can lock them out on a schedule. Per-address throttling is what stops
-	// that, and it belongs to the edge (guard), not to a service that cannot see
+	// that, and it belongs to the edge (gateway), not to a service that cannot see
 	// the address history. Fifteen minutes is long enough that guessing 256-bit
 	// tokens or a dictionary attack is hopeless, and short enough that a locked
 	// out user waits out one coffee.

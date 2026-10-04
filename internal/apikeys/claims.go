@@ -28,7 +28,7 @@ import (
 // name:
 //
 //	core/docs/openapi-conventions.md:134 requires a claim named `scopes`.
-//	guard/src/middleware/jwt.ts:32 reads `scope`, splits it on whitespace, and
+//	gateway/src/middleware/jwt.ts:32 reads `scope`, splits it on whitespace, and
 //	treats an absent claim as an empty set.
 //
 // The question is recorded as MD7 in the manager's DECISIONS.md and it is OPEN.
@@ -45,9 +45,9 @@ import (
 // question.
 //
 // The SHAPE is a space-separated string, not an array, and that is not a
-// third opinion — it is the one shape both sides can read. guard's
+// third opinion — it is the one shape both sides can read. gateway's
 // `principalOf` does `raw.split(/\s+)` and rejects a non-string claim outright, so
-// an array is a token guard refuses to parse at all; and core's own example is a
+// an array is a token gateway refuses to parse at all; and core's own example is a
 // capability string (`invoices:write`). RFC 8693's token-introspection response
 // says the same thing.
 //
@@ -58,7 +58,7 @@ import (
 // an extra. A token with no `account_id` is refused: ClaimsFor returns
 // ErrNoAccountID, and the response is inactive.
 //
-// The alternative — falling back to `sub`, which is what guard's `limitKey` does
+// The alternative — falling back to `sub`, which is what gateway's `limitKey` does
 // today — would give a service-to-service token a USER as its tenancy key. Two
 // consequences, and the second is the one that matters: a service holding a
 // user-scoped key can read that user's rows across every account they belong to,
@@ -66,7 +66,7 @@ import (
 // than a 403. "Refuse it" costs a client one integration fix; "default it" costs
 // a data breach, and the default is invisible until it is exploited.
 //
-// Whether guard's fallback is safe is a SEPARATE and more serious open question
+// Whether gateway's fallback is safe is a SEPARATE and more serious open question
 // (MD8 in the manager's DECISIONS.md, proposed but not written up), and it is not
 // decided here. What is decided here is that identity never produces a token that
 // relies on it.
@@ -88,7 +88,7 @@ var ErrNoAccountID = errors.New("an api key claim document requires an account_i
 const (
 	// ClaimScopes is the primary name, and the one core's conventions require.
 	ClaimScopes = "scopes"
-	// ClaimScope is the exact mirror, and the one guard's middleware reads. See
+	// ClaimScope is the exact mirror, and the one gateway's middleware reads. See
 	// the file comment: this is an interim pending MD7, not a contract.
 	ClaimScope = "scope"
 	// ClaimAccountID is the tenancy claim, and it is required.

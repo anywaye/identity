@@ -389,7 +389,7 @@ func (f *oidcFixture) roundTrip(t *testing.T, client registered) map[string]any 
 }
 
 // verify checks a token's signature against the PUBLISHED key set, which is the
-// same thing guard does and the only check worth making about an RS256 token.
+// same thing gateway does and the only check worth making about an RS256 token.
 func (f *oidcFixture) verify(t *testing.T, token string) map[string]any {
 	t.Helper()
 

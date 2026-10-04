@@ -116,7 +116,7 @@ func TestOIDCAuthorizationCodeRoundTrip(t *testing.T) {
 		t.Errorf("accounts[0].personal = %v, want true", first["personal"])
 	}
 
-	// The access token. RS256, the same key, and the claims guard reads.
+	// The access token. RS256, the same key, and the claims gateway reads.
 	accessClaims := f.verify(t, accessToken)
 	if accessClaims["iss"] != oidcTestIssuer {
 		t.Errorf("access_token iss = %v, want %q", accessClaims["iss"], oidcTestIssuer)
@@ -125,7 +125,7 @@ func TestOIDCAuthorizationCodeRoundTrip(t *testing.T) {
 		t.Errorf("access_token sub = %v, want %s", accessClaims["sub"], f.owner)
 	}
 	if scope, _ := accessClaims["scope"].(string); scope != "accounts openid" {
-		t.Errorf("access_token scope = %q, want the granted scopes space-delimited; guard splits this on whitespace",
+		t.Errorf("access_token scope = %q, want the granted scopes space-delimited; gateway splits this on whitespace",
 			scope)
 	}
 	if _, present := accessClaims["jti"]; !present {
@@ -1206,7 +1206,7 @@ func TestOIDCWellKnownDocuments(t *testing.T) {
 				t.Errorf("%s issuer = %v, want %q", path, rec.JSON["issuer"], oidcTestIssuer)
 			}
 			if rec.JSON["jwks_uri"] != oidcTestIssuer+oidc.PathJWKS {
-				t.Errorf("%s jwks_uri = %v, want the path guard hardcodes", path, rec.JSON["jwks_uri"])
+				t.Errorf("%s jwks_uri = %v, want the path gateway hardcodes", path, rec.JSON["jwks_uri"])
 			}
 		}
 	})
@@ -1219,7 +1219,7 @@ func TestOIDCWellKnownDocuments(t *testing.T) {
 			t.Fatalf("GET the jwks = %d, want 200; body: %s", rec.Code, rec.Body)
 		}
 		if got := rec.JSON["keys"]; got == nil {
-			t.Fatal("the key set has no keys array; guard's isKeySet refuses an empty one")
+			t.Fatal("the key set has no keys array; gateway's isKeySet refuses an empty one")
 		}
 		keys, _ := rec.JSON["keys"].([]any)
 		if len(keys) != 1 {

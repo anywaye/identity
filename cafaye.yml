@@ -22,7 +22,7 @@
 #     print(list(Draft202012Validator(json.load(open('../core/schemas/cafaye.manifest.schema.json'))).iter_errors(yaml.safe_load(open('cafaye.yml')))))"
 
 # The cafaye namespace name. Also the repository name, the Go module path, the
-# event envelope's `source`, and the guard routing prefix. Changing it means
+# event envelope's `source`, and the gateway routing prefix. Changing it means
 # changing all five.
 name: identity
 
@@ -236,7 +236,7 @@ owner:
 # WHAT DISAGREES, verified against the code rather than a reading of it:
 #
 #   core/docs/openapi-conventions.md:134 requires a claim named `scopes`.
-#   guard/src/middleware/jwt.ts:32 reads `scope`, splits it on whitespace, and
+#   gateway/src/middleware/jwt.ts:32 reads `scope`, splits it on whitespace, and
 #   treats an absent claim as an empty set.
 #
 # The question is open as MD7 in the manager's DECISIONS.md. It has been recorded
@@ -252,14 +252,14 @@ owner:
 # wire, which is the only place a consumer sees them.
 #
 # THE SHAPE IS A STRING, NOT AN ARRAY, and that is not a third opinion: it is the
-# one shape both sides can read. guard's verifier does `raw.split(/\s+/)` and
+# one shape both sides can read. gateway's verifier does `raw.split(/\s+/)` and
 # REFUSES a non-string claim, so an array is a token the gateway will not parse at
 # all, and core's own example is a capability string.
 #
 # TWO NAMES IS NOT A CONTRACT. It is the cost of not rotating credentials over an
 # unanswered question, and it is a deliberate interim rather than an oversight.
 #
-# RELATED AND NOT DECIDED HERE: core requires `account_id` and guard treats it as
+# RELATED AND NOT DECIDED HERE: core requires `account_id` and gateway treats it as
 # optional with a fallback to `sub`. That is a separate and more serious question
 # (proposed as MD8) and this packet does not rule on it. What it does is never
 # produce a token that needs the fallback: an api key's claim document always

@@ -953,7 +953,7 @@ type IntrospectionResponse struct {
 	// branching on.
 	Role *string `json:"role,omitempty"`
 
-	// Scope An **exact mirror of `scopes`**, and the name `guard` reads. Both are
+	// Scope An **exact mirror of `scopes`**, and the name `gateway` reads. Both are
 	// emitted because the fleet has not agreed on one (MD7, open) and
 	// answering it here would mean rotating every credential already in a
 	// customer's hand. Whichever name wins, the other is a one-line removal
@@ -3336,13 +3336,13 @@ type ClientInterface interface {
 	// space-separated strings.
 	//
 	// This is a deliberate interim, not a contract. The fleet does not agree on the
-	// name: core's `docs/openapi-conventions.md` requires `scopes`, and guard's
+	// name: core's `docs/openapi-conventions.md` requires `scopes`, and gateway's
 	// `src/middleware/jwt.ts` reads `scope` and splits it on whitespace. The
 	// question is open (MD7 in the manager's `DECISIONS.md`) and answering it
 	// unilaterally would mean rotating every credential already in a customer's
 	// hand. Emitting both means whichever name wins, the other is a one-line
 	// removal and no credential has to be reissued. A space-separated **string**
-	// rather than an array because guard's verifier refuses a non-string claim.
+	// rather than an array because gateway's verifier refuses a non-string claim.
 	//
 	// ### `account_id` is required and there is no `sub` fallback
 	//
@@ -3393,13 +3393,13 @@ type ClientInterface interface {
 	// space-separated strings.
 	//
 	// This is a deliberate interim, not a contract. The fleet does not agree on the
-	// name: core's `docs/openapi-conventions.md` requires `scopes`, and guard's
+	// name: core's `docs/openapi-conventions.md` requires `scopes`, and gateway's
 	// `src/middleware/jwt.ts` reads `scope` and splits it on whitespace. The
 	// question is open (MD7 in the manager's `DECISIONS.md`) and answering it
 	// unilaterally would mean rotating every credential already in a customer's
 	// hand. Emitting both means whichever name wins, the other is a one-line
 	// removal and no credential has to be reissued. A space-separated **string**
-	// rather than an array because guard's verifier refuses a non-string claim.
+	// rather than an array because gateway's verifier refuses a non-string claim.
 	//
 	// ### `account_id` is required and there is no `sub` fallback
 	//
@@ -5820,13 +5820,13 @@ func (c *Client) ConfirmEmailVerification(ctx context.Context, body ConfirmEmail
 // space-separated strings.
 //
 // This is a deliberate interim, not a contract. The fleet does not agree on the
-// name: core's `docs/openapi-conventions.md` requires `scopes`, and guard's
+// name: core's `docs/openapi-conventions.md` requires `scopes`, and gateway's
 // `src/middleware/jwt.ts` reads `scope` and splits it on whitespace. The
 // question is open (MD7 in the manager's `DECISIONS.md`) and answering it
 // unilaterally would mean rotating every credential already in a customer's
 // hand. Emitting both means whichever name wins, the other is a one-line
 // removal and no credential has to be reissued. A space-separated **string**
-// rather than an array because guard's verifier refuses a non-string claim.
+// rather than an array because gateway's verifier refuses a non-string claim.
 //
 // ### `account_id` is required and there is no `sub` fallback
 //
@@ -5887,13 +5887,13 @@ func (c *Client) IntrospectAPIKeyWithBody(ctx context.Context, contentType strin
 // space-separated strings.
 //
 // This is a deliberate interim, not a contract. The fleet does not agree on the
-// name: core's `docs/openapi-conventions.md` requires `scopes`, and guard's
+// name: core's `docs/openapi-conventions.md` requires `scopes`, and gateway's
 // `src/middleware/jwt.ts` reads `scope` and splits it on whitespace. The
 // question is open (MD7 in the manager's `DECISIONS.md`) and answering it
 // unilaterally would mean rotating every credential already in a customer's
 // hand. Emitting both means whichever name wins, the other is a one-line
 // removal and no credential has to be reissued. A space-separated **string**
-// rather than an array because guard's verifier refuses a non-string claim.
+// rather than an array because gateway's verifier refuses a non-string claim.
 //
 // ### `account_id` is required and there is no `sub` fallback
 //
@@ -9950,13 +9950,13 @@ type ClientWithResponsesInterface interface {
 	// space-separated strings.
 	//
 	// This is a deliberate interim, not a contract. The fleet does not agree on the
-	// name: core's `docs/openapi-conventions.md` requires `scopes`, and guard's
+	// name: core's `docs/openapi-conventions.md` requires `scopes`, and gateway's
 	// `src/middleware/jwt.ts` reads `scope` and splits it on whitespace. The
 	// question is open (MD7 in the manager's `DECISIONS.md`) and answering it
 	// unilaterally would mean rotating every credential already in a customer's
 	// hand. Emitting both means whichever name wins, the other is a one-line
 	// removal and no credential has to be reissued. A space-separated **string**
-	// rather than an array because guard's verifier refuses a non-string claim.
+	// rather than an array because gateway's verifier refuses a non-string claim.
 	//
 	// ### `account_id` is required and there is no `sub` fallback
 	//
@@ -10007,13 +10007,13 @@ type ClientWithResponsesInterface interface {
 	// space-separated strings.
 	//
 	// This is a deliberate interim, not a contract. The fleet does not agree on the
-	// name: core's `docs/openapi-conventions.md` requires `scopes`, and guard's
+	// name: core's `docs/openapi-conventions.md` requires `scopes`, and gateway's
 	// `src/middleware/jwt.ts` reads `scope` and splits it on whitespace. The
 	// question is open (MD7 in the manager's `DECISIONS.md`) and answering it
 	// unilaterally would mean rotating every credential already in a customer's
 	// hand. Emitting both means whichever name wins, the other is a one-line
 	// removal and no credential has to be reissued. A space-separated **string**
-	// rather than an array because guard's verifier refuses a non-string claim.
+	// rather than an array because gateway's verifier refuses a non-string claim.
 	//
 	// ### `account_id` is required and there is no `sub` fallback
 	//
@@ -17310,13 +17310,13 @@ func (c *ClientWithResponses) ConfirmEmailVerificationWithResponse(ctx context.C
 // space-separated strings.
 //
 // This is a deliberate interim, not a contract. The fleet does not agree on the
-// name: core's `docs/openapi-conventions.md` requires `scopes`, and guard's
+// name: core's `docs/openapi-conventions.md` requires `scopes`, and gateway's
 // `src/middleware/jwt.ts` reads `scope` and splits it on whitespace. The
 // question is open (MD7 in the manager's `DECISIONS.md`) and answering it
 // unilaterally would mean rotating every credential already in a customer's
 // hand. Emitting both means whichever name wins, the other is a one-line
 // removal and no credential has to be reissued. A space-separated **string**
-// rather than an array because guard's verifier refuses a non-string claim.
+// rather than an array because gateway's verifier refuses a non-string claim.
 //
 // ### `account_id` is required and there is no `sub` fallback
 //
@@ -17373,13 +17373,13 @@ func (c *ClientWithResponses) IntrospectAPIKeyWithBodyWithResponse(ctx context.C
 // space-separated strings.
 //
 // This is a deliberate interim, not a contract. The fleet does not agree on the
-// name: core's `docs/openapi-conventions.md` requires `scopes`, and guard's
+// name: core's `docs/openapi-conventions.md` requires `scopes`, and gateway's
 // `src/middleware/jwt.ts` reads `scope` and splits it on whitespace. The
 // question is open (MD7 in the manager's `DECISIONS.md`) and answering it
 // unilaterally would mean rotating every credential already in a customer's
 // hand. Emitting both means whichever name wins, the other is a one-line
 // removal and no credential has to be reissued. A space-separated **string**
-// rather than an array because guard's verifier refuses a non-string claim.
+// rather than an array because gateway's verifier refuses a non-string claim.
 //
 // ### `account_id` is required and there is no `sub` fallback
 //

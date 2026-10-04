@@ -32,7 +32,7 @@ import (
 // ONE key, and it is configured rather than generated. Two properties of this
 // service depend on that and neither survives the alternative:
 //
-//   - guard verifies every token this service issues against the JWKS this key
+//   - gateway verifies every token this service issues against the JWKS this key
 //     produces, and caches by `kid` for minutes at a time. A key generated at
 //     boot would publish a document no cached verifier has seen, and every
 //     request would fail until the cache expired. A key generated per process
@@ -162,7 +162,7 @@ func (k *SigningKey) Key() any { return k.priv }
 // SignatureAlgorithm is RS256.
 //
 // core's conventions allow RS256 and ES256 and forbid everything else, and
-// guard pins RS256 before it fetches anything. One algorithm, stated once: a
+// gateway pins RS256 before it fetches anything. One algorithm, stated once: a
 // provider that advertised a second one and then used the first is a provider
 // whose tokens stop verifying the day it rotates.
 func (k *SigningKey) SignatureAlgorithm() jose.SignatureAlgorithm { return jose.RS256 }
@@ -203,7 +203,7 @@ func (p publicKey) Key() any {
 //
 // The document is byte-stable for a given key: the same key and kid produce the
 // same JSON on every call, which is what lets a consumer cache it for minutes
-// (guard's default is five) without re-fetching on every request. go-jose
+// (gateway's default is five) without re-fetching on every request. go-jose
 // marshals a JSONWebKey struct, whose field order is fixed, so there is no map
 // anywhere in the path.
 func (k *SigningKey) JWKS() ([]byte, error) {

@@ -243,7 +243,7 @@ func TestTheListIsAnArrayNotNull(t *testing.T) {
 
 // TestTheScopesSurviveTheWire is the wire-shape half of the scope contract: the
 // client's `scopes` array is the set, unchanged, and it is an array rather than
-// the space-separated string guard parses from a JWT. A response that rendered the
+// the space-separated string gateway parses from a JWT. A response that rendered the
 // OIDC shape here would be a client that had to split on whitespace to discover
 // what it was granted.
 func TestTheScopesSurviveTheWire(t *testing.T) {

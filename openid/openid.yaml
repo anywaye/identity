@@ -63,7 +63,7 @@ info:
 
     The signing key is configured, not generated: `OIDC_SIGNING_KEY` and
     `OIDC_SIGNING_KEY_ID`. It is the same key whose public half is served here and
-    which `guard` verifies every request against, and there is no second one. A key
+    which `gateway` verifies every request against, and there is no second one. A key
     generated at boot would publish a document no caching verifier has seen, and
     two processes behind a load balancer would each publish a different one.
 

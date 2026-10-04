@@ -188,7 +188,7 @@ func (c protocolClient) LoginURL(requestID string) string {
 }
 
 // AccessTokenType is JWT, so the access token is signed with the published key
-// and verifiable by guard without a round trip to this service.
+// and verifiable by gateway without a round trip to this service.
 func (c protocolClient) AccessTokenType() op.AccessTokenType { return op.AccessTokenTypeJWT }
 
 // IDTokenLifetime is core's access-token cap, applied to the id_token as well. An
@@ -245,7 +245,7 @@ func (s *Storage) SigningKey(context.Context) (op.SigningKey, error) {
 	return s.key, nil
 }
 
-// SignatureAlgorithms is RS256 and nothing else. guard pins RS256 before it
+// SignatureAlgorithms is RS256 and nothing else. gateway pins RS256 before it
 // fetches anything, and a discovery document advertising a second algorithm is a
 // document promising a key this service does not publish.
 func (s *Storage) SignatureAlgorithms(context.Context) ([]jose.SignatureAlgorithm, error) {
@@ -648,7 +648,7 @@ const (
 // Two claims, both of which core's conventions ask for by a name that does not
 // fit what this service knows:
 //
-//   - `scope`, a space-delimited string. RFC 9068 registers that name, guard's
+//   - `scope`, a space-delimited string. RFC 9068 registers that name, gateway's
 //     verifier reads exactly that, and it is the one a scope gate in any
 //     language will look for. core's prose says `scopes`; the disagreement is
 //     recorded in README.md and is a one-line change if the manager rules the
@@ -678,7 +678,7 @@ func (s *Storage) GetPrivateClaimsFromScopes(ctx context.Context, userID, client
 // SetIntrospectionFromToken refuses, because the endpoint is not mounted.
 //
 // Introspection is how a resource server asks "is this token still good", and
-// this service answers that question locally: guard verifies the signature
+// this service answers that question locally: gateway verifies the signature
 // against the published JWKS and the row behind the `jti` is what stops a revoked
 // token. A second mechanism would be a second answer.
 func (s *Storage) SetIntrospectionFromToken(context.Context, *oidc.IntrospectionResponse, string, string, string) error {

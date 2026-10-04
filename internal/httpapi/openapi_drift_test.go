@@ -11,7 +11,7 @@ package httpapi
 // client — an endpoint nobody chose, described nowhere, and the first thing a
 // security review asks about.
 //
-// This is the last of these checks in the fleet. courier, darkroom, guard, muse,
+// This is the last of these checks in the fleet. courier, darkroom, gateway, muse,
 // pantry and billing have had one since the sixth time it fired. This file is
 // the seventh, and it fired on its first run: twelve operations were served and
 // written down in no document at all.

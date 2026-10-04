@@ -111,7 +111,7 @@ func TestIntrospectionPublishesBothScopeClaimNames(t *testing.T) {
 		t.Errorf("%s = %q and %s = %q; a consumer's answer must not depend on which name it reads",
 			apikeys.ClaimScopes, primary, apikeys.ClaimScope, mirror)
 	}
-	// Space-separated, because guard splits on whitespace and refuses anything else.
+	// Space-separated, because gateway splits on whitespace and refuses anything else.
 	if strings.Contains(primary, ",") || strings.Contains(primary, "[") {
 		t.Errorf("the scope claim is not a space-separated string: %q", primary)
 	}

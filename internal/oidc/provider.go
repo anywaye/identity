@@ -57,8 +57,8 @@ const (
 	// loginui.go has the full flow.
 	PathLogin = "/oidc/login"
 	// PathJWKS is where the signing keys are published. It is the path core's
-	// conventions name and the one guard's verifier hardcodes:
-	// JWKS_PATH = "/.well-known/jwks.json" in guard/src/middleware/jwt.ts.
+	// conventions name and the one gateway's verifier hardcodes:
+	// JWKS_PATH = "/.well-known/jwks.json" in gateway/src/middleware/jwt.ts.
 	PathJWKS = "/.well-known/jwks.json"
 	// PathDiscovery is the OpenID Connect Discovery path.
 	PathDiscovery = "/.well-known/openid-configuration"
@@ -141,7 +141,7 @@ func NewProvider(cfg Config, storage *Storage) (*Provider, error) {
 		// The library's own defaults are /authorize, /oauth/token, /userinfo and
 		// /keys. The protocol paths here are this service's, under /oidc so the
 		// two surfaces are distinguishable in an access log; the well-known path
-		// is the one core's conventions name and guard's verifier hardcodes.
+		// is the one core's conventions name and gateway's verifier hardcodes.
 		//
 		// The four this service does NOT serve are configured too, and it looks
 		// like an oversight until you read Discovery: the library builds its

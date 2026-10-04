@@ -1812,7 +1812,7 @@ test's failure message is the checklist for the packet that will do it properly.
     unavailable is an availability bug dressed as a safety one.
   - **The capability set is published under BOTH claim names, and that is a
     deliberate interim, not the contract.** `POST /v1/introspections` emits
-    `scopes` (core's name, `docs/openapi-conventions.md:134`) and `scope` (guard's
+    `scopes` (core's name, `docs/openapi-conventions.md:134`) and `scope` (gateway's
     name, `src/middleware/jwt.ts:32`), **byte for byte identical**, both
     space-separated strings. The fleet has not agreed and the question is open as
     **MD7** in the manager's `DECISIONS.md`; it has been recorded twice before and
@@ -1824,15 +1824,15 @@ test's failure message is the checklist for the packet that will do it properly.
     unanswered question. `TestTheTwoScopeClaimNamesAreEqual` holds them together in
     a struct and `TestIntrospectionPublishesBothScopeClaimNames` holds them
     together on the wire, which is the only place a consumer sees them. The shape
-    is a **string**, not an array: guard splits on whitespace and refuses a
+    is a **string**, not an array: gateway splits on whitespace and refuses a
     non-string claim, so an array is a token the gateway will not parse.
   - **`account_id` is required and nothing falls back to `sub`.** `sub` is the
     *user* a token names; `account_id` is the tenancy boundary and is always
     present, and a token with no account is answered `{"active": false}` rather
     than issued a subject to guess a tenancy key from. Falling back to `sub` — as
-    guard's `limitKey` does today — would give a service-to-service token a user
+    gateway's `limitKey` does today — would give a service-to-service token a user
     as its tenancy key, so a bug in one service that keys on `sub` becomes a
-    cross-tenant read rather than a `403`. Whether guard's fallback is safe is
+    cross-tenant read rather than a `403`. Whether gateway's fallback is safe is
     **MD8** and is not decided here; what is decided is that identity never
     produces a token that needs it.
   - **The vocabulary is four names and every one is a capability an existing route
@@ -2041,7 +2041,7 @@ test's failure message is the checklist for the packet that will do it properly.
     equality.
   - The token endpoint issues **RS256** access tokens and ID tokens from the ONE
     configured signing key — the same key whose public half is published at
-    `/.well-known/jwks.json` and which `guard` already verifies against. The
+    `/.well-known/jwks.json` and which `gateway` already verifies against. The
     `kid` in the document is the `kid` in every token header.
   - UserInfo returns `sub`, `email`, `email_verified`, `name` and the account and
     role claims from `account_users`, and nothing that is not already in the
@@ -2104,7 +2104,7 @@ test's failure message is the checklist for the packet that will do it properly.
   (`account_locked` 423, `invalid_json` 400, `payload_too_large` 413) are this
   service's extension and are flagged for the manager.
 - `internal/httpapi/trace.go` — a trace id on every request and every response.
-  An inbound id is reused so a trace survives a hop through guard or a proxy;
+  An inbound id is reused so a trace survives a hop through gateway or a proxy;
   an unusable one is replaced rather than rejected.
 - `internal/httpapi/recover.go` — a panic in a handler becomes a logged 500
   with a quotable trace id instead of a closed connection and a bare log line.
@@ -2145,7 +2145,7 @@ test's failure message is the checklist for the packet that will do it properly.
   importing it. It brings 21 indirect modules with it. `go mod tidy` is idempotent
   and `go.sum` is committed.
 - The access token's capability claim is spelled `scope`, not `scopes`. RFC 9068
-  registers that name and `guard`'s verifier splits on exactly that string; core's
+  registers that name and `gateway`'s verifier splits on exactly that string; core's
   prose says `scopes`. One line in `internal/oidc/storage.go` either way, and the
   divergence is recorded there.
 - A third direct dependency, `alexedwards/argon2id`, arrives with the password

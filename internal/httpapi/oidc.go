@@ -236,7 +236,7 @@ func (o options) handleOIDCDiscovery(w http.ResponseWriter, r *http.Request) {
 // handleOIDCJWKS serves the published key set.
 //
 // Cache-Control is public and long because the document changes only when the
-// signing key does, and guard's verifier caches it for five minutes anyway. A
+// signing key does, and gateway's verifier caches it for five minutes anyway. A
 // `no-store` here would mean every edge in the platform re-fetched it on a timer
 // the operator cannot see.
 func (o options) handleOIDCJWKS(w http.ResponseWriter, _ *http.Request) {
