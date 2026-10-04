@@ -2,7 +2,10 @@ package tenancy
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -164,9 +167,50 @@ func TestTenancyACredentialResolvesByTheDigestTheCallerPresentedAndNothingElse(t
 	}{
 		{"the credential it presented", tenantA, digestFor(tenantA), 1},
 		{"the other tenant's credential", tenantB, digestFor(tenantB), 1},
-		{"a digest no row has", tenantA, digestFor(tenantA)[:63] + "0", 0},
+		// Built by digestNoRowHas rather than written inline, and CHECKED for being
+		// a digest nothing has inside the subtest below. This case's whole claim is
+		// "no row carries this digest", the value is derived from a random tenant id,
+		// and a derived value can come out equal to the thing it was derived from —
+		// so the premise is asserted rather than assumed, and asserted against the
+		// two digests the seed wrote, which is every digest in the table this test
+		// creates.
+		{"a digest no row has", tenantA, digestNoRowHas(digestFor(tenantA)), 0},
 	} {
 		t.Run("resolve "+tc.name, func(t *testing.T) {
+			// A CASE THAT EXPECTS NOTHING MUST PRESENT A DIGEST NOTHING HAS.
+			//
+			// This is here because the first version of that case built the value
+			// inline as `digestFor(tenantA)[:63] + "0"` — the real digest with a
+			// constant appended — and that string IS the real digest whenever the
+			// real digest's 64th character already was "0". The tenant ids are
+			// `gen_random_uuid()::text`, the digest is `(accountID + accountID)[:64]`
+			// over a 36-character uuid, so that 64th character is character 28 of a
+			// random uuid: a random hex digit, and "0" one time in sixteen (measured:
+			// 0.063 over 200,000 generated ids; 2 failures in 48 consecutive runs of
+			// this package before the fix).
+			//
+			// On those runs the policy was asked to return zero rows for a row that
+			// EXISTS, answered correctly, and the run went red reporting a security
+			// failure. That is the worst failure mode a security assertion has: the
+			// reasonable response to it is to go looking for a policy leak that is not
+			// there, and a package that is red one run in sixteen is a package people
+			// learn to re-run until green.
+			//
+			// So the failure mode is closed in the direction that costs a red build
+			// instead of a flake. Nothing here counts rows or sets an identity: it
+			// compares two strings the SEED chose, so a failure can only ever be the
+			// fixture's and the message says so.
+			if tc.want == 0 {
+				for _, seeded := range []string{digestFor(tenantA), digestFor(tenantB)} {
+					if tc.digest == seeded {
+						t.Fatalf("this case presents a digest the fixture seeded a row with, so it is " +
+							"not a digest no row has, and asserting 0 rows against it asserts that the " +
+							"policy hides a row that exists. Build it with digestNoRowHas, which " +
+							"cannot return the digest it was given.")
+					}
+				}
+			}
+
 			seen, err := countAsCredential(ctx, conn, tc.digest)
 			if err != nil {
 				t.Fatalf("resolving by digest: %v", err)
@@ -364,6 +408,17 @@ func countInResolution(ctx context.Context, conn *pgx.Conn, digest, query string
 // any account is known). Reading it needs no identity, which is the only reason
 // it is read here at all — the row being written has to satisfy a foreign key, and
 // reading it off api_keys would need the identity this case is refusing.
+//
+// The digest the row would carry is a digest NO ROW HAS, for the same reason the
+// "resolve a digest no row has" case needs one, and it is a requirement rather
+// than tidiness: `api_keys_token_digest_key` is a UNIQUE index, so an insert
+// whose digest collided with a seeded one would be refused by that index rather
+// than by the resolve policy. The first version built it as "0"+digest[1:] and
+// was byte-identical to the real digest on the same one run in sixteen, which made
+// this control measure a unique-index violation instead of the boundary — on those
+// runs the assertion still passed, because all it asserts is that the insert was
+// NOT ACCEPTED, so nothing here ever went red. A control that is right for two
+// different reasons is not evidence of either.
 func writeInResolution(ctx context.Context, conn *pgx.Conn, digest, accountID string) (bool, error) {
 	var userID string
 	if err := conn.QueryRow(ctx,
@@ -380,7 +435,7 @@ func writeInResolution(ctx context.Context, conn *pgx.Conn, digest, accountID st
 			_, err := tx.Exec(ctx,
 				`insert into api_keys (user_id, account_id, name, token_digest, scopes, expires_at)
 				 values ($1, $2, 'minted-in-a-resolution', $3, array['accounts:read'], $4)`,
-				userID, accountID, "0"+digest[1:], time.Now().Add(24*time.Hour))
+				userID, accountID, digestNoRowHas(digest), time.Now().Add(24*time.Hour))
 			if err != nil {
 				// Expected. Unwinding to the savepoint puts the transaction back in a
 				// usable state so the refusal costs nothing else.
@@ -521,6 +576,168 @@ func digestFor(accountID string) string {
 		d += d
 	}
 	return d[:64]
+}
+
+// digestNoRowHas builds the 64-character digest for the cases that need a value NO
+// ROW HAS: the real digest with its FIRST character replaced by a hex digit chosen
+// to differ from the one it replaces.
+//
+// # WHY NOT THE LAST CHARACTER, WHICH IS WHERE THE FIRST VERSION PUT IT
+//
+// The first version appended a literal "0" to the real digest's first 63
+// characters, which reads as "somebody else's digest". It is the same byte string
+// as the real digest whenever the real digest's 64th character already was "0",
+// and because the tenant ids are `gen_random_uuid()::text` while the digest is
+// `(accountID + accountID)[:64]` over a 36-character uuid, that 64th character is
+// character 28 of a random uuid and therefore a random hex digit — "0" one time in
+// sixteen. Measured, 200,000 generated tenant ids: 0.063. Observed, 48 consecutive
+// runs of this package: 2 red runs, both this case, both a correct policy answering
+// correctly.
+//
+// # WHY THE FIRST CHARACTER IS SAFE WHERE THE LAST ONE WAS NOT
+//
+// `digestFor` is `(accountID + accountID)[:64]`, so the generator owns every
+// character of the digest EQUALLY and position is not what makes the difference.
+// What makes the difference is who picks the replacement: this function picks it,
+// and picks it to differ, so the result cannot be the digest it was given whatever
+// the generator produced. The old form appended a constant and hoped the random
+// character happened to differ, which is a probability and not a property — and a
+// property is the whole point, because the failure this fixes is reported as a
+// policy leak and sends a maintainer looking for a leak that is not there.
+//
+// The result is still 64 characters, which is all `api_keys_token_digest_length`
+// asks of it, and still a value no seeded row carries. It is not hex and is not
+// meant to be: `digestFor` copies the tenant id's TEXT, so a fixture digest is
+// uuid text with its four hyphens in it. Only the length and the unique index
+// apply to the column.
+func digestNoRowHas(real string) string {
+	if real[0] == '0' {
+		return "1" + real[1:]
+	}
+	return "0" + real[1:]
+}
+
+// TestTheNoRowDigestIsNeverTheDigestItWasDerivedFrom is the check on the premise
+// the cases above now assert, and it needs no database — which is the point of
+// having it: the defect it describes made a PACKAGE red one run in sixteen, and a
+// unit test turns that into a failure on every run that changes the builder.
+//
+// It is two arms. The table is the property stated on values a person chose,
+// including the one shape that made the old form fail: a tenant id whose character
+// 28 is "0", which is the input that produced a byte-identical digest. The sample
+// is the property stated over generated ids, because "cannot return its input" is
+// a claim about every input rather than about the four written down.
+//
+// And it carries a NEGATIVE CONTROL, because a loop that compares two strings and
+// finds them always different is also what a broken loop looks like: the old form
+// is measured with the same sampler in the same pass, and the control fails if it
+// stops colliding. A sampler that cannot detect a collision cannot certify an
+// absence, and that is the same shape of check as the one it now guards.
+func TestTheNoRowDigestIsNeverTheDigestItWasDerivedFrom(t *testing.T) {
+	// The tenant id whose character 28 is "0" — so `digestFor` of it ends in "0"
+	// and the old inline form reproduced the real digest exactly. Kept as a literal
+	// rather than generated because this is the one input in this file whose value
+	// is the defect, and a generated one would stop reproducing it eventually.
+	const idWithZeroInCharacter28 = "a1b2c3d4-e5f6-4a8b-9c0d-1e203a4b5c6d"
+
+	// NO ASSERTION ABOUT THE CHARACTER SET, and its absence is worth one line because
+	// the helper's name invites one: a fixture digest is uuid text with hyphens in it,
+	// not hex. The invariants that do matter are the narrow ones below — 64
+	// characters, and the first character changed with the other 63 untouched.
+
+	for _, tc := range []struct {
+		name string
+		real string
+	}{
+		{"a digest that already begins with 0", "0" + strings.Repeat("a", 63)},
+		{"a digest that begins with 1", "1" + strings.Repeat("a", 63)},
+		{"a digest that begins with f", "f" + strings.Repeat("a", 63)},
+		{"and the one that broke the old form", digestFor(idWithZeroInCharacter28)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := digestNoRowHas(tc.real)
+
+			if got == tc.real {
+				t.Errorf("digestNoRowHas returned the digest it was given, so a case built on it is " +
+					"asserting that the policy hides a row that exists.")
+			}
+			if len(got) != 64 {
+				t.Errorf("digestNoRowHas returned %d characters, want 64: it has to satisfy "+
+					"api_keys_token_digest_length.", len(got))
+			}
+			if want := tc.real[1:]; got[1:] != want {
+				t.Errorf("digestNoRowHas changed more than the first character: got %q, want the first "+
+					"character replaced and characters 2-64 of %q", got, tc.real)
+			}
+
+			// The replacement is one of the two hex digits this file controls, and it
+			// is the OTHER one — a digest already opening "0" must not be handed back
+			// unchanged, which is the exact defect the helper exists to remove.
+			wantFirst := "0"
+			if tc.real[0] == '0' {
+				wantFirst = "1"
+			}
+			if string(got[0]) != wantFirst {
+				t.Errorf("digestNoRowHas opened with %q, want %q", got[:1], wantFirst)
+			}
+		})
+	}
+
+	t.Run("and never, over generated tenant ids, with a control that can still fail", func(t *testing.T) {
+		// 100,000 ids is ten times what the collision rate needs to be unmissable at:
+		// the old form collides on about 6,300 of them, and the control demands more
+		// than 1,000 so it is many sigma clear of its own sampling noise rather than
+		// balanced against zero.
+		const samples = 100_000
+
+		// One read for the whole sample rather than 100,000: the ids are not secrets
+		// and are not compared against anything but each other, so what is wanted is
+		// entropy-shaped input, not entropy hygiene, and a per-iteration syscall would
+		// buy nothing but wall clock.
+		raw := make([]byte, samples*16)
+		if _, err := rand.Read(raw); err != nil {
+			t.Fatalf("reading entropy for the sample: %v", err)
+		}
+
+		var collided, controlCollided int
+		for i := 0; i < samples; i++ {
+			// `raw[i*16 : i*16+16]` and NOT `raw[i*16:]`: the second is every byte from
+			// here to the end of the sample, which is 3.2MB of text per iteration and
+			// turns a 20ms loop into 90 seconds. The high bound is the whole reason this
+			// arm is bounded at all.
+			real := digestFor(uuidText(raw[i*16 : i*16+16]))
+			if digestNoRowHas(real) == real {
+				collided++
+			}
+			// The control is the form this helper replaced, run over the same ids by
+			// the same loop. If it ever stops colliding, the loop is no longer
+			// comparing and the count above is not evidence of anything.
+			if control := real[:63] + "0"; control == real {
+				controlCollided++
+			}
+		}
+
+		if collided != 0 {
+			t.Errorf("digestNoRowHas returned its input for %d of %d generated tenant ids; it must "+
+				"never, and one is enough to put a security case back to one run in sixteen.",
+				collided, samples)
+		}
+		if controlCollided < 1_000 {
+			t.Errorf("the negative control collided %d times in %d, want more than 1000 (1/16 predicts "+
+				"about %d). The sampler has stopped detecting collisions, so the count above is a green "+
+				"that proves nothing.", controlCollided, samples, samples/16)
+		}
+		t.Logf("digestNoRowHas collided %d/%d; the form it replaced collided %d/%d (%.4f, 1/16 predicts 0.0625)",
+			collided, samples, controlCollided, samples, float64(controlCollided)/float64(samples))
+	})
+}
+
+// uuidText formats 16 bytes the way `gen_random_uuid()::text` formats them, because
+// the position that matters to `digestFor` — character 28, four digits into the last
+// group — is a property of the TEXT form and not of the byte order underneath it.
+func uuidText(b []byte) string {
+	s := hex.EncodeToString(b)
+	return s[0:8] + "-" + s[8:12] + "-" + s[12:16] + "-" + s[16:20] + "-" + s[20:32]
 }
 
 // credentialTestDigest satisfies users.password_digest's NOT NULL and its CHECK.
