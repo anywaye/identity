@@ -24,7 +24,7 @@ func newTestProvider(t *testing.T) *Provider {
 	if err != nil {
 		t.Fatalf("LoadSigningKey: %v", err)
 	}
-	storage := NewStorage(nil, NewProfileReader(), key, testClock{}, nil, PathLogin)
+	storage := NewStorage(nil, NewProfileReader(), nil, key, testClock{}, nil, PathLogin)
 
 	provider, err := NewProvider(Config{
 		Issuer:        "https://identity.test",
@@ -251,7 +251,7 @@ func TestNewProviderRefusesAnIssuerItCannotBeVerifiedAgainst(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			storage := NewStorage(nil, NewProfileReader(), key, testClock{}, nil, PathLogin)
+			storage := NewStorage(nil, NewProfileReader(), nil, key, testClock{}, nil, PathLogin)
 			if _, err := NewProvider(Config{Issuer: tt.issuer, SigningKey: key, LoginUIURL: testLoginUIURL}, storage); err == nil {
 				t.Errorf("NewProvider accepted the issuer %q", tt.issuer)
 			}
@@ -270,7 +270,7 @@ func TestNewProviderAcceptsATrailingSlash(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadSigningKey: %v", err)
 	}
-	storage := NewStorage(nil, NewProfileReader(), key, testClock{}, nil, PathLogin)
+	storage := NewStorage(nil, NewProfileReader(), nil, key, testClock{}, nil, PathLogin)
 
 	provider, err := NewProvider(Config{Issuer: "https://identity.test/", SigningKey: key, LoginUIURL: testLoginUIURL}, storage)
 	if err != nil {
@@ -285,7 +285,7 @@ func TestNewProviderAcceptsATrailingSlash(t *testing.T) {
 func TestNewProviderRefusesToBuildWithoutASigningKey(t *testing.T) {
 	t.Parallel()
 
-	storage := NewStorage(nil, NewProfileReader(), nil, testClock{}, nil, PathLogin)
+	storage := NewStorage(nil, NewProfileReader(), nil, nil, testClock{}, nil, PathLogin)
 	if _, err := NewProvider(Config{Issuer: "https://identity.test", LoginUIURL: testLoginUIURL}, storage); err == nil {
 		t.Fatal("NewProvider built a provider with no signing key")
 	}

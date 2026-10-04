@@ -11,6 +11,7 @@ import (
 	"github.com/zitadel/oidc/v3/pkg/oidc"
 	"github.com/zitadel/oidc/v3/pkg/op"
 
+	"github.com/cafaye/identity/internal/oauth"
 	"github.com/cafaye/identity/internal/platform/clock"
 	"github.com/cafaye/identity/internal/platform/db"
 	"github.com/cafaye/identity/internal/platform/id"
@@ -40,29 +41,66 @@ import (
 // It is built once and shared. Every field is immutable after construction and
 // none of them is per-request state, so there is nothing to synchronize.
 type Storage struct {
-	store    *Store
-	profiles ProfileReader
-	key      *SigningKey
-	clk      clock.Clock
-	read     db.QuerierSource
+	store     *Store
+	profiles  ProfileReader
+	githubIDs GitHubIDReader
+	key       *SigningKey
+	clk       clock.Clock
+	read      db.QuerierSource
 	// loginBase is the path the login UI is mounted at, and it is here rather
 	// than in a constant because the router and the client implementation have
 	// to agree on it and one of the two is going to move first.
 	loginBase string
 }
 
+// GitHubIDReader answers "which GitHub account has this user linked", for the
+// `github_id` claim.
+//
+// An interface for the reason ProfileReader is one: this adapter's job is to
+// answer the library's questions, and how a linked account is stored is the
+// `oauth` package's business. It also keeps the claim testable without a
+// database tier — the alternative is a test that only runs against Postgres,
+// which is the same reason every other seam in this package is an interface.
+//
+// The interface is structurally identical to `oauth.GitHubIDReader`, so
+// `*oauth.Store` satisfies it with no adapter and no wrapper. That is checked
+// rather than assumed: see the compile-time assertion below.
+type GitHubIDReader interface {
+	// GitHubIDForUser returns the id as the STRING the column holds — see MD21,
+	// a JSON number does not survive `gateway` — or `oauth.ErrNoGitHubAccount`
+	// when the user has linked none, which is an ordinary state rather than a
+	// failure.
+	GitHubIDForUser(ctx context.Context, q db.Querier, userID id.UUID) (string, error)
+}
+
+// One sentinel for "this user has not linked GitHub", owned by `oauth` because
+// `oauth` owns the table and `oidc` does not depend on it — the arrow points this
+// way, so an alias and not a second `errors.New`. Two names for one condition is
+// how the token endpoint's omission branch and the store's lookup drift apart,
+// and the failure mode is nasty: the branch stops matching, "this user never
+// linked GitHub" surfaces as a 500 from the token endpoint, and MD19's publisher
+// gets an error instead of the "no publisher record" refusal it is owed.
+var ErrNoGitHubAccount = oauth.ErrNoGitHubAccount
+
 // Compile-time proof that the adapter is the library's Storage, and that the
 // auth request is its AuthRequest. A method-set change upstream fails here with
 // a message naming the interface rather than in a call site three layers down.
 var (
 	_ op.Storage                   = (*Storage)(nil)
+	_ GitHubIDReader               = (*oauth.Store)(nil)
 	_ op.AuthRequest               = (*AuthRequest)(nil)
 	_ op.CanSetUserinfoFromRequest = (*Storage)(nil)
 )
 
 // NewStorage wires the adapter.
-func NewStorage(store *Store, profiles ProfileReader, key *SigningKey, clk clock.Clock, read db.QuerierSource, loginBase string) *Storage {
-	return &Storage{store: store, profiles: profiles, key: key, clk: clk, read: read, loginBase: loginBase}
+//
+// githubIDs is the `github_id` claim's reader and may be nil ONLY by a caller
+// that asks for no `publish` scope, in which case a request carrying one gets the
+// same omission a user with no linked account gets. It is a parameter rather than
+// a package-level global for the reason `profiles` is: a test drives it with a
+// fake, and a global would make two tests in one package share a claim set.
+func NewStorage(store *Store, profiles ProfileReader, githubIDs GitHubIDReader, key *SigningKey, clk clock.Clock, read db.QuerierSource, loginBase string) *Storage {
+	return &Storage{store: store, profiles: profiles, githubIDs: githubIDs, key: key, clk: clk, read: read, loginBase: loginBase}
 }
 
 // ---------------------------------------------------------------------------
@@ -641,6 +679,24 @@ const (
 	// ClaimAccounts is this service's one custom claim, released on the `accounts`
 	// scope.
 	ClaimAccounts = "accounts"
+	// ClaimGitHubID is the caller's verified GitHub account id, released on the
+	// `publish` scope.
+	//
+	// IT IS A STRING AND NOT A NUMBER, and MD21 is the reason. `gateway` copies
+	// claims through a JavaScript `JSON.parse` and re-signs what comes out, so a
+	// JSON number here is a float64 before `pantry` ever sees it: measured in node,
+	// 107346492749283471920 re-serializes as ...3480000 and round-trips through
+	// BigInt as ...3485475456. Nothing fails — the assertion is correctly signed
+	// over the wrong publisher. `pantry` reads the string exactly
+	// (`json.Number` parses one), so the string is the encoding that works, and
+	// `pantry`'s `TestANumericStringGitHubIDIsAccepted` is the other half of that
+	// contract.
+	//
+	// Nothing on the reading side can enforce this: `json.Number` erases the
+	// difference between a JSON string and a JSON number before `pantry`'s code
+	// runs. So the guarantee rests here, and the test that holds it is the one
+	// asserting the claim is a Go `string`.
+	ClaimGitHubID = "github_id"
 )
 
 // GetPrivateClaimsFromScopes fills the access token's custom claims.
@@ -657,21 +713,59 @@ const (
 //     this service has no single one: a user of a cafaye product is a member of a
 //     personal account and usually of several team accounts, and a token
 //     carrying one of them would be wrong for all the others.
+//   - `github_id`, a string. On the `publish` scope, for MD21's publisher path.
+//
+// THE TWO SCOPED CLAIMS ARE INDEPENDENT, and the shape below is what makes that
+// true rather than accidental: each is behind its own `if`, and the early return
+// that used to guard the `accounts` one is gone. Written as one guarded block the
+// second claim would have been unreachable for every client that asked for
+// `publish` alone, which is the only client that wants it.
 func (s *Storage) GetPrivateClaimsFromScopes(ctx context.Context, userID, clientID string, scopes []string) (map[string]any, error) {
 	claims := map[string]any{"scope": spaceDelimited(scopes)}
 
-	if !slices.Contains(scopes, ScopeAccounts) {
+	wantsAccounts := slices.Contains(scopes, ScopeAccounts)
+	wantsPublish := slices.Contains(scopes, ScopePublish)
+	if !wantsAccounts && !wantsPublish {
 		return claims, nil
 	}
+
 	parsed, err := id.Parse(userID)
 	if err != nil {
 		return nil, fmt.Errorf("%w: the subject on this token is not an id", ErrNoProfile)
 	}
-	profile, err := s.profiles.Profile(ctx, s.read.Queryer(), parsed)
-	if err != nil {
-		return nil, err
+
+	if wantsAccounts {
+		profile, err := s.profiles.Profile(ctx, s.read.Queryer(), parsed)
+		if err != nil {
+			return nil, err
+		}
+		claims[ClaimAccounts] = accountsClaim(profile.Accounts)
 	}
-	claims[ClaimAccounts] = accountsClaim(profile.Accounts)
+
+	// A MISSING GITHUB ACCOUNT IS NOT AN ERROR, and this is the branch that makes
+	// the claim honest rather than absent-by-accident. The claim is OMITTED, not
+	// invented and not set to "": MD19 wants a caller with no publisher row to get
+	// a "no publisher record" refusal from `pantry`, and for that refusal to be
+	// reachable the claim has to arrive missing rather than empty. An empty
+	// string here would be a claim `pantry` parses and rejects with a different
+	// error, pointing an operator at their gateway instead of at the user who
+	// never linked GitHub.
+	//
+	// Any OTHER error — a database that is down — propagates. "No linked account"
+	// and "could not ask" are different facts and collapsing them would mint a
+	// token that silently drops the publisher claim during an outage.
+	if wantsPublish && s.githubIDs != nil {
+		githubID, err := s.githubIDs.GitHubIDForUser(ctx, s.read.Queryer(), parsed)
+		switch {
+		case err == nil:
+			claims[ClaimGitHubID] = githubID
+		case errors.Is(err, ErrNoGitHubAccount):
+			// Deliberately nothing. See above.
+		default:
+			return nil, err
+		}
+	}
+
 	return claims, nil
 }
 

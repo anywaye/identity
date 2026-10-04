@@ -343,7 +343,7 @@ func serviceRouter(t *testing.T) http.Handler {
 	t.Helper()
 
 	key := throwawaySigningKey(t)
-	storage := oidc.NewStorage(nil, oidc.NewProfileReader(), key, clock.System{}, nil, oidc.PathLogin)
+	storage := oidc.NewStorage(nil, oidc.NewProfileReader(), nil, key, clock.System{}, nil, oidc.PathLogin)
 	provider, err := oidc.NewProvider(oidc.Config{
 		Issuer:     "https://identity.test",
 		SigningKey: key,

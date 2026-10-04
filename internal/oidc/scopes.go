@@ -20,6 +20,10 @@ import (
 //	profile   the one human-readable name identity holds, which is the personal
 //	          account's name. See nameFromPersonalAccount.
 //	accounts  the caller's memberships and their roles, from account_users.
+//	publish   the caller's verified GitHub account id (`github_id`), from
+//	          connected_accounts. Separate from `accounts` because a product
+//	          that renders memberships has no business holding the id that keys
+//	          a registry row — and MD21's publisher path is the only reader.
 //
 // The ones the OIDC specification defines and this list omits — phone, address,
 // offline_access — are omissions, not oversights. identity has no phone column,
@@ -32,13 +36,19 @@ const (
 	ScopeEmail    = "email"
 	ScopeProfile  = "profile"
 	ScopeAccounts = "accounts"
+	// ScopePublish releases `github_id`. It is its own scope rather than a
+	// rider on `accounts` because the two answer different questions: `accounts`
+	// is "what can this user see", and `publish` is "who does this user publish
+	// as". A client asking for membership rendering should not thereby acquire
+	// the identifier that keys a publisher row.
+	ScopePublish = "publish"
 )
 
 // SupportedScopes is the set above, in the order the discovery document lists
 // them. It is a slice rather than a set because the order is the contract the
 // document publishes, and a map's iteration order would make it differ between
 // two runs of the same process.
-var SupportedScopes = []string{ScopeOpenID, ScopeEmail, ScopeProfile, ScopeAccounts}
+var SupportedScopes = []string{ScopeOpenID, ScopeEmail, ScopeProfile, ScopeAccounts, ScopePublish}
 
 // IsSupportedScope reports whether this service implements a scope.
 //

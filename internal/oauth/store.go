@@ -138,6 +138,75 @@ func (s *Store) Create(ctx context.Context, q db.Querier, n NewAccount) (Account
 	return out, nil
 }
 
+// ErrNoGitHubAccount is returned by GitHubIDForUser when the user has linked no
+// GitHub account.
+//
+// It is this package's own name rather than a reference to `oidc`'s, because the
+// dependency runs the other way: `oidc` asks this package a question and
+// translates. Two names for one condition is how the two drift apart.
+var ErrNoGitHubAccount = errors.New("no linked github account")
+
+// GitHubIDReader is what `oidc` asks for the `github_id` claim, declared here so
+// `oidc` does not import this package for one method.
+//
+// It is an interface on the consuming side for the same reason `oidc`'s
+// `ProfileReader` is: the OIDC adapter's job is to answer the library's
+// questions, and how this service stores a linked account is not the adapter's
+// business. It also keeps the claim testable without a database tier.
+type GitHubIDReader interface {
+	// GitHubIDForUser returns the id as the STRING the column holds — see MD21,
+	// a JSON number does not survive `gateway` — or ErrNoGitHubAccount.
+	GitHubIDForUser(ctx context.Context, q db.Querier, userID id.UUID) (string, error)
+}
+
+// Compile-time proof that `*Store` is the reader, so a signature change here
+// fails at this line rather than at a wiring site in another package.
+var _ GitHubIDReader = (*Store)(nil)
+
+// GitHubIDForUser returns one user's verified GitHub account id, the value
+// `connected_accounts.provider_uid` holds for a `github` row.
+//
+// It is keyed on the USER rather than on the provider identity, because the
+// caller is minting a claim about somebody who is already signed in — the
+// direction the rest of this file's lookups run is the other way round.
+//
+// The id is returned as the STRING the column already holds and is NOT parsed
+// into an integer here, and the reason is MD21 rather than laziness: the value
+// crosses `gateway` as a JSON claim, and `gateway` copies claims through a
+// JavaScript `JSON.parse`. A `github_id` emitted as a JSON **number** is already
+// a float64 by the time `gateway` re-signs it, and every digit past 2^53 is
+// silently rewritten inside a correctly-signed assertion — measured in node,
+// 107346492749283471920 comes back as ...3485475456. The string survives. So the
+// string is what leaves this function, and nothing downstream may "helpfully"
+// convert it.
+//
+// ErrNotFound means this user has linked no GitHub account, which is an
+// ordinary state and not an error the caller should surface: a token with no
+// `github_id` is the correct token for a user who has not linked one.
+func (s *Store) GitHubIDForUser(ctx context.Context, q db.Querier, userID id.UUID) (string, error) {
+	const query = `
+		SELECT provider_uid
+		FROM connected_accounts
+		WHERE user_id = $1 AND provider = 'github'`
+
+	var out string
+	err := q.QueryRow(ctx, query, userID).Scan(&out)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNoGitHubAccount
+	}
+	if err != nil {
+		return "", fmt.Errorf("looking up a user's github id: %w", err)
+	}
+	if out == "" {
+		// An empty provider_uid is not an id, and handing one back would put an
+		// empty string in a signed token where `pantry` reads a publisher key.
+		// The column is NOT NULL, so this is a corrupt row rather than a missing
+		// one, and it is refused as absent rather than passed on.
+		return "", ErrNoGitHubAccount
+	}
+	return out, nil
+}
+
 // ByProviderUID finds the account for one provider identity.
 //
 // The lookup key is the provider plus the provider's own identifier, never the

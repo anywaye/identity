@@ -32,7 +32,7 @@ func testProviderFor(t *testing.T, loginUI string) *Provider {
 	if err != nil {
 		t.Fatalf("LoadSigningKey: %v", err)
 	}
-	storage := NewStorage(nil, NewProfileReader(), key, testClock{}, nil, PathLogin)
+	storage := NewStorage(nil, NewProfileReader(), nil, key, testClock{}, nil, PathLogin)
 	provider, err := NewProvider(Config{
 		Issuer:     "https://identity.test",
 		SigningKey: key,
@@ -56,7 +56,7 @@ func TestNewProviderRefusesToBuildWithoutALoginUI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadSigningKey: %v", err)
 	}
-	storage := NewStorage(nil, NewProfileReader(), key, testClock{}, nil, PathLogin)
+	storage := NewStorage(nil, NewProfileReader(), nil, key, testClock{}, nil, PathLogin)
 
 	_, err = NewProvider(Config{Issuer: "https://identity.test", SigningKey: key}, storage)
 	if err == nil {

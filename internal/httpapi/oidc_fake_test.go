@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/cafaye/identity/internal/oauth"
 	"github.com/cafaye/identity/internal/oidc"
 	"github.com/cafaye/identity/internal/outbox"
 	"github.com/cafaye/identity/internal/platform/clock"
@@ -42,7 +43,7 @@ func matrixOIDCClients(t *testing.T, pool *pgxpool.Pool, clk clock.Clock) *oidc.
 	t.Helper()
 
 	store := oidc.NewStore(pool)
-	storage := oidc.NewStorage(store, oidc.NewProfileReader(), generateTestKey(t), clk, db.Direct{Pool: pool}, oidc.PathLogin)
+	storage := oidc.NewStorage(store, oidc.NewProfileReader(), oauth.NewStore(pool), generateTestKey(t), clk, db.Direct{Pool: pool}, oidc.PathLogin)
 
 	return oidc.NewService(
 		db.TxRunner{Pool: pool},

@@ -5,16 +5,26 @@ import (
 	"testing"
 )
 
-// The scope set is a closed list of four names, and the test is the list. An
+// The scope set is a closed list of FIVE names, and the test is the list. An
 // unknown scope is a 400 rather than a silently dropped parameter, which means
 // the set has to be exhaustive in one place: a scope the authorize endpoint
 // would accept but the claims builder does not know is a token that comes back
 // with nothing in it.
+//
+// The name carried a number and the number went stale the moment `publish` was
+// added for MD21. A test named for a count asserts a census that drifts quietly
+// out of date while the test itself keeps passing, so the name now carries the
+// PROPERTY — the set is closed and enumerated — and the count is asserted here,
+// in the list, which is the only place a count can be.
+//
+// This test is what makes adding a scope deliberate rather than an append: it
+// fails until the new name is written down, which is the moment somebody has to
+// decide whether identity will actually honour it.
 
-func TestSupportedScopesAreExactlyTheFour(t *testing.T) {
+func TestSupportedScopesAreExactlyTheFive(t *testing.T) {
 	t.Parallel()
 
-	want := []string{"openid", "email", "profile", "accounts"}
+	want := []string{"openid", "email", "profile", "accounts", "publish"}
 
 	if !slices.Equal(SupportedScopes, want) {
 		t.Fatalf("SupportedScopes = %v, want %v", SupportedScopes, want)

@@ -938,7 +938,8 @@ func buildOIDC(cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger) (*oid
 	}
 
 	store := oidc.NewStore(pool)
-	storage := oidc.NewStorage(store, oidc.NewProfileReader(), key, clock.System{}, db.Direct{Pool: pool}, oidc.PathLogin)
+	storage := oidc.NewStorage(store, oidc.NewProfileReader(), oauth.NewStore(pool),
+		key, clock.System{}, db.Direct{Pool: pool}, oidc.PathLogin)
 
 	provider, err := oidc.NewProvider(oidc.Config{
 		Issuer:        cfg.OIDCIssuer,

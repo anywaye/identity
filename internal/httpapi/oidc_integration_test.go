@@ -21,6 +21,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/cafaye/identity/internal/accounts"
+	"github.com/cafaye/identity/internal/oauth"
 	"github.com/cafaye/identity/internal/oidc"
 	"github.com/cafaye/identity/internal/outbox"
 	"github.com/cafaye/identity/internal/platform/clock"
@@ -101,7 +102,7 @@ func newOIDCFixture(t *testing.T) *oidcFixture {
 	clk := clock.System{}
 
 	store := oidc.NewStore(pool)
-	storage := oidc.NewStorage(store, oidc.NewProfileReader(), key, clk, db.Direct{Pool: pool}, oidc.PathLogin)
+	storage := oidc.NewStorage(store, oidc.NewProfileReader(), oauth.NewStore(pool), key, clk, db.Direct{Pool: pool}, oidc.PathLogin)
 
 	provider, err := oidc.NewProvider(oidc.Config{
 		Issuer:     oidcTestIssuer,

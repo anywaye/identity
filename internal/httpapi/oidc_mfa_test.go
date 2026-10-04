@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/cafaye/identity/internal/mfa"
+	"github.com/cafaye/identity/internal/oauth"
 	"github.com/cafaye/identity/internal/oidc"
 	"github.com/cafaye/identity/internal/outbox"
 	"github.com/cafaye/identity/internal/platform/clock"
@@ -69,7 +70,7 @@ func newOIDCMFAFixture(t *testing.T, withMFA bool) *oidcMFAFixture {
 	// this repository is a private key even a dead one.
 	key := generateTestKey(t)
 	store := oidc.NewStore(pool)
-	storage := oidc.NewStorage(store, oidc.NewProfileReader(), key, clock.System{},
+	storage := oidc.NewStorage(store, oidc.NewProfileReader(), oauth.NewStore(pool), key, clock.System{},
 		db.Direct{Pool: pool}, oidc.PathLogin)
 	provider, err := oidc.NewProvider(oidc.Config{
 		Issuer:     oidcTestIssuer,
