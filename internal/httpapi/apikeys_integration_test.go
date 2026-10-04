@@ -593,7 +593,7 @@ func (s *apiKeyServer) expectScopeAnswer(t *testing.T, method, path, body, held,
 				method, path, held, rec.Code, rec.Body)
 			return
 		}
-		// The refusal names the scope that is missing, which is guard's own detail
+		// The refusal names the scope that is missing, which is gateway's own detail
 		// wording and the reason a developer can fix it.
 		if !strings.Contains(rec.Body.String(), required) {
 			t.Errorf("%s %s refused without naming %q: %s", method, path, required, rec.Body)

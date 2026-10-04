@@ -34,7 +34,7 @@ func claimKey() Key {
 // TestTheTwoScopeClaimNamesAreEqual is the addendum's requirement, as a test.
 //
 // IT IS THE ASSERTION THAT MAKES THE INTERIM SAFE. A document carrying a scope in
-// one name and not the other is worse than either choice: guard would see an
+// one name and not the other is worse than either choice: gateway would see an
 // empty set and refuse every request, and the debugging session would be spent
 // asking why a token that "has" the scope does not work. So the two are compared
 // as the strings a consumer will actually parse, over every shape of grant — and
@@ -99,7 +99,7 @@ func TestTheTwoScopeClaimNamesAreEqual(t *testing.T) {
 }
 
 // TestTheScopeClaimIsASpaceSeparatedString is the shape, and it is a decision
-// rather than a default: guard splits the claim on whitespace and REFUSES a
+// rather than a default: gateway splits the claim on whitespace and REFUSES a
 // non-string one, so an array is a token the gateway will not parse at all. The
 // alternative spelling is asserted too — no array anywhere in the document.
 func TestTheScopeClaimIsASpaceSeparatedString(t *testing.T) {
@@ -116,11 +116,11 @@ func TestTheScopeClaimIsASpaceSeparatedString(t *testing.T) {
 		t.Fatalf("rendering: %v", err)
 	}
 	if strings.Contains(string(raw), `"scopes":[`) || strings.Contains(string(raw), `"scope":[`) {
-		t.Errorf("a scope claim is an array: %s. guard splits on whitespace and rejects a "+
+		t.Errorf("a scope claim is an array: %s. gateway splits on whitespace and rejects a "+
 			"non-string claim, so an array is a token it cannot read", raw)
 	}
 
-	// The exact form guard's own split produces.
+	// The exact form gateway's own split produces.
 	want := "accounts:read accounts:write"
 	if claims.Scopes != want {
 		t.Errorf("scopes = %q, want %q", claims.Scopes, want)

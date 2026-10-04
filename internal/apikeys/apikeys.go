@@ -66,7 +66,7 @@ import (
 // recognised as a cafaye credential by its first seven characters, which turns
 // "somebody has to guess which of these strings is a working key" into a grep.
 // It is the same reason the OIDC client id is 32 random bytes rather than a
-// counter, and the same reason guard's api key carries a prefix: a credential
+// counter, and the same reason gateway's api key carries a prefix: a credential
 // you cannot recognise is a credential you cannot revoke in time.
 //
 // It is the PREFIX of the value rather than a separator somewhere in the middle

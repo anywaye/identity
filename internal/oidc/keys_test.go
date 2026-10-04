@@ -18,7 +18,7 @@ import (
 // runtime and cannot have two of. Everything below is about the one key: that it
 // loads from a PEM rather than being generated, that it is big enough, that its
 // identifier is safe to put in a JWT header and a consumer's cache, and that the
-// document served at the JWKS URL is shaped the way guard's verifier reads it.
+// document served at the JWKS URL is shaped the way gateway's verifier reads it.
 
 func TestLoadSigningKey(t *testing.T) {
 	t.Parallel()
@@ -91,12 +91,12 @@ func TestLoadSigningKeyRejects(t *testing.T) {
 	}
 }
 
-// The published document is guard's entire view of this service's trust, and
-// guard reads it with three specific expectations: a `keys` array, non-empty,
+// The published document is gateway's entire view of this service's trust,
+// and gateway reads it with three specific expectations: a `keys` array, non-empty,
 // of objects; a `kid` on the key that matches the token header; and an RS256
 // key. The shape is asserted field by field rather than "it is JSON" because
 // every one of these has a different failure on the consumer side.
-func TestJWKSIsTheDocumentGuardReads(t *testing.T) {
+func TestJWKSIsTheDocumentGatewayReads(t *testing.T) {
 	t.Parallel()
 
 	key, err := LoadSigningKey(pemFor(t, 2048, pkcs8), "cafaye-2026-09")
@@ -123,7 +123,7 @@ func TestJWKSIsTheDocumentGuardReads(t *testing.T) {
 		t.Fatalf("the JWKS is not JSON: %v", err)
 	}
 
-	// guard's isKeySet: an array, non-empty, every entry an object. An empty
+	// gateway's isKeySet: an array, non-empty, every entry an object. An empty
 	// array is a 401 on every request, so it is worth pinning.
 	if len(decoded.Keys) != 1 {
 		t.Fatalf("the key set has %d keys, want exactly 1; this service has one signing key", len(decoded.Keys))
@@ -136,7 +136,7 @@ func TestJWKSIsTheDocumentGuardReads(t *testing.T) {
 		t.Errorf("kid = %q, want the configured key id", got.Kid)
 	}
 	if got.Alg != "RS256" {
-		t.Errorf("alg = %q, want RS256; guard refuses any token whose header is not RS256", got.Alg)
+		t.Errorf("alg = %q, want RS256; gateway refuses any token whose header is not RS256", got.Alg)
 	}
 	if got.Use != "sig" {
 		t.Errorf("use = %q, want sig; the key verifies signatures and encrypts nothing", got.Use)

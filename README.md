@@ -2,7 +2,7 @@
 
 `identity` is the cafaye service that knows who someone is: auth, sessions,
 MFA, accounts and tenancy, social login, and OIDC. Every other cafaye service —
-billing, courier, guard, parlor — asks this one who is calling and what they may
+billing, courier, gateway, parlor — asks this one who is calling and what they may
 do. It is the platform's security boundary, and the reason `PLAN.md` §3 singles it
 out for a user-run security review before the phase closes.
 
@@ -868,7 +868,7 @@ a token in an account it owns.
 > **The capability set is emitted TWICE, as `scopes` and as `scope`, byte for byte
 > identical.** That is a deliberate interim and it is not this service's contract.
 > core's `docs/openapi-conventions.md:134` requires a claim named `scopes`;
-> `guard/src/middleware/jwt.ts:32` reads `scope`, splits it on whitespace, and
+> `gateway/src/middleware/jwt.ts:32` reads `scope`, splits it on whitespace, and
 > treats an absent claim as an empty set. The fleet has not agreed, the question is
 > open as **MD7**, and picking a side here would mean rotating every credential
 > already in a customer's hand. Emitting both means whichever name wins, the other
@@ -876,16 +876,16 @@ a token in an account it owns.
 > reissued**. Two names is not a contract.
 >
 > The shape is a space-separated **string**, not an array: that is the one shape
-> both sides can read. guard's verifier does `raw.split(/\s+/)` and refuses a
+> both sides can read. gateway's verifier does `raw.split(/\s+/)` and refuses a
 > non-string claim, so an array is a token the gateway will not parse at all.
 
 **`account_id` is required and there is no `sub` fallback.** `sub` is the **user**
 the token names; `account_id` is the tenancy boundary and it is always present. A
 token with no account cannot be used against any account, so it is answered
 `{"active": false}` rather than issued a subject to guess a tenancy key from. The
-alternative — falling back to `sub`, as guard's `limitKey` does today — would give a
+alternative — falling back to `sub`, as gateway's `limitKey` does today — would give a
 service-to-service token a *user* as its tenancy key, and a bug in one service that
-keys on `sub` becomes a cross-tenant read rather than a `403`. Whether guard's
+keys on `sub` becomes a cross-tenant read rather than a `403`. Whether gateway's
 fallback is safe is **MD8** and is not decided here; what is decided here is that
 identity never produces a token that needs it.
 
@@ -941,7 +941,7 @@ The claims:
 Two decisions the manager may want to rule on, both recorded in the code:
 
 - The `scope` claim is spelled `scope`, not `scopes`. RFC 9068 registers that
-  name and `guard`'s verifier splits on exactly that string; core's prose says
+  name and `gateway`'s verifier splits on exactly that string; core's prose says
   `scopes`. One line in `internal/oidc/storage.go` either way.
 - An unknown scope at `/oidc/authorize` is **400** with a problem envelope, as
   the packet specifies. core scopes 400 to "malformed syntax the client could not

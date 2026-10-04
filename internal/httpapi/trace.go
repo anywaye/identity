@@ -38,7 +38,7 @@ func traceIDFrom(ctx context.Context) string {
 // traceMiddleware puts a trace id on every request and echoes it on every
 // response, successful or not.
 //
-// An inbound id is reused so a trace survives a hop through guard, a load
+// An inbound id is reused so a trace survives a hop through gateway, a load
 // balancer or a proxy; anything unusable is replaced rather than rejected,
 // because refusing a request because its correlation header is untidy is not a
 // useful behaviour for a security boundary to have.

@@ -101,17 +101,17 @@ func TestDiscoveryIssuerMatchesTheConfiguredOne(t *testing.T) {
 	}
 }
 
-// The jwks_uri is the one path that is not a choice. guard's verifier hardcodes
+// The jwks_uri is the one path that is not a choice. gateway's verifier hardcodes
 // `{issuer}/.well-known/jwks.json` and appends it to its configured issuer
 // without asking this document, so a document advertising /keys would be correct
 // and useless.
-func TestDiscoveryPointsAtThePathGuardHardcodes(t *testing.T) {
+func TestDiscoveryPointsAtThePathGatewayHardcodes(t *testing.T) {
 	t.Parallel()
 
 	doc := newTestProvider(t).DiscoveryFor(contextWithIssuer(t, "https://identity.test"))
 
 	if want := "https://identity.test" + PathJWKS; doc.JwksURI != want {
-		t.Errorf("jwks_uri = %q, want %q; guard appends %q to its issuer and never reads this field",
+		t.Errorf("jwks_uri = %q, want %q; gateway appends %q to its issuer and never reads this field",
 			doc.JwksURI, want, PathJWKS)
 	}
 }
