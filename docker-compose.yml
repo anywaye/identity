@@ -224,6 +224,33 @@ services:
       DATABASE_URL: postgres://identity:${KIT_POSTGRES_PASSWORD:-cafaye}@postgres:5432/identity?sslmode=disable
 
       # ---------------------------------------------------------------------
+      # SOCIAL LOGIN, OFF BY DEFAULT
+      #
+      # Every `OAUTH_*` variable is optional and none of them is set here, which is
+      # the shipped state: with no client credentials the social routes are ABSENT
+      # rather than present-and-404, and a development stack cannot reach Google or
+      # GitHub anyway.
+      #
+      # The endpoint overrides are what a local stack points at something it
+      # controls — a fake IdP, or a stub — without the flow being able to reach a
+      # third party. They are read once at startup, so changing them means a
+      # restart, and a value that is present but undialable fails the boot naming
+      # itself rather than falling back to the real provider.
+      #
+      #   OAUTH_REDIRECT_BASE_URL: https://identity.cafaye.com
+      #   OAUTH_ENCRYPTION_KEY: <standard base64 of 32 raw bytes>
+      #   OAUTH_GOOGLE_CLIENT_ID / OAUTH_GOOGLE_CLIENT_SECRET
+      #   OAUTH_GITHUB_CLIENT_ID / OAUTH_GITHUB_CLIENT_SECRET
+      #   OAUTH_GOOGLE_AUTHORIZE_URL / OAUTH_GOOGLE_TOKEN_URL / OAUTH_GOOGLE_USERINFO_URL
+      #   OAUTH_GITHUB_AUTHORIZE_URL / OAUTH_GITHUB_TOKEN_URL
+      #   OAUTH_GITHUB_USERINFO_URL / OAUTH_GITHUB_EMAILS_URL
+      #
+      # A provider is mounted only when BOTH halves of its credentials are set, and
+      # only the variables listed for a provider it actually has: Google has no
+      # emails endpoint, so setting one for it fails the boot rather than quietly
+      # doing nothing.
+
+      # ---------------------------------------------------------------------
       # OBSERVABILITY, ON BY DEFAULT
       #
       # One variable, and it is the only contract (core D16). Unset it and the

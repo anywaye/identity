@@ -17,10 +17,40 @@ import (
 // and sending them to the same message sends them to the wrong place.
 var ErrIncompleteSettings = errors.New("oauth settings are incomplete")
 
-// ProviderSettings is one provider's client credentials from the environment.
+// ProviderSettings is one provider's configuration from the environment: the
+// credentials it authenticates with, and the endpoints it is reached at.
+//
+// THE ENDPOINTS ARE HERE AND NOT ON Settings because they are per provider, exactly
+// as the credentials are. An `Settings.Endpoints` map keyed by provider name would
+// be the same information with a second thing to forget a provider from.
 type ProviderSettings struct {
 	ClientID     string
 	ClientSecret string
+	// Endpoints are this provider's endpoint overrides. Empty fields keep the
+	// defaults in endpoints.go, which is what an untouched deployment gets.
+	Endpoints ProviderEndpoints
+}
+
+// namedProvider is one provider's settings paired with the name they belong to,
+// which is what lets Validate and Providers both walk every provider knowing which
+// one they are on.
+type namedProvider struct {
+	name     string
+	settings ProviderSettings
+}
+
+// providers is the per-provider table: every provider this service knows, in the
+// order they are logged.
+//
+// IT IS THE COMPLETE SET, and `TestEveryProviderThisServiceOffersIsInTheTable` holds
+// `knownProviders` against it in both directions. Nothing about a struct literal
+// that configures a check looks like a completeness obligation, which is why this
+// one is walked rather than trusted.
+func (s Settings) providers() []namedProvider {
+	return []namedProvider{
+		{name: ProviderGoogle, settings: s.Google},
+		{name: ProviderGitHub, settings: s.GitHub},
+	}
 }
 
 // configured reports whether both halves are present. A caller must have run
@@ -40,18 +70,15 @@ func (p ProviderSettings) halfConfigured() bool {
 //
 // It lives in this package rather than in internal/config so that the rules about
 // which combinations of these values make sense stay with the code that consumes
-// them. When the surface mounts, internal/config reads the environment into one of
-// these and calls Validate; it does not know what a client secret is.
+// them. internal/config reads the environment into one of these and calls Validate;
+// it does not know what a client secret is.
 //
-// THAT IS THE INTENDED SHAPE AND NOT THE CURRENT ONE. Nothing constructs a
-// Settings today: there is no `OAUTH_REDIRECT_BASE_URL`, no `OAUTH_ENCRYPTION_KEY`
-// and no per-provider client id or secret in internal/config, so Validate is
-// exercised only by its own tests. A deployment cannot turn social login on,
-// because there is nothing to turn it on with. This comment used to say
-// internal/config reads the environment into a Settings, and it did not — a
-// reader checking would have found no `OAUTH_` string in that package at all,
-// which is the same class of defect as a README describing an endpoint that
-// answers 404. See README.md's "Social login is not built".
+// IT USED TO SAY THAT NOTHING CONSTRUCTED A SETTINGS, and that was false by the
+// time it was written: `internal/config`'s `loadOAuth` builds one out of the
+// `OAUTH_*` variables on every `Load`, and `cmd/identity` mounts the social routes
+// from it. A reader checking would have found the `OAUTH_` strings in that package
+// — which is the same class of defect as a README describing an endpoint that
+// answers 404, and the record of it belongs here rather than in the history.
 type Settings struct {
 	// RedirectBaseURL is this service's public base URL. Callback URLs are built
 	// from it and from nothing else — never from a Host header.
@@ -59,8 +86,9 @@ type Settings struct {
 	// EncryptionKey is standard base64 of 32 bytes, which is what
 	// `head -c 32 /dev/urandom | base64` prints.
 	EncryptionKey string
-	Google        ProviderSettings
-	GitHub        ProviderSettings
+	// Google and GitHub are per provider: credentials and endpoint overrides.
+	Google ProviderSettings
+	GitHub ProviderSettings
 }
 
 // Validate reports whether these settings can be used to serve sign-in.
@@ -70,9 +98,16 @@ type Settings struct {
 // Settings is fine, and so is a set base URL with no providers; a key that does
 // not decode is never fine.
 func (s Settings) Validate() error {
-	for _, p := range []ProviderSettings{s.Google, s.GitHub} {
-		if p.halfConfigured() {
+	for _, np := range s.providers() {
+		if np.settings.halfConfigured() {
 			return fmt.Errorf("%w: set both the client id and the client secret, or neither", ErrIncompleteProvider)
+		}
+
+		// Whether or not this provider has credentials: an endpoint that is set to
+		// something undialable is a deployment that should find out now, and the
+		// deployer is the only person who can fix it.
+		if err := np.settings.Endpoints.validate(np.name); err != nil {
+			return err
 		}
 	}
 
@@ -121,30 +156,43 @@ func (s Settings) Key() ([]byte, error) {
 
 // Enabled reports whether at least one provider is fully configured. The process
 // mounts the OAuth routes only when this is true.
+//
+// IT DOES NOT LOOK AT THE ENDPOINT OVERRIDES, and that is deliberate: an override
+// is not credentials. A deployment that pointed Google's token URL at its own IdP
+// and has no Google client id has no Google sign-in to offer, and mounting the
+// routes because it configured an endpoint would advertise a provider it cannot
+// authenticate with.
 func (s Settings) Enabled() bool {
-	return s.Google.configured() || s.GitHub.configured()
+	for _, np := range s.providers() {
+		if np.settings.configured() {
+			return true
+		}
+	}
+	return false
 }
 
 // Providers returns the fully-configured providers, each carrying this service's
-// endpoints and the operator's credentials.
+// endpoints, this deployment's overrides and the operator's credentials.
 //
 // The order is fixed — google, then github — so a startup log line naming them is
 // stable between restarts of the same configuration.
 func (s Settings) Providers() []Provider {
-	definitions := []Provider{Google(), GitHub()}
-	credentials := map[string]ProviderSettings{
-		ProviderGoogle: s.Google,
-		ProviderGitHub: s.GitHub,
-	}
-
-	out := make([]Provider, 0, len(definitions))
-	for _, definition := range definitions {
-		c := credentials[definition.Name]
-		if !c.configured() {
+	out := make([]Provider, 0, len(s.providers()))
+	for _, np := range s.providers() {
+		if !np.settings.configured() {
 			continue
 		}
-		definition.ClientID = c.ClientID
-		definition.ClientSecret = c.ClientSecret
+		definition, known := providerByName(np.name)
+		if !known {
+			// Unreachable through providers(), which holds only known names, and
+			// Validate refuses one that is not. Skipped rather than appended as a
+			// zero Provider, because a provider with no endpoints is a provider
+			// whose sign-in redirects to "".
+			continue
+		}
+		np.settings.Endpoints.applyTo(&definition)
+		definition.ClientID = np.settings.ClientID
+		definition.ClientSecret = np.settings.ClientSecret
 		out = append(out, definition)
 	}
 	return out

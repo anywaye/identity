@@ -170,6 +170,17 @@ service quietly listening on the wrong port.
 | `MFA_ISSUER` | `cafaye identity` | The account label an authenticator app displays. A display string, not a secret; changing it does not affect any confirmed credential. |
 | `COURIER_BASE_URL` | *(unset)* | The mail service's base URL. With `COURIER_TOKEN` and a link template it makes recovery deliverable; unset, the recovery routes stay mounted and answer `503` with a sentence naming the problem. `http` is accepted for a compose stack. |
 | `COURIER_TOKEN` | *(unset)* | The service credential courier authenticates `POST /v1/messages` with. Never logged, never rendered. |
+| `OAUTH_REDIRECT_BASE_URL` | *(unset)* | **This service's own public base URL**, and every provider callback is built from it — never from a request's `Host`. Point it at the app's origin and not at identity's address unless identity *is* the origin the browser returns to. `http`/`https`, a path prefix is fine, no query and no fragment. |
+| `OAUTH_ENCRYPTION_KEY` | *(unset)* | Standard base64 of exactly 32 raw bytes, sealing provider tokens at rest. Never generated. A value of the wrong length or the wrong alphabet fails the boot **even with no provider configured**. |
+| `OAUTH_GOOGLE_CLIENT_ID` / `OAUTH_GOOGLE_CLIENT_SECRET` | *(unset)* | The Google pair. **Both or neither**: one half is a startup failure, and a provider with no credentials is not mounted at all rather than mounted and 404. |
+| `OAUTH_GITHUB_CLIENT_ID` / `OAUTH_GITHUB_CLIENT_SECRET` | *(unset)* | The GitHub pair, with the same both-or-neither rule. |
+| `OAUTH_GOOGLE_AUTHORIZE_URL` | `https://accounts.google.com/o/oauth2/v2/auth` | Where the browser is sent for a Google code. One of the seven **endpoint overrides**: read once at startup, deployment configuration only, and never influenced by a request, a header or a query parameter. |
+| `OAUTH_GOOGLE_TOKEN_URL` | `https://oauth2.googleapis.com/token` | Where the Google code is exchanged for a token. A present-but-undialable value **fails the boot naming this variable** rather than falling back to Google's real endpoint — a deployer who set it and silently got the default would have a working sign-in flow pointing somewhere they did not choose. |
+| `OAUTH_GOOGLE_USERINFO_URL` | `https://openidconnect.googleapis.com/v1/userinfo` | Where Google's access token is presented to learn who the user is. |
+| `OAUTH_GITHUB_AUTHORIZE_URL` | `https://github.com/login/oauth/authorize` | GitHub's authorize endpoint. Same three rules as Google's. |
+| `OAUTH_GITHUB_TOKEN_URL` | `https://github.com/login/oauth/access_token` | GitHub's token endpoint. |
+| `OAUTH_GITHUB_USERINFO_URL` | `https://api.github.com/user` | GitHub's identity call. |
+| `OAUTH_GITHUB_EMAILS_URL` | `https://api.github.com/user/emails?per_page=100` | GitHub's address list, dialled only when `/user` comes back with no address. **A query is allowed here and a fragment is not** — a fragment is never sent to a server, so an override carrying one is silently a different URL from the one that was written. There is no `OAUTH_GOOGLE_EMAILS_URL`, and setting one fails the boot: Google returns the address on the identity call, so there is no second call to point anywhere. |
 | `RECOVERY_LINK_TEMPLATE` | *(unset)* | **The link for every purpose that has no template of its own.** `https://app.example.com/reset?token={token}` is a working example, and `{token}` is required. **This is the single template a deployment set before the per-purpose variables existed, and it is honoured** — so setting it alone keeps an existing deployment booting with the links it had, which for the configuration that shape was introduced to replace means the address-confirmation link still points at the password-reset screen. Setting it is enough to deliver; setting it *alone* is a migration still in progress. |
 | `PASSWORD_RESET_LINK_TEMPLATE` | *(unset)* | Where the **password reset** link points. Overrides `RECOVERY_LINK_TEMPLATE` for that purpose only. |
 | `EMAIL_VERIFICATION_LINK_TEMPLATE` | *(unset)* | Where the **address confirmation** link points. Overrides `RECOVERY_LINK_TEMPLATE` for that purpose only — and setting this one variable is the whole migration out of the state above. |
@@ -244,6 +255,22 @@ are reachable with no credential at all** — `security: []` in
 request is the `__Host-oauth-state` cookie this service set on the way out, and
 the `state` query parameter is compared against it **before** the code is spent.
 A caller who cannot produce that cookie cannot finish the flow.
+
+**Where the flow goes is deployment configuration, and the seven endpoint overrides
+are how you change it.** Set `OAUTH_GOOGLE_AUTHORIZE_URL`, `OAUTH_GOOGLE_TOKEN_URL`,
+`OAUTH_GOOGLE_USERINFO_URL` and the three `OAUTH_GITHUB_*` equivalents (plus
+`OAUTH_GITHUB_EMAILS_URL`) and the whole round trip — the redirect the browser
+follows, the exchange, and the identity call — runs against those addresses instead
+of Google and GitHub. They are read once at startup, so they need a restart, and a
+value that is present but undialable fails the boot naming the variable instead of
+falling back. **A test in this repository never needed them** — it builds a
+`Provider` literal — but a real process cannot build one, which is why they exist:
+an end-to-end run against a fake IdP needs a real identity to aim at one.
+
+What they are **not** is a per-request switch. There is no route, header or query
+parameter that reaches them, because which endpoint this service dials is where an
+outbound call carrying somebody's authorization code goes, and a caller who could
+choose it would be choosing that.
 
 Getting this wrong is the security bug rather than the documentation bug. A reader
 who assumed these two rows are session-gated would invent a middleware that is not
