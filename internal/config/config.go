@@ -234,7 +234,94 @@ const (
 	// OAuthGitHubClientIDVar and OAuthGitHubClientSecretVar are the GitHub pair.
 	OAuthGitHubClientIDVar     = "OAUTH_GITHUB_CLIENT_ID"
 	OAuthGitHubClientSecretVar = "OAUTH_GITHUB_CLIENT_SECRET"
+
+	// The endpoint overrides. Every one is OPTIONAL and every one defaults to the
+	// provider's real endpoint, which is defined once in internal/oauth/endpoints.go
+	// — this package never writes one of those URLs, so a default cannot drift from
+	// the variable that overrides it.
+	//
+	// THEY EXIST so a deployment can point the whole sign-in flow at a server it
+	// controls. A test in this repository can already do that by building a Provider
+	// literal (internal/platform/oauthtest), but a real process cannot, and a
+	// deployment that cannot try a flow against its own IdP before pointing at
+	// Google finds out about a wrong redirect base from a person who cannot sign
+	// in.
+	//
+	// Which values are refused is oauth.Settings.Validate's rule and not this
+	// package's: absent is the default, and present-but-undialable fails startup
+	// naming the variable below.
+	OAuthGoogleAuthorizeURLVar = "OAUTH_GOOGLE_AUTHORIZE_URL"
+	OAuthGoogleTokenURLVar     = "OAUTH_GOOGLE_TOKEN_URL"
+	OAuthGoogleUserInfoURLVar  = "OAUTH_GOOGLE_USERINFO_URL"
+	OAuthGitHubAuthorizeURLVar = "OAUTH_GITHUB_AUTHORIZE_URL"
+	OAuthGitHubTokenURLVar     = "OAUTH_GITHUB_TOKEN_URL"
+	OAuthGitHubUserInfoURLVar  = "OAUTH_GITHUB_USERINFO_URL"
+	OAuthGitHubEmailsURLVar    = "OAUTH_GITHUB_EMAILS_URL"
 )
+
+// oauthEndpointVars is the per-endpoint table: which variable sets which provider's
+// which endpoint.
+//
+// IT IS USED TWICE and that is why it is one table rather than seven reads. It
+// READS the block, and it NAMES the variable in a refusal — oauth refuses an
+// endpoint by provider and struct field because it does not know what a variable
+// is called, and pattern-matching its error message on prose is how a rename
+// becomes a message that names the wrong variable.
+//
+// `TestEveryOAuthEndpointHasAVariableAndEveryVariableHasAnEndpoint` walks it in
+// both directions against the two definitions in internal/oauth: a field a provider
+// has and no variable sets it is a deployment that cannot do the thing, and a
+// variable with no field behind it is one that sets nothing while reading as if it
+// did.
+var oauthEndpointVars = []struct {
+	provider string
+	field    string
+	variable string
+	assign   func(*oauth.Settings, string)
+}{
+	{
+		provider: oauth.ProviderGoogle,
+		field:    "AuthorizeURL",
+		variable: OAuthGoogleAuthorizeURLVar,
+		assign:   func(s *oauth.Settings, v string) { s.Google.Endpoints.AuthorizeURL = v },
+	},
+	{
+		provider: oauth.ProviderGoogle,
+		field:    "TokenURL",
+		variable: OAuthGoogleTokenURLVar,
+		assign:   func(s *oauth.Settings, v string) { s.Google.Endpoints.TokenURL = v },
+	},
+	{
+		provider: oauth.ProviderGoogle,
+		field:    "UserInfoURL",
+		variable: OAuthGoogleUserInfoURLVar,
+		assign:   func(s *oauth.Settings, v string) { s.Google.Endpoints.UserInfoURL = v },
+	},
+	{
+		provider: oauth.ProviderGitHub,
+		field:    "AuthorizeURL",
+		variable: OAuthGitHubAuthorizeURLVar,
+		assign:   func(s *oauth.Settings, v string) { s.GitHub.Endpoints.AuthorizeURL = v },
+	},
+	{
+		provider: oauth.ProviderGitHub,
+		field:    "TokenURL",
+		variable: OAuthGitHubTokenURLVar,
+		assign:   func(s *oauth.Settings, v string) { s.GitHub.Endpoints.TokenURL = v },
+	},
+	{
+		provider: oauth.ProviderGitHub,
+		field:    "UserInfoURL",
+		variable: OAuthGitHubUserInfoURLVar,
+		assign:   func(s *oauth.Settings, v string) { s.GitHub.Endpoints.UserInfoURL = v },
+	},
+	{
+		provider: oauth.ProviderGitHub,
+		field:    "EmailsURL",
+		variable: OAuthGitHubEmailsURLVar,
+		assign:   func(s *oauth.Settings, v string) { s.GitHub.Endpoints.EmailsURL = v },
+	},
+}
 
 // MFAEncryptionKey returns the configured key, or ErrNoMFAEncryptionKey.
 //
@@ -452,8 +539,8 @@ func (c Config) OAuthEnabled() bool { return c.OAuth.Enabled() }
 
 // loadOAuth reads the social-login block.
 //
-// FIVE VARIABLES AND TWO PROVIDERS, and the rules are oauth.Settings.Validate's
-// rather than this function's:
+// FIVE CREDENTIAL VARIABLES, SEVEN ENDPOINT OVERRIDES AND TWO PROVIDERS, and the
+// rules are oauth.Settings.Validate's rather than this function's:
 //
 //   - a provider with one half of its credentials is a STARTUP FAILURE, not a
 //     disabled provider. A "Continue with Google" button that 404s because a secret
@@ -482,14 +569,43 @@ func (c *Config) loadOAuth(lookup Lookup) error {
 			ClientSecret: lookupValue(lookup, OAuthGitHubClientSecretVar),
 		},
 	}
+	for _, v := range oauthEndpointVars {
+		v.assign(&c.OAuth, lookupValue(lookup, v.variable))
+	}
 
 	if err := c.OAuth.Validate(); err != nil {
 		// Every message this produces names a variable, because Validate's do and
 		// the alternative — "invalid oauth settings" — sends an operator looking
-		// through six variables instead of at one.
+		// through six variables instead of at one. An endpoint refusal arrives as
+		// the provider and the struct field, because internal/oauth does not know
+		// what a variable is called, so the table turns it back into one here.
+		if variable := oauthEndpointVariable(err); variable != "" {
+			return fmt.Errorf("%w: %s: %w", ErrInvalidOAuth, variable, err)
+		}
 		return fmt.Errorf("%w: %v", ErrInvalidOAuth, err)
 	}
 	return nil
+}
+
+// oauthEndpointVariable returns the environment variable that sets the endpoint an
+// *oauth.EndpointError refused, or "" when the refusal was not about one.
+//
+// The empty answer is not a case anything can reach — the table covers every field
+// both providers have — and it is handled rather than assumed precisely because it
+// cannot be: a variable that names nothing is the same shape as a variable that was
+// renamed, and this is the one place that would turn a rename into a boot log
+// pointing at the wrong name.
+func oauthEndpointVariable(err error) string {
+	var endpointErr *oauth.EndpointError
+	if !errors.As(err, &endpointErr) {
+		return ""
+	}
+	for _, v := range oauthEndpointVars {
+		if v.provider == endpointErr.Provider && v.field == endpointErr.Field {
+			return v.variable
+		}
+	}
+	return ""
 }
 
 // The asymmetry with the OIDC block above is deliberate and is the whole of this

@@ -51,7 +51,8 @@ var (
 //
 // The endpoints are fields rather than constants because that is what lets a test
 // point the whole flow at an httptest server. In production they come from
-// Google() and GitHub() and nothing mutates them after startup.
+// Google() and GitHub(), with this deployment's endpoint overrides applied once at
+// startup, and nothing mutates them after that.
 type Provider struct {
 	// Name is the enum value: "google" or "github".
 	Name string
@@ -82,14 +83,15 @@ type Provider struct {
 // OIDC *provider*, and a service that hard-codes its own RPs to what it resolves
 // at boot is a service whose behaviour depends on what a third party served it
 // that morning. Apple's and Microsoft's endpoints arrive the same way when those
-// packets land.
+// packets land. What they are is in endpoints.go, next to the overrides that can
+// replace them.
 func Google() Provider {
 	return Provider{
 		Name:         ProviderGoogle,
 		Scopes:       []string{"openid", "email", "profile"},
-		AuthorizeURL: "https://accounts.google.com/o/oauth2/v2/auth",
-		TokenURL:     "https://oauth2.googleapis.com/token",
-		UserInfoURL:  "https://openidconnect.googleapis.com/v1/userinfo",
+		AuthorizeURL: GoogleAuthorizeURL,
+		TokenURL:     GoogleTokenURL,
+		UserInfoURL:  GoogleUserInfoURL,
 		// Google issues a refresh token only on the FIRST consent unless the
 		// request asks for offline access. Without this, refresh_token is NULL on
 		// every account forever, and the stored credential dies an hour later with
@@ -103,10 +105,29 @@ func GitHub() Provider {
 	return Provider{
 		Name:         ProviderGitHub,
 		Scopes:       []string{"read:user", "user:email"},
-		AuthorizeURL: "https://github.com/login/oauth/authorize",
-		TokenURL:     "https://github.com/login/oauth/access_token",
-		UserInfoURL:  "https://api.github.com/user",
-		EmailsURL:    "https://api.github.com/user/emails?per_page=100",
+		AuthorizeURL: GitHubAuthorizeURL,
+		TokenURL:     GitHubTokenURL,
+		UserInfoURL:  GitHubUserInfoURL,
+		EmailsURL:    GitHubEmailsURL,
+	}
+}
+
+// providerByName returns this service's definition for a known provider name.
+//
+// It exists because the definitions and the settings have to be walked TOGETHER —
+// Validate has to know which endpoints a provider has before it can refuse an
+// override for one it does not, and Providers has to start from the definition the
+// name names. Keying by name rather than pairing two slices positionally is what
+// keeps a provider added to one and not the other from quietly becoming the other's
+// settings.
+func providerByName(name string) (Provider, bool) {
+	switch name {
+	case ProviderGoogle:
+		return Google(), true
+	case ProviderGitHub:
+		return GitHub(), true
+	default:
+		return Provider{}, false
 	}
 }
 
