@@ -34,6 +34,7 @@ import (
 	"github.com/cafaye/identity/internal/courier"
 	"github.com/cafaye/identity/internal/httpapi"
 	"github.com/cafaye/identity/internal/mfa"
+	"github.com/cafaye/identity/internal/oauth"
 	"github.com/cafaye/identity/internal/oidc"
 	"github.com/cafaye/identity/internal/outbox"
 	"github.com/cafaye/identity/internal/platform/clock"
@@ -292,6 +293,32 @@ func newApp(ctx context.Context, cfg config.Config, logger *slog.Logger) (*app, 
 		if recoverySvc != nil {
 			opts = append(opts, httpapi.WithRecovery(recoverySvc))
 		}
+		// The social-login surface, and this is the ONLY call site WithSocial has ever
+		// had. Its absence is why the surface was unreachable on master: the two
+		// routes were written, registerSocialRoutes was called from registerRoutes,
+		// and `options.social` was nil in every process, so the registrar returned
+		// before registering anything and a deployment with OAUTH_* configured served
+		// a 404 for a feature it had been given credentials for.
+		//
+		// IT IS INSIDE THIS BRANCH rather than beside it because a social sign-in
+		// creates a user row, provisions a personal account and mints a session — all
+		// through auth.Service. A process with no DATABASE_URL has none of that, and a
+		// mounted start route there would send a browser to a provider and answer 404
+		// on the way back. registerRoutes gates the same way, at auth.go:125, so the
+		// absence and the gate agree.
+		//
+		// `social == nil` IS THE NORMAL CASE and is not an error: every OAUTH_* variable
+		// is optional and an untouched deployment arrives here with none of them set.
+		// That is the state this service ships in, and the absence of these two routes
+		// is the documented shape of it — a clean 404 rather than a redirect to a
+		// provider the deployment cannot authenticate with.
+		social, err := buildSocial(cfg, pool, authSvc, logger)
+		if err != nil {
+			return nil, err
+		}
+		if social != nil {
+			opts = append(opts, httpapi.WithSocial(social))
+		}
 		if machineCredentials != nil {
 			// Four options from one service, and each is a different capability rather
 			// than a different spelling of the same one: the management surface
@@ -500,6 +527,116 @@ func buildAuth(
 // the seam was written for — every path that needs a message answers 503 rather
 // than dropping one — and that is worth keeping for a deployment that has not
 // finished the configuration rather than deleting.
+//
+// buildSocial assembles the social-login dependency, and its return type is
+// httpapi.Social so that "nothing to mount" is a nil of the interface the router
+// takes — the same shape buildRecovery's and buildOIDC's callers already handle.
+//
+// # A NIL RETURN IS THE SHIPPED STATE, NOT A MISCONFIGURATION
+//
+// Every OAUTH_* variable is optional. A deployment that sets none of them arrives
+// here with `cfg.OAuth.Enabled()` false and gets (nil, nil), and the two routes are
+// absent — a clean 404 rather than a redirect to a provider the deployment cannot
+// authenticate with. That is the rule `httpapi.WithSocial` states and it is
+// enforced by returning an UNTYPED nil: `WithSocial` guards on `if s != nil`, so a
+// typed nil pointer inside the interface would defeat the guard and mount routes
+// with nothing behind them. `httpapi.NewSocial` is where that nil is produced.
+//
+// # WHY EACH UNCONFIGURED PIECE IS ITS OWN CONDITION
+//
+// `pool == nil` and `authSvc == nil` are checked separately rather than combined,
+// because they are different misconfigurations with different fixes and this
+// function returns no error for either. They are both NORMAL: `config.Load` accepts
+// a process with no DATABASE_URL, and newApp warns about it a few lines above.
+// A combined condition would be shorter and would lose the ability to say which.
+//
+// # AND WHY A BROKEN CONFIGURATION IS A STARTUP FAILURE
+//
+// Every error below is a FAILURE and not a warning, and the distinction is the same
+// one buildRecovery and buildOIDC draw. A key that does not decode to 32 bytes, a
+// base URL that cannot produce a callback, or half a provider's credentials are all
+// things an operator can fix before serving traffic, and every one of them would
+// otherwise present as a support call from a person whose sign-in button does
+// nothing. config.Load has already refused the obviously broken combinations by
+// calling oauth.Settings.Validate; what reaches here is what that could not check
+// without constructing the objects.
+func buildSocial(
+	cfg config.Config, pool *pgxpool.Pool, authSvc *auth.Service, logger *slog.Logger,
+) (httpapi.Social, error) {
+	if !cfg.OAuthEnabled() {
+		// Nothing configured. The shipped state, and not a failure: every OAUTH_*
+		// variable is optional and an untouched deployment arrives here.
+		return nil, nil
+	}
+	if pool == nil || authSvc == nil {
+		// Said out loud, and it is reachable: buildSocial takes both as arguments
+		// rather than reading them from newApp's closure, so a future caller outside
+		// the `if authSvc != nil` branch gets a log line naming the cause rather than
+		// a nil dereference at boot. The current caller does not, and saying so is
+		// what makes this branch's unreachability a fact rather than a hope.
+		logger.Warn("OAuth is configured but there is no DATABASE_URL or no auth service; " +
+			"the social-login surface is not mounted")
+		return nil, nil
+	}
+
+	key, err := cfg.OAuth.Key()
+	if err != nil {
+		return nil, fmt.Errorf("loading the OAuth token encryption key: %w", err)
+	}
+	cipher, err := oauth.NewCipher(key)
+	if err != nil {
+		// A wrong key length is a startup failure for the reason NewCipher gives: an
+		// operator who configured a 16-byte key believes they have 128 bits of
+		// entropy protecting every provider credential on the platform, and they do
+		// not. The tokens are already in the database sealed under whatever key was
+		// there, so starting anyway would mean writing new rows this process cannot
+		// read back.
+		return nil, fmt.Errorf("building the OAuth token cipher: %w", err)
+	}
+
+	// The registry is built from the SAME base URL the settings carry, and the
+	// client is given the same one, because the redirect_uri sent with the exchange
+	// has to byte-match the one the authorize step offered. Two values would produce a
+	// callback URL nothing is listening on, and the provider refuses the mismatch
+	// without saying which of the two URLs was wrong.
+	registry, err := oauth.NewRegistry(cfg.OAuth.RedirectBaseURL, cfg.OAuth.Providers()...)
+	if err != nil {
+		return nil, fmt.Errorf("building the OAuth provider registry: %w", err)
+	}
+
+	service := auth.NewSocialService(
+		// The ordinary auth service, not a copy. Every write a social callback makes
+		// goes through its transaction runner, its session store and its tenancy
+		// provisioner, so a user minted by a provider round trip is a user the rest of
+		// the service cannot tell apart from one registered with a password — which is
+		// the point of not duplicating any of it here.
+		authSvc,
+		// The SAME registry object the router resolves providers through. NewSocial
+		// takes both halves and hands this one to each; two registries would be a start
+		// route that redirects to a provider the callback then 404s for, which is a 404
+		// a person sees halfway through a sign-in.
+		registry,
+		oauth.NewClient(oauth.ClientOptions{RedirectBaseURL: cfg.OAuth.RedirectBaseURL}),
+		oauth.NewStore(pool),
+		cipher,
+	)
+
+	// The operator cannot see which providers came up otherwise — oauth.Registry.Names
+	// exists for this log line and nothing else. A missing secret and a broken route
+	// look identical from outside the process, and this is the only place they do not.
+	logger.Info("social login is mounted",
+		"providers", strings.Join(registry.Names(), ","),
+		"redirect_base", cfg.OAuth.RedirectBaseURL,
+	)
+
+	// NewSocial returns an UNTYPED nil when the registry is empty, which is the shape
+	// WithSocial's `if s != nil` guard needs. The `Enabled()` check above has already
+	// established at least one provider, so this is belt and braces — and it is the
+	// kind of belt that is load-bearing, because a typed nil here would mount two
+	// routes with nothing behind them and panic on the first request.
+	return httpapi.NewSocial(registry, service), nil
+}
+
 func buildRecovery(
 	cfg config.Config, pool *pgxpool.Pool, hasher *users.Hasher, logger *slog.Logger,
 ) (*recovery.Service, error) {
