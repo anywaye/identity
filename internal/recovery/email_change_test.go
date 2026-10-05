@@ -91,9 +91,9 @@ func TestTheNewAddressTokenIsMintedOnlyAfterTheCurrentAddressIsConfirmed(t *test
 	}
 	// And the database agrees, which is the schema's own CHECK and the reason this
 	// is not merely a code convention.
-	if err := h.pool.QueryRow(t.Context(),
+	if _, err := h.pool.Exec(t.Context(),
 		`UPDATE recovery_tokens SET target_token_digest = $2 WHERE id = $1`,
-		rowID, sessions.Digest("written by hand")).Scan(nil); err == nil {
+		rowID, sessions.Digest("written by hand")); err == nil {
 		t.Error("the database accepted a target token before the current address was confirmed")
 	}
 

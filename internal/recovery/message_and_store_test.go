@@ -115,27 +115,57 @@ func TestAnEmailChangeBodyNamesTheNewAddress(t *testing.T) {
 // TestThePurposesAreAClosedSetThatTheSchemaAgreesWith is the Go half of a pair; the
 // schema half is TestTheSchemaRefusesAnUnknownPurpose. Between them, a row naming a
 // purpose this build does not implement cannot be written and cannot be read.
+//
+// IT WALKS `allPurposes` AGAINST A SET PINNED HERE, in both directions, so adding a
+// purpose is an edit to this file rather than a silent widening of a list. The
+// pinned set is the definition; `allPurposes` is the enumeration that the TTL and
+// delivery checks walk, and one of them drifting is the failure.
 func TestThePurposesAreAClosedSetThatTheSchemaAgreesWith(t *testing.T) {
 	want := map[Purpose]bool{
 		PurposePasswordReset: true,
 		PurposeVerifyEmail:   true,
 		PurposeEmailChange:   true,
+		PurposeSessionLink:   true,
 	}
-	for _, p := range []Purpose{PurposePasswordReset, PurposeVerifyEmail, PurposeEmailChange} {
+	for _, p := range allPurposes() {
 		if !want[p] {
-			t.Errorf("%q is not in the set this test pins", p)
+			t.Errorf("%q is in allPurposes but not in the set this test pins; either the "+
+				"purpose does not exist or this test was not told about it", p)
 		}
 		delete(want, p)
 	}
 	if len(want) != 0 {
 		t.Errorf("the pinned set has %d purposes this file no longer declares: %v", len(want), want)
 	}
+}
 
-	// And every one of them has a body, because a purpose with no message is a flow
-	// that mails nobody.
-	for _, p := range []Purpose{PurposePasswordReset, PurposeVerifyEmail, PurposeEmailChange} {
-		if _, ok := messageBodies[purposeMessageKind(p)]; !ok {
-			t.Errorf("%q has no message body", p)
+// TestEveryPurposeIsMailedHereOrDeclaredCallerDelivered is the half of the
+// completeness obligation a session link introduced: a purpose with no message body
+// used to be impossible (the three flows all mail), and it is now a fact that has
+// to be WRITTEN DOWN rather than inferred.
+//
+// The failure this catches is the obvious one: a fourth flow added, no body
+// written, and a user told a mail is on its way that this package never sends.
+// The opposite error is not caught here — a purpose listed as caller-delivered that
+// somebody has since started mailing from here — because that would show up as two
+// delivery paths for one flow, and the honest place to notice it is a reader of
+// `callerDeliveredPurposes` rather than a test.
+func TestEveryPurposeIsMailedHereOrDeclaredCallerDelivered(t *testing.T) {
+	for _, p := range allPurposes() {
+		_, hasBody := messageBodies[purposeMessageKind(p)]
+		_, declaredElsewhere := callerDeliveredPurposes[p]
+		if hasBody == declaredElsewhere {
+			t.Errorf("%q is either renderable here and also declared caller-delivered, or "+
+				"neither; every purpose is exactly one of the two, and `callerDeliveredPurposes` "+
+				"must not name a flow this package sends", p)
+		}
+	}
+
+	// And the declaration must say WHO, because "delivered elsewhere" without a
+	// subject is the sentence that outlives the person who knew.
+	for p, who := range callerDeliveredPurposes {
+		if who == "" {
+			t.Errorf("%q is declared caller-delivered with nobody named as the deliverer", p)
 		}
 	}
 }
@@ -160,10 +190,10 @@ func TestTheSchemaRefusesAnUnknownPurpose(t *testing.T) {
 		t.Fatalf("NewToken: %v", err)
 	}
 
-	if err := h.pool.QueryRow(t.Context(), `
+	if _, err := h.pool.Exec(t.Context(), `
 		INSERT INTO recovery_tokens (user_id, purpose, token_digest, created_at, expires_at)
 		VALUES ($1, 'sign_their_will', $2, $3, $4)`,
-		who.id, digest, h.now(), h.now().Add(time.Hour)).Scan(nil); err == nil {
+		who.id, digest, h.now(), h.now().Add(time.Hour)); err == nil {
 		t.Error("the database accepted a purpose this build does not implement")
 	}
 }
@@ -182,10 +212,10 @@ func TestTheSchemaRefusesATokenWhoseExpiryIsItsOwnCreation(t *testing.T) {
 		t.Fatalf("NewToken: %v", err)
 	}
 
-	if err := h.pool.QueryRow(t.Context(), `
+	if _, err := h.pool.Exec(t.Context(), `
 		INSERT INTO recovery_tokens (user_id, purpose, token_digest, created_at, expires_at)
 		VALUES ($1, 'password_reset', $2, $3, $3)`,
-		who.id, digest, h.now()).Scan(nil); err == nil {
+		who.id, digest, h.now()); err == nil {
 		t.Error("the database accepted a token that expires the instant it was created")
 	}
 }
@@ -202,17 +232,17 @@ func TestTheSchemaRefusesATargetOnAFlowThatDoesNotMoveAddresses(t *testing.T) {
 		t.Fatalf("NewToken: %v", err)
 	}
 
-	if err := h.pool.QueryRow(t.Context(), `
+	if _, err := h.pool.Exec(t.Context(), `
 		INSERT INTO recovery_tokens (user_id, purpose, token_digest, target_email, created_at, expires_at)
 		VALUES ($1, 'password_reset', $2, 'attacker@example.com', $3, $4)`,
-		who.id, digest, h.now(), h.now().Add(time.Hour)).Scan(nil); err == nil {
+		who.id, digest, h.now(), h.now().Add(time.Hour)); err == nil {
 		t.Error("the database accepted a password reset token carrying a target address")
 	}
 
-	if err := h.pool.QueryRow(t.Context(), `
+	if _, err := h.pool.Exec(t.Context(), `
 		INSERT INTO recovery_tokens (user_id, purpose, token_digest, created_at, expires_at)
 		VALUES ($1, 'email_change', $2, $3, $4)`,
-		who.id, digest, h.now(), h.now().Add(time.Hour)).Scan(nil); err == nil {
+		who.id, digest, h.now(), h.now().Add(time.Hour)); err == nil {
 		t.Error("the database accepted an email change token with no target address")
 	}
 }

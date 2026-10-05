@@ -111,7 +111,73 @@ const (
 	// It is the only purpose carrying a target, and the schema says so with a
 	// CHECK rather than a convention.
 	PurposeEmailChange Purpose = "email_change"
+
+	// PurposeSessionLink is a token a MACHINE CREDENTIAL minted for one named
+	// account, which redeems into a session that account would have got from a
+	// password.
+	//
+	// IT IS A FOURTH PURPOSE ON THIS TABLE AND NOT A FOURTH TABLE, and the reason
+	// is the reason the three flows are one package: the lifecycle is identical
+	// (mint 256 bits, store only the digest, expire, spend with a conditional
+	// UPDATE) and every one of those is a property of the machine rather than of
+	// what the token is for. A second table would be a second implementation of
+	// single-use expiry, and the second implementation is where the bug lives.
+	//
+	// IT IS NOT A PASSWORD AND NOT A PASSWORD RESET, which is the distinction the
+	// name is carrying. Nothing here changes a credential: the row it writes is a
+	// session, exactly the row `POST /v1/session` writes, and it expires on the
+	// session's own clock. A token that could reset a password would be a bearer
+	// credential worth stealing from a mail inbox, and this one is never in an
+	// inbox at all — the caller delivers it, or nobody does.
+	//
+	// WHAT IS DELIBERATELY ABSENT FROM THE ROW, because each of these is the point:
+	// where the browser should land after redemption, who asked for it, and which
+	// project it is for. The caller owns delivery and landing, and a row that
+	// carried a redirect would make this service an open redirector for every
+	// product registered on it. There is no column for it, which is enforced by
+	// TestASessionLinkIsOneRowOfTheMachineAndNothingElse.
+	PurposeSessionLink Purpose = "session_link"
 )
+
+// allPurposes is the closed set, as a list.
+//
+// IT EXISTS SO THAT THE SET HAS A PLACE THAT IS NOT A TEST'S, because two
+// properties have to be checked against every member of it and neither can be
+// checked by walking a map literal declared next to itself: `TTLFor` must have a
+// case of its own for each purpose, and each purpose must be accounted for in
+// `callerDeliveredPurposes`.
+//
+// It is deliberately NOT the thing the closed-set test trusts: that test walks
+// this list against a set pinned in the test file, so adding a purpose is a
+// deliberate edit to both rather than an invisible widening of one.
+func allPurposes() []Purpose {
+	return []Purpose{
+		PurposePasswordReset,
+		PurposeVerifyEmail,
+		PurposeEmailChange,
+		PurposeSessionLink,
+	}
+}
+
+// callerDeliveredPurposes is the set of purposes this package does NOT mail,
+// mapped to who delivers them.
+//
+// IT EXISTS BECAUSE "no message body" IS NOT AN ERROR for a purpose any more, and
+// the reason is the one that matters for the surface: identity mails the three
+// self-service flows because a person cannot finish them without an inbox, and it
+// does not mail a session link because the project holding the credential that
+// minted the token already has a channel for it. Rendering a body here would put
+// a second delivery path beside courier's for a message nobody asked this service
+// to send.
+//
+// The map is a COMPLETENESS OBLIGATION, not a way to make a check pass: a purpose
+// in neither this map nor `messageBodies` fails
+// TestThePurposesAreAClosedSetThatTheSchemaAgreesWith, and a purpose in this map
+// that somebody has since started delivering from here is a second opinion nobody
+// reconciled.
+var callerDeliveredPurposes = map[Purpose]string{
+	PurposeSessionLink: "the credential holder that minted it delivers it and relays the redeem",
+}
 
 // TTLs. Three windows and three judgements, because the three tokens are worth
 // different amounts to whoever holds them.
@@ -144,6 +210,25 @@ const (
 	// and over.
 	EmailChangeTTL = 24 * time.Hour
 
+	// SessionLinkTTL is ten minutes.
+	//
+	// MUCH SHORTER THAN THE OTHER TWO, and the reasoning is not that a link is more
+	// dangerous — it is not, since it can only mint the session its subject could
+	// have had by signing in anyway. The reasoning is that the other three windows
+	// are sized around DELIVERY, and this one is not delivered by this service at
+	// all: the caller hands the token to a browser that is already in front of
+	// somebody. Ten minutes is long enough for a person to read a message, open a
+	// link, have it relayed and click through, and short enough that a link which
+	// escapes into a chat log, a support ticket or a shared browser history is dead
+	// by lunchtime.
+	//
+	// MaxSessionLinkTTL is one hour, and it is the answer to "a caller may choose a
+	// shorter window" rather than a licence to choose a longer one. The maximum is
+	// what actually bounds how long a delivered link stays live, so it is a
+	// published number rather than a field the caller fills in.
+	SessionLinkTTL    = 10 * time.Minute
+	MaxSessionLinkTTL = time.Hour
+
 	// RequestWindow is the minimum time between two tokens of the same purpose
 	// for the same account.
 	//
@@ -172,6 +257,8 @@ func TTLFor(p Purpose) time.Duration {
 	switch p {
 	case PurposeVerifyEmail, PurposeEmailChange:
 		return VerifyEmailTTL
+	case PurposeSessionLink:
+		return SessionLinkTTL
 	default:
 		return PasswordResetTTL
 	}
