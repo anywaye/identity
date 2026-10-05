@@ -20,22 +20,31 @@ import (
 
 // Defines values for APIKeyScope.
 const (
-	AccountsDelete   APIKeyScope = "accounts:delete"
-	AccountsRead     APIKeyScope = "accounts:read"
-	AccountsWrite    APIKeyScope = "accounts:write"
-	OidcClientsWrite APIKeyScope = "oidc_clients:write"
+	AccountInvitationsWrite APIKeyScope = "account_invitations:write"
+	AccountsDelete          APIKeyScope = "accounts:delete"
+	AccountsRead            APIKeyScope = "accounts:read"
+	AccountsWrite           APIKeyScope = "accounts:write"
+	AuditLogRead            APIKeyScope = "audit_log:read"
+	OidcClientsWrite        APIKeyScope = "oidc_clients:write"
+	SessionsWrite           APIKeyScope = "sessions:write"
 )
 
 // Valid indicates whether the value is a known member of the APIKeyScope enum.
 func (e APIKeyScope) Valid() bool {
 	switch e {
+	case AccountInvitationsWrite:
+		return true
 	case AccountsDelete:
 		return true
 	case AccountsRead:
 		return true
 	case AccountsWrite:
 		return true
+	case AuditLogRead:
+		return true
 	case OidcClientsWrite:
+		return true
+	case SessionsWrite:
 		return true
 	default:
 		return false
@@ -519,10 +528,16 @@ type APIKey struct {
 	UserID openapi_types.UUID `json:"user_id"`
 }
 
-// APIKeyScope One of four names, in core's `resource:action` shape. The set is closed and
+// APIKeyScope One of seven names, in core's `resource:action` shape. The set is closed and
 // adding one is a code change rather than a migration, which is why a token
 // holding a name this build does not know is refused at the point of use
 // rather than being treated as "and so anything goes".
+//
+// **`sessions:write` is the only one whose route turns an opaque value into an
+// authenticated browser session**, and it is last in this list for that reason.
+// It mints a single-use, ten-minute link for a subject the caller names; it does
+// not create, read or revoke a session, and the redemption route that spends it
+// cannot be reached by a token at all.
 type APIKeyScope string
 
 // AcceptInvitationRequest defines model for AcceptInvitationRequest.
@@ -1240,6 +1255,33 @@ type MintAPIKeyRequest struct {
 	Scopes []APIKeyScope `json:"scopes"`
 }
 
+// MintSessionLinkRequest **The subject, and only the subject.** There is no `account_id`, no redirect,
+// no landing URL and no project: what a session belongs to is the user, and
+// where the browser goes afterwards and how the link reaches them are the
+// caller's — a row carrying a redirect would make this service an open
+// redirector for every caller that used it, and there is no column for one.
+//
+// An unknown field is a 422, so a client that tried to send a landing URL is
+// told rather than having it silently dropped.
+type MintSessionLinkRequest struct {
+	// ExpiresIn **Seconds from now**, the same name and shape RFC 6749's token response
+	// uses. Omit it for the ten-minute default. A value over **3600** is a
+	// **422 and never a clamp**, and so is `0` or a negative one: a caller that
+	// asked for a day and received an hour has been told a lie about how long a
+	// credential it is about to hand to somebody else stays live.
+	//
+	// The ceiling is low because the link is not delivered to an inbox — the
+	// caller hands it to a browser somebody is already in front of — so the
+	// window has no delivery latency to absorb.
+	ExpiresIn *int64 `json:"expires_in,omitempty"`
+
+	// UserID The subject the redeemed session will belong to. **It is not the
+	// caller's own user id** — that is the whole point of the route. A uuid
+	// this service did not issue is a 422, and the nil uuid is refused rather
+	// than looked up: it is a value no row can hold.
+	UserID openapi_types.UUID `json:"user_id"`
+}
+
 // OIDCClient One OpenID Connect registration. `client_secret` and `secret_digest` are
 // both absent and always will be: the secret exists once, in the 201, and
 // the digest is what the row holds.
@@ -1538,6 +1580,22 @@ type Session struct {
 	Token string `json:"token"`
 }
 
+// SessionLink The minted pair, and the ONLY place a session link's plaintext appears. Two
+// fields and no third: anything further would be a fact about the subject that
+// this service has no reason to publish.
+type SessionLink struct {
+	// ExpiresAt When it stops working, on the clock the mint was served from. It is the
+	// link's window and not a session's: redeeming writes a session that lives
+	// on the session's own much longer clock.
+	ExpiresAt time.Time `json:"expires_at"`
+
+	// Token The link: 256 bits of entropy, stored as a SHA-256. Shown once, here, and
+	// unrecoverable afterwards. **This service does not deliver it** — the
+	// caller does, over a channel the caller owns, and identity has no mail for
+	// it, no redirect to send the browser to and no record of where it went.
+	Token string `json:"token"`
+}
+
 // SocialLinked The 200 from the **link** path of `completeSocialLogin`: a provider
 // identity was attached to the account the caller was already signed in as,
 // and **no session was minted**.
@@ -1824,6 +1882,9 @@ type ConfirmPasswordResetJSONRequestBody = ConfirmPasswordResetRequest
 
 // CreateSessionJSONRequestBody defines body for CreateSession for application/json ContentType.
 type CreateSessionJSONRequestBody = LoginRequest
+
+// MintSessionLinkJSONRequestBody defines body for MintSessionLink for application/json ContentType.
+type MintSessionLinkJSONRequestBody = MintSessionLinkRequest
 
 // CompleteSecondFactorJSONRequestBody defines body for CompleteSecondFactor for application/json ContentType.
 type CompleteSecondFactorJSONRequestBody = CompleteSecondFactorRequest
@@ -3921,6 +3982,142 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/session (the `CreateSession` operationId).
 	CreateSession(ctx context.Context, body CreateSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// MintSessionLinkWithBody Mint a delegated session link for a named subject
+	//
+	// Writes **one row of the same `recovery_tokens` table** the password-reset,
+	// verification and email-change tokens live in, with purpose `session_link`,
+	// and hands the plaintext back exactly once. Redeeming it — at
+	// `POST /v1/session-links/redeem`, which is not in this document yet — produces
+	// what a password login produces.
+	//
+	// ### Why the subject is in the body and the credential is a token
+	//
+	// A browser session is a person acting as themselves, and this route asks this
+	// service to put a credential in front of **somebody else's** browser. That is
+	// the vocabulary's `sessions:write`: the only scope in this service whose route
+	// turns an opaque value into an authenticated browser session, which is why it
+	// is granted deliberately rather than inherited.
+	//
+	// **A browser session is refused with `403`, not `401`.** A session *is*
+	// authenticated, so a 401 would send a client looking for a login problem that
+	// does not exist. The same is true of presenting no credential at all: this
+	// surface is reachable by a scoped api key and by nothing else.
+	//
+	// ### The subject is a user, and it is not the caller
+	//
+	// There is no account in the path and no tenancy check on this route, which is
+	// a fact about **what the scope buys** rather than a shortcut: `sessions:write`
+	// may mint for any subject, not for one subject in one account. A token minted
+	// FOR somebody else and handed to them is a delegation the owner of the token
+	// chose to make; the alternative — a scope that could only ever delegate to
+	// yourself — would be a name for "mint me a session", which is a different and
+	// larger capability wearing a smaller one's clothes.
+	//
+	// **`404` for a subject that is not a user, and that is deliberate.** Every
+	// other route in this service answers `202` for an unknown subject or address,
+	// because those routes have **no credential** and "no such account" would be a
+	// free enumeration oracle. This one is behind a credential holding
+	// `sessions:write`, so there is no anonymous stranger to protect and a caller
+	// asking for a user who is not there is entitled to be told. See DECISIONS.md
+	// D12 for the contrast written out.
+	//
+	// ### A subject with a second factor is refused, not challenged
+	//
+	// **`409 conflict`** for a subject who has enrolled MFA. A link redeems into a
+	// session, so honouring one for an enrolled subject would let a token holder turn
+	// a first factor into a complete login — which is the downgrade this service's
+	// own scope vocabulary says no machine credential may perform. Threading a
+	// challenge through the redemption would be a second authentication surface
+	// mounted on a **public** route, so the refusal is exact and the alternative is
+	// a packet of its own.
+	//
+	// ### `expires_in` is SECONDS, default 10 minutes, ceiling 1 hour
+	//
+	// The name and the shape are RFC 6749's, so every OAuth client already knows
+	// them. **Over the ceiling is a `422`, never a clamp**: a caller that asked for
+	// a day and received an hour has been told a lie about how long a credential it
+	// is about to hand to somebody else stays live.
+	//
+	// **`token` is returned here and nowhere else, ever.** There is no endpoint that
+	// re-reads it — there is nothing left to print, because the row holds a SHA-256.
+	// A caller that loses it mints another. **This service does not deliver it and
+	// does not know where it is delivered to**: the caller owns delivery, and there
+	// is no redirect parameter, no landing URL and no mail. A `recovery_tokens` row
+	// for a link carries no target, and the schema says so with a CHECK.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/session-links (the `MintSessionLink` operationId).
+	MintSessionLinkWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// MintSessionLink Mint a delegated session link for a named subject
+	//
+	// Writes **one row of the same `recovery_tokens` table** the password-reset,
+	// verification and email-change tokens live in, with purpose `session_link`,
+	// and hands the plaintext back exactly once. Redeeming it — at
+	// `POST /v1/session-links/redeem`, which is not in this document yet — produces
+	// what a password login produces.
+	//
+	// ### Why the subject is in the body and the credential is a token
+	//
+	// A browser session is a person acting as themselves, and this route asks this
+	// service to put a credential in front of **somebody else's** browser. That is
+	// the vocabulary's `sessions:write`: the only scope in this service whose route
+	// turns an opaque value into an authenticated browser session, which is why it
+	// is granted deliberately rather than inherited.
+	//
+	// **A browser session is refused with `403`, not `401`.** A session *is*
+	// authenticated, so a 401 would send a client looking for a login problem that
+	// does not exist. The same is true of presenting no credential at all: this
+	// surface is reachable by a scoped api key and by nothing else.
+	//
+	// ### The subject is a user, and it is not the caller
+	//
+	// There is no account in the path and no tenancy check on this route, which is
+	// a fact about **what the scope buys** rather than a shortcut: `sessions:write`
+	// may mint for any subject, not for one subject in one account. A token minted
+	// FOR somebody else and handed to them is a delegation the owner of the token
+	// chose to make; the alternative — a scope that could only ever delegate to
+	// yourself — would be a name for "mint me a session", which is a different and
+	// larger capability wearing a smaller one's clothes.
+	//
+	// **`404` for a subject that is not a user, and that is deliberate.** Every
+	// other route in this service answers `202` for an unknown subject or address,
+	// because those routes have **no credential** and "no such account" would be a
+	// free enumeration oracle. This one is behind a credential holding
+	// `sessions:write`, so there is no anonymous stranger to protect and a caller
+	// asking for a user who is not there is entitled to be told. See DECISIONS.md
+	// D12 for the contrast written out.
+	//
+	// ### A subject with a second factor is refused, not challenged
+	//
+	// **`409 conflict`** for a subject who has enrolled MFA. A link redeems into a
+	// session, so honouring one for an enrolled subject would let a token holder turn
+	// a first factor into a complete login — which is the downgrade this service's
+	// own scope vocabulary says no machine credential may perform. Threading a
+	// challenge through the redemption would be a second authentication surface
+	// mounted on a **public** route, so the refusal is exact and the alternative is
+	// a packet of its own.
+	//
+	// ### `expires_in` is SECONDS, default 10 minutes, ceiling 1 hour
+	//
+	// The name and the shape are RFC 6749's, so every OAuth client already knows
+	// them. **Over the ceiling is a `422`, never a clamp**: a caller that asked for
+	// a day and received an hour has been told a lie about how long a credential it
+	// is about to hand to somebody else stays live.
+	//
+	// **`token` is returned here and nowhere else, ever.** There is no endpoint that
+	// re-reads it — there is nothing left to print, because the row holds a SHA-256.
+	// A caller that loses it mints another. **This service does not deliver it and
+	// does not know where it is delivered to**: the caller owns delivery, and there
+	// is no redirect parameter, no landing URL and no mail. A `recovery_tokens` row
+	// for a link carries no target, and the schema says so with a CHECK.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/session-links (the `MintSessionLink` operationId).
+	MintSessionLink(ctx context.Context, body MintSessionLinkJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CompleteSecondFactorWithBody Answer a second factor and start the session
 	//
@@ -6616,6 +6813,162 @@ func (c *Client) CreateSession(ctx context.Context, body CreateSessionJSONReques
 	return c.Client.Do(req)
 }
 
+// MintSessionLinkWithBody Mint a delegated session link for a named subject
+//
+// Writes **one row of the same `recovery_tokens` table** the password-reset,
+// verification and email-change tokens live in, with purpose `session_link`,
+// and hands the plaintext back exactly once. Redeeming it — at
+// `POST /v1/session-links/redeem`, which is not in this document yet — produces
+// what a password login produces.
+//
+// ### Why the subject is in the body and the credential is a token
+//
+// A browser session is a person acting as themselves, and this route asks this
+// service to put a credential in front of **somebody else's** browser. That is
+// the vocabulary's `sessions:write`: the only scope in this service whose route
+// turns an opaque value into an authenticated browser session, which is why it
+// is granted deliberately rather than inherited.
+//
+// **A browser session is refused with `403`, not `401`.** A session *is*
+// authenticated, so a 401 would send a client looking for a login problem that
+// does not exist. The same is true of presenting no credential at all: this
+// surface is reachable by a scoped api key and by nothing else.
+//
+// ### The subject is a user, and it is not the caller
+//
+// There is no account in the path and no tenancy check on this route, which is
+// a fact about **what the scope buys** rather than a shortcut: `sessions:write`
+// may mint for any subject, not for one subject in one account. A token minted
+// FOR somebody else and handed to them is a delegation the owner of the token
+// chose to make; the alternative — a scope that could only ever delegate to
+// yourself — would be a name for "mint me a session", which is a different and
+// larger capability wearing a smaller one's clothes.
+//
+// **`404` for a subject that is not a user, and that is deliberate.** Every
+// other route in this service answers `202` for an unknown subject or address,
+// because those routes have **no credential** and "no such account" would be a
+// free enumeration oracle. This one is behind a credential holding
+// `sessions:write`, so there is no anonymous stranger to protect and a caller
+// asking for a user who is not there is entitled to be told. See DECISIONS.md
+// D12 for the contrast written out.
+//
+// ### A subject with a second factor is refused, not challenged
+//
+// **`409 conflict`** for a subject who has enrolled MFA. A link redeems into a
+// session, so honouring one for an enrolled subject would let a token holder turn
+// a first factor into a complete login — which is the downgrade this service's
+// own scope vocabulary says no machine credential may perform. Threading a
+// challenge through the redemption would be a second authentication surface
+// mounted on a **public** route, so the refusal is exact and the alternative is
+// a packet of its own.
+//
+// ### `expires_in` is SECONDS, default 10 minutes, ceiling 1 hour
+//
+// The name and the shape are RFC 6749's, so every OAuth client already knows
+// them. **Over the ceiling is a `422`, never a clamp**: a caller that asked for
+// a day and received an hour has been told a lie about how long a credential it
+// is about to hand to somebody else stays live.
+//
+// **`token` is returned here and nowhere else, ever.** There is no endpoint that
+// re-reads it — there is nothing left to print, because the row holds a SHA-256.
+// A caller that loses it mints another. **This service does not deliver it and
+// does not know where it is delivered to**: the caller owns delivery, and there
+// is no redirect parameter, no landing URL and no mail. A `recovery_tokens` row
+// for a link carries no target, and the schema says so with a CHECK.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/session-links (the `MintSessionLink` operationId).
+func (c *Client) MintSessionLinkWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewMintSessionLinkRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// MintSessionLink Mint a delegated session link for a named subject
+//
+// Writes **one row of the same `recovery_tokens` table** the password-reset,
+// verification and email-change tokens live in, with purpose `session_link`,
+// and hands the plaintext back exactly once. Redeeming it — at
+// `POST /v1/session-links/redeem`, which is not in this document yet — produces
+// what a password login produces.
+//
+// ### Why the subject is in the body and the credential is a token
+//
+// A browser session is a person acting as themselves, and this route asks this
+// service to put a credential in front of **somebody else's** browser. That is
+// the vocabulary's `sessions:write`: the only scope in this service whose route
+// turns an opaque value into an authenticated browser session, which is why it
+// is granted deliberately rather than inherited.
+//
+// **A browser session is refused with `403`, not `401`.** A session *is*
+// authenticated, so a 401 would send a client looking for a login problem that
+// does not exist. The same is true of presenting no credential at all: this
+// surface is reachable by a scoped api key and by nothing else.
+//
+// ### The subject is a user, and it is not the caller
+//
+// There is no account in the path and no tenancy check on this route, which is
+// a fact about **what the scope buys** rather than a shortcut: `sessions:write`
+// may mint for any subject, not for one subject in one account. A token minted
+// FOR somebody else and handed to them is a delegation the owner of the token
+// chose to make; the alternative — a scope that could only ever delegate to
+// yourself — would be a name for "mint me a session", which is a different and
+// larger capability wearing a smaller one's clothes.
+//
+// **`404` for a subject that is not a user, and that is deliberate.** Every
+// other route in this service answers `202` for an unknown subject or address,
+// because those routes have **no credential** and "no such account" would be a
+// free enumeration oracle. This one is behind a credential holding
+// `sessions:write`, so there is no anonymous stranger to protect and a caller
+// asking for a user who is not there is entitled to be told. See DECISIONS.md
+// D12 for the contrast written out.
+//
+// ### A subject with a second factor is refused, not challenged
+//
+// **`409 conflict`** for a subject who has enrolled MFA. A link redeems into a
+// session, so honouring one for an enrolled subject would let a token holder turn
+// a first factor into a complete login — which is the downgrade this service's
+// own scope vocabulary says no machine credential may perform. Threading a
+// challenge through the redemption would be a second authentication surface
+// mounted on a **public** route, so the refusal is exact and the alternative is
+// a packet of its own.
+//
+// ### `expires_in` is SECONDS, default 10 minutes, ceiling 1 hour
+//
+// The name and the shape are RFC 6749's, so every OAuth client already knows
+// them. **Over the ceiling is a `422`, never a clamp**: a caller that asked for
+// a day and received an hour has been told a lie about how long a credential it
+// is about to hand to somebody else stays live.
+//
+// **`token` is returned here and nowhere else, ever.** There is no endpoint that
+// re-reads it — there is nothing left to print, because the row holds a SHA-256.
+// A caller that loses it mints another. **This service does not deliver it and
+// does not know where it is delivered to**: the caller owns delivery, and there
+// is no redirect parameter, no landing URL and no mail. A `recovery_tokens` row
+// for a link carries no target, and the schema says so with a CHECK.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/session-links (the `MintSessionLink` operationId).
+func (c *Client) MintSessionLink(ctx context.Context, body MintSessionLinkJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewMintSessionLinkRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // CompleteSecondFactorWithBody Answer a second factor and start the session
 //
 // The second half of a login for an account with a second factor, and **the
@@ -8406,6 +8759,46 @@ func NewCreateSessionRequestWithBody(server string, contentType string, body io.
 	}
 
 	operationPath := fmt.Sprintf("/v1/session")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewMintSessionLinkRequest calls the generic MintSessionLink builder with application/json body
+func NewMintSessionLinkRequest(server string, body MintSessionLinkJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewMintSessionLinkRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewMintSessionLinkRequestWithBody constructs an http.Request for the MintSessionLink method, with any body, and a specified content type
+func NewMintSessionLinkRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/session-links")
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -10541,6 +10934,142 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/session (the `CreateSession` operationId).
 	CreateSessionWithResponse(ctx context.Context, body CreateSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateSessionResponse, error)
+
+	// MintSessionLinkWithBodyWithResponse Mint a delegated session link for a named subject
+	//
+	// Writes **one row of the same `recovery_tokens` table** the password-reset,
+	// verification and email-change tokens live in, with purpose `session_link`,
+	// and hands the plaintext back exactly once. Redeeming it — at
+	// `POST /v1/session-links/redeem`, which is not in this document yet — produces
+	// what a password login produces.
+	//
+	// ### Why the subject is in the body and the credential is a token
+	//
+	// A browser session is a person acting as themselves, and this route asks this
+	// service to put a credential in front of **somebody else's** browser. That is
+	// the vocabulary's `sessions:write`: the only scope in this service whose route
+	// turns an opaque value into an authenticated browser session, which is why it
+	// is granted deliberately rather than inherited.
+	//
+	// **A browser session is refused with `403`, not `401`.** A session *is*
+	// authenticated, so a 401 would send a client looking for a login problem that
+	// does not exist. The same is true of presenting no credential at all: this
+	// surface is reachable by a scoped api key and by nothing else.
+	//
+	// ### The subject is a user, and it is not the caller
+	//
+	// There is no account in the path and no tenancy check on this route, which is
+	// a fact about **what the scope buys** rather than a shortcut: `sessions:write`
+	// may mint for any subject, not for one subject in one account. A token minted
+	// FOR somebody else and handed to them is a delegation the owner of the token
+	// chose to make; the alternative — a scope that could only ever delegate to
+	// yourself — would be a name for "mint me a session", which is a different and
+	// larger capability wearing a smaller one's clothes.
+	//
+	// **`404` for a subject that is not a user, and that is deliberate.** Every
+	// other route in this service answers `202` for an unknown subject or address,
+	// because those routes have **no credential** and "no such account" would be a
+	// free enumeration oracle. This one is behind a credential holding
+	// `sessions:write`, so there is no anonymous stranger to protect and a caller
+	// asking for a user who is not there is entitled to be told. See DECISIONS.md
+	// D12 for the contrast written out.
+	//
+	// ### A subject with a second factor is refused, not challenged
+	//
+	// **`409 conflict`** for a subject who has enrolled MFA. A link redeems into a
+	// session, so honouring one for an enrolled subject would let a token holder turn
+	// a first factor into a complete login — which is the downgrade this service's
+	// own scope vocabulary says no machine credential may perform. Threading a
+	// challenge through the redemption would be a second authentication surface
+	// mounted on a **public** route, so the refusal is exact and the alternative is
+	// a packet of its own.
+	//
+	// ### `expires_in` is SECONDS, default 10 minutes, ceiling 1 hour
+	//
+	// The name and the shape are RFC 6749's, so every OAuth client already knows
+	// them. **Over the ceiling is a `422`, never a clamp**: a caller that asked for
+	// a day and received an hour has been told a lie about how long a credential it
+	// is about to hand to somebody else stays live.
+	//
+	// **`token` is returned here and nowhere else, ever.** There is no endpoint that
+	// re-reads it — there is nothing left to print, because the row holds a SHA-256.
+	// A caller that loses it mints another. **This service does not deliver it and
+	// does not know where it is delivered to**: the caller owns delivery, and there
+	// is no redirect parameter, no landing URL and no mail. A `recovery_tokens` row
+	// for a link carries no target, and the schema says so with a CHECK.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/session-links (the `MintSessionLink` operationId).
+	MintSessionLinkWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MintSessionLinkResponse, error)
+
+	// MintSessionLinkWithResponse Mint a delegated session link for a named subject
+	//
+	// Writes **one row of the same `recovery_tokens` table** the password-reset,
+	// verification and email-change tokens live in, with purpose `session_link`,
+	// and hands the plaintext back exactly once. Redeeming it — at
+	// `POST /v1/session-links/redeem`, which is not in this document yet — produces
+	// what a password login produces.
+	//
+	// ### Why the subject is in the body and the credential is a token
+	//
+	// A browser session is a person acting as themselves, and this route asks this
+	// service to put a credential in front of **somebody else's** browser. That is
+	// the vocabulary's `sessions:write`: the only scope in this service whose route
+	// turns an opaque value into an authenticated browser session, which is why it
+	// is granted deliberately rather than inherited.
+	//
+	// **A browser session is refused with `403`, not `401`.** A session *is*
+	// authenticated, so a 401 would send a client looking for a login problem that
+	// does not exist. The same is true of presenting no credential at all: this
+	// surface is reachable by a scoped api key and by nothing else.
+	//
+	// ### The subject is a user, and it is not the caller
+	//
+	// There is no account in the path and no tenancy check on this route, which is
+	// a fact about **what the scope buys** rather than a shortcut: `sessions:write`
+	// may mint for any subject, not for one subject in one account. A token minted
+	// FOR somebody else and handed to them is a delegation the owner of the token
+	// chose to make; the alternative — a scope that could only ever delegate to
+	// yourself — would be a name for "mint me a session", which is a different and
+	// larger capability wearing a smaller one's clothes.
+	//
+	// **`404` for a subject that is not a user, and that is deliberate.** Every
+	// other route in this service answers `202` for an unknown subject or address,
+	// because those routes have **no credential** and "no such account" would be a
+	// free enumeration oracle. This one is behind a credential holding
+	// `sessions:write`, so there is no anonymous stranger to protect and a caller
+	// asking for a user who is not there is entitled to be told. See DECISIONS.md
+	// D12 for the contrast written out.
+	//
+	// ### A subject with a second factor is refused, not challenged
+	//
+	// **`409 conflict`** for a subject who has enrolled MFA. A link redeems into a
+	// session, so honouring one for an enrolled subject would let a token holder turn
+	// a first factor into a complete login — which is the downgrade this service's
+	// own scope vocabulary says no machine credential may perform. Threading a
+	// challenge through the redemption would be a second authentication surface
+	// mounted on a **public** route, so the refusal is exact and the alternative is
+	// a packet of its own.
+	//
+	// ### `expires_in` is SECONDS, default 10 minutes, ceiling 1 hour
+	//
+	// The name and the shape are RFC 6749's, so every OAuth client already knows
+	// them. **Over the ceiling is a `422`, never a clamp**: a caller that asked for
+	// a day and received an hour has been told a lie about how long a credential it
+	// is about to hand to somebody else stays live.
+	//
+	// **`token` is returned here and nowhere else, ever.** There is no endpoint that
+	// re-reads it — there is nothing left to print, because the row holds a SHA-256.
+	// A caller that loses it mints another. **This service does not deliver it and
+	// does not know where it is delivered to**: the caller owns delivery, and there
+	// is no redirect parameter, no landing URL and no mail. A `recovery_tokens` row
+	// for a link carries no target, and the schema says so with a CHECK.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/session-links (the `MintSessionLink` operationId).
+	MintSessionLinkWithResponse(ctx context.Context, body MintSessionLinkJSONRequestBody, reqEditors ...RequestEditorFn) (*MintSessionLinkResponse, error)
 
 	// CompleteSecondFactorWithBodyWithResponse Answer a second factor and start the session
 	//
@@ -15376,6 +15905,152 @@ func (r CreateSessionResponse) ContentType() string {
 	return ""
 }
 
+// MintSessionLinkResponse201Headers the declared response headers of an HTTP 201 response for MintSessionLink
+type MintSessionLinkResponse201Headers struct {
+	XTraceID string
+}
+
+// MintSessionLinkResponse401Headers the declared response headers of an HTTP 401 response for MintSessionLink
+type MintSessionLinkResponse401Headers struct {
+	XTraceID string
+}
+
+// MintSessionLinkResponse403Headers the declared response headers of an HTTP 403 response for MintSessionLink
+type MintSessionLinkResponse403Headers struct {
+	XTraceID string
+}
+
+// MintSessionLinkResponse404Headers the declared response headers of an HTTP 404 response for MintSessionLink
+type MintSessionLinkResponse404Headers struct {
+	XTraceID string
+}
+
+// MintSessionLinkResponse409Headers the declared response headers of an HTTP 409 response for MintSessionLink
+type MintSessionLinkResponse409Headers struct {
+	XTraceID string
+}
+
+// MintSessionLinkResponse422Headers the declared response headers of an HTTP 422 response for MintSessionLink
+type MintSessionLinkResponse422Headers struct {
+	XTraceID string
+}
+
+// MintSessionLinkResponse500Headers the declared response headers of an HTTP 500 response for MintSessionLink
+type MintSessionLinkResponse500Headers struct {
+	XTraceID string
+}
+
+// MintSessionLinkResponse503Headers the declared response headers of an HTTP 503 response for MintSessionLink
+type MintSessionLinkResponse503Headers struct {
+	XTraceID string
+}
+
+type MintSessionLinkResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *SessionLink
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthenticated
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *Problem
+	// ApplicationProblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationProblemJSON409 *Problem
+	// ApplicationProblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationProblemJSON422 *ValidationFailed
+	// ApplicationProblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationProblemJSON500 *InternalError
+	// ApplicationProblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationProblemJSON503 *Problem
+	// Headers201 the parsed response headers for an HTTP 201 response
+	Headers201 *MintSessionLinkResponse201Headers
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *MintSessionLinkResponse401Headers
+	// Headers403 the parsed response headers for an HTTP 403 response
+	Headers403 *MintSessionLinkResponse403Headers
+	// Headers404 the parsed response headers for an HTTP 404 response
+	Headers404 *MintSessionLinkResponse404Headers
+	// Headers409 the parsed response headers for an HTTP 409 response
+	Headers409 *MintSessionLinkResponse409Headers
+	// Headers422 the parsed response headers for an HTTP 422 response
+	Headers422 *MintSessionLinkResponse422Headers
+	// Headers500 the parsed response headers for an HTTP 500 response
+	Headers500 *MintSessionLinkResponse500Headers
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *MintSessionLinkResponse503Headers
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r MintSessionLinkResponse) GetJSON201() *SessionLink {
+	return r.JSON201
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r MintSessionLinkResponse) GetApplicationProblemJSON401() *Unauthenticated {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r MintSessionLinkResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r MintSessionLinkResponse) GetApplicationProblemJSON404() *Problem {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r MintSessionLinkResponse) GetApplicationProblemJSON409() *Problem {
+	return r.ApplicationProblemJSON409
+}
+
+// GetApplicationProblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r MintSessionLinkResponse) GetApplicationProblemJSON422() *ValidationFailed {
+	return r.ApplicationProblemJSON422
+}
+
+// GetApplicationProblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r MintSessionLinkResponse) GetApplicationProblemJSON500() *InternalError {
+	return r.ApplicationProblemJSON500
+}
+
+// GetApplicationProblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r MintSessionLinkResponse) GetApplicationProblemJSON503() *Problem {
+	return r.ApplicationProblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r MintSessionLinkResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r MintSessionLinkResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r MintSessionLinkResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r MintSessionLinkResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // CompleteSecondFactorResponse200Headers the declared response headers of an HTTP 200 response for CompleteSecondFactor
 type CompleteSecondFactorResponse200Headers struct {
 	SetCookie *string
@@ -18026,6 +18701,154 @@ func (c *ClientWithResponses) CreateSessionWithResponse(ctx context.Context, bod
 		return nil, err
 	}
 	return ParseCreateSessionResponse(rsp)
+}
+
+// MintSessionLinkWithBodyWithResponse Mint a delegated session link for a named subject
+//
+// Writes **one row of the same `recovery_tokens` table** the password-reset,
+// verification and email-change tokens live in, with purpose `session_link`,
+// and hands the plaintext back exactly once. Redeeming it — at
+// `POST /v1/session-links/redeem`, which is not in this document yet — produces
+// what a password login produces.
+//
+// ### Why the subject is in the body and the credential is a token
+//
+// A browser session is a person acting as themselves, and this route asks this
+// service to put a credential in front of **somebody else's** browser. That is
+// the vocabulary's `sessions:write`: the only scope in this service whose route
+// turns an opaque value into an authenticated browser session, which is why it
+// is granted deliberately rather than inherited.
+//
+// **A browser session is refused with `403`, not `401`.** A session *is*
+// authenticated, so a 401 would send a client looking for a login problem that
+// does not exist. The same is true of presenting no credential at all: this
+// surface is reachable by a scoped api key and by nothing else.
+//
+// ### The subject is a user, and it is not the caller
+//
+// There is no account in the path and no tenancy check on this route, which is
+// a fact about **what the scope buys** rather than a shortcut: `sessions:write`
+// may mint for any subject, not for one subject in one account. A token minted
+// FOR somebody else and handed to them is a delegation the owner of the token
+// chose to make; the alternative — a scope that could only ever delegate to
+// yourself — would be a name for "mint me a session", which is a different and
+// larger capability wearing a smaller one's clothes.
+//
+// **`404` for a subject that is not a user, and that is deliberate.** Every
+// other route in this service answers `202` for an unknown subject or address,
+// because those routes have **no credential** and "no such account" would be a
+// free enumeration oracle. This one is behind a credential holding
+// `sessions:write`, so there is no anonymous stranger to protect and a caller
+// asking for a user who is not there is entitled to be told. See DECISIONS.md
+// D12 for the contrast written out.
+//
+// ### A subject with a second factor is refused, not challenged
+//
+// **`409 conflict`** for a subject who has enrolled MFA. A link redeems into a
+// session, so honouring one for an enrolled subject would let a token holder turn
+// a first factor into a complete login — which is the downgrade this service's
+// own scope vocabulary says no machine credential may perform. Threading a
+// challenge through the redemption would be a second authentication surface
+// mounted on a **public** route, so the refusal is exact and the alternative is
+// a packet of its own.
+//
+// ### `expires_in` is SECONDS, default 10 minutes, ceiling 1 hour
+//
+// The name and the shape are RFC 6749's, so every OAuth client already knows
+// them. **Over the ceiling is a `422`, never a clamp**: a caller that asked for
+// a day and received an hour has been told a lie about how long a credential it
+// is about to hand to somebody else stays live.
+//
+// **`token` is returned here and nowhere else, ever.** There is no endpoint that
+// re-reads it — there is nothing left to print, because the row holds a SHA-256.
+// A caller that loses it mints another. **This service does not deliver it and
+// does not know where it is delivered to**: the caller owns delivery, and there
+// is no redirect parameter, no landing URL and no mail. A `recovery_tokens` row
+// for a link carries no target, and the schema says so with a CHECK.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/session-links (the `MintSessionLink` operationId).
+func (c *ClientWithResponses) MintSessionLinkWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MintSessionLinkResponse, error) {
+	rsp, err := c.MintSessionLinkWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseMintSessionLinkResponse(rsp)
+}
+
+// MintSessionLinkWithResponse Mint a delegated session link for a named subject
+//
+// Writes **one row of the same `recovery_tokens` table** the password-reset,
+// verification and email-change tokens live in, with purpose `session_link`,
+// and hands the plaintext back exactly once. Redeeming it — at
+// `POST /v1/session-links/redeem`, which is not in this document yet — produces
+// what a password login produces.
+//
+// ### Why the subject is in the body and the credential is a token
+//
+// A browser session is a person acting as themselves, and this route asks this
+// service to put a credential in front of **somebody else's** browser. That is
+// the vocabulary's `sessions:write`: the only scope in this service whose route
+// turns an opaque value into an authenticated browser session, which is why it
+// is granted deliberately rather than inherited.
+//
+// **A browser session is refused with `403`, not `401`.** A session *is*
+// authenticated, so a 401 would send a client looking for a login problem that
+// does not exist. The same is true of presenting no credential at all: this
+// surface is reachable by a scoped api key and by nothing else.
+//
+// ### The subject is a user, and it is not the caller
+//
+// There is no account in the path and no tenancy check on this route, which is
+// a fact about **what the scope buys** rather than a shortcut: `sessions:write`
+// may mint for any subject, not for one subject in one account. A token minted
+// FOR somebody else and handed to them is a delegation the owner of the token
+// chose to make; the alternative — a scope that could only ever delegate to
+// yourself — would be a name for "mint me a session", which is a different and
+// larger capability wearing a smaller one's clothes.
+//
+// **`404` for a subject that is not a user, and that is deliberate.** Every
+// other route in this service answers `202` for an unknown subject or address,
+// because those routes have **no credential** and "no such account" would be a
+// free enumeration oracle. This one is behind a credential holding
+// `sessions:write`, so there is no anonymous stranger to protect and a caller
+// asking for a user who is not there is entitled to be told. See DECISIONS.md
+// D12 for the contrast written out.
+//
+// ### A subject with a second factor is refused, not challenged
+//
+// **`409 conflict`** for a subject who has enrolled MFA. A link redeems into a
+// session, so honouring one for an enrolled subject would let a token holder turn
+// a first factor into a complete login — which is the downgrade this service's
+// own scope vocabulary says no machine credential may perform. Threading a
+// challenge through the redemption would be a second authentication surface
+// mounted on a **public** route, so the refusal is exact and the alternative is
+// a packet of its own.
+//
+// ### `expires_in` is SECONDS, default 10 minutes, ceiling 1 hour
+//
+// The name and the shape are RFC 6749's, so every OAuth client already knows
+// them. **Over the ceiling is a `422`, never a clamp**: a caller that asked for
+// a day and received an hour has been told a lie about how long a credential it
+// is about to hand to somebody else stays live.
+//
+// **`token` is returned here and nowhere else, ever.** There is no endpoint that
+// re-reads it — there is nothing left to print, because the row holds a SHA-256.
+// A caller that loses it mints another. **This service does not deliver it and
+// does not know where it is delivered to**: the caller owns delivery, and there
+// is no redirect parameter, no landing URL and no mail. A `recovery_tokens` row
+// for a link carries no target, and the schema says so with a CHECK.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/session-links (the `MintSessionLink` operationId).
+func (c *ClientWithResponses) MintSessionLinkWithResponse(ctx context.Context, body MintSessionLinkJSONRequestBody, reqEditors ...RequestEditorFn) (*MintSessionLinkResponse, error) {
+	rsp, err := c.MintSessionLink(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseMintSessionLinkResponse(rsp)
 }
 
 // CompleteSecondFactorWithBodyWithResponse Answer a second factor and start the session
@@ -23219,6 +24042,164 @@ func ParseCreateSessionResponse(rsp *http.Response) (*CreateSessionResponse, err
 			headers.XTraceID = value
 		}
 		response.Headers500 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseMintSessionLinkResponse parses an HTTP response from a MintSessionLinkWithResponse call
+func ParseMintSessionLinkResponse(rsp *http.Response) (*MintSessionLinkResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &MintSessionLinkResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest SessionLink
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthenticated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ValidationFailed
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 201:
+		var headers MintSessionLinkResponse201Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers201 = &headers
+	case rsp.StatusCode == 401:
+		var headers MintSessionLinkResponse401Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers401 = &headers
+	case rsp.StatusCode == 403:
+		var headers MintSessionLinkResponse403Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers403 = &headers
+	case rsp.StatusCode == 404:
+		var headers MintSessionLinkResponse404Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers404 = &headers
+	case rsp.StatusCode == 409:
+		var headers MintSessionLinkResponse409Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers409 = &headers
+	case rsp.StatusCode == 422:
+		var headers MintSessionLinkResponse422Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers422 = &headers
+	case rsp.StatusCode == 500:
+		var headers MintSessionLinkResponse500Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers500 = &headers
+	case rsp.StatusCode == 503:
+		var headers MintSessionLinkResponse503Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers503 = &headers
 	}
 
 	return response, nil

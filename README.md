@@ -295,6 +295,7 @@ service quietly listening on the wrong port.
 | `GET /v1/accounts/:id/api-keys` | `200 [{id, name, scopes, …}]` | The account's credentials, newest first, **revoked ones included**. `[]` and not `null`. **Owner only.** |
 | `DELETE /v1/accounts/:id/api-keys/:keyId` | `204` | Revoke a credential. The row is kept. `409 conflict` if already revoked, `404` for an id that is not there or not in this account. **Owner only.** |
 | `POST /v1/introspections` | `200 {active, …}` or `200 {"active":false}` | What a presented token may do, and for which account. Needed because the token is opaque. |
+| `POST /v1/session-links` | `201 {token, expires_at}` | **Mint a delegated session link** for a subject you name. `sessions:write`, **scoped api key only** — a browser session is `403`, and so is presenting no credential at all. `404` for a subject that is not a user, which is deliberate here and the opposite of the self-service routes below; `409 conflict` for a subject with a second factor, because a link cannot answer a challenge; `422` for a window over the hour ceiling. The link is **not delivered by this service** and there is no redirect parameter — the caller owns both. |
 | `GET /v1/accounts/:id/admin/audit-log` | `200 {entries, next?}` | The account's admin audit trail, newest first, **append-only**. Bounded: `limit` defaults to 25 and is refused above 100; `before` is an opaque cursor. **Admin, `audit_log:read`, scoped api key only.** |
 | `DELETE /v1/accounts/:id/admin/invitations/:invitationId` | `204` | Revoke one pending invitation. The row is kept with `revoked_at`, and the address is freed to be invited again. `409 conflict` if already accepted or revoked, `404` for an id not in this account. **Admin, `account_invitations:write`, scoped api key only.** |
 | `POST /v1/accounts/:id/admin/invitation-revocations` | `200 {requested, revoked}` | Revoke up to 50 pending invitations in one transaction, **one** audit record for the lot. `confirm: true` and a non-empty array are both required. **Owner, `account_invitations:write`, scoped api key only.** |
@@ -394,6 +395,36 @@ not a different error.
 is redeemed.** A stolen session can start one, and what it produces is a link in the
 victim's inbox and nowhere else — the attacker cannot advance it, and the victim gets
 the one warning they would otherwise never get.
+
+#### The fourth purpose: a delegated session link, and what this service does not do with it
+
+`session_link` is a fourth `purpose` on that same table, with the same lifecycle —
+mint 256 bits, store only the digest, expire, spend with the same conditional write
+— and it is the only purpose **this service does not mail**. Everything above exists
+because a person cannot finish the flow without an inbox; a session link has no inbox
+behind it, because the caller holding `sessions:write` already has a channel to the
+browser in front of the user. So there is no message body, no `Mailer.Ready` check,
+and no fourth delivery path beside courier's for a message nobody asked identity to
+send.
+
+**THE CALLER OWNS DELIVERY AND LANDING, and there is no column for either.** The
+`recovery_tokens` row carries no redirect, no landing URL and no project name, and
+`TestASessionLinkIsOneRowOfTheMachineAndNothingElse` fails if one of those columns
+appears. A row that carried a redirect would make this service an open redirector
+for every caller registered against it — and "the word for any caller here is the
+caller" is why this README does not name a product: the mechanism has no opinion
+about who is using it.
+
+**The window is ten minutes with a one-hour ceiling, and over the ceiling is a `422`
+rather than a clamp.** The other three windows are sized around delivery and this one
+is not delivered at all, so there is no mail latency to absorb. The ceiling is
+published rather than configured because it is the number that decides how long a
+delivered link stays live; a caller that asked for a day and received an hour has
+been told a lie about a credential it is about to hand to somebody else.
+
+**A subject with a second factor is refused at the mint, not challenged at the
+redeem.** See [DECISIONS.md D12](DECISIONS.md) for why a subject that does not exist
+is a `404` here and a `202` on every self-service route above.
 
 **Delivery goes through one seam with two methods, and this repository does not
 implement the delivery.** `recovery.Mailer` is `Send` and `Ready`; the second exists
@@ -844,6 +875,9 @@ removes access to something that exists. The shape is core's
 | `accounts:write` | `PATCH /v1/accounts/:id`, `POST /v1/accounts/:id/invitations`, `PATCH` and `DELETE /v1/accounts/:id/members/:userId` |
 | `accounts:delete` | `DELETE /v1/accounts/:id`, and nothing else |
 | `oidc_clients:write` | all four `/v1/accounts/:id/oidc-clients` routes |
+| `audit_log:read` | `GET /v1/accounts/:id/admin/audit-log` |
+| `account_invitations:write` | `DELETE /v1/accounts/:id/admin/invitations/:invitationId`, `POST /v1/accounts/:id/admin/invitation-revocations` |
+| `sessions:write` | `POST /v1/session-links` — **the only scope whose route turns an opaque value into an authenticated browser session** |
 
 **Where the vocabulary came from:** `openapi/v1.yaml` and the route table, read
 rather than invented. `accounts:delete` is separate from `accounts:write` because
@@ -862,7 +896,19 @@ oversight:**
   MFA, enrol one, rotate one or turn one off. A machine credential that could
   disable a second factor is a credential whose theft is a *downgrade* rather than
   a break-in, so the routes refuse a token outright rather than consulting a list.
-- **no scope for sessions.** A token cannot mint, read or revoke a browser session.
+- **no scope for SESSIONS — and this is the sentence `sessions:write` changed, so it
+  is worth reading rather than inheriting.** A token still cannot create, read or
+  revoke a browser session, and it still cannot complete a second-factor login; the
+  session routes refuse a token outright and no scope changes that. What
+  `sessions:write` buys is **minting a link**: a single-use token worth ten minutes
+  that a *caller* delivers to a browser and that redeems into a session for the
+  subject it names. A link is not a session — possession of one is not proof of
+  anything, it is a delegation somebody chose to make over a channel they already
+  own — but it is the closest this vocabulary comes to an authentication
+  credential, which is why it is granted deliberately, why a mint for an
+  MFA-enrolled subject is refused rather than served with a challenge, and why the
+  redemption route is public. There is no `sessions:read` and there will not be one:
+  a link is minted and handed over, so there is nothing to list.
 - **no scope for the api keys themselves.** A credential that can mint more
   credentials is a privilege-escalation path with a nice UI.
 - **no scope that means "everything."** Not `*`, not `accounts:*`, not one named
@@ -1290,7 +1336,42 @@ The database tier, once the schema is applied:
 ```sh
 docker compose up -d --wait postgres
 goose -dir migrations postgres "$DATABASE_URL" up
-TEST_DATABASE_URL="postgres://identity:identity@localhost:5432/identity?sslmode=disable" go test ./...
+TEST_DATABASE_URL="postgres://identity:cafaye@localhost:15500/identity?sslmode=disable" go test ./...
+```
+
+**That DSN was wrong in two ways until 2026-10-05, and both were measured rather than
+guessed.** A command in this section that *looks* like the gate and is not the gate is
+the same family of defect as the single-link-template bug the recovery suite just
+fixed: it looks like an instruction, it is followed, and it fails somewhere far from
+its cause.
+
+| | was | is | what the wrong value does |
+|---|---|---|---|
+| password | `identity` | `cafaye` | `password authentication failed for user "identity"` |
+| port | `5432` | `15500` | connects to a *different cluster* — or to none |
+
+**THE PASSWORD IS THE CLUSTER'S, NOT THE SERVICE'S**, which is what
+[AGENTS.md](AGENTS.md)'s identity-27 note says and what `docker-compose.yml` states
+where it interpolates `${KIT_POSTGRES_PASSWORD:-cafaye}`: kit's shared cluster gives
+every role `$POSTGRES_PASSWORD`, and isolation is by privilege and never by secret.
+The literal `identity` was correct only while identity ran its own container with its
+own password.
+
+**THE PORT IS KIT'S, AND `5432` IS NOT THIS SERVICE'S TO CLAIM.** kit publishes the
+shared postgres on **15500**, and on a machine where 15500 is already held, that is
+also where a developer reaches an identity verification cluster. Write `5432` and
+`psql` answers `FATAL: role "identity" does not exist` — a sentence about a *role*,
+produced by a server this repository has nothing to do with, which sends the reader
+looking for a migration rather than for a port.
+
+**TAKE THE DSN FROM THE FILE RATHER THAN TYPING IT**, and that is the whole of the
+correction:
+
+```sh
+# one source, interpolated, follows an overridden cluster password
+dsn=$(grep -o 'postgres://identity_app[^ ]*@postgres:5432/identity' docker-compose.yml)
+# host-side equivalent: same credentials, kit's published port
+TEST_DATABASE_URL="postgres://identity:${KIT_POSTGRES_PASSWORD:-cafaye}@localhost:15500/identity?sslmode=disable" go test ./...
 ```
 
 Migrations are a deploy step, so they are not a test step — `goose up` is its own

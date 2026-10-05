@@ -3276,6 +3276,145 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  /v1/session-links:
+    post:
+      tags: [sessions]
+      operationId: mintSessionLink
+      summary: Mint a delegated session link for a named subject
+      description: |
+        Writes **one row of the same `recovery_tokens` table** the password-reset,
+        verification and email-change tokens live in, with purpose `session_link`,
+        and hands the plaintext back exactly once. Redeeming it — at
+        `POST /v1/session-links/redeem`, which is not in this document yet — produces
+        what a password login produces.
+
+        ### Why the subject is in the body and the credential is a token
+
+        A browser session is a person acting as themselves, and this route asks this
+        service to put a credential in front of **somebody else's** browser. That is
+        the vocabulary's `sessions:write`: the only scope in this service whose route
+        turns an opaque value into an authenticated browser session, which is why it
+        is granted deliberately rather than inherited.
+
+        **A browser session is refused with `403`, not `401`.** A session *is*
+        authenticated, so a 401 would send a client looking for a login problem that
+        does not exist. The same is true of presenting no credential at all: this
+        surface is reachable by a scoped api key and by nothing else.
+
+        ### The subject is a user, and it is not the caller
+
+        There is no account in the path and no tenancy check on this route, which is
+        a fact about **what the scope buys** rather than a shortcut: `sessions:write`
+        may mint for any subject, not for one subject in one account. A token minted
+        FOR somebody else and handed to them is a delegation the owner of the token
+        chose to make; the alternative — a scope that could only ever delegate to
+        yourself — would be a name for "mint me a session", which is a different and
+        larger capability wearing a smaller one's clothes.
+
+        **`404` for a subject that is not a user, and that is deliberate.** Every
+        other route in this service answers `202` for an unknown subject or address,
+        because those routes have **no credential** and "no such account" would be a
+        free enumeration oracle. This one is behind a credential holding
+        `sessions:write`, so there is no anonymous stranger to protect and a caller
+        asking for a user who is not there is entitled to be told. See DECISIONS.md
+        D12 for the contrast written out.
+
+        ### A subject with a second factor is refused, not challenged
+
+        **`409 conflict`** for a subject who has enrolled MFA. A link redeems into a
+        session, so honouring one for an enrolled subject would let a token holder turn
+        a first factor into a complete login — which is the downgrade this service's
+        own scope vocabulary says no machine credential may perform. Threading a
+        challenge through the redemption would be a second authentication surface
+        mounted on a **public** route, so the refusal is exact and the alternative is
+        a packet of its own.
+
+        ### `expires_in` is SECONDS, default 10 minutes, ceiling 1 hour
+
+        The name and the shape are RFC 6749's, so every OAuth client already knows
+        them. **Over the ceiling is a `422`, never a clamp**: a caller that asked for
+        a day and received an hour has been told a lie about how long a credential it
+        is about to hand to somebody else stays live.
+
+        **`token` is returned here and nowhere else, ever.** There is no endpoint that
+        re-reads it — there is nothing left to print, because the row holds a SHA-256.
+        A caller that loses it mints another. **This service does not deliver it and
+        does not know where it is delivered to**: the caller owns delivery, and there
+        is no redirect parameter, no landing URL and no mail. A `recovery_tokens` row
+        for a link carries no target, and the schema says so with a CHECK.
+      security:
+        - bearerToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MintSessionLinkRequest'
+            examples:
+              theDefaultWindow:
+                summary: The ten-minute default
+                value:
+                  user_id: ab000000-0000-0000-0000-0000000000b1
+              aShorterWindow:
+                summary: Naming a shorter one
+                value:
+                  user_id: ab000000-0000-0000-0000-0000000000b1
+                  expires_in: 300
+      responses:
+        '201':
+          description: |
+            The link, and its expiry. `token` is the only place it appears.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionLink'
+              example:
+                token: cafaye_Zq3vK7mXpR2tY8wB4cN6dF0gH1jK5lM9oP3qS7uV2wX4yZ8
+                expires_at: '2026-10-01T12:10:00Z'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: No user with that id exists on this deployment.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          description: |
+            That account has a second factor, which a session link cannot answer.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          description: |
+            This deployment cannot say whether an account has a second factor, so it
+            mints no links. Same shape as the password-reset 503 for a deployment
+            that cannot send mail: a configuration problem the caller can act on by
+            not depending on this.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
   /v1/introspections:
     post:
       tags: [api-keys]
@@ -4248,15 +4387,24 @@ components:
     APIKeyScope:
       type: string
       description: |
-        One of four names, in core's `resource:action` shape. The set is closed and
+        One of seven names, in core's `resource:action` shape. The set is closed and
         adding one is a code change rather than a migration, which is why a token
         holding a name this build does not know is refused at the point of use
         rather than being treated as "and so anything goes".
+
+        **`sessions:write` is the only one whose route turns an opaque value into an
+        authenticated browser session**, and it is last in this list for that reason.
+        It mints a single-use, ten-minute link for a subject the caller names; it does
+        not create, read or revoke a session, and the redemption route that spends it
+        cannot be reached by a token at all.
       enum:
         - accounts:read
         - accounts:write
         - accounts:delete
         - oidc_clients:write
+        - audit_log:read
+        - account_invitations:write
+        - sessions:write
 
     IssuedAPIKey:
       allOf:
@@ -4480,6 +4628,67 @@ components:
             uses. Omit it for the 90-day default. `0` and negative values are 422:
             a permanent credential is not something this build offers, and the
             ceiling is 365 days.
+
+    MintSessionLinkRequest:
+      type: object
+      description: |
+        **The subject, and only the subject.** There is no `account_id`, no redirect,
+        no landing URL and no project: what a session belongs to is the user, and
+        where the browser goes afterwards and how the link reaches them are the
+        caller's — a row carrying a redirect would make this service an open
+        redirector for every caller that used it, and there is no column for one.
+
+        An unknown field is a 422, so a client that tried to send a landing URL is
+        told rather than having it silently dropped.
+      required: [user_id]
+      additionalProperties: false
+      properties:
+        user_id:
+          type: string
+          format: uuid
+          description: |
+            The subject the redeemed session will belong to. **It is not the
+            caller's own user id** — that is the whole point of the route. A uuid
+            this service did not issue is a 422, and the nil uuid is refused rather
+            than looked up: it is a value no row can hold.
+        expires_in:
+          type: integer
+          format: int64
+          minimum: 1
+          description: |
+            **Seconds from now**, the same name and shape RFC 6749's token response
+            uses. Omit it for the ten-minute default. A value over **3600** is a
+            **422 and never a clamp**, and so is `0` or a negative one: a caller that
+            asked for a day and received an hour has been told a lie about how long a
+            credential it is about to hand to somebody else stays live.
+
+            The ceiling is low because the link is not delivered to an inbox — the
+            caller hands it to a browser somebody is already in front of — so the
+            window has no delivery latency to absorb.
+
+    SessionLink:
+      type: object
+      description: |
+        The minted pair, and the ONLY place a session link's plaintext appears. Two
+        fields and no third: anything further would be a fact about the subject that
+        this service has no reason to publish.
+      required: [token, expires_at]
+      additionalProperties: false
+      properties:
+        token:
+          type: string
+          description: |
+            The link: 256 bits of entropy, stored as a SHA-256. Shown once, here, and
+            unrecoverable afterwards. **This service does not deliver it** — the
+            caller does, over a channel the caller owns, and identity has no mail for
+            it, no redirect to send the browser to and no record of where it went.
+        expires_at:
+          type: string
+          format: date-time
+          description: |
+            When it stops working, on the clock the mint was served from. It is the
+            link's window and not a session's: redeeming writes a session that lives
+            on the session's own much longer clock.
 
     RevokeAPIKeyRequest:
       type: object

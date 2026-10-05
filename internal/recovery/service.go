@@ -97,6 +97,10 @@ type Service struct {
 	mailer   Mailer
 	hasher   *users.Hasher
 	clk      clock.Clock
+	// secondFactor answers the one question a session link must ask about its
+	// subject. See SecondFactorState for why it is an interface and why the refusal
+	// on a nil one is the honest direction.
+	secondFactor SecondFactorState
 }
 
 // NewService wires the use cases.
@@ -115,18 +119,24 @@ func NewService(
 	mailer Mailer,
 	hasher *users.Hasher,
 	clk clock.Clock,
+	// secondFactor is the session-link mint's only question about a subject, and it
+	// is a REQUIRED argument rather than an option so that a caller cannot forget it
+	// and inherit a nil that reads as "nobody has a second factor". `mfa.Service`
+	// satisfies it by signature; see SecondFactorState.
+	secondFactor SecondFactorState,
 ) *Service {
 	return &Service{
-		uow:      uow,
-		read:     read,
-		tokens:   tokens,
-		users:    userStore,
-		sessions: revoker,
-		access:   access,
-		events:   events,
-		mailer:   mailer,
-		hasher:   hasher,
-		clk:      clk,
+		uow:          uow,
+		read:         read,
+		tokens:       tokens,
+		users:        userStore,
+		sessions:     revoker,
+		access:       access,
+		events:       events,
+		mailer:       mailer,
+		hasher:       hasher,
+		clk:          clk,
+		secondFactor: secondFactor,
 	}
 }
 

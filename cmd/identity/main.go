@@ -286,7 +286,7 @@ func newApp(ctx context.Context, cfg config.Config, logger *slog.Logger) (*app, 
 		// product this service has never heard of password recovery, which is both
 		// false and useless. A deployment that cannot send a message answers 503 on
 		// the routes that need one, with a sentence saying so.
-		recoverySvc, err := buildRecovery(cfg, pool, hasher, logger)
+		recoverySvc, err := buildRecovery(cfg, pool, hasher, secondFactor, logger)
 		if err != nil {
 			return nil, err
 		}
@@ -637,8 +637,16 @@ func buildSocial(
 	return httpapi.NewSocial(registry, service), nil
 }
 
+// buildRecovery is the account-recovery service, and it takes the second factor as a
+// parameter rather than being handed it.
+//
+// The reason is the session link: `MintSessionLink` must be able to refuse a subject
+// who has enrolled one, and a recovery service that could not ask would mint a link
+// for such a subject on the assumption that nobody has one. So the dependency is
+// explicit at the call site, and `buildAuth`'s `secondFactor` is what satisfies it.
 func buildRecovery(
-	cfg config.Config, pool *pgxpool.Pool, hasher *users.Hasher, logger *slog.Logger,
+	cfg config.Config, pool *pgxpool.Pool, hasher *users.Hasher,
+	secondFactor recovery.SecondFactorState, logger *slog.Logger,
 ) (*recovery.Service, error) {
 	if pool == nil {
 		return nil, nil
@@ -675,6 +683,13 @@ func buildRecovery(
 		mailer,
 		hasher,
 		clock.System{},
+		// `mfa.Service` itself, and NOT nil and not a stub. A deployment with no
+		// MFA_ENCRYPTION_KEY still builds one — with an Unavailable vault — because
+		// `Enabled` needs no key: it is a lookup on `mfa_credentials`, and refusing
+		// every link in such a deployment would be exactly backwards, since those are
+		// the deployments where an enrolment somebody made elsewhere is most likely to
+		// exist.
+		secondFactor,
 	)
 
 	return service, nil

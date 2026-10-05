@@ -193,6 +193,16 @@ func (o options) registerRoutes(r chiRouter) {
 	// configured, which is a NORMAL state here rather than a broken one — this is
 	// the one surface a deployment can leave off on purpose.
 	o.registerSocialRoutes(r)
+
+	// And the session-link mint: a machine credential holding `sessions:write`
+	// mints a single-use token for a named subject, which that subject's browser
+	// redeems into a session. It needs the same one thing the recovery surface needs
+	// — a database — and it has its own registrar so the surface has a name a reader
+	// can go looking for. It is NOT conditional on a mailer and never will be: the
+	// caller delivers the link, so a deployment that cannot send email can still mint
+	// one, and gating this on a mailer would refuse a capability that does not need
+	// it.
+	o.registerSessionLinkRoutes(r)
 }
 
 // chiRouter is the slice of *chi.Mux these routes need. Naming it keeps the

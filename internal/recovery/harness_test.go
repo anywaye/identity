@@ -39,6 +39,13 @@ type harness struct {
 	mailer *recordingMailer
 	access *recordingAccessRevoker
 	users  *users.Store
+	// secondFactor is the seam the session-link mint asks about its subject. It is a
+	// STUB and not internal/mfa's service because that package's own store needs its
+	// own tables and a vault, and the property under test here is the mint's
+	// BEHAVIOUR for each answer rather than mfa's lookup — which is exercised in
+	// internal/mfa. A stub that could not fail would be a problem, so it can: see
+	// `err` and `enrolled`.
+	secondFactor *stubSecondFactor
 	// token is the session token register() last minted, kept on the harness rather
 	// than returned because most tests want a live session without caring about its
 	// value.
@@ -120,6 +127,23 @@ func (r *recordingAccessRevoker) swept(userID id.UUID) (time.Time, bool) {
 	return at, ok
 }
 
+// stubSecondFactor is `mfa.Service.Enabled`'s answer, held in memory.
+//
+// IT IS A STUB WITH THREE ANSWERS RATHER THAN A BOOLEAN FIELD, and the third is the
+// point: `enabled`, `enrolled` and `err` cover the two questions the mint asks and
+// the failure where the seam cannot answer at all, so a test can prove that a
+// deployment which cannot look is refused rather than served. A stub with only
+// `enrolled bool` could not express the case the refusal exists for.
+type stubSecondFactor struct {
+	enabled  bool
+	enrolled bool
+	err      error
+}
+
+func (s *stubSecondFactor) Enabled(context.Context, db.Querier, id.UUID) (bool, error) {
+	return s.enrolled, s.err
+}
+
 // newHarness builds the service over a shared pool.
 //
 // schema says whether to build a PRIVATE schema instead, which a test needs only
@@ -140,13 +164,21 @@ func newHarness(t *testing.T, schema bool) *harness {
 	access := newRecordingAccessRevoker()
 	userStore := users.NewStore(pool)
 
+	// ONE stub instance, shared with the service. Two of them would be a harness
+	// where a test that sets `h.secondFactor.enrolled = true` is talking to an
+	// object the use case never sees, and every mint would answer as though the
+	// subject had no second factor — which is exactly the assertion the MFA refusal
+	// test needs to be able to make.
+	secondFactor := &stubSecondFactor{}
+
 	return &harness{
-		t:      t,
-		pool:   pool,
-		clk:    clk,
-		mailer: mailer,
-		access: access,
-		users:  userStore,
+		t:            t,
+		pool:         pool,
+		clk:          clk,
+		mailer:       mailer,
+		access:       access,
+		users:        userStore,
+		secondFactor: secondFactor,
 		svc: NewService(
 			db.TxRunner{Pool: pool},
 			db.Direct{Pool: pool},
@@ -158,6 +190,7 @@ func newHarness(t *testing.T, schema bool) *harness {
 			mailer,
 			testHasher(),
 			clk,
+			secondFactor,
 		),
 	}
 }

@@ -222,6 +222,15 @@ func TestEveryScopeIsWiredToARoute(t *testing.T) {
 			"DELETE /v1/accounts/{accountID}/admin/invitations/{invitationID}",
 			"POST /v1/accounts/{accountID}/admin/invitation-revocations",
 		},
+		// The session-link mint, and the only row on a route with no account in its
+		// path — which is why the list above it can be read as "where each scope is
+		// enforced" and this one cannot be read off an account route. It is here in
+		// the same commit as the scope for the same reason as the two above: a scope
+		// and its route land together or the vocabulary's completeness claim is
+		// false in the interval between them.
+		ScopeSessionsWrite: {
+			"POST /v1/session-links",
+		},
 	}
 
 	if len(want) != len(AllScopes()) {

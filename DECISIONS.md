@@ -28,6 +28,7 @@ and its entry here is deleted; the number is never reused.**
 | [D8](#d8-one-link-template-for-four-messages-and-what-the-deployment-inherits) | one link template served all four messages — so a verification mail's button opened the password-reset screen. What does the template a deployment already set now MEAN? | RULED: it is the DEFAULT for every purpose with no template of its own, so nothing breaks at boot, and a purpose with neither is refused by name at startup |
 | [D9](#d9-registration-publishes-that-an-address-is-taken-and-that-is-the-last-one) | `POST /v1/users` answers `409` for a taken address, so an unauthenticated caller can discover whether anybody has an account here. Is that disclosure accepted, or does registration change shape? | RULED for now: it is accepted, and it is named. Closing it is a decision about products, not about identity |
 | [D10](#d10-identity-renders-no-html-and-the-browser-belongs-to-parlor) | `identity` must not have its own views — the frontend belongs to `parlor`. But the page *is* the AS's user-agent interaction, and OpenID Connect Core §3.1.2.1 makes that part of the provider's job. Does the page move, and if so, what crosses the boundary and what does not? | RULED: it moves. identity keeps every authorization decision and hands the browser to a configured login UI. The contract is published in `internal/oidc/loginui.go` and `openid/openid.yaml` |
+| [D12](#d12-an-unknown-subject-is-a-404-behind-a-machine-credential-and-a-202-in-front-of-a-stranger) | the session-link mint names a subject. The self-service flows answer `202` for an unknown address because they have no credential. What does this one answer? | RULED: **404 with a problem document**, because the caller already holds `sessions:write` and there is no anonymous stranger left to protect. The contrast with the self-service flows is the decision, not the status |
 
 ## D1: twelve served operations are in no document
 
@@ -1225,3 +1226,61 @@ product works, which reads as a missing grant and not as a missing scope. That
 asymmetry is why the package doc in `user.go` and the substrate's own closing
 paragraph both name it, and why the fix is one function with a doc comment rather
 than a line inside a loop.
+
+## D12: an unknown subject is a 404 behind a machine credential, and a 202 in front of a stranger
+
+`POST /v1/session-links` names the subject it mints for: `{user_id,
+expires_in?}`. The question this decision answers is what the route says when
+that `user_id` is not a user.
+
+The answer is **404 with a problem document**, and the fact that it disagrees
+with every other route in this service that takes an identifier from a caller
+is the whole of it.
+
+**THE CONTRAST, STATED AS A TABLE, because it is easy to read one row and apply
+it everywhere.**
+
+| route | credential required | unknown identifier answers | why |
+|---|---|---|---|
+| `POST /v1/password-resets` | none | `202 {"status":"accepted"}` | there is no caller to protect — publishing "no such account" would be a free enumeration oracle for every address an attacker types |
+| `POST /v1/email-verifications` | none | `202 {"status":"accepted"}` | same, and the 409 that used to stand here was [D9](#d9-registration-publishes-that-an-address-is-taken-and-that-is-the-last-one)'s cousin, found and removed by identity-27 |
+| `POST /v1/email-changes` | session | `401` with no session | the caller has not proved anything, so the request never reaches the lookup |
+| **`POST /v1/session-links`** | **api key with `sessions:write`** | **`404 not_found`** | **there is a caller, it is inside the trust boundary, and it is entitled to know** |
+
+**WHY IT IS SAFE HERE AND NOT ON THE ROWS ABOVE.** The enumeration property
+protects somebody who has proved nothing. A credential holding
+`sessions:write` is not that: it is a grant somebody made deliberately, it is
+recorded against an `api_keys` row, and it is revocable. Such a caller asking
+"does this user id exist on this deployment" is asking a question it is already
+entitled to ask — it could learn the same thing from `GET /v1/accounts/:id` and
+from the introspection endpoint. Refusing the answer here would protect nothing
+and cost the caller a `422`-shaped guess on every retry.
+
+**WHY IT IS NOT 422.** A `422` says "this request is not acceptable". The
+request was fine; the thing it named is not there. core's convention is that
+`404` is for a resource the caller may not see or does not exist, and here the
+two are the same answer to the same question, which is what `404` is for. The
+detail names no fact beyond the absence.
+
+**WHY IT IS NOT 202.** `202` is the self-service flows' whole enumeration
+defence, and using it here would be a lie in the other direction: this route
+either writes a row or it does not, and a caller that received `202` for a
+subject that is not a user would believe a link existed for nobody.
+
+**THE THING THAT WOULD OVERTURN THIS.** If a deployment ever exposed the mint
+without the credential — a route variant, an internal-only port, a future
+`POST /v1/session-links` for a self-service "sign in on another device" flow —
+this decision inverts completely and the answer becomes `202` with a body that
+says nothing at all. The property that makes 404 safe is the middleware, not the
+handler: `requireSessionLinkMint` refuses everything that is not a scoped api
+key, so the 404 is only ever reachable by a caller inside the boundary. Moving
+the decision into a handler would have made it depend on which handler ran, and
+that is the shape of thing this repository refuses.
+
+**AND THE REFUSAL THAT IS *NOT* IN THIS TABLE, because it is a different
+question.** A subject who exists and has a second factor is `409 conflict`,
+which publishes that the account exists — which is safe for the same reason the
+404 is, and which would not be on a route without a credential. And the subject
+lookup runs BEFORE that check, so an unknown subject is a 404 rather than a
+409: the two must not be told apart, or the 409 becomes a probe for which ids
+are enrolled.
