@@ -1151,3 +1151,77 @@ copying the library's headers verbatim, so `/oidc/authorize` answered
   `302`, the flow still ends at a `302` to the client's `redirect_uri` with a
   `code`, and no discovery metadata changed. A browser flow is a browser flow and
   the number of fields in a form is not part of the protocol.
+
+## D11: "my accounts" is a THIRD scope, and it is a policy rather than a join filter
+
+`GET /v1/accounts` answered `[]` for a user who owned three accounts, and it
+answered `[]` without an error, a 401, or a red assertion anywhere. The query
+was correct, the membership rows were in the table, and the product rendered
+"you are not a member of any account".
+
+The cause is that the fleet has had two scopes since kit's substrate landed,
+and this endpoint needs a third:
+
+| scope | set by | answers |
+|---|---|---|
+| `cafaye.account_id` | `begin_account` | *which account* a request stands in |
+| `cafaye.credential_digest` | `begin_credential` | *which credential* a caller presented |
+| `cafaye.user_id` | `begin_user` | *who* the caller is |
+
+`account_users` was protected by `protect_table`, so it carried exactly the
+first scope's policy: `account_id = (select cafaye.current_account_id())`. A
+caller who has signed in and has not yet chosen an account is not standing in
+one — that is what makes them a caller rather than a tenant — so that predicate
+was not true for every row they own, and the row filter took all of them.
+
+Measured against this repository's migrations on PostgreSQL 17.11, three
+accounts, two users, as the table owner with `FORCE` on:
+
+| context | rows visible in `account_users` |
+|---|---|
+| none | 0 |
+| `begin_user(one)` | 2 — the two accounts he is a member of |
+| `begin_user(two)` | 1 — his own only |
+| `begin_user(one)`, `where account_id = beta` | 1 — his own membership, not a browse |
+| `begin_user(one)`, `where user_id = two` | 0 |
+| no `begin_user`, `where account_id = beta` | 0 |
+| `begin_user(ccc…)` for a user with no membership | 0 |
+| `begin_user(one)`, then `INSERT` | `42501`, `new row violates row-level security policy` |
+| `begin_account(beta)` + `begin_user(one)` | 3 — beta's two members plus his own |
+
+That last row is permissive-policy semantics and is not an accident: two
+select policies on one table are OR-ed, so a caller standing in an account sees
+that account's members exactly as before, and additionally sees their own
+memberships everywhere else. Nothing that used to be readable stopped being
+readable.
+
+**Why a THIRD POLICY rather than a query change.** The tempting fix is to scope
+the join in Go — read the membership rows through the login role, or query with
+an explicit `where user_id = $1` from a table nobody else can read. Both were
+rejected, and the second is the interesting one: a predicate written into a
+query is a predicate every future caller of that query must remember, and the
+row that reaches `store.ListForUser` next will be somebody else's. The database
+is the only place where "you may see your own memberships, and only your own" is
+true of the table rather than of the one function that remembered.
+
+**Why not `begin_account` per account, discovered by trial.** Because a caller
+does not know which accounts he is in — that is the question — so it would be a
+loop over an unbounded unknown that asks the boundary "does this account have
+this user in it" once per account in the fleet.
+
+**Why `begin_user` is NOT wired into `TxRunner`.** `internal/tenancy/user.go`
+offers `BeginUser` and deliberately leaves it out of the runner, and
+`accounts.Service.ListMine` opens its own transaction through the same `s.uow`
+every write in that service uses. `TxRunner`'s argument is that *every*
+account-scoped write passes through it, so "every write runs under an identity"
+is a property of one type; that argument does not carry over to one read that
+one endpoint makes, and paying a statement on every transaction of every request
+to satisfy it is the cost `scope.go` already declines for the account seam.
+
+**The cost, which is the thing to remember.** Forgetting `begin_account` makes
+*every* account-scoped read empty, which is loud and gets debugged in minutes.
+Forgetting `begin_user` makes *one screen* empty while everything else in the
+product works, which reads as a missing grant and not as a missing scope. That
+asymmetry is why the package doc in `user.go` and the substrate's own closing
+paragraph both name it, and why the fix is one function with a doc comment rather
+than a line inside a loop.

@@ -252,11 +252,62 @@ func (s *Service) addOwner(ctx context.Context, q db.Querier, account Account, u
 //
 // Scoped by the authenticated user's id and nothing else. A query scoped by an
 // account id from the request body is how one tenant's data reaches another's.
+//
+// # WHY THIS IS THE ONE CALL SITE OF tenancy.BeginUser
+//
+// `account_users` carries two policies after migration 00018 and this query needs
+// the second one. The first is `cafaye.protect_table`'s — `account_id = (select
+// cafaye.current_account_id())` — and it answers "which members belong to the
+// account I am standing in", which is a different question from this one. A caller
+// who has signed in and has not yet chosen an account is not standing in one;
+// that is what makes them a caller rather than a tenant.
+//
+// So this query ran under the account policy alone and returned nothing. Not an
+// error, not a 401, not a red assertion anywhere: the join was correct, the
+// membership row was in the table, and the answer was `[]` for a user who owned
+// an account. The product rendered "you are not a member of any account".
+//
+// The fix is `cafaye.begin_user/1`, and it needs a TRANSACTION to live in —
+// `begin_user` is `is_local = true`, exactly as `begin_account` is, so on a
+// pooled connection outside a transaction it expires at the end of the statement
+// that set it. That is why this opens one through the same `s.uow` every write in
+// this service already uses rather than reading on `s.read.Queryer()`.
+//
+// It opens its own rather than relying on TxRunner having set it, and that is a
+// deliberate trade rather than an oversight. TxRunner's argument is that EVERY
+// account-scoped write passes through it, so "every write runs under an identity"
+// is a property of one type; that argument does not carry over to a read one
+// endpoint makes, and paying a statement on every transaction of every request to
+// satisfy it is the cost scope.go explicitly declines for the account seam's own
+// empty case.
 func (s *Service) ListMine(ctx context.Context, userID id.UUID) ([]MemberSummary, error) {
 	if userID.IsZero() {
 		return nil, ErrNotAMember
 	}
-	return s.store.ListForUser(ctx, s.read.Queryer(), userID)
+
+	var out []MemberSummary
+	err := s.uow.Do(ctx, func(ctx context.Context, q db.Querier) error {
+		if err := tenancy.BeginUser(ctx, q, userID); err != nil {
+			return fmt.Errorf("naming the caller for the account list: %w", err)
+		}
+		rows, err := s.store.ListForUser(ctx, q, userID)
+		if err != nil {
+			return fmt.Errorf("listing the caller's accounts: %w", err)
+		}
+		out = rows
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	// Never nil, so a JSON encoder renders `[]` rather than `null` for a user
+	// with no accounts. The store guarantees that already; it is restated because
+	// this method now hands back whatever the callback captured, and a nil slice
+	// captured there is a `null` one level out with nothing left to turn it back.
+	if out == nil {
+		out = []MemberSummary{}
+	}
+	return out, nil
 }
 
 // Get returns an account and the caller's membership in it.

@@ -1773,7 +1773,10 @@ tool, not a module dependency. `00001_init.sql` establishes the convention and
 the tenancy and social-login tables (`00008`'s `connected_accounts` is defined and
 unused — the social-login surface is not mounted, see "Not built yet"), `00009` the
 OIDC ones, `00010` the four MFA
-tables, and `00011` the `api_keys` table. Migrations are a deploy step, not a boot
+tables, and `00011` the `api_keys` table, and `00016`–`00018` the account-isolation
+substrate itself: kit's `protect_table`, the credential-resolution audit, and the
+caller scope that lets `GET /v1/accounts` answer the question it exists to answer
+(see D11). Migrations are a deploy step, not a boot
 step — see [migrations/README.md](migrations/README.md).
 
 ## Image

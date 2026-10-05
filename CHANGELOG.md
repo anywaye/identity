@@ -6,6 +6,64 @@ All notable changes to identity are recorded here. The format follows
 
 ## [Unreleased]
 
+### Fixed (packet identity-caller-scope: `GET /v1/accounts` answered `[]` for a user who owned three accounts)
+
+`GET /v1/accounts` listed the accounts an authenticated user belongs to, and
+returned an empty array for everybody. Not an error, not a `401`, not a red
+assertion: the query was correct, the membership rows were present, and the
+product rendered "you are not a member of any account".
+
+The cause is a scope that did not exist. `account_users` was protected by
+`cafaye.protect_table`, which scopes by `cafaye.account_id` — *which account a
+request stands in*. A caller who has signed in and has not yet chosen an account
+is not standing in one, so that predicate was false for every row they own.
+
+- **`migrations/00018_membership_user_scope.sql`** installs `cafaye.begin_user/1`
+  and `cafaye.current_user_id()` verbatim from kit's substrate, then re-protects
+  `account_users` with `cafaye.protect_membership_table('account_users',
+  'user_id')` — the same four account policies as before, plus ONE `for select`
+  policy qualified by the caller.
+- **`internal/tenancy/user.go`** is the Go seam: `tenancy.WithUser`,
+  `tenancy.UserFrom`, `tenancy.BeginUser`. A zero user is refused rather than
+  cleared, matching `BeginAccount`.
+- **`accounts.Service.ListMine`** opens a transaction through the existing
+  `s.uow`, names the caller with `begin_user`, and reads. Previously it read on
+  `s.read.Queryer()` with no scope at all.
+
+Measured on PostgreSQL 17.11 with two users across three accounts, as the table
+owner with `FORCE` on: no context 0 rows; `begin_user(one)` 2 rows; `begin_user`
+for a user with no membership 0 rows; a `begin_user` session attempting an
+`INSERT` gets `42501`; `begin_account(beta)` + `begin_user(one)` sees beta's
+members and his own, because two permissive select policies are OR-ed and
+nothing that used to be readable stopped being.
+
+End to end, one session, one database, two binaries — the request against the
+binary without `begin_user` answers `[]`, the request against this one answers
+all three accounts.
+
+Also in this packet, and only because the migration had never been applied:
+
+- **The `Down` section of 00018 did not parse.** Three `StatementEnd`
+  annotations and one `StatementBegin`; `goose` refused the file at parse time,
+  which is the first red anyone saw because every check so far read the file as
+  text. Fixed, and `goose down` / `goose up` now run: the Down leaves 00016's
+  four policies, its index and its grants exactly where they were.
+- **`TestTheOtherSixSubstrateFunctionsAreKitsBytes` is now
+  `TestEverySubstrateFunctionThisRepositoryInstallsIsKitsBytes`.** It measures
+  TEN functions across 00016 and 00018; the old name and its skip message said
+  six, and would have described a shrinking check as a passing one.
+- A second CI check asserts `cafaye.membership_tables()` resolves the caller
+  through `pg_depend` rather than through a deparsed spelling, which is the trap
+  that makes the audit answer nothing as the cluster admin role and everything
+  as everybody else. It was measured green from both `identity` and
+  `identity_app`.
+
+`cafaye.begin_user`, `cafaye.current_user_id`,
+`cafaye.protect_membership_table` and `cafaye.membership_tables` are kit's, and
+kit's `templates/database/tenancy/substrate.sql` is the file they were copied
+from; `internal/platform/ci/substrate_copy_test.go` hashes each body out of both
+files and fails if they drift. See D11.
+
 ### Fixed (packet registry-identity-down-05: `goose up` could not succeed on CI, and seventeen Down sections had never been run)
 
 **Two findings, and the first one is why the second one was possible.**

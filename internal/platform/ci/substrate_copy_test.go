@@ -65,6 +65,7 @@ import (
 const (
 	substrateMigration = "migrations/00016_account_isolation.sql"
 	fixMigration       = "migrations/00017_credential_audit_dependencies.sql"
+	userScopeMigration = "migrations/00018_membership_user_scope.sql"
 )
 
 // readMigration fails the test with the path when the file is unreadable, rather
@@ -202,6 +203,25 @@ func TestNoMigrationAfterTheFixInstallsAnAuditThatReadsASpelling(t *testing.T) {
 			len(migrations))
 	}
 
+	// The audits this rule covers, rather than one hard-coded name.
+	//
+	// A LIST because 00018 added a second audit with the identical property and
+	// the failure it guards is a shape, not a spelling: both resolve their subject
+	// function by OID out of pg_proc and their column by a pg_depend row onto the
+	// policy's OWN table, and a rewrite that read either of those as text would
+	// give the right answer to every role except the one whose `"$user"` schema
+	// IS `cafaye` — which is kit's cluster admin role, and so the operator most
+	// likely to be auditing. 00018's `membership_tables()` has to be covered by
+	// this or the rule has a hole exactly the shape of the defect it was written
+	// for: a second audit, added later, quietly deparsing.
+	//
+	// Both names are listed rather than matched by a regexp over every
+	// `cafaye.*_tables()` definition, because the alternative sweeps in a function
+	// that returns tables and is not an audit of this kind, and a rule that
+	// catches the wrong function is a rule nobody can reason about at the point it
+	// fires.
+	audits := []string{"credential_tables", "membership_tables"}
+
 	matched := map[string]bool{}
 	for _, path := range migrations {
 		name := filepath.Base(path)
@@ -209,30 +229,32 @@ func TestNoMigrationAfterTheFixInstallsAnAuditThatReadsASpelling(t *testing.T) {
 		// 00017's does, by contract, so that `goose down` returns the tree to the
 		// state the previous migration left it in. Asserting on Down would make
 		// the rollback the thing the check forbids.
-		for i, body := range functionBodies(t, name, sqlSection(t, name, true), "credential_tables") {
-			reads := ""
-			for _, forbidden := range []string{"pg_get_expr", "regexp_match"} {
-				if strings.Contains(body, forbidden) {
-					reads = forbidden
-					break
+		for _, audit := range audits {
+			for i, body := range functionBodies(t, name, sqlSection(t, name, true), audit) {
+				reads := ""
+				for _, forbidden := range []string{"pg_get_expr", "regexp_match"} {
+					if strings.Contains(body, forbidden) {
+						reads = forbidden
+						break
+					}
 				}
+				if reads == "" {
+					continue
+				}
+				matched[name] = true
+				if _, excused := migrationsThatPredateTheFix[name]; excused {
+					continue
+				}
+				t.Errorf("migrations/%s: the %d `%s()` in its Up section contains %q.\n"+
+					"Reading a pretty-printed expression makes the answer depend on the session's\n"+
+					"search_path, so the audit returns NOTHING as kit's cluster admin role\n"+
+					"`cafaye` and the right answer as every other role — measured by\n"+
+					"bin/credential-audit-drift. It reads as 'no table here can be resolved without\n"+
+					"an account', which is the one answer an operator believes.\n"+
+					"A migration is APPEND-ONLY: fix this with a new numbered file, and if the body\n"+
+					"genuinely has to differ from kit's, record why in that migration.",
+					name, i+1, audit, reads)
 			}
-			if reads == "" {
-				continue
-			}
-			matched[name] = true
-			if _, excused := migrationsThatPredateTheFix[name]; excused {
-				continue
-			}
-			t.Errorf("migrations/%s: the %d `credential_tables()` in its Up section contains %q.\n"+
-				"Reading a pretty-printed expression makes the answer depend on the session's\n"+
-				"search_path, so the audit returns NOTHING as kit's cluster admin role\n"+
-				"`cafaye` and the right answer as every other role — measured by\n"+
-				"bin/credential-audit-drift. It reads as 'no table here can be resolved without\n"+
-				"an account', which is the one answer an operator believes.\n"+
-				"A migration is APPEND-ONLY: fix this with a new numbered file, and if the body\n"+
-				"genuinely has to differ from kit's, record why in that migration.",
-				name, i+1, reads)
 		}
 	}
 
@@ -281,6 +303,53 @@ func TestTheCredentialAuditReadsDependenciesAndNotASpelling(t *testing.T) {
 	}
 }
 
+// The SECOND audit, checked for the same four structural markers, and the
+// assertion that matters most here is the negative one: `membership_tables()` was
+// written AFTER the fix, so unlike `credential_tables()` it has no deparsing
+// version anywhere in this tree to be compared against — a future edit could make
+// it read text and every existing check would stay green.
+//
+// `proname = 'current_user_id'` rather than the digest's name is the marker that
+// distinguishes it, and it is listed rather than left implied: an audit that
+// resolved the wrong function would still contain `pg_proc`, `pg_depend` and
+// `pronargs = 0`, so the required-substring list has to name the thing that is
+// actually being resolved or the check passes on a body that answers about a
+// different scope.
+func TestTheMembershipAuditResolvesTheCallerAndNotASpelling(t *testing.T) {
+	body := functionBody(t, userScopeMigration, sqlSection(t, userScopeMigration, true), "membership_tables")
+
+	for _, want := range []string{
+		"pg_depend",
+		"pg_proc",
+		"pronargs = 0",
+		"proname = 'current_user_id'",
+		"_cafaye!_members",
+		"ud.refobjid = pol.polrelid", // the policy's OWN table, so another table's column stays out
+		"'(unresolved)'",              // a row we cannot narrow is reported, not dropped
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("cafaye.membership_tables() does not contain %q.\n"+
+				"Without it the audit is reading something the session can change, or answering\n"+
+				"about a scope other than the caller's. The argument is kit's, at\n"+
+				"templates/database/tenancy/substrate.sql above that function.", want)
+		}
+	}
+
+	for _, forbidden := range []string{
+		"pg_get_expr",
+		"regexp_match",
+	} {
+		if strings.Contains(body, forbidden) {
+			t.Errorf("cafaye.membership_tables() contains %q.\n"+
+				"That is the reading 00017 removed from the credential audit, and the reason it\n"+
+				"matters twice over here: this audit answers 'which tables can be read with no\n"+
+				"account because of WHO IS ASKING', so an admin told nothing reads as a service\n"+
+				"with no caller-scoped path at all — which is the answer most likely to be\n"+
+				"believed about the table that was silently unreadable to every caller.", forbidden)
+		}
+	}
+}
+
 // The pre-00017 body is not hypothetical: it is IN THIS TREE, in 00017's own Down
 // section, so this file can prove the check above is able to fail rather than
 // asserting that it would. A check that has never been watched red is a check
@@ -310,23 +379,31 @@ func TestTheDriftCheckIsProvenAbleToFailOnTheBodyItRejects(t *testing.T) {
 	}
 }
 
-// The other six substrate functions are byte-identical to kit's, measured by
-// hashing each one out of both files. That is why 00017 replaces ONE body rather
-// than re-applying a whole template, and it is why a future drift in any of them
-// shows up here rather than as an unexplained difference.
+// Every substrate function this repository installs is byte-identical to kit's,
+// measured by hashing each one out of both files. That is why 00017 replaces ONE
+// body rather than re-applying a whole template, and it is why a future drift in
+// any of them shows up here rather than as an unexplained difference.
+//
+// TEN OF THEM NOW, ACROSS TWO MIGRATIONS, and the count is the point of the
+// comment rather than a detail of it: the file was written when kit's substrate
+// had six functions and two of them had already diverged. Each later addition is
+// exactly the shape of the drift that went unnoticed — a fourth function written
+// today against kit, and a copy somewhere that stops matching it the next time
+// kit edits the template.
 //
 // The comparison is against a LOCAL kit checkout when one is beside this
 // repository's sibling, and is SKIPPED — loudly, naming itself — when there is
 // not. A check that quietly passes because it could not find the other file is
 // the failure this file exists to prevent, so the skip says what was not checked.
-func TestTheOtherSixSubstrateFunctionsAreKitsBytes(t *testing.T) {
+func TestEverySubstrateFunctionThisRepositoryInstallsIsKitsBytes(t *testing.T) {
 	kitPath := findKitSubstrate(t)
 	kitBytes, err := os.ReadFile(kitPath)
 	if err != nil {
 		t.Skipf("SKIP: no kit substrate within three levels above this repository (%s), so the copy "+
-			"could not be compared against the template. Not checked: that the six functions 00017 "+
-			"did NOT replace are still byte-identical to kit's. Re-run this beside a kit checkout "+
-			"to close it; the audit check above needs no kit and is not gated on this.",
+			"could not be compared against the template. Not checked: that the six functions 00016 "+
+			"installed and the four 00018 added are still byte-identical to kit's. Re-run this "+
+			"beside a kit checkout to close it; the audit checks above need no kit and are not "+
+			"gated on this.",
 			filepath.Join(repoRoot(t), ".."))
 	}
 	kitSrc := string(kitBytes)
@@ -345,6 +422,32 @@ func TestTheOtherSixSubstrateFunctionsAreKitsBytes(t *testing.T) {
 				"00016 claims to embed kit's substrate verbatim, and one function differing\n"+
 				"means the copy has drifted again. Either re-copy it in a NEW migration or\n"+
 				"record why this one is deliberately different.", fn)
+		}
+	}
+
+	// The four 00018 added, and they are read from THAT migration rather than from
+	// 00016 — which is the whole reason 00018 exists, since 00016 was applied in
+	// deployed environments and rewriting it would diverge them.
+	//
+	// A SEPARATE LOOP rather than one list of ten, because the two migrations have
+	// different provenance and merging them would hide which file has to be edited
+	// when kit's substrate changes next. A reader told "cafaye.protect_table differs
+	// from kit's" and given ten function names has to go and work out which of the
+	// two migrations owns each one before they can do anything about it.
+	membershipSrc := sqlSection(t, userScopeMigration, true)
+	for _, fn := range []string{
+		"current_user_id",
+		"begin_user",
+		"protect_membership_table",
+		"membership_tables",
+	} {
+		if a, b := kitFunctionBody(t, kitSrc, fn), functionBody(t, userScopeMigration, membershipSrc, fn); a != b {
+			t.Errorf("cafaye.%s differs from kit's.\n"+
+				"%s claims to embed kit's substrate verbatim, and one function differing\n"+
+				"means the copy has drifted again — the failure 00017 exists because it\n"+
+				"happened once and nothing noticed. Either re-copy it in a NEW migration\n"+
+				"or record why this one is deliberately different.",
+				fn, userScopeMigration)
 		}
 	}
 
