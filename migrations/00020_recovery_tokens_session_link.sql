@@ -59,12 +59,25 @@ ALTER TABLE recovery_tokens
 
 -- +goose Down
 
--- The reverse drops the value from the vocabulary. It is NOT refused when rows
--- exist: a rollback that fails would strand the deploy, so a link row is left
--- readable by this build as a token nothing will spend (the flow that redeems it
--- is not mounted by the binary being rolled back), and the operator who needs the
--- rows gone deletes them deliberately — a live link row is a credential, and
--- deleting credentials in a rollback is a decision rather than a side effect.
+-- THE REVERSE IS REFUSED WHILE A LINK ROW EXISTS, and that is a fact about
+-- Postgres rather than a choice: a table's CHECK is validated against every row
+-- when it is added, so dropping the value from the vocabulary while a row names it
+-- fails with
+--
+--   ERROR: check constraint "recovery_tokens_purpose_is_known" of relation
+--          "recovery_tokens" is violated by some row (SQLSTATE 23514)
+--
+-- measured, not predicted — see the commit message. An operator rolling this back
+-- therefore has a choice to make, and this file refuses to make it for them:
+--
+--   DELETE FROM recovery_tokens WHERE purpose = 'session_link';
+--
+-- first, deliberately, or not at all. Deleting a live link row is destroying a
+-- credential, and a rollback that quietly did it would be a side effect dressed as
+-- an undo. Rolling back to the build that has no redeem route already makes every
+-- outstanding link unusable — nothing can spend them — so the rows can wait for a
+-- sweep (the one README.md's "Not built yet" still owes this table) rather than
+-- being destroyed by a deploy.
 ALTER TABLE recovery_tokens
     DROP CONSTRAINT recovery_tokens_purpose_is_known,
     ADD  CONSTRAINT recovery_tokens_purpose_is_known
