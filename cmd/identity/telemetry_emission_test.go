@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"go.opentelemetry.io/otel"
 
 	"github.com/cafaye/identity/internal/config"
+	"github.com/cafaye/identity/internal/httpapi"
 )
 
 // The end-to-end emission proof, and the test the fleet's measurement asked for.
@@ -302,6 +304,55 @@ func TestAMalformedTraceparentOverTheWireIsStillServed(t *testing.T) {
 	// Still exactly one export: the request is traced, just not under the id the
 	// header asked for.
 	receiver.oneExport(t)
+}
+
+// TestAServerErrorCrossesTheWireWithTheFleetsErrorClass is the last unproven half
+// of DONE MEANS 2 — `error.type` in core's own vocabulary, on a span that actually
+// leaves the process.
+//
+// The recorder suite already proves a 5xx becomes an error span carrying
+// `internal_error`, but "the span carries it" and "the collector receives it" were
+// different claims until the path bug, and only one of them was ever tested. So
+// this drives a failing readiness probe through `httpapi.New` directly — the same
+// constructor `newApp` calls, with the same middleware chain, rather than a
+// hand-built one — and asserts the class is in the bytes.
+//
+// A readiness check that always fails is the cheapest 5xx in this service: no
+// database, no fault injection, and a route that genuinely exists, so the span also
+// has to carry its route template.
+func TestAServerErrorCrossesTheWireWithTheFleetsErrorClass(t *testing.T) {
+	receiver := newOTLPReceiver(t)
+	t.Setenv("IDENTITY_OTEL_ENDPOINT", receiver.endpoint)
+	flush := installForTest(t)
+
+	failing := httpapi.Check{
+		Name: "always_fails",
+		Ping: func(context.Context) error { return errors.New("the dependency is down") },
+	}
+	handler := httpapi.New([]httpapi.Check{failing}, httpapi.WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("GET /readyz = %d, want 503. A readiness probe whose dependency fails "+
+			"has to answer 503, or there is nothing here to record.", rec.Code)
+	}
+	flush()
+
+	export := receiver.oneExport(t)
+	for _, want := range []struct{ what, needle string }{
+		{"the route template", "/readyz"},
+		{"the error class", "internal_error"},
+		{"the error attribute name", "error.type"},
+	} {
+		if !strings.Contains(export.body, want.needle) {
+			t.Errorf("the exported bytes carry no %s: %q is not in the body.\n\n"+
+				"A 5xx that reaches the collector with no error class is a request an "+
+				"operator can see failed and cannot search for by cause, and "+
+				"`internal_error` is core's own vocabulary rather than one invented here.",
+				want.what, want.needle)
+		}
+	}
 }
 
 // TestTelemetryOffDialsNothing is DONE MEANS 1, and it is the one direction a
