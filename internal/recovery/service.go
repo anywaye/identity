@@ -65,6 +65,26 @@ type SessionRevoker interface {
 	RevokeAllForUser(ctx context.Context, q db.Querier, userID id.UUID) error
 }
 
+// SessionStore is the slice of the sessions table these use cases need: the sweep a
+// reset and an email change use, PLUS the INSERT a session-link redemption uses.
+//
+// IT IS ONE ARGUMENT RATHER THAN TWO, and the reason is that both halves are the same
+// `*sessions.Store` at every call site — asking a caller to pass it twice would be
+// asking them to prove nothing. The split into SessionRevoker and SessionIssuer is
+// still worth having: it says what each flow asks of the table, and the redemption's
+// reason for wanting the INSERT is stated on the interface rather than inferred from
+// the fact that a session happens to appear at the end of a function.
+//
+// AND WIDENING THE PARAMETER TYPE IS A CHANGE TO EVERY CALL SITE'S CONTRACT, so it is
+// worth saying what it costs: a double that implemented only `RevokeAllForUser` used
+// to satisfy the constructor and does not any more. That is the cost of the union
+// being honest about what it needs, and it fails at the build rather than at a
+// redemption.
+type SessionStore interface {
+	SessionRevoker
+	SessionIssuer
+}
+
 // AccessTokenRevoker ends every OpenID Connect access token a user holds.
 //
 // THIS IS THE SAME RULE ONE SURFACE OVER, and it is here because "a reset that
@@ -91,7 +111,7 @@ type Service struct {
 	read     db.QuerierSource
 	tokens   TokenStore
 	users    UserStore
-	sessions SessionRevoker
+	sessions SessionStore
 	access   AccessTokenRevoker
 	events   EventAppender
 	mailer   Mailer
@@ -113,7 +133,7 @@ func NewService(
 	read db.QuerierSource,
 	tokens TokenStore,
 	userStore UserStore,
-	revoker SessionRevoker,
+	sessions SessionStore,
 	access AccessTokenRevoker,
 	events EventAppender,
 	mailer Mailer,
@@ -130,7 +150,7 @@ func NewService(
 		read:         read,
 		tokens:       tokens,
 		users:        userStore,
-		sessions:     revoker,
+		sessions:     sessions,
 		access:       access,
 		events:       events,
 		mailer:       mailer,

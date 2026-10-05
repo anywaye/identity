@@ -55,6 +55,13 @@ type fakeRecovery struct {
 	// mintOut and mintErr are the double's answer for a mint.
 	mintOut recovery.SessionLink
 	mintErr error
+	// linkRedeems records every RedeemSessionLink call, and linkRedeemErr is the
+	// double's answer for one. They are SEPARATE fields from `redeems`/`redeemErr`
+	// rather than shared, because the two flows have opposite credential shapes — one
+	// behind a scope, one public — and a shared field would make a table about one of
+	// them depend on the other's fixture.
+	linkRedeems   []recovery.RedeemSessionLinkInput
+	linkRedeemErr error
 }
 
 func newFakeRecovery() *fakeRecovery {
@@ -159,8 +166,26 @@ func (f *fakeRecovery) MintSessionLink(_ context.Context, in recovery.MintSessio
 	return f.mintOut, nil
 }
 
-// touched reports whether any use-case method was reached.
+// RedeemSessionLink is the session-link redemption's half of this double.
 //
+// A DISTINGUISHABLE DEFAULT is returned rather than the zero value, for the reason
+// `MintSessionLink`'s is: a test asserting "the route hands back the use case's
+// value" cannot pass against a token the handler invented, and it cannot tell a 200
+// that minted a session of its own from one that relayed.
+func (f *fakeRecovery) RedeemSessionLink(_ context.Context, in recovery.RedeemSessionLinkInput) (recovery.RedeemedSession, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.linkRedeems = append(f.linkRedeems, in)
+	if f.linkRedeemErr != nil {
+		return recovery.RedeemedSession{}, f.linkRedeemErr
+	}
+	return recovery.RedeemedSession{
+		Token:     "redeemed-by-the-use-case",
+		ExpiresAt: time.Date(2026, 10, 31, 12, 0, 0, 0, time.UTC),
+	}, nil
+}
+
+// touched reports whether any use-case method was reached.//
 // It is the half of an authorization assertion that a status code cannot make. A
 // handler that refused AFTER calling the service would produce the right 403 while
 // having already minted a token and sent a mail, so the recovery matrix asks about
@@ -171,7 +196,7 @@ func (f *fakeRecovery) touched() bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return len(f.resets)+len(f.verifies)+len(f.redeems)+len(f.confirmed)+
-		len(f.statuses)+len(f.mints) > 0
+		len(f.statuses)+len(f.mints)+len(f.linkRedeems) > 0
 }
 
 // recoveryServer builds a router with the recovery surface mounted.

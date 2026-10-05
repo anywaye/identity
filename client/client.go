@@ -971,6 +971,33 @@ func (c *Client) MintSessionLink(ctx context.Context, body generated.MintSession
 	return &out, err
 }
 
+// RedeemSessionLink exchanges a delegated link for a browser session. Corresponds to
+// `POST /v1/session-links/redeem`.
+//
+// **THE LINK IS THE CREDENTIAL, so this method presents nothing else** — no
+// `Authorization` header, no cookie, and deliberately no `Idempotency-Key`. The
+// operation is single-use by construction: a second presentation of the same token
+// is a `404`, and the one that loses the race is not retryable because there is no
+// second answer to retry for. An idempotency key here would cache a **session**, and
+// a cached session is a credential handed out twice.
+//
+// **The caller owns landing.** There is no `redirect`, no `return_to` and no address
+// to send the browser back to, because the caller that minted the link already knows
+// where its own front end is and this service has nothing to allow-list. A `422`
+// naming an unknown field is what a client gets if it sends one anyway.
+//
+// The 200 body is `generated.Session` — **the same type `CreateSession` returns**,
+// because the route answers byte-for-byte what a correct password produces. A caller
+// holding a session from either route handles one type, and that is the point of the
+// route rather than a coincidence of the document.
+func (c *Client) RedeemSessionLink(ctx context.Context, body generated.RedeemSessionLinkRequest) (*generated.Session, error) {
+	var out generated.Session
+	err := call(c, "redeemSessionLink", func() (*http.Response, error) {
+		return c.transport.RedeemSessionLink(ctx, body)
+	}, &out)
+	return &out, err
+}
+
 // ListAPIKeys lists an account's tokens. Corresponds to
 // `GET /v1/accounts/{account_id}/api-keys`.
 //

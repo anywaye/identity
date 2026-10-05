@@ -3535,6 +3535,198 @@ paths:
               schema:
                 $ref: '#/components/schemas/Problem'
 
+  /v1/session-links/redeem:
+    post:
+      tags: [sessions]
+      operationId: redeemSessionLink
+      summary: Redeem a delegated session link for a browser session
+      description: |
+        Turns one live, unspent `session_link` token into **exactly the session a
+        password login would have produced** — the same body, the same
+        `Set-Cookie`, the same expiry — and spends the link in the same transaction.
+
+        ### This route is PUBLIC, and the token IS the credential
+
+        **`security: []`.** There is nothing else to present: the link is 256 bits
+        of entropy with a ten-minute window and one use, delivered by the caller
+        over a channel the caller owns. This is the same shape as
+        `POST /v1/session/mfa`, where a challenge is the credential.
+
+        A browser session is **neither required nor refused** here, and that is a
+        decision: a caller holding a valid session and presenting no link is
+        exactly the hijacked-browser case, and a session in the header changes
+        nothing about whether the link is right.
+
+        **A scoped api key is refused with `403`.** The mint is reachable by a
+        credential holding `sessions:write`, and a credential that could mint the
+        link *and* redeem it would take a browser session without a browser — with
+        the mint's delegation check meaning nothing. No such scope is invented
+        here.
+
+        ### There is no redirect, no landing URL and no `return_to`
+
+        The caller that minted the link already owns the channel it arrived over
+        and therefore already knows where the browser is. A parameter on a
+        **public** route that this service stored and handed back would be an open
+        redirector with a session attached, and there would be nothing to
+        allow-list. A body carrying `redirect` is a `422`, not a request that
+        quietly ignores the field.
+
+        ### Every refusal is the shape of a link that never existed
+
+        **`404`, one status, one body, one round trip** for all six:
+
+        | the link | refused because |
+        |---|---|
+        | never existed | the digest matches no row |
+        | has expired | it is past `expires_at` |
+        | has been spent | `token_consumed_at` is set |
+        | was minted for another flow | it is a `password_reset` token |
+        | belongs to a disabled account | `users.disabled_at` is set |
+        | belongs to an enrolled account | a live `mfa_credentials` row exists |
+
+        The last two are the reason this is written down rather than assumed. They
+        are facts about an **account**, not about a row, and they reach a caller
+        holding a link they may have taken rather than somebody who has proved
+        anything. `409` for "that account has MFA" and `403` for "that account is
+        disabled" would publish both to exactly the person the operator acted
+        about — the opposite of the mint, where the caller is a machine credential
+        and naming the state is free. See DECISIONS.md D13.
+
+        ### The two state checks are repeated here, and they are not redundant
+
+        The **mint** refuses an enrolled subject (`409`) and a disabled one
+        (`403`), so at mint time no link exists for either. A ten-minute window is
+        long enough for both to change inside it. A user who enrolls MFA *after*
+        the link was minted must not redeem it: that would turn a delegated link
+        into a **complete login** for an account whose owner chose two, which is
+        precisely the downgrade the mint's refusal exists to prevent, arriving
+        through the other door. The mint's refusal is necessary and not sufficient.
+
+        The alternative would be a threaded challenge flow on an unauthenticated
+        route — a second authentication surface, with its own state, expiry and
+        failure modes. That is a packet of its own.
+
+        ### A refusal spends nothing
+
+        Both checks run **before** the conditional write, so a refused redemption
+        leaves the link live. A refusal that consumed it would be an irreversible
+        decision made on somebody's behalf: un-disabling the account, or
+        un-enrolling the second factor, would leave the user holding a link that no
+        longer works and no session, which is indistinguishable from a service that
+        lost their state.
+
+        ### The spend is a conditional write, and it is the single-use guarantee
+
+        Two requests carrying the same token both resolve it and both reach the
+        spend, and the `UPDATE … WHERE token_consumed_at IS NULL` is what makes
+        exactly one of them win. The session insert is in the same transaction, so
+        a failure to write it rolls the spend back rather than handing over a spent
+        link and no session.
+
+        ### `503` is the one refusal that is not the shape of a link
+
+        When this deployment cannot say whether anybody has a second factor it
+        redeems nothing. That is a fact about the **server** rather than about any
+        account — true of every caller — and folding it into the `404` would let a
+        misconfigured deployment present as a very quiet successful attack.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RedeemSessionLinkRequest'
+            examples:
+              followingALink:
+                summary: The token the mint handed the caller
+                value:
+                  token: Zq3vK7mXpR2tY8wB4cN6dF0gH1jK5lM9oP3qS7uV2wX4yZ8
+      responses:
+        '200':
+          description: |
+            The session, byte-for-byte what `POST /v1/session` answers for a correct
+            password: the same body, the same `Set-Cookie` attributes, and the same
+            expiry. **The cookie is written before the body**, for the reason it is
+            written at all — a client that crashes mid-write is left signed out
+            rather than holding a token it never saw.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+            Set-Cookie:
+              description: |
+                `__Host-session`, `Path=/`, `Secure`, `HttpOnly`, `SameSite=Lax`,
+                carrying the same value as the body's `token`. The `__Host-` prefix
+                is a contract the browser enforces: accepted only if `Secure`, if
+                `Path=/`, and with no `Domain`.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+              example:
+                token: Zq3vK7mXpR2tY8wB4cN6dF0gH1jK5lM9oP3qS7uV2wX4yZ8
+                expires_at: '2026-10-31T12:00:00Z'
+        '403':
+          description: |
+            The credential presented is a scoped api key. See the description above
+            for why a machine credential that could both mint and redeem would be a
+            takeover rather than a convenience.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              example:
+                type: https://errors.cafaye.com/forbidden
+                title: Forbidden
+                status: 403
+                detail: a scoped api key may not exchange a delegated link for a browser session
+                instance: /v1/session-links/redeem
+                code: forbidden
+                trace_id: 0af7651916cd43dd8448eb211c80319c
+        '404':
+          description: |
+            One answer for all six ways of being wrong, listed in the description.
+            It names none of them: `detail` is a fixed sentence, so a caller cannot
+            tell a spent link from an expired one, from a disabled account's, from an
+            enrolled one's, or from one minted for a different flow.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              example:
+                type: https://errors.cafaye.com/not_found
+                title: Not found
+                status: 404
+                detail: no such link, or it has already been used
+                instance: /v1/session-links/redeem
+                code: not_found
+                trace_id: 0af7651916cd43dd8448eb211c80319c
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          description: |
+            This deployment cannot say whether an account has a second factor, so it
+            redeems no links. Same shape as the mint's `503` and the password-reset
+            `503` for a deployment that cannot send mail: a configuration problem
+            the caller can act on by not depending on this.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
   /v1/introspections:
     post:
       tags: [api-keys]
@@ -4809,6 +5001,36 @@ components:
             When it stops working, on the clock the mint was served from. It is the
             link's window and not a session's: redeeming writes a session that lives
             on the session's own much longer clock.
+
+    RedeemSessionLinkRequest:
+      type: object
+      description: |
+        The token from a link the CALLER delivered, and **nothing else**.
+
+        There is no `redirect`, no `return_to` and no landing page, and the absence
+        is the design rather than an omission. The caller that minted the link
+        already owns the channel it arrived over and therefore already knows where
+        the browser is; a parameter here would be a value this service stored about
+        somebody else's front end and handed back on a **public** route, which is an
+        open redirector with a session attached. There is no allow-list here because
+        there is nothing to allow-list.
+
+        `additionalProperties: false` is what makes that promise enforceable rather
+        than aspirational: a body carrying `redirect` is a `422`, not a request that
+        quietly ignores the field, so a client that believed it had been told where
+        to send the browser finds out at the point it still controls.
+      required: [token]
+      additionalProperties: false
+      properties:
+        token:
+          type: string
+          minLength: 1
+          maxLength: 43
+          description: |
+            The plaintext the mint returned, presented once. An empty or whitespace
+            value is a `422` about the caller's own input rather than a `404` about a
+            link, and a value longer than a token cannot be one — which is the whole
+            of what there is to validate here.
 
     RevokeAPIKeyRequest:
       type: object

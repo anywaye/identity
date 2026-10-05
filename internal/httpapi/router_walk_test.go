@@ -161,7 +161,7 @@ func TestTheDriftWalkSeesTheRecoverySurface(t *testing.T) {
 }
 
 // TestTheDriftWalkSeesTheSessionLinkSurface is the fourth instance of the same bug,
-// for the one route the session-link packet added.
+// for the two routes the session-link packets added.
 //
 // IT IS HERE FOR A REASON SPECIFIC TO THIS SURFACE, and the reason is that the mint
 // is mounted with NO CONDITIONAL SURFACE OF ITS OWN — it hangs off `recovery`, which
@@ -171,11 +171,18 @@ func TestTheDriftWalkSeesTheRecoverySurface(t *testing.T) {
 // route that no walk could see would still be "documented" as far as
 // `TestEveryServedRouteIsDocumentedOrNamed` is concerned, which is precisely the
 // state that file's comment says made it green over three undocumented operations.
+//
+// BOTH ROUTES ARE NAMED, and the redemption's presence is the sharper half: it is the
+// route a browser reaches with NO credential at all, so it is also the one an
+// undocumented entry would hide best — a caller would have discovered it by reading
+// the router rather than the document, which is how a public surface grows past what
+// anybody decided.
 func TestTheDriftWalkSeesTheSessionLinkSurface(t *testing.T) {
 	t.Parallel()
 
 	for _, want := range []operationKey{
 		{Method: "POST", Path: "/v1/session-links"},
+		{Method: "POST", Path: "/v1/session-links/redeem"},
 	} {
 		if _, seen := servedRoutes(t)[want]; !seen {
 			t.Errorf("servedRoutes did not report %s as served. The router mounts it once "+

@@ -70,11 +70,20 @@ type Recovery interface {
 	// interface rather than on a second one for the reason the others are here: one
 	// `recovery_tokens` table has one service, and a second interface over it would
 	// be a second way to reach it.
-	//
-	// IT IS MINT-ONLY HERE. The redemption answers with a browser session, and the
-	// session row is `Auth`'s to write, so its method belongs on this interface only
-	// once it exists — and until then a handler for it would be a route that 500s.
 	MintSessionLink(ctx context.Context, in recovery.MintSessionLinkInput) (recovery.SessionLink, error)
+
+	// RedeemSessionLink spends a link and answers with a browser session, which is why
+	// it returns `recovery.RedeemedSession` rather than reusing `SessionLink`: the two
+	// are opposites, and one type that could be either would be a type the mint
+	// could be handed.
+	//
+	// IT IS HERE AND NOT ON `Auth` for the reason the mint is here rather than on the
+	// tenancy interface: the LINK is this table's, the spend is this table's
+	// conditional write, and the session is one row this method writes in the same
+	// transaction. A handler that reached for `Auth` to mint the session would have
+	// to spend the token somewhere else, and the two writes would no longer be one
+	// fact.
+	RedeemSessionLink(ctx context.Context, in recovery.RedeemSessionLinkInput) (recovery.RedeemedSession, error)
 }
 
 // WithRecovery mounts the recovery surface.
