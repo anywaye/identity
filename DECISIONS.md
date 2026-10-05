@@ -1284,3 +1284,177 @@ which publishes that the account exists — which is safe for the same reason th
 lookup runs BEFORE that check, so an unknown subject is a 404 rather than a
 409: the two must not be told apart, or the 409 becomes a probe for which ids
 are enrolled.
+
+## D13: `disabled_at` is a person, not a policy — and it says so
+
+**Raised** 2026-10-05 by packet `identity-disabled-01`, which added
+`users.disabled_at` and the doors that read it.
+
+**WHAT IT IS.** A nullable `timestamptz` on `users`. Null is active. There is no
+`false`, no counter, and no expiry. No "who disabled" or "why" columns either: the
+audit log is the house's answer to that, and a pair of columns here would be a
+second, deletable copy of what `account_audit_log` holds append-only in the
+database.
+
+**WHAT IT IS NOT, AND THIS IS THE ENTRY'S FIRST CLAIM.** It is not
+`locked_until`. A lockout is automatic, temporary, and expires by itself — five
+consecutive wrong passwords buy fifteen minutes and the account is usable again
+with no human involved. A disable is deliberate, indefinite, and set by a person
+who could equally have deleted the row. Conflating them is not untidy, it is a
+security bug with a specific shape: a "disable" implemented as a lockout with a
+longer expiry lifts itself after a quarter of an hour, and the account nobody
+thought about for fifteen minutes is quietly usable again.
+
+### The refusal shape: `403 forbidden`, checked after the password
+
+**RULED.** A disabled login is **`403 forbidden`**, with a fixed detail sentence,
+**no `Retry-After`**, and no new problem code.
+
+**Why not 423.** A 423 in this service means "locked, retry at", carries a
+`Retry-After`, and is rendered by every client that knows the code as a countdown.
+A disabled account is not coming back at any time, so that header would be a
+promise nothing keeps and a countdown that ends in a second refusal. It is also the
+conflation above, in the one place where a client would act on it: a caller told
+"locked, retry in 15 minutes" who is actually disabled will keep trying.
+
+**Why not 401.** The caller proved the password. `401` says their password is
+wrong, which is false, and sends them into a reset loop that cannot help them —
+while making the account's state invisible to the only person who can act on it.
+This is the same reasoning D9 records for the lockout: "a user who mistyped five
+times is still told to wait fifteen minutes rather than being told 'wrong
+password'."
+
+**Why `forbidden` and not a new code.** core's reserved list already names this
+case, and a code invented for something core describes is a code somebody has to
+reconcile later. `account_locked` earns its own because 423 is a status core has no
+name for; this is not.
+
+**And the enumeration reasoning, which is the load-bearing part.** The lockout's
+423 leaks: it is checked *before* the password, so a stranger reads it after six
+unauthenticated requests, and D9 keeps it as strictly dominated by registration's
+409. **This check is after the password is verified.** A caller who receives "this
+account is disabled" has already proved they hold the credential and therefore
+already knew the account existed. So naming the state is not a trade against
+enumeration — it is free, and it is *strictly better positioned than the 423 sitting
+three lines above it on the same route*. Move the check above the password and it
+becomes a one-request oracle for every disabled account on the service, which is
+worse than the leak D9 accepted.
+
+The order is therefore the ruling, not an implementation detail:
+`TestADisabledLoginWithTheWrongPasswordIsRefusedExactlyAsAnyOther` holds the
+stranger's answer, and the census row in
+`internal/httpapi/anonymous_enumeration_test.go` says so on the route.
+
+### The doors, and where the check lives
+
+Password login, the social callback, the second step of a two-factor login, and
+every recovery redemption. Two placement decisions are load-bearing:
+
+- **The check is in `startLogin`, not in `Login`.** `internal/auth/social.go`
+  resolves a provider identity to a local user and arrives at `startLogin` with no
+  password anywhere in the request. A check written in `Login` would have left the
+  social door open, and the way that defect stays invisible is that a social
+  sign-in for a disabled account WORKS — every test green, nothing in the logs.
+  One line that both doors pass through is what makes the second door's coverage a
+  fact about the code rather than about whether somebody remembered.
+- **`CompleteSecondFactor` carries it too.** A challenge was minted ten minutes
+  earlier while the account was still enabled, and that door is reached by a token
+  rather than by a user row, so the gate that covered the first half does not cover
+  the second. Ten minutes is long enough for an administrator to act inside.
+
+### Revocation is same-transaction, and it is DELETE
+
+`auth.Service.Disable` deletes the user's session rows and stamps the column in
+**one transaction**. A column write and a later sweep is a window whose length is
+not a number anybody chose; the DELETE makes the window zero, and a request in
+flight dies at its next store read.
+
+The ordering is sessions-then-column: if the column write fails the transaction
+rolls back and nothing is lost, and the reverse order would leave an account
+reading as disabled to an operator while its sessions are still live.
+
+It is **DELETE and not a flag** — the same rule 00003 states and `TestTheClaimWalk`
+depends on — and that is also why `Authenticate` needs no check of its own. The row
+is gone, so the lookup misses for a reason the caller cannot distinguish from a
+token that never existed. A service that made this a soft flag on the session would
+pass every door test above it and still be holding live sessions.
+
+**Both failure directions are tested against real SQL**, with a trigger making each
+half fail, because `fakeUnitOfWork` cannot roll anything back and a double-based
+suite would pass against an implementation that set the column and swept the
+sessions separately.
+
+### Recovery cannot bypass it, and its two refusals have different shapes
+
+Minting **refuses silently**: a disabled account is sent nothing, and the response
+is byte-identical to an unregistered address's. Those routes are anonymous, so any
+difference — a status, a slower response, a message that arrives — is a list of
+disabled accounts for anyone posting a list of addresses. That is the oracle D9
+records and identity-27 removed from this package's sibling route.
+
+Redemption **refuses with the 404 a nonexistent token gets.** The token in the body
+*is* the credential on those routes, so the caller is the owner or whoever took the
+link, and an answer that named the account's state would publish it to exactly the
+person the operator acted about. The owner's honest sentence is on the login, which
+names it to somebody who has proved their password.
+
+**A refusal does not spend the token.** An operator who disabled an account did not
+also decide to invalidate the link already in its owner's inbox, and spending it
+would make re-enabling leave the user with a dead link and no session —
+indistinguishable from a service that lost their state. Every redemption refuses
+while the account is disabled, so the live token costs nothing, and lifting the
+disable restores the flow the user started.
+
+The email change needed both halves closed separately, because the second token is
+only minted when the first is confirmed and that mint is itself a credential.
+
+### The session-link mint says 403 and its redemption will not
+
+`POST /v1/session-links` refuses a disabled subject with **403**, not the `404` an
+unknown subject gets, and that is D12's ruling pointed the other way: the caller
+holds `sessions:write` and is an operator with authority over somebody else's
+account, so there is no stranger to protect and a `404` would send them looking for
+a user id that is not missing.
+
+The redemption does not exist yet, so there is nothing to refuse today and no link
+can become a session at all. When it is written it must use the **shape of an
+unknown token**, for the reason the recovery redemptions do: the token is the
+credential there. The two answers differ and neither is the other's — which is the
+whole content of the rule.
+
+### What is deliberately NOT here
+
+**An operator.** No route, no scope, no audit record, and no way for a human to
+disable an account. `Disable` and `Enable` are a use case and nothing is mounted on
+them.
+
+That is a gap with a reason rather than an omission. `internal/admin` is
+**account**-scoped: its audit rows carry an `account_id`, its privilege boundary is
+one sentence about account admins and invitations, and a **user is not an account**
+— the same person belongs to several. Mounting this behind that boundary would
+widen a boundary D2–D5 spent five entries drawing, in a packet whose subject is
+something else, and the honest answer to "who may turn an account off" is a role
+decision this packet should not make for the fleet.
+
+**An enforcement without an operator is a foundation, not a feature**, and this
+entry says so rather than letting the column imply a capability. The operator
+surface — and the role question that goes with it, because "a platform admin" does
+not exist on this service today and inventing one is a bigger decision than a
+packet — is named in `HANDOFF-identity-disabled-01.md`.
+
+### What is deliberately NOT here, second: a soft disable
+
+No read-only mode, no grace period, no "disabled but the owner can still download
+their data" tier. Disabled is disabled. A partial version is a different concept
+with a different name, and `users` would need a second column to express it.
+
+### What this packet did not decide
+
+Whether OIDC access tokens issued before a disable stop working. A JWT is verified
+by third parties against a published JWKS and this service cannot revoke one; that
+is the same position `recovery`'s reset takes, which sweeps `oidc_access_tokens` and
+says so. **An operator reading this entry should know the OIDC surface is not
+closed by a disable**, because a disable that ends browser sessions and leaves
+fifteen-minute access tokens in third parties' hands is half a revocation and the
+other half is a product decision about how quickly an identity provider can be made
+to disbelieve its own key.

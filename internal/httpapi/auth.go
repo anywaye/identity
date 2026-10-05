@@ -601,9 +601,34 @@ func decodeBody[T any](w http.ResponseWriter, r *http.Request, dst **T) bool {
 // case is how a login endpoint becomes an account-enumeration oracle.
 func (o options) writeAuthError(w http.ResponseWriter, r *http.Request, err error) {
 	var locked *auth.LockedError
+	var disabled *auth.DisabledError
 	var fieldErr *users.FieldError
 
 	switch {
+	case errors.As(err, &disabled):
+		// 403 forbidden, and the reason this leaks nothing while the 423 below
+		// leaks a little: the use case reaches this only AFTER the password has been
+		// verified. A caller told their account is disabled has already proved they
+		// hold the credential, so they already knew the account existed.
+		//
+		// 403 rather than 423 because 423 in this service means "locked, retry at",
+		// carries a Retry-After, and every client that knows the code renders it as a
+		// countdown. This account is not coming back at any time, so a Retry-After
+		// would be a promise nothing keeps — and reusing the lockout's status is the
+		// conflation migrations/00021's first three lines exist to prevent.
+		//
+		// `forbidden` rather than a new code: core's reserved list already names
+		// this case ("understood the request, refuses to authorize it"), and a code
+		// invented for something core describes is a code somebody has to reconcile
+		// later. `account_locked` earns its own because 423 is a status core has no
+		// name for.
+		//
+		// The sentence is FIXED. A detail that varied by reason would vary by
+		// account state, which is the enumeration oracle this check is positioned to
+		// avoid.
+		problemFor(w, r, http.StatusForbidden, CodeForbidden,
+			"this account is disabled; contact the person or organisation that administers it")
+
 	case errors.As(err, &locked):
 		// The window goes in the Retry-After header, which is where RFC 9110 puts
 		// it, and in the detail sentence so a human reading the response can act on

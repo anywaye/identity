@@ -57,6 +57,15 @@ var (
 // layer two types to match and a bug the day it matched the wrong one.
 type LockedError = sessions.LockedError
 
+// DisabledError is a login refused because somebody turned the account off.
+//
+// It is the ALIAS's counterpart and the same argument applies, pointing the other
+// way: the type lives in internal/users because the state is a column on that row
+// and `users` is where its meaning is defined. Declaring a second type here would
+// give the HTTP layer two things to match and a bug the day it matched the wrong
+// one — and "disabled" and "locked" are exactly the two it must never confuse.
+type DisabledError = users.DisabledError
+
 // DefaultSessionTTL is how long a session lasts when nothing overrides it.
 const DefaultSessionTTL = 30 * 24 * time.Hour
 
@@ -73,6 +82,11 @@ type UserStore interface {
 	ByID(ctx context.Context, q db.Querier, id id.UUID) (users.User, error)
 	RecordFailedLogin(ctx context.Context, q db.Querier, userID id.UUID, attempts int, lockedUntil *time.Time) error
 	ClearFailures(ctx context.Context, q db.Querier, userID id.UUID) error
+	// Disable and Enable are the concept's two directions and they are here because
+	// Disable has to do more than write a column — see Service.Disable, which is the
+	// only thing in this repository that should call them.
+	Disable(ctx context.Context, q db.Querier, userID id.UUID, at time.Time) error
+	Enable(ctx context.Context, q db.Querier, userID id.UUID) error
 }
 
 // SessionStore is the part of sessions.Store that login, logout and resolution
@@ -81,6 +95,9 @@ type SessionStore interface {
 	Create(ctx context.Context, q db.Querier, n sessions.NewSession) (sessions.Session, error)
 	ByToken(ctx context.Context, q db.Querier, token string, now time.Time) (sessions.Session, error)
 	Revoke(ctx context.Context, q db.Querier, sessionID id.UUID) error
+	// RevokeAllForUser ends every session a user holds. It is on this interface
+	// because a disable is not a column write: see Service.Disable.
+	RevokeAllForUser(ctx context.Context, q db.Querier, userID id.UUID) error
 }
 
 // SecondFactor is the part of internal/mfa that login needs, and it is REQUIRED.
@@ -395,13 +412,41 @@ type Challenge struct {
 //  4. Verify the password.
 //  5. On a mismatch, count the failure, persist it, and return
 //     ErrInvalidCredentials.
-//  6. On a match: ask whether this account has a CONFIRMED second factor.
-//     If it does, mint a CHALLENGE and return MFARequired — no session, no token,
-//     nothing that authenticates anything.
-//  7. Otherwise mint the session and clear the password's failure run in one
+//  6. On a match: refuse a DISABLED account. DisabledError, and it comes HERE —
+//     after the password and before anything is minted. See below.
+//  7. On a match and not disabled: ask whether this account has a CONFIRMED
+//     second factor. If it does, mint a CHALLENGE and return MFARequired — no
+//     session, no token, nothing that authenticates anything.
+//  8. Otherwise mint the session and clear the password's failure run in one
 //     transaction.
 //
-// STEP 6 IS THE LINE THIS PACKET IS ABOUT, and it sits where it does on purpose:
+// # STEP 6 IS AFTER THE PASSWORD, AND THAT IS THE ENUMERATION REASONING
+//
+// A disabled answer NAMES the state rather than pretending the password was wrong,
+// and the only thing that makes that free is that this check sits after step 4. A
+// caller who is told "this account is disabled" has already proved they hold the
+// right password, so they already know the account exists and the answer reveals
+// nothing. Move it above the password and it becomes a one-request existence
+// oracle for every disabled account on the service — strictly worse than the
+// lockout's 423, which costs a stranger six requests and is measured in
+// DECISIONS.md D9.
+//
+// The same reasoning says the social callback gets it too, and gets it for a
+// better reason still: there the caller has proved control of a provider account
+// whose address this service believes. See startLogin, which is where that check
+// actually lives, because Login cannot be the only door that has it.
+//
+// # AND IT IS NOT 423, EVER
+//
+// The lock is above it and stays there. A 423 in this service means "retry at",
+// with a Retry-After, and a client that knows the code renders it as a wait. A
+// disabled account is not coming back at any time, so answering 423 would be a
+// promise nothing keeps — and it would be precisely the conflation
+// migrations/00021 exists to prevent. The other order (disabled above locked) is
+// worse than wrong: a user whose account is merely locked would be told to contact
+// an administrator and would have no reason to try again in fifteen minutes.
+//
+// STEP 7 IS THE LINE THE PREVIOUS PACKET WAS ABOUT, and it sits where it does on purpose:
 // after the password has been verified and before the session is created. A
 // challenge is not a session, and a session created here for an account with a
 // second factor is a login with one factor where there should be two — which is
@@ -452,6 +497,13 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (LoginResult, error)
 		return LoginResult{}, ErrInvalidCredentials
 	}
 
+	// Step 6. The password was right, so this is a refusal about the ACCOUNT and
+	// not about the credential — which is why it is its own error and why saying
+	// so is safe here rather than only in the comment above.
+	if user.IsDisabled() {
+		return LoginResult{}, &DisabledError{}
+	}
+
 	return s.startLogin(ctx, user, in, now)
 }
 
@@ -465,7 +517,30 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (LoginResult, error)
 // a second factor", which is the one line that must never be optional. Naming it
 // also means there is exactly one place in this package where a session is minted
 // without a password having been verified, and it is this one.
+//
+// # THE DISABLED CHECK IS HERE AND NOT IN Login, and that placement IS THE POINT
+//
+// Login refuses a disabled account too, one line earlier, and it would be redundant
+// if this were the only caller. It is not the only caller: `internal/auth/social.go`
+// resolves a provider identity to a local user and comes straight here, with no
+// password anywhere in the request.
+//
+// So a check written in Login would leave the social door open, and the way that
+// defect stays invisible is that a social sign-in for a disabled account WORKS —
+// it mints a session, tests are green, and nothing in the logs says the account
+// was turned off. Putting the gate here means there is one line that both doors
+// pass through, which is what makes the second door's coverage a fact about the
+// code rather than about whether somebody remembered.
+//
+// The social path's answer is safe on the same terms as the password one and for a
+// stronger reason: the caller proved control of a provider account whose address
+// this service already believes (internal/oauth refuses an unverified one), so
+// they already knew the local account existed.
 func (s *Service) startLogin(ctx context.Context, user users.User, in LoginInput, now time.Time) (LoginResult, error) {
+	if user.IsDisabled() {
+		return LoginResult{}, &DisabledError{}
+	}
+
 	required, err := s.requiresSecondFactor(ctx, user.ID)
 	if err != nil {
 		return LoginResult{}, err
@@ -551,6 +626,20 @@ type CompleteSecondFactorInput struct {
 // reset every time they get it wrong. The second factor's counter lives on a
 // different row from the password's, and both are cleared here — a successful
 // two-factor login restarts both runs and neither one survives on its own.
+//
+// # AND THE DISABLED CHECK IS HERE TOO, BECAUSE THIS DOOR DOES NOT GO THROUGH
+// startLogin
+//
+// A challenge was minted by startLogin, ten minutes ago, while the account was
+// still enabled. Ten minutes is a long time for an administrator to act inside,
+// and this method is reached by a TOKEN rather than by a user row — so the gate
+// that covered the first half of the login does not cover the second. A user
+// disabled midway through their own two-factor login is a real window, and closing
+// it is the reason a disable is worth more than a flag on the row.
+//
+// It is INSIDE the transaction, which is what makes the refusal cost nothing: the
+// session insert above and this read are the same transaction, so a refusal rolls
+// the session back rather than minting one and then declining to hand it over.
 func (s *Service) CompleteSecondFactor(ctx context.Context, in CompleteSecondFactorInput) (LoginResult, error) {
 	if s.mfa == nil {
 		return LoginResult{}, ErrNoSecondFactor
@@ -576,6 +665,18 @@ func (s *Service) CompleteSecondFactor(ctx context.Context, in CompleteSecondFac
 	expiresAt := now.Add(s.sessionTTL)
 
 	err = s.uow.Do(ctx, func(ctx context.Context, q db.Querier) error {
+		// BEFORE the session, and the reason is the same as Login's: a refusal
+		// that minted a session first would have to be rolled back to be honest,
+		// and the two orders differ in exactly one respect — this one cannot leave
+		// a row behind even if a later statement in this transaction misbehaves.
+		user, err := s.users.ByID(ctx, q, claim.UserID())
+		if err != nil {
+			return err
+		}
+		if user.IsDisabled() {
+			return &DisabledError{}
+		}
+
 		// The session is created first, for the reason startSession gives: if it
 		// fails the transaction rolls back and the challenge is still live, so the
 		// user can press "try again" rather than being told their login has
@@ -648,6 +749,70 @@ func (s *Service) startSession(ctx context.Context, user users.User, in LoginInp
 // recordFailure persists the new lockout state for an account.
 func (s *Service) recordFailure(ctx context.Context, userID id.UUID, next sessions.Lockout) error {
 	return s.users.RecordFailedLogin(ctx, s.read.Queryer(), userID, next.FailedAttempts, next.LockedUntil)
+}
+
+// Disable turns an account off and ends every session it holds, in ONE
+// transaction.
+//
+// # WHY THIS LIVES HERE AND NOT IN internal/admin, SAID OUT LOUD
+//
+// `internal/admin` is the house's operator surface and this is the operation an
+// operator will eventually want there, but that surface is ACCOUNT-scoped: its
+// audit rows carry an account_id, its privilege boundary is one sentence about
+// account admins and invitations, and a user is not an account — the same person
+// belongs to several. Putting this behind that boundary would widen a boundary
+// DECISIONS.md D2–D5 spent five entries drawing, in a packet whose subject is
+// something else entirely.
+//
+// So the enforcement ships here, in the package that owns "which sessions may
+// exist", and the ROUTE does not ship at all. What is deliberately NOT here: an
+// HTTP surface, a scope, an audit record, a permission. `Enable` exists because
+// re-enabling has to be testable for the concept to be honest, not because an
+// operator can reach it yet. **This is a foundation, not a feature**, and the
+// operator surface is the next packet — see HANDOFF-identity-disabled-01.md.
+//
+// # WHY THE REVOCATION IS IN THE SAME TRANSACTION, AND WHY THAT IS NOT OPTIONAL
+//
+// Two statements, two tables, one transaction. The alternative — a column write
+// and a later sweep — is a window in which a disabled account holds live sessions,
+// and its length is not a number anybody chose: it is however long the sweep is
+// late. A request already in flight dies at its NEXT store read, because the
+// sessions table is the thing it reads and the row is gone.
+//
+// The direction of the ordering matters for the same reason it does in
+// startSession: the session DELETE first, then the column. If the column write
+// fails, the transaction rolls back and nothing is lost; if it were the other way
+// round and the DELETE failed, an account marked disabled would still be holding
+// sessions with no record of why.
+//
+// This is the same rule MFA and a password reset already follow with their own
+// RevokeAllForUser calls, and the reasoning is theirs: a credential minted before
+// a change is not a credential after it.
+func (s *Service) Disable(ctx context.Context, userID id.UUID, at time.Time) error {
+	return s.uow.Do(ctx, func(ctx context.Context, q db.Querier) error {
+		// First, as above.
+		if err := s.sessions.RevokeAllForUser(ctx, q, userID); err != nil {
+			return fmt.Errorf("ending a disabled user's sessions: %w", err)
+		}
+		if err := s.users.Disable(ctx, q, userID, at); err != nil {
+			return fmt.Errorf("marking the user disabled: %w", err)
+		}
+		return nil
+	})
+}
+
+// Enable lifts a disable.
+//
+// IT RESTORES NOTHING BUT THE COLUMN, and that is worth stating because "enable"
+// reads like the inverse of everything Disable did. The sessions it ended are gone
+// and do not come back: the owner signs in again like anybody else. A re-enable
+// that resurrected the sessions would hand back credentials minted before the
+// account was turned off, which is the thing the revocation exists to prevent.
+//
+// It is one statement and needs no transaction for that reason — there is no second
+// write to make atomic with it.
+func (s *Service) Enable(ctx context.Context, userID id.UUID) error {
+	return s.users.Enable(ctx, s.read.Queryer(), userID)
 }
 
 // Authenticate resolves a presented token to its user.

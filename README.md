@@ -704,6 +704,79 @@ code never reaches the failure counter at all, because the claim and the refusal
 would roll back together, and a code that cannot be counted is one an attacker may
 present without limit.
 
+#### A disabled account, and how it is not a locked one
+
+`users.disabled_at` is the one state on this table a **person** decides. Null is
+active; there is no `false`, no counter, and no expiry.
+
+**It is not `locked_until`, and the difference is not a degree.** A lockout is
+automatic, temporary, and ends by itself: five consecutive wrong passwords buy
+fifteen minutes and then the account is usable again with nobody involved.
+`disabled_at` is deliberate, indefinite, and set by somebody who could equally have
+deleted the row. Reading one as the other is how a "disable" ends up lifting itself
+after a quarter of an hour because it was implemented as a lockout with a longer
+expiry — so the two never share a status, a response, or a sentence. A locked
+account is `423 account_locked` with a `Retry-After`; **a disabled one is `403
+forbidden` with no `Retry-After` at all**, because it is not coming back at any time
+and a client that believed a countdown would poll a route whose answer cannot
+change. The whole ruling is [DECISIONS.md D13](DECISIONS.md).
+
+Three properties, each with a test:
+
+- **Every door refuses, and the password door is where the decision is anchored.**
+  `POST /v1/session` checks it **after** the password verifies, so the honest answer
+  is free: a caller told "this account is disabled" has already proved they hold the
+  credential and therefore already knew the account existed. Move that check above
+  the password and it becomes a one-request existence oracle — strictly worse than
+  the 423 on the same route, which is checked *before* the password and is measured
+  in D9. A wrong password on a disabled account is still the generic `401`.
+  `internal/auth`'s check lives in `startLogin` rather than in `Login`, because the
+  social callback resolves to a local user and arrives at the same place with no
+  password in the request — a check written in `Login` would have left that door
+  open, and the way that defect stays invisible is that a social sign-in for a
+  disabled account works.
+- **Disabling ends live sessions in the same transaction that writes the column.**
+  There is no sweeper and no grace window to reason about: the `sessions` rows are
+  deleted, so a request already in flight dies at its next store read and a token
+  that used to work misses for a reason the caller cannot tell from one that never
+  existed. `Authenticate` needs no check of its own *because* the rows are gone —
+  which is why revocation is `DELETE` and not a flag.
+- **Recovery is not the way back in.** It is the one flow that exists to let a
+  locked-out user recover, so it is the one that must not work past somebody's
+  decision. Minting refuses **silently** — a disabled account is sent nothing and
+  the response is byte-identical to an unregistered address's, because those routes
+  are anonymous and any difference would publish a list of disabled accounts to
+  anyone posting a list of addresses. Redemption refuses with the **404 a
+  nonexistent token gets**: the token in the body *is* the credential, so the caller
+  may be whoever took the link, and telling them why would publish the account's
+  state to exactly the person the operator acted about. The owner's next stop is the
+  login, which tells them the truth.
+
+**What is not built: an operator.** There is no route, no scope and no audit record
+that can disable an account — `auth.Service.Disable` and `.Enable` are the use case
+and nothing is mounted on them. That is a deliberate gap, not an oversight:
+`internal/admin` is **account**-scoped (its audit rows carry an `account_id`, its
+privilege boundary is one sentence about account admins and invitations) and a user
+is not an account — the same person belongs to several — so mounting this behind
+that boundary would widen a boundary D2–D5 spent five entries drawing, in a packet
+whose subject is something else. The operator surface, with the role question that
+goes with it, is named in [HANDOFF-identity-disabled-01.md](HANDOFF-identity-disabled-01.md).
+**This is a foundation, not a feature.**
+
+Re-enabling ships, because an irreversible disable is a different feature with a
+different name. It restores the column and nothing else: **the sessions the disable
+ended do not come back**, since they were minted before the account was turned off,
+and the owner signs in again. A refused recovery redemption does not spend its
+token either, so a link already in an inbox still works once the disable is lifted —
+an operator who turns an account off did not also decide to invalidate the mail.
+
+The `POST /v1/session-links` mint refuses a disabled subject with **403** rather
+than the `404` an unknown subject gets: that route is behind a scoped api key, so
+the caller is an operator, and a `404` would send them looking for a user id that
+is not missing. Its *redemption* does not exist yet — that is the next packet, and
+the answer it must use is named at its definition in
+`internal/recovery/session_link.go`.
+
 #### The lockout is per-factor
 
 `mfa_credentials.failed_attempts` is the second factor's counter.

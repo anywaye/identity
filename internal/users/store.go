@@ -38,7 +38,7 @@ func NewStore(pool db.Pool) *Store { return &Store{pool: pool} }
 // userColumns is the select list, in the order scan expects. One constant, so a
 // column added here cannot be forgotten in one query and present in another.
 const userColumns = `id, email, password_digest, failed_login_attempts, locked_until, ` +
-	`email_verified_at, created_at, updated_at`
+	`email_verified_at, disabled_at, created_at, updated_at`
 
 // Create inserts a user and returns the stored row.
 //
@@ -54,7 +54,7 @@ func (s *Store) Create(ctx context.Context, q db.Querier, p CreateParams) (User,
 	var u User
 	err := q.QueryRow(ctx, query, p.Email, p.PasswordDigest).Scan(
 		&u.ID, &u.Email, &u.PasswordDigest, &u.FailedLoginAttempts, &u.LockedUntil,
-		&u.EmailVerifiedAt, &u.CreatedAt, &u.UpdatedAt,
+		&u.EmailVerifiedAt, &u.DisabledAt, &u.CreatedAt, &u.UpdatedAt,
 	)
 	if err != nil {
 		if isEmailTaken(err) {
@@ -187,6 +187,74 @@ func (s *Store) SetEmail(ctx context.Context, q db.Querier, userID id.UUID, emai
 	return nil
 }
 
+// Disable stamps `disabled_at` and does nothing else to the row.
+//
+// # IT IS NOT A LOCKOUT, AND IT IS NOT A PASSWORD RESET
+//
+// The address and the digest are untouched, deliberately. A disabled account is
+// still an account: its recovery mail still arrives, its password still works,
+// and the moment somebody calls Enable the owner is exactly where they were. A
+// disable that scrambled the credential would make Enable irreversible, which is a
+// different feature with a different name and would belong in its own packet.
+//
+// # IT DOES NOT REVOKE THE SESSIONS, AND THAT IS THE OTHER HALF OF THIS PACKET
+//
+// This method writes one column and one column only. Ending the user's live
+// sessions is a second statement against a second table, and it must happen in
+// the SAME transaction as this write or not at all — which is why this takes a
+// `db.Querier` and is called from inside a caller's transaction rather than
+// opening one of its own. `auth.Service.Disable` is that caller; a bare
+// `users.Store.Disable` against the pool is a disable that leaves a live session
+// behind, and it is exported because the store is the table's surface and the
+// composition is the use case's. Any caller that wants the whole concept must go
+// through the use case.
+//
+// at is the caller's clock, like every other timestamp in this repository, so the
+// row and whatever this is announced alongside it agree on one instant under test
+// control.
+func (s *Store) Disable(ctx context.Context, q db.Querier, userID id.UUID, at time.Time) error {
+	const query = `
+		UPDATE users
+		SET disabled_at = $2, updated_at = now()
+		WHERE id = $1`
+
+	tag, err := q.Exec(ctx, query, userID, at)
+	if err != nil {
+		return fmt.Errorf("disabling a user: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// Enable clears `disabled_at`.
+//
+// IT IS THE REVERSE AND NOTHING ELSE: no session comes back, no invitation is
+// restored, nothing is re-sent. A session minted before the disable was deleted
+// with it and the owner signs in again like anybody else — which is the reason
+// re-enabling is safe to ship at all, and the reason it is worth saying out loud
+// rather than letting a reader assume "enabled" means "as if it never happened".
+//
+// The column goes to SQL NULL rather than to a zero timestamp, for the reason
+// User.DisabledAt has no `false`: 'never disabled' and 'disabled since 1970' are
+// different answers and only one of them is true.
+func (s *Store) Enable(ctx context.Context, q db.Querier, userID id.UUID) error {
+	const query = `
+		UPDATE users
+		SET disabled_at = NULL, updated_at = now()
+		WHERE id = $1`
+
+	tag, err := q.Exec(ctx, query, userID)
+	if err != nil {
+		return fmt.Errorf("enabling a user: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // MarkEmailVerified records that somebody proved they can read the address on
 // this row.
 //
@@ -222,7 +290,7 @@ func scanOne(row interface{ Scan(...any) error }) (User, error) {
 	var u User
 
 	err := row.Scan(&u.ID, &u.Email, &u.PasswordDigest, &u.FailedLoginAttempts, &u.LockedUntil,
-		&u.EmailVerifiedAt, &u.CreatedAt, &u.UpdatedAt)
+		&u.EmailVerifiedAt, &u.DisabledAt, &u.CreatedAt, &u.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return User{}, ErrNotFound
 	}

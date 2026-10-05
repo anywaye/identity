@@ -106,7 +106,27 @@ info:
   # plain `int`; nothing else in any language in this fleet can tell the difference,
   # and the compiled Go client gets strictly simpler — three named types with
   # exported case constants and `Valid()` methods are gone.
-  version: 1.8.0
+  #
+  # 1.9.0 ADDS A 403 TO `POST /v1/session`, and it is additive in both senses while
+  # still being a behaviour change, so both halves are stated. **No path moved and
+  # no request changed**, and `200` and `202` are still what an enabled account gets
+  # — so a client that only accepts those is unaffected.
+  #
+  # **What is new is a 403 with core's `forbidden` code, for an account a person
+  # has disabled.** A client that treats 403 as "retry with different credentials"
+  # will now show a disabled user a password form instead of telling them to contact
+  # an administrator, and the fix for that is one branch on the status.
+  #
+  # **No new problem code.** `account_disabled` was considered and rejected: core's
+  # reserved list already names this case, and a code invented for something core
+  # describes is one somebody has to reconcile later. `account_locked` has its own
+  # because 423 is a status core does not name.
+  #
+  # **No `Retry-After` on the 403**, and its absence is contract: 423 in this
+  # service means "locked, retry at" and clients render it as a countdown. A
+  # disabled account is not coming back, so a client that treated the 403 as
+  # retryable would poll a route whose answer cannot change.
+  version: 1.9.0
   summary: Authentication, sessions, multi-factor authentication, account recovery, accounts, tenancy, scoped API tokens, the admin surface and OIDC registrations.
   description: |
     `identity` is the cafaye platform's security boundary: it is what every other
@@ -158,9 +178,12 @@ info:
     from that id. `errors[]` appears only on 422 and lists per-field failures.
 
     Login never distinguishes a wrong password from an unregistered address. Both
-    are 401 with the same body. A 423 is the one place login reveals that an
-    account exists, and it does so only because the caller has just demonstrated
-    knowledge of a working password's absence five times over.
+    are 401 with the same body. Two answers on this operation say something about
+    the account — `423` for a lockout and `403` for a disable — and both are
+    positioned so that reaching them tells a stranger nothing new: the lock is
+    checked before the password, so a caller who reaches it has demonstrated the
+    absence of a working password five times over, and the disable is checked
+    AFTER it, so a caller who reaches that has already proved they hold one.
 
     ## Request size
 
@@ -543,6 +566,10 @@ paths:
             The credentials were refused. The body is identical whether the
             address is unregistered or the password is wrong, and says nothing
             about which.
+
+            **This is also the answer to a wrong password on a DISABLED account**,
+            which is what keeps the 403 below from being an existence oracle: a
+            caller who has not proved the password never reaches it.
           headers:
             X-Trace-Id:
               $ref: '#/components/headers/TraceId'
@@ -595,11 +622,65 @@ paths:
           $ref: '#/components/responses/BodyTooLarge'
         '422':
           $ref: '#/components/responses/ValidationFailed'
+        '403':
+          description: |
+            **The account is disabled.** Somebody with authority over it turned it
+            off deliberately, and the password was correct — which is why this is
+            not a 401, and why the 401 above is unchanged for a wrong password on
+            the same account.
+
+            It is `forbidden`, core's own code for "understood the request, refuses
+            to authorize it", rather than a new one; and it is **403 rather than
+            423** because 423 in this service means "locked, retry at" and carries a
+            `Retry-After`. **There is deliberately no `Retry-After` header here.**
+            A disabled account is not coming back at any time, so a client that
+            believed one would poll a route whose answer cannot change. `account_locked`
+            earns its own code because 423 is a status core's reserved list does not
+            name; this case core does name.
+
+            **It discloses nothing to a stranger**, and the position is the whole
+            argument: the check runs AFTER the password is verified, so a caller who
+            receives this has already proved they hold the credential and therefore
+            already knew the account existed. That is a stronger position than the
+            423 on this same operation, which is checked before the password and so
+            is reachable by a stranger in six unauthenticated requests.
+
+            The `detail` is a fixed sentence. A detail that varied with the reason
+            would vary with the account's state.
+
+            Disabling an account also ends every session it holds, in the same
+            transaction that writes the state, so a session that existed before the
+            account was disabled stops authenticating immediately — there is no grace
+            window.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                disabled:
+                  value:
+                    type: https://errors.cafaye.com/forbidden
+                    title: Forbidden
+                    status: 403
+                    detail: this account is disabled; contact the person or organisation that administers it
+                    instance: /v1/session
+                    code: forbidden
+                    trace_id: 0af7651916cd43dd8448eb211c80319c
         '423':
           description: |
             The account is locked after too many consecutive failures. The
             `Retry-After` header and the `detail` both carry the remaining window
             in whole seconds, rounded up.
+
+            This is a DIFFERENT STATE from the 403 above and the two must not be
+            confused by a client: a lock is automatic, temporary and expires by
+            itself after fifteen minutes, while a disable is a person's decision with
+            no expiry. A client that renders both as "cannot sign in right now" and
+            then offers "try again shortly" will tell a permanently disabled user to
+            keep retrying.
 
             The window is deliberately **not** an entry in `errors[]`: core scopes
             that array to 422 and to fields of the request, and `retry_after` is
@@ -3319,6 +3400,18 @@ paths:
         asking for a user who is not there is entitled to be told. See DECISIONS.md
         D12 for the contrast written out.
 
+        ### A disabled subject is refused at the mint
+
+        **`403 forbidden`** for a subject somebody has turned off. The window and
+        the `expires_in` validation never run, so no row is written at all — the same
+        property the second-factor refusal below has.
+
+        It is `403` and **not** `404` even though the subject certainly exists,
+        because the caller here is a machine credential with `sessions:write`: an
+        operator told "no user with that id" would go looking for a missing user.
+        The redemption will answer differently, and that difference is the point —
+        see DECISIONS.md D13.
+
         ### A subject with a second factor is refused, not challenged
 
         **`409 conflict`** for a subject who has enrolled MFA. A link redeems into a
@@ -3377,7 +3470,34 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthenticated'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          description: |
+            The credential is not permitted on this route — a browser session
+            rather than a scoped api key — **or the named subject is disabled.**
+
+            The two share a status and are told apart by the `detail`, which is
+            fixed per reason. Naming the disabled state is safe HERE and is the
+            whole contrast with the redemption: this route is behind a machine
+            credential, so the caller is an operator with authority over somebody
+            else's account and there is no stranger to protect. A `404` would send
+            them looking for a user id that is not missing. See DECISIONS.md D13.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                disabled:
+                  summary: The subject has been turned off by a person
+                  value:
+                    type: https://errors.cafaye.com/forbidden
+                    title: Forbidden
+                    status: 403
+                    detail: that account is disabled and cannot be given a session
+                    instance: /v1/session-links
+                    code: forbidden
+                    trace_id: 0af7651916cd43dd8448eb211c80319c
         '404':
           description: No user with that id exists on this deployment.
           headers:
@@ -5892,7 +6012,7 @@ components:
 #    `validation_failed` at 400, since core's list is keyed by slug and one slug
 #    cannot carry two statuses.
 #
-# 3. `info.version` is set, and it is at 1.7.0.
+# 3. `info.version` is set, and it is at 1.9.0.
 #
 #    core's versioning section carries an open decision (D4) about whether a
 #    document version is required alongside the `/v1` path prefix, precisely
