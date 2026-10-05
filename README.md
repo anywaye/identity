@@ -15,10 +15,76 @@ nothing served it: a bare "OAuth" beside "OIDC" reads as one capability wearing
 two names. See [Social login](#social-login-what-it-was-and-what-it-is) for the
 record.
 
-**v0 is a skeleton.** There is no auth logic here yet, on purpose: the
-scaffolding *is* this packet's deliverable. What exists is the shape every later
-packet builds on — configuration, liveness and readiness, a Postgres pool, the
-migration convention, and an image. What it does today:
+Roughly 253 Go files and 125k lines under `internal/`, across twenty
+implemented packages (`accounts`, `sessions`, `users`, `auth`, `mfa`,
+`recovery`, `oidc`, `oauth`, `tenancy`, `admin`, `apikeys`, `outbox`,
+`platform`, …), with 156 test files. Eighteen migrations define the schema;
+`openapi/v1.yaml` is the contract.
+
+What it serves:
+
+```
+POST   /v1/users                                  registration
+POST   /v1/session                                sign-in
+DELETE /v1/session                                sign-out
+GET    /v1/me                                     who am I
+POST   /v1/mfa/enrollments                        MFA enrolment + confirm
+POST   /v1/mfa/recovery-codes                     recovery codes
+POST   /v1/password-resets                        password reset + confirm
+POST   /v1/email-verifications                    email verification
+POST   /v1/email-changes                          change address
+POST   /v1/auth/oauth/{provider}                  Google / GitHub sign-in
+GET    /v1/auth/oauth/{provider}/callback         provider callback
+
+POST   /v1/accounts                               create an account (tenant)
+GET    /v1/accounts                               list them
+GET    /v1/accounts/{accountID}                   read it
+PATCH  /v1/accounts/{accountID}                   update it
+DELETE /v1/accounts/{accountID}                   delete it
+GET    /v1/accounts/{accountID}/members           list members
+POST   /v1/accounts/{accountID}/members           add a member
+PATCH  /v1/accounts/{accountID}/members/{userID}  change a role
+DELETE /v1/accounts/{accountID}/members/{userID}  remove a member
+POST   /v1/accounts/{accountID}/invitations       invite
+POST   /v1/invitations/accept                     accept one
+GET    /v1/accounts/{accountID}/admin/invitations/{invitationID}
+DELETE /v1/accounts/{accountID}/admin/invitations/{invitationID}
+POST   /v1/accounts/{accountID}/api-keys          scoped machine credentials
+GET    /v1/accounts/{accountID}/admin/audit-log   who did what
+
+GET    /.well-known/openid-configuration          it is an OIDC *provider*
+POST   /v1/introspections                         token introspection
+```
+
+It is both directions of "OAuth", which is the distinction the paragraph above
+is about: an **OIDC provider** that issues tokens to registered clients, and an
+**OAuth client** of Google and GitHub via the two `/v1/auth/oauth/*` routes.
+
+Security properties worth naming, because they are the reason to prefer this
+over a hosted auth service: passwords are argon2id; session, invitation and
+recovery **tokens are stored as SHA-256 digests**, never as presented values, so
+a database dump yields nothing usable; accounts carry an ordered role enum
+(`owner` > `admin` > `member`) so authorization is a comparison rather than a
+set of independent booleans; and every privileged action is written to an
+account audit log.
+
+**What it is not.** Resource-level sharing is not in scope here. There is no
+audit, assignment or document concept in `migrations/` — identity answers *who
+is this and what may they do about the account*. Anything scoped to a specific
+audit belongs to the service that owns audits, keyed by an account id from
+here. That boundary is deliberate; see `tenancy.yml` and `account_scope.yml`.
+
+### What still gates it
+
+`gate.yml` measures this, and is worth reading before trusting a local green.
+Two commands exist and they are not the same: `bin/prime` for developers
+(measured green, 335s wall, exit 0) and a stricter CI job that adds `-race`,
+`goose up`, `go vet`, `gofmt`, a coverage floor, and five cold boots of the
+real binary. CI once could not apply the migrations at all — it ran a bare
+Postgres service container with no init script, so the role `protect_table`
+requires did not exist. That is fixed and recorded in `CHANGELOG.md`.
+
+The readiness probe is still the honest minimal one:
 
 ```
 $ curl -s localhost:8080/healthz
@@ -27,6 +93,10 @@ $ curl -s localhost:8080/healthz
 $ curl -s localhost:8080/readyz
 {"status":"ok","deps":"none"}
 ```
+
+`deps:"none"` is accurate for this service's current check set, not a stub: it
+reflects what `readyz` is configured to verify, and Postgres is not in that
+set. Treat it as a liveness signal, not a dependency check.
 
 ## Why chi
 
