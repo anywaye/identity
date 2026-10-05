@@ -298,6 +298,42 @@ services:
       # four that are legal and `local` is not one of them.
       DEPLOYMENT_ENVIRONMENT: development
 
+    # ON KIT'S `platform` NETWORK, and this line is not optional tidiness.
+    #
+    # kit puts every service it ships on a network called `platform`. A service
+    # in the SECOND compose file that declares no `networks:` lands on the
+    # project's `default` network instead, and `default` and `platform` are two
+    # different networks in two different DNS domains — so every hostname this
+    # service uses stops resolving the moment it starts. Measured, from
+    # `docker compose config` on the merged file before this line:
+    #
+    #     identity:   networks: {default: null}
+    #     postgres:   networks: {platform: null}
+    #     otel-collector: networks: {platform: null}
+    #
+    # and the symptom at `up`, which names neither the network nor the database:
+    #
+    #     failed to connect to `user=identity_app database=identity`:
+    #     lookup postgres on 127.0.11: no such host
+    #
+    # `127.0.0.11` is Docker's embedded DNS, and it is the tell: the resolver
+    # the container was given serves ITS OWN network's names, and `postgres` is
+    # not on it. The pool is lazy, so this is where the defect surfaces —
+    # `db.Open` parses and constructs without dialling, so `/readyz` is what
+    # reports it rather than a crash at boot.
+    #
+    # The same missing line is why courier's `syslog` driver below made its
+    # failure louder than this one does: the driver resolves `otel-collector`
+    # from the DAEMON rather than from the container, so a wrong-network service
+    # dies before it can serve and says so. Here it starts, and then cannot
+    # reach its database.
+    #
+    # No other adopter is a reason not to have it — courier, darkroom and muse
+    # each carry this same stanza with this same reason, and no check requires
+    # it, so it is a fleet finding rather than an identity-only one.
+    networks:
+      - platform
+
     # THE CRASH LAYER, and it is the reason a panic reaches an operator with no
     # per-language log SDK in it.
     #
