@@ -357,10 +357,63 @@ services:
     # `tag` is the process identity the collector promotes to `service.name` when a
     # record has none — see `transform/cafaye_logs` in the collector config. It
     # has to match the service name or a crash is filed against `unknown`.
+    #
+    # WHERE THIS STANZA WORKS, AND WHERE IT DOES NOT. The decision above is
+    # unchanged and stands: `syslog` is the crash layer, on every platform, with
+    # no per-language dependency. What differs by host is whether the DAEMON can
+    # resolve the receiver's NAME, and that is a property of the daemon's
+    # resolver rather than of the compose network:
+    #
+    #   - A Linux dockerd runs the driver in the host's network namespace and
+    #     resolves `otel-collector` over the same bridge the containers are on.
+    #     The stanza works as written.
+    #   - Docker Desktop and OrbStack run the daemon inside a VM whose resolver
+    #     is the HOST's (0.250.250.200:53 on OrbStack), and a compose service
+    #     name exists in no host DNS zone. The container then cannot START:
+    #
+    #       failed to create task for container: failed to initialize logging
+    #       driver: dial tcp: lookup otel-collector on 0.250.250.200:53: no such host
+    #
+    #     Measured with no compose file and no cafaye involved: `docker run --rm
+    #     --log-driver syslog --log-opt syslog-address=tcp://otel-collector:15514
+    #     alpine:3 echo hi` fails identically. The same command with the
+    #     collector's CONTAINER IP instead of its name exits 0.
+    #
+    # SO THE ADDRESS IS A VARIABLE, and the name stays the default. On a Linux
+    # daemon nothing needs setting and the documented behaviour is what runs; on
+    # Docker Desktop / OrbStack a developer sets `IDENTITY_SYSLOG_ADDRESS` in
+    # `.env` (git-ignored) to the collector's address on the platform network —
+    #
+    #   docker inspect -f '{{.NetworkSettings.Networks.identity-compose_platform.IPAddress}}' \
+    #     identity-compose-otel-collector-1
+    #
+    # (the key is `<project>_platform`, prefixed with `${KIT_STACK_NAME:-cafaye}`,
+    # which is why it is worth reading off `docker inspect` rather than being
+    # guessed) — and the crash layer is fully in place,
+    # because the bytes arrive at the same receiver over the same transport.
+    # The variable names the ADAPTER to the host's resolver, and nothing about
+    # the decision: the receiver is still the collector's `syslog/crash`, still
+    # unpublished, still the same `tag`.
+    #
+    # WHY NOT FALL BACK TO `json-file` ON A NON-LINUX HOST. Docker has no way to
+    # ask "which host am I on" from a compose file, and a driver chosen by
+    # anything else — a second `-f` override a developer forgets to pass, a CI
+    # runner, the next person — is a crash layer that is silently absent on the
+    # machines nobody re-tests. `syslog-address` is refused outright by
+    # `json-file` and `local` ("unknown log opt 'syslog-address'"), so a driver
+    # swap cannot even be spelled by editing the address. A variable the
+    # developer sets once in a git-ignored file is the smallest thing that is
+    # honest: the stanza names where it works, and the workaround is visible in
+    # the developer's own `.env` rather than hidden in a committed default.
+    #
+    # A dropped crash layer locally is still the better failure to the OTHER one:
+    # with the driver disabled a panic is in `docker logs identity-compose-identity-1`,
+    # which a developer reads; with it misconfigured the container does not start
+    # and there is no log anywhere.
     logging:
       driver: syslog
       options:
-        syslog-address: "tcp://otel-collector:15514"
+        syslog-address: "${IDENTITY_SYSLOG_ADDRESS:-tcp://otel-collector:15514}"
         tag: "identity"
 
     # The database, and ONLY the database. Not the collector, for the reason at
