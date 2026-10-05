@@ -259,6 +259,30 @@ accessories:
     # credentials come from the deployment secret store and are distinct per
     # environment — but it fails as "password authentication failed", which names
     # the symptom rather than the cause, so it is recorded here.
+    #
+    # THE RUNTIME DSN NAMES `identity_app`, NOT `identity`, and this is the other
+    # half of that paragraph. The role the service LOGS IN AS is the one the
+    # account boundary is written for: migrations/00016 installs four row-level-
+    # security policies per account-scoped table, each naming `identity_app` and the
+    # owner, and Postgres exempts a table's OWNER from its own policies — so a
+    # deployed `DATABASE_URL` naming the owner would run a service that reads every
+    # account's rows while every policy sits in the catalog looking like a boundary.
+    # `docker-compose.yml` says the same thing for the dev stack, and the two have
+    # to agree: same role, different passwords.
+    #
+    # WHICH LEAVES AN OPERER FACT, and it is the one thing in this block a reader
+    # must not have to infer. This accessory is a bare `postgres:17-alpine` with no
+    # init script and no `KIT_POSTGRES_DATABASES`, so the only role it creates is
+    # the one `POSTGRES_USER` names — and `POSTGRES_USER` is deliberately absent, so
+    # the image's default applies. That means **`identity_app` does not exist on a
+    # deployed database until an operator creates it**, and the service's DSN fails
+    # with `role "identity_app" does not exist` until they do. Provisioning a role
+    # is ENVIRONMENT and never a migration: a migration that created its own roles
+    # would need CREATEROLE, would quietly recreate a role an operator had dropped on
+    # purpose, and would leave behind a role no `goose down` could remove. Locally
+    # kit's `10-cluster.sh` provisions it from `KIT_POSTGRES_DATABASES`; here it is
+    # one `create role identity_app login …` against the cluster admin, run once,
+    # with a distinct password from the admin's.
     env:
       secret:
         - POSTGRES_PASSWORD
