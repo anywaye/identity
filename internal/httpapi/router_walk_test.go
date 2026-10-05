@@ -160,6 +160,37 @@ func TestTheDriftWalkSeesTheRecoverySurface(t *testing.T) {
 	}
 }
 
+// TestTheDriftWalkSeesTheSessionLinkSurface is the fourth instance of the same bug,
+// for the one route the session-link packet added.
+//
+// IT IS HERE FOR A REASON SPECIFIC TO THIS SURFACE, and the reason is that the mint
+// is mounted with NO CONDITIONAL SURFACE OF ITS OWN — it hangs off `recovery`, which
+// every walk already sets — so there is no missing-field failure mode here to catch.
+// The row is therefore not insurance against a literal; it is a claim that the route
+// is visible to the walk that holds `openapi/v1.yaml` to the router. Without it, a
+// route that no walk could see would still be "documented" as far as
+// `TestEveryServedRouteIsDocumentedOrNamed` is concerned, which is precisely the
+// state that file's comment says made it green over three undocumented operations.
+func TestTheDriftWalkSeesTheSessionLinkSurface(t *testing.T) {
+	t.Parallel()
+
+	for _, want := range []operationKey{
+		{Method: "POST", Path: "/v1/session-links"},
+	} {
+		if _, seen := servedRoutes(t)[want]; !seen {
+			t.Errorf("servedRoutes did not report %s as served. The router mounts it once "+
+				"`options.recovery` is set, and this walk is what decides whether its "+
+				"documentation is checked — a route invisible here is a route whose document "+
+				"entry nothing verifies", want)
+		}
+		if _, seen := routesIn(t, walkOptions())[want]; !seen {
+			t.Errorf("walkOptions did not report %s. The two options literals describe the "+
+				"same deployed router, and a suite that walks two different routers reports "+
+				"agreement about a service neither one is", want)
+		}
+	}
+}
+
 // TestTheDriftWalkSeesTheSocialLoginSurface is the behavioural instance for the
 // third occurrence, and it is the pair of checks that let the social-login
 // tripwire go green on the day its own subject was mounted.

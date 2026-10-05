@@ -65,6 +65,16 @@ type Recovery interface {
 	RequestEmailChange(ctx context.Context, in recovery.RequestEmailChangeInput) (recovery.EmailChange, error)
 	ConfirmEmailChangeCurrent(ctx context.Context, in recovery.ConfirmEmailChangeCurrentInput) (recovery.EmailChange, error)
 	ConfirmEmailChangeNew(ctx context.Context, in recovery.ConfirmEmailChangeNewInput) (users.User, error)
+
+	// MintSessionLink is the FOURTH purpose on the same table, and it is on this
+	// interface rather than on a second one for the reason the others are here: one
+	// `recovery_tokens` table has one service, and a second interface over it would
+	// be a second way to reach it.
+	//
+	// IT IS MINT-ONLY HERE. The redemption answers with a browser session, and the
+	// session row is `Auth`'s to write, so its method belongs on this interface only
+	// once it exists — and until then a handler for it would be a route that 500s.
+	MintSessionLink(ctx context.Context, in recovery.MintSessionLinkInput) (recovery.SessionLink, error)
 }
 
 // WithRecovery mounts the recovery surface.

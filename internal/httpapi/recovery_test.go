@@ -48,6 +48,13 @@ type fakeRecovery struct {
 	redeems   []recovery.RedeemPasswordResetInput
 	confirmed []recovery.ConfirmEmailChangeNewInput
 	statuses  []id.UUID
+	// mints records every MintSessionLink call, so a test can prove a refusal
+	// happened BEFORE the use case rather than in it — and that a token-less caller
+	// reached no method at all.
+	mints []recovery.MintSessionLinkInput
+	// mintOut and mintErr are the double's answer for a mint.
+	mintOut recovery.SessionLink
+	mintErr error
 }
 
 func newFakeRecovery() *fakeRecovery {
@@ -133,16 +140,38 @@ func (f *fakeRecovery) ConfirmEmailChangeNew(_ context.Context, in recovery.Conf
 	return f.confirmNewOu, nil
 }
 
+func (f *fakeRecovery) MintSessionLink(_ context.Context, in recovery.MintSessionLinkInput) (recovery.SessionLink, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.mints = append(f.mints, in)
+	if f.mintErr != nil {
+		return recovery.SessionLink{}, f.mintErr
+	}
+	if f.mintOut.Token == "" {
+		// A distinguishable default, so a test that asserts "the route hands the
+		// value the use case returned" cannot pass against a body the handler
+		// invented.
+		return recovery.SessionLink{
+			Token:     "minted-by-the-use-case",
+			ExpiresAt: time.Date(2026, 10, 1, 12, 10, 0, 0, time.UTC),
+		}, nil
+	}
+	return f.mintOut, nil
+}
+
 // touched reports whether any use-case method was reached.
 //
 // It is the half of an authorization assertion that a status code cannot make. A
 // handler that refused AFTER calling the service would produce the right 403 while
 // having already minted a token and sent a mail, so the recovery matrix asks about
-// both.
+// both. `mints` is in the sum for the same reason and with more force: a mint that
+// was refused at the middleware must leave no row, and the only way to see that is
+// to ask whether the use case was called.
 func (f *fakeRecovery) touched() bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return len(f.resets)+len(f.verifies)+len(f.redeems)+len(f.confirmed)+len(f.statuses) > 0
+	return len(f.resets)+len(f.verifies)+len(f.redeems)+len(f.confirmed)+
+		len(f.statuses)+len(f.mints) > 0
 }
 
 // recoveryServer builds a router with the recovery surface mounted.

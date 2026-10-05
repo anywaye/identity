@@ -233,6 +233,26 @@ func anonymousFamilyAudit() []auditRoute {
 				"holding a token that cannot exist before two inbox proofs",
 		},
 		{
+			// A row because the `/v1/session` PREFIX catches it, not because it is
+			// anonymous in the sense the question is about: the mint demands a scoped
+			// api key, and a stranger presenting none gets the surface's 403. So the
+			// identifier in the body — `user_id` — never reaches a use case from
+			// outside the trust boundary, which is the answer this column records.
+			//
+			// IT IS NOT 401 AND THAT IS NOT AN ACCIDENT: `requireSessionLinkMint`
+			// refuses on the credential's SHAPE, so "you are not a scoped token" is
+			// true of a stranger exactly as it is of a signed-in person. A 401 here
+			// would send a client hunting a login problem on a route where having a
+			// login is the wrong thing to have.
+			name: "mint a session link", method: http.MethodPost, pattern: "/v1/session-links",
+			identifier: "user_id",
+			probe:      `{"user_id":"` + id.MustNew().String() + `"}`,
+			anonymous:  http.StatusForbidden,
+			discloses: "nothing: 403 without a scoped api key holding sessions:write, so a subject " +
+				"id never reaches the use case from a stranger. Behind that credential the 404 for " +
+				"an unknown subject IS a deliberate disclosure — see DECISIONS.md D12",
+		},
+		{
 			name: "introspect a token", method: http.MethodPost, pattern: "/v1/introspections",
 			identifier: "token",
 			probe:      `{"token":"` + scopedTokenForTheMatrix + `"}`,
@@ -761,6 +781,7 @@ func newAuditFixture(t *testing.T) *auditFixture {
 				Memory: 8 * 1024, Iterations: 1, Parallelism: 1, SaltLength: 16, KeyLength: 32,
 			}),
 			clk,
+			noEnrolledSecondFactor{},
 		)),
 		WithAPIKeys(keys),
 		WithAPIKeyCaller(keys),

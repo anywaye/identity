@@ -189,6 +189,26 @@ var accountRouteScopes = map[string]string{
 	"GET /v1/accounts/{accountID}/admin/audit-log":                     apikeys.ScopeAuditLogRead,
 	"DELETE /v1/accounts/{accountID}/admin/invitations/{invitationID}": apikeys.ScopeAccountInvitationsWrite,
 	"POST /v1/accounts/{accountID}/admin/invitation-revocations":       apikeys.ScopeAccountInvitationsWrite,
+
+	// THE ONE ROW THAT IS NOT ACCOUNT-SCOPED, and it is here rather than in a second
+	// table for the reason the whole file argues: one table is one place a scope is
+	// declared, so `TestEveryScopeIsEnforcedOnItsRoutes` can walk the vocabulary
+	// against the router in both directions and a scope with no route behind it — a
+	// comment with a type — fails.
+	//
+	// The mint names no account, so it does not go through `requireAccountRole`, and
+	// `requireSessionLinkMint` reads this row through the same `scopeRequiredBy` the
+	// account gate uses. That is what makes the row a declaration the code consults
+	// rather than a description of it: deleting it makes `scopeRequiredBy` return ""
+	// and `Allows("")` is false, so the mint CLOSES to tokens — the fail-closed
+	// direction this table exists to guarantee, and a red build beside it.
+	//
+	// AND THE ROW IS NOT A WEAKER GATE BECAUSE THERE IS NO ACCOUNT. A subject is
+	// named in the body rather than in the path, so this route cannot restrict by
+	// tenancy the way the rows above do. That is a fact about WHAT THE SCOPE BUYS —
+	// any subject, not any subject in one account — and it is why the scope's own
+	// comment in internal/apikeys says the grant has to be deliberate.
+	"POST /v1/session-links": apikeys.ScopeSessionsWrite,
 }
 
 // scopeRequiredBy returns the scope a token needs for the route it reached, or ""

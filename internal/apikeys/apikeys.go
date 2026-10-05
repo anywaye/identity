@@ -169,8 +169,23 @@ const LastUsedResolution = 5 * time.Minute
 //	a downgrade rather than a break-in, and the routes refuse a token outright
 //	rather than consulting a scope list.
 //
-//	there is NO scope for sessions. A token cannot mint, read or revoke a
-//	browser session, and it cannot complete a second-factor login.
+//	there is NO scope for SESSIONS, and `sessions:write` below is the one that
+//	used to make that sentence true in its entirety, so the change is worth
+//	saying rather than making silently. A token still cannot create, read or
+//	revoke a browser session, and it still cannot complete a second-factor
+//	login — both routes refuse a token outright and no scope changes that. What
+//	`sessions:write` buys is MINTING A LINK: a single-use token, worth ten
+//	minutes, that a CALLER delivers to a browser and that redeems into a
+//	session for the user it names. The distinction is not a technicality, it is
+//	the whole boundary: the browser session is a credential this service issues
+//	to a person who proved two things, and a token that could mint one would be
+//	a token that could assert a person proved them. The link is not that — it is
+//	carried by somebody the token's owner chose, over a channel the owner
+//	already owns, and the redemption is what still requires the account to be in
+//	a state that may sign in at all. It is the closest this vocabulary comes to
+//	an authentication credential, which is why it is LAST in AllScopes, why it
+//	is granted deliberately rather than inherited, and why a mint for an
+//	MFA-enrolled subject is refused rather than served with a challenge.
 //
 //	there is NO scope that means "everything". Not `*`, not `accounts:*`, not a
 //	scope named `admin`. A token is granted the scopes it names, so "read this
@@ -228,6 +243,29 @@ const (
 	// rule at the top of this block is that a token is granted exactly what it
 	// names and a category name is where a wildcard grows back.
 	ScopeAccountInvitationsWrite = "account_invitations:write"
+
+	// ScopeSessionsWrite is POST /v1/session-links and nothing else.
+	//
+	// IT MINTS A LINK AND NOT A SESSION, and the sentence above is why that
+	// distinction is load-bearing: the redemption route is public and the mint route
+	// is not, so a token holding this scope can put a credential in front of a
+	// browser but cannot hold one. A "session" name would have promised the second
+	// and delivered the first, and a client written against the name would put this
+	// scope in a place a session scope belonged.
+	//
+	// READ IS NOT IN THE NAME AND MUST NOT BE ADDED FOR THIS. A link is minted and
+	// then handed to the caller; there is nothing to list. A `sessions:read` beside
+	// this one would be a scope no route enforces and therefore a promise about the
+	// future rather than a control over the present.
+	//
+	// WHAT THIS IS WORTH. It is the only scope in the vocabulary whose route turns
+	// an opaque value into an authenticated browser session, and the redemption
+	// answers a stranger holding that value. The blast radius is the user the link
+	// names, which is why the mint route refuses a subject with a second factor and
+	// refuses a subject the account cannot sign in — a scope that reads as "write a
+	// link" and behaves as "log somebody in" is the shape of thing a grant has to be
+	// deliberate about.
+	ScopeSessionsWrite = "sessions:write"
 )
 
 // AllScopes is the vocabulary, in a fixed order.
@@ -239,6 +277,7 @@ func AllScopes() []string {
 	return []string{
 		ScopeAccountsRead, ScopeAccountsWrite, ScopeAccountsDelete,
 		ScopeOIDCClientsWrite, ScopeAuditLogRead, ScopeAccountInvitationsWrite,
+		ScopeSessionsWrite,
 	}
 }
 

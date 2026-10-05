@@ -144,8 +144,21 @@ func newRecoveryFlow(t *testing.T, mailer recovery.Mailer) *recoveryFlow {
 			mailer,
 			testHasher(t),
 			clock.System{},
+			// The session-link mint's only question about a subject. This fixture
+			// drives the three MAILED flows and mints no links, so "no second factor"
+			// is the answer that keeps that true; the stub exists because the
+			// constructor argument is required precisely so that no deployment can be
+			// built unable to ask.
+			noSecondFactor{},
 		),
 	}
+}
+
+// noSecondFactor is `mfa.Service.Enabled` for a fixture that mints no links.
+type noSecondFactor struct{}
+
+func (noSecondFactor) Enabled(context.Context, db.Querier, id.UUID) (bool, error) {
+	return false, nil
 }
 
 // testPasswordDigest is a real argon2id digest.

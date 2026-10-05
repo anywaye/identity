@@ -126,6 +126,7 @@ func newRecoveryServerFixture(t *testing.T) *recoveryServerFixture {
 		mailer,
 		hasher,
 		clk,
+		noEnrolledSecondFactor{},
 	)
 
 	return &recoveryServerFixture{
@@ -750,6 +751,7 @@ func TestNoRecoveryTokenReachesTheLogs(t *testing.T) {
 			Memory: 8 * 1024, Iterations: 1, Parallelism: 1, SaltLength: 16, KeyLength: 32,
 		}),
 		clk,
+		noEnrolledSecondFactor{},
 	)
 	handler := New(nil, WithAuth(authServiceFor(pool, clk)), WithRecovery(svc),
 		WithLogger(slogLogger(logs)))

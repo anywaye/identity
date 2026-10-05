@@ -948,6 +948,29 @@ func (c *Client) MintAPIKey(ctx context.Context, accountId openapiTypes.UUID, bo
 	return &out, err
 }
 
+// MintSessionLink mints a delegated session link for a subject. Corresponds to
+// `POST /v1/session-links`.
+//
+// **The caller owns delivery and landing.** This service writes the row and hands
+// back the plaintext; it does not mail it, and the request carries no redirect, no
+// landing URL and no project. A link that escapes into a chat log, a support ticket or
+// a shared browser history is dead in ten minutes, which is the whole of the window's
+// argument, and that bound is a **422 above an hour rather than a clamp**: a caller
+// that asked for a day and got an hour has been told a lie about how long a credential
+// it is about to hand somebody else stays live.
+//
+// **`Token` is the single most loggable value in this package**, for the reason
+// `MintAPIKey` gives: the generated type carries it with no redacting `String()`, it is
+// never stored in the clear, and it is redeemed exactly once. See
+// `TestTheGeneratedSecretBearingTypesAreSafeToPrint`.
+func (c *Client) MintSessionLink(ctx context.Context, body generated.MintSessionLinkRequest) (*generated.SessionLink, error) {
+	var out generated.SessionLink
+	err := call(c, "mintSessionLink", func() (*http.Response, error) {
+		return c.transport.MintSessionLink(ctx, body)
+	}, &out)
+	return &out, err
+}
+
 // ListAPIKeys lists an account's tokens. Corresponds to
 // `GET /v1/accounts/{account_id}/api-keys`.
 //
