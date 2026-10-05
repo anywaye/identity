@@ -91,9 +91,63 @@ type User struct {
 	// instant. The way to stop trusting it is to change the address, and
 	// Store.SetEmail clears this in the same transaction that moves it.
 	EmailVerifiedAt *time.Time
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	// DisabledAt is when somebody deliberately turned this account off. nil means
+	// nobody ever has.
+	//
+	// IT IS NOT LockedUntil AND THE TWO MUST NOT BE MERGED, which is the whole of
+	// migrations/00021's first three lines. A lock is automatic, temporary and
+	// expires by itself; a disable is a person's decision with no expiry. So there
+	// is no `now` parameter here and no expiry to check: an account disabled in
+	// 2019 is disabled today, and the only thing that changes that is somebody
+	// calling Store.Enable.
+	//
+	// A POINTER WITH NO `false`, for the reason EmailVerifiedAt has one: null is
+	// the positive statement "nobody has decided this", and a second way to say
+	// "active" is a second thing to disagree with this one.
+	DisabledAt *time.Time
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
 }
+
+// DisabledError is a credential refused because the account was turned off by a
+// person.
+//
+// # IT IS A TYPE AND NOT A SENTINEL, and it is the mirror of LockedError for the
+// same reason LockedError is a type
+//
+// LockedError carries a RetryAfter, so it has to be a value with a field. This one
+// carries nothing: there is no window, no count, no deadline. It is a type anyway,
+// for the reason that matters on the other side — `errors.As` matches on
+// assignability, and the HTTP layer has to be able to tell "disabled" from "wrong
+// password" and from "locked" without inspecting a string. A sentinel would work
+// for errors.Is and would lose the ability to say anything else about it, and the
+// one thing this concept needs to be able to say is that it is NOT the lockout.
+//
+// # IT IS NOT ErrInvalidCredentials, AND THAT IS A DECISION
+//
+// The caller reached it by presenting a correct password. Answering 401 would tell
+// somebody that their password is wrong when it is not, send them round a reset
+// loop that cannot help them, and make the account's state invisible to the only
+// person who can act on it. See DECISIONS.md D13 for the enumeration reasoning,
+// which is that the check runs AFTER the password is verified — so this error
+// reaches a caller who has already proved they hold the credential and therefore
+// already knows the account exists.
+//
+// The sentence is fixed in the HTTP layer for the same reason the lockout's is:
+// a detail that varied would be a detail that leaked.
+type DisabledError struct{}
+
+func (e *DisabledError) Error() string { return "this account is disabled" }
+
+// IsDisabled reports whether this account has been turned off by a person.
+//
+// IT TAKES NO CLOCK, and the absence is the decision rather than an oversight: a
+// disable does not expire, so there is no instant to compare against. IsLocked
+// takes one because a lock does expire, and the two methods reading alike while
+// meaning opposite things is the exact confusion migrations/00021 exists to stop —
+// so the name says the difference rather than leaving it to a caller to remember
+// which column it had.
+func (u User) IsDisabled() bool { return u.DisabledAt != nil }
 
 // IsVerified reports whether the address on this row has been proved.
 //

@@ -15778,6 +15778,11 @@ type CreateSessionResponse401Headers struct {
 	XTraceID string
 }
 
+// CreateSessionResponse403Headers the declared response headers of an HTTP 403 response for CreateSession
+type CreateSessionResponse403Headers struct {
+	XTraceID string
+}
+
 // CreateSessionResponse413Headers the declared response headers of an HTTP 413 response for CreateSession
 type CreateSessionResponse413Headers struct {
 	XTraceID string
@@ -15810,6 +15815,8 @@ type CreateSessionResponse struct {
 	ApplicationProblemJSON400 *MalformedBody
 	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
 	ApplicationProblemJSON401 *Problem
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Problem
 	// ApplicationProblemJSON413 the response for an HTTP 413 `application/problem+json` response
 	ApplicationProblemJSON413 *BodyTooLarge
 	// ApplicationProblemJSON422 the response for an HTTP 422 `application/problem+json` response
@@ -15826,6 +15833,8 @@ type CreateSessionResponse struct {
 	Headers400 *CreateSessionResponse400Headers
 	// Headers401 the parsed response headers for an HTTP 401 response
 	Headers401 *CreateSessionResponse401Headers
+	// Headers403 the parsed response headers for an HTTP 403 response
+	Headers403 *CreateSessionResponse403Headers
 	// Headers413 the parsed response headers for an HTTP 413 response
 	Headers413 *CreateSessionResponse413Headers
 	// Headers422 the parsed response headers for an HTTP 422 response
@@ -15854,6 +15863,11 @@ func (r CreateSessionResponse) GetApplicationProblemJSON400() *MalformedBody {
 // GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
 func (r CreateSessionResponse) GetApplicationProblemJSON401() *Problem {
 	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r CreateSessionResponse) GetApplicationProblemJSON403() *Problem {
+	return r.ApplicationProblemJSON403
 }
 
 // GetApplicationProblemJSON413 returns the response for an HTTP 413 `application/problem+json` response
@@ -23910,6 +23924,13 @@ func ParseCreateSessionResponse(rsp *http.Response) (*CreateSessionResponse, err
 		}
 		response.ApplicationProblemJSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
 		var dest BodyTooLarge
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -23995,6 +24016,16 @@ func ParseCreateSessionResponse(rsp *http.Response) (*CreateSessionResponse, err
 			headers.XTraceID = value
 		}
 		response.Headers401 = &headers
+	case rsp.StatusCode == 403:
+		var headers CreateSessionResponse403Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers403 = &headers
 	case rsp.StatusCode == 413:
 		var headers CreateSessionResponse413Headers
 		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {

@@ -149,9 +149,15 @@ func anonymousFamilyAudit() []auditRoute {
 			identifier: "email, password",
 			probe:      `{"email":"nobody@example.com","password":"not the right password"}`,
 			anonymous:  http.StatusUnauthorized,
-			discloses: "that the account is LOCKED (423), to a stranger who has caused the lockout " +
-				"themselves. Six unauthenticated requests per candidate address. Held, measured " +
-				"and not fixed by TestALockedAccountIsToldApartOnlyFromThePassword",
+			discloses: "NOTHING to a stranger, and the two answers that say something are both " +
+				"positioned behind the password. LOCKED answers 423, to a stranger who caused the " +
+				"lockout themselves — six unauthenticated requests per candidate address, held and " +
+				"measured by TestALockedAccountIsToldApartOnlyFromThePassword. DISABLED answers 403 " +
+				"with the state named, and is reached only AFTER the password verifies, so a caller " +
+				"who sees it has already proved they hold the credential and already knew the " +
+				"account existed — which makes it strictly cheaper to be honest about than the 423 " +
+				"above it. A wrong password on a disabled account is the same 401 as on any other. " +
+				"Held by TestADisabledLoginWithTheWrongPasswordIsRefusedExactlyAsAnyOther",
 		},
 		{
 			name: "read the session", method: http.MethodGet, pattern: "/v1/me",

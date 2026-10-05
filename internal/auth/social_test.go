@@ -310,6 +310,14 @@ type socialFixture struct {
 // `fixture.register`, which calls t.Fatalf on a duplicate address. Every test in
 // this file passes its own *testing.T, which is what keeps the file safe under
 // t.Parallel — a package-level testing.T would be a race.
+// newSocialFixture is the fixture with both providers configured, which is what
+// every test in disabled_test.go wants: it names one provider and does not care
+// about the other.
+func newSocialFixtureWithBothProviders(t *testing.T) *socialFixture {
+	t.Helper()
+	return newSocialFixture(t, oauth.ProviderGoogle, oauth.ProviderGitHub)
+}
+
 func newSocialFixture(t *testing.T, names ...string) *socialFixture {
 	t.Helper()
 

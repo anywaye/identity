@@ -102,6 +102,36 @@ func (f *fakeUsers) RecordFailedLogin(_ context.Context, _ db.Querier, userID id
 	return nil
 }
 
+// Disable and Enable mirror the real store's pair, including the ErrNotFound on a
+// user that is not there — a double that returned nil would let a test assert that
+// a missing user disables cleanly, which is the shape of the bug this pair exists
+// to refuse.
+//
+// The write lands on BOTH maps, for the same reason RecordFailedLogin does: a
+// user fetched by email and a user fetched by id must not disagree about whether
+// the account is disabled.
+func (f *fakeUsers) Disable(_ context.Context, _ db.Querier, userID id.UUID, at time.Time) error {
+	u, ok := f.byID[userID]
+	if !ok {
+		return users.ErrNotFound
+	}
+	u.DisabledAt = &at
+	f.byID[userID] = u
+	f.byEmail[u.Email] = u
+	return nil
+}
+
+func (f *fakeUsers) Enable(_ context.Context, _ db.Querier, userID id.UUID) error {
+	u, ok := f.byID[userID]
+	if !ok {
+		return users.ErrNotFound
+	}
+	u.DisabledAt = nil
+	f.byID[userID] = u
+	f.byEmail[u.Email] = u
+	return nil
+}
+
 func (f *fakeUsers) ClearFailures(_ context.Context, _ db.Querier, userID id.UUID) error {
 	f.cleared++
 	u, ok := f.byID[userID]
@@ -160,6 +190,22 @@ func (f *fakeSessions) ByToken(_ context.Context, _ db.Querier, token string, no
 		return sessions.Session{}, sessions.ErrNotFound
 	}
 	return sessions.Session{ID: sid, UserID: f.owners[sid]}, nil
+}
+
+// RevokeAllForUser deletes every session the user holds, which is what makes a
+// disable a revocation rather than a flag.
+//
+// The rows are removed from `live`, not merely counted, so `ByToken` misses
+// afterwards exactly as it does when the DELETE has committed — and a test that
+// asserted on a counter while leaving the map alone would pass against an
+// implementation that revoked nothing observable.
+func (f *fakeSessions) RevokeAllForUser(_ context.Context, _ db.Querier, userID id.UUID) error {
+	for digest, sid := range f.live {
+		if f.owners[sid] == userID {
+			delete(f.live, digest)
+		}
+	}
+	return nil
 }
 
 func (f *fakeSessions) Revoke(_ context.Context, _ db.Querier, sessionID id.UUID) error {
@@ -291,6 +337,35 @@ func (f *fixture) register(t *testing.T, email, password string) users.User {
 }
 
 func mustAddr(s string) netip.Addr { return netip.MustParseAddr(s) }
+
+// ptr is a time pointer, for the fields whose nil means something.
+//
+// The lockout tests need a LockedUntil in the future and there are four of them,
+// so a helper earns its place; a general-purpose pointer helper would not.
+func ptr(t time.Time) *time.Time { return &t }
+
+// disable and enable are the concept's two directions, driven through the use
+// case rather than by poking the double.
+//
+// They go through `Service.Disable` on purpose: the property under test everywhere
+// in disabled_test.go is that the COLUMN and the SESSION REVOCATION are one
+// transaction, and a helper that set the double's field directly would let every
+// one of those tests pass against an implementation that never revoked anything.
+// The fake sessions store is a real map, so `Authenticate` misses afterwards for
+// the same reason production does — the row is gone.
+func (f *fixture) disable(t *testing.T, userID id.UUID) {
+	t.Helper()
+	if err := f.svc.Disable(context.Background(), userID, f.clock.Now()); err != nil {
+		t.Fatalf("Disable: %v", err)
+	}
+}
+
+func (f *fixture) enable(t *testing.T, userID id.UUID) {
+	t.Helper()
+	if err := f.svc.Enable(context.Background(), userID); err != nil {
+		t.Fatalf("Enable: %v", err)
+	}
+}
 
 func mustHash(t *testing.T, password string) string {
 	t.Helper()
