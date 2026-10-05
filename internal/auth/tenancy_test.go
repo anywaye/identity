@@ -11,6 +11,7 @@ import (
 
 	"github.com/cafaye/identity/internal/accounts"
 	"github.com/cafaye/identity/internal/apikeys"
+	"github.com/cafaye/identity/internal/oidc"
 	"github.com/cafaye/identity/internal/outbox"
 	"github.com/cafaye/identity/internal/platform/clock"
 	"github.com/cafaye/identity/internal/platform/db"
@@ -210,6 +211,10 @@ func newServiceWithTenancy(t *testing.T, pool *pgxpool.Pool, tenancy PersonalAcc
 		outbox.NewStore(pool),
 		tenancy,
 		realSecondFactor(t, pool, clockForTest()),
+		// The real sweep over the real table, as main wires it: `Disable` refuses
+		// to run without one, so a nil here would answer every disable in this
+		// file with ErrNoAccessTokenRevoker rather than with what is under test.
+		oidc.NewStore(pool),
 		users.NewHasherWithParams(&argon2id.Params{
 			Memory: 8 * 1024, Iterations: 1, Parallelism: 1, SaltLength: 16, KeyLength: 32,
 		}),

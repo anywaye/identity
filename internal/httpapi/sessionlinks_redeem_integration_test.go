@@ -47,6 +47,7 @@ import (
 
 	"github.com/cafaye/identity/internal/auth"
 	"github.com/cafaye/identity/internal/mfa"
+	"github.com/cafaye/identity/internal/oidc"
 	"github.com/cafaye/identity/internal/outbox"
 	"github.com/cafaye/identity/internal/platform/clock"
 	"github.com/cafaye/identity/internal/platform/db"
@@ -94,6 +95,10 @@ func newRedeemFixture(t *testing.T) *redeemFixture {
 		outbox.NewStore(pool),
 		realTenancy(pool, clk),
 		secondFactor,
+		// The real sweep over the real table, as main wires it. A disable in this
+		// package must behave the way the deployed service does, and a nil here
+		// would make it refuse rather than revoke.
+		oidc.NewStore(pool),
 		cheap,
 		clk,
 		recovery.RedeemedSessionTTL,

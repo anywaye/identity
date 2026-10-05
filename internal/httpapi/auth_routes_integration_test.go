@@ -14,6 +14,7 @@ import (
 	"github.com/cafaye/identity/internal/accounts"
 	"github.com/cafaye/identity/internal/apikeys"
 	"github.com/cafaye/identity/internal/auth"
+	"github.com/cafaye/identity/internal/oidc"
 	"github.com/cafaye/identity/internal/outbox"
 	"github.com/cafaye/identity/internal/platform/clock"
 	"github.com/cafaye/identity/internal/platform/db"
@@ -60,6 +61,11 @@ func authServiceWithSessionTTL(pool *pgxpool.Pool, clk clock.Clock, sessionTTL t
 		// make every test in this file pass with a login that skips the challenge,
 		// which is the one bug this packet exists to prevent.
 		testMFAService(pool, clk),
+		// The real OIDC store, for the same reason main wires the real one: a
+		// disable's access-token sweep is one UPDATE over `oidc_access_tokens` and
+		// the operator routes in this package must be exercised against the table
+		// they revoke in. See TestADisableRevokesTheAccessTokensAtThisLayer.
+		oidc.NewStore(pool),
 		users.NewHasherWithParams(&argon2id.Params{
 			Memory: 8 * 1024, Iterations: 1, Parallelism: 1, SaltLength: 16, KeyLength: 32,
 		}),
@@ -545,6 +551,9 @@ func TestEndToEndWriteFailureIs500AndLeaksNothing(t *testing.T) {
 		outbox.NewStore(pool),
 		realTenancy(pool, clk),
 		testMFAService(pool, clk),
+		// The real sweep, as main wires it: `Disable` refuses to run without one,
+		// so this service has the same set of capabilities the production one does.
+		oidc.NewStore(pool),
 		users.NewHasherWithParams(&argon2id.Params{
 			Memory: 8 * 1024, Iterations: 1, Parallelism: 1, SaltLength: 16, KeyLength: 32,
 		}),
