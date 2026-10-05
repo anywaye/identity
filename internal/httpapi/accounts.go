@@ -190,7 +190,7 @@ var accountRouteScopes = map[string]string{
 	"DELETE /v1/accounts/{accountID}/admin/invitations/{invitationID}": apikeys.ScopeAccountInvitationsWrite,
 	"POST /v1/accounts/{accountID}/admin/invitation-revocations":       apikeys.ScopeAccountInvitationsWrite,
 
-	// THE ONE ROW THAT IS NOT ACCOUNT-SCOPED, and it is here rather than in a second
+	// THE ROWS THAT ARE NOT ACCOUNT-SCOPED, and they are here rather than in a second
 	// table for the reason the whole file argues: one table is one place a scope is
 	// declared, so `TestEveryScopeIsEnforcedOnItsRoutes` can walk the vocabulary
 	// against the router in both directions and a scope with no route behind it — a
@@ -209,6 +209,27 @@ var accountRouteScopes = map[string]string{
 	// any subject, not any subject in one account — and it is why the scope's own
 	// comment in internal/apikeys says the grant has to be deliberate.
 	"POST /v1/session-links": apikeys.ScopeSessionsWrite,
+
+	// THE OPERATOR SURFACE, and the second pair of rows with no account in the path.
+	// The argument above is theirs; what is different here is WHY there is no
+	// account to scope by, which is that a user is not an account. One person belongs
+	// to as many accounts as they like, so there is no single account whose tenancy
+	// would mean "the accounts this token may act on" for an action whose subject is
+	// the person rather than one of their memberships. Putting it under
+	// `/v1/accounts/{accountID}/…` would have meant inventing a tenancy for it, and
+	// the obvious invention — the caller's own account — is a boundary that a user
+	// belonging to ten tenants would cross ten times, granting tenant N the power to
+	// reach the employee tenant M also employs.
+	//
+	// SO THE ROWS DECLARE THE SCOPE AND NOTHING ELSE, and the refusal that matters is
+	// the one nobody can reach by adding an account to the path: an ACCOUNT-SCOPED
+	// credential is refused here, whatever its role and whatever else it holds. There
+	// is no role minimum that opens this surface, because there is no account in it to
+	// hold a minimum. `TestAnAccountScopedCredentialCannotDisableAUser` holds that by
+	// name, because it is the boundary D2–D5 drew and a future packet widening this
+	// route to "admins may too" would be invisible everywhere else.
+	"POST /v1/users/{userID}/disable": apikeys.ScopeUsersDisable,
+	"POST /v1/users/{userID}/enable":  apikeys.ScopeUsersDisable,
 }
 
 // scopeRequiredBy returns the scope a token needs for the route it reached, or ""

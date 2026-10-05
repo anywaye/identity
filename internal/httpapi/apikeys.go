@@ -348,6 +348,18 @@ func (o options) writeAPIKeyError(w http.ResponseWriter, r *http.Request, err er
 		problemFor(w, r, http.StatusForbidden, CodeForbidden,
 			"only an owner may manage api keys for this account")
 
+	case errors.Is(err, apikeys.ErrScopeNotMintableHere):
+		// 403 and not 422, and the sentence names the scope AND says why this
+		// surface is the wrong place to ask for it. The request is well-formed and the
+		// scope exists, so a 422 naming `scopes` as invalid would send a developer to
+		// the vocabulary table hunting a typo that is not there — and a caller told
+		// only "forbidden" would try the next account-shaped route instead.
+		problemFor(w, r, http.StatusForbidden, CodeForbidden,
+			"an account's api keys cannot carry the "+apikeys.ScopeUsersDisable+" scope: it names no "+
+				"account, so a credential minted for one account would be able to act on any user on the "+
+				"deployment. That credential is a deployment fact, provisioned for the deployment rather "+
+				"than minted from a tenant's settings")
+
 	case errors.Is(err, apikeys.ErrNotFound):
 		// The same sentence as an unknown account, and for the same reason: a
 		// different one would confirm that the id they guessed is a real credential.

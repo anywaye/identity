@@ -65,11 +65,23 @@ type fakeAuth struct {
 	secondFactorErr error
 	// secondFactor is the result CompleteSecondFactor returns.
 	secondFactor auth.LoginResult
+	// disableErr and enableErr are what the operator surface's two use cases
+	// return, and they are separate fields because a test mapping one direction's
+	// refusals has no reason to set the other's.
+	disableErr error
+	enableErr  error
 
 	// recorded inputs
 	registered []auth.RegisterInput
 	loggedIn   []auth.LoginInput
 	loggedOut  []string
+	// disabled and enabled are the user ids the operator surface asked about, in
+	// order. disabledAt is the instant Disable was handed, kept beside disabled
+	// rather than as a parallel slice because a test asserting one call's instant
+	// wants the two as one fact.
+	disabled   []id.UUID
+	disabledAt []time.Time
+	enabled    []id.UUID
 	// completed records the challenges CompleteSecondFactor was handed, so a test
 	// can prove which token the handler read and from where.
 	completed []auth.CompleteSecondFactorInput
@@ -142,6 +154,27 @@ func (f *fakeAuth) Logout(_ context.Context, token string) error {
 	defer f.mu.Unlock()
 	f.loggedOut = append(f.loggedOut, token)
 	return f.logoutErr
+}
+
+// Disable and Enable are the operator surface's two use cases.
+//
+// They record what they were asked for and return a programmable error, on the same
+// terms as every other method on this double: what is under test at the router is
+// the credential gate and the mapping, and the transaction `auth.Service.Disable`
+// runs is internal/auth's to hold against a real database.
+func (f *fakeAuth) Disable(_ context.Context, userID id.UUID, at time.Time) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.disabled = append(f.disabled, userID)
+	f.disabledAt = append(f.disabledAt, at)
+	return f.disableErr
+}
+
+func (f *fakeAuth) Enable(_ context.Context, userID id.UUID) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.enabled = append(f.enabled, userID)
+	return f.enableErr
 }
 
 // post sends a JSON body and returns the recorder.
@@ -1109,5 +1142,16 @@ func (panickingAuth) Authenticate(context.Context, string) (users.User, error) {
 	panic("handler exploded")
 }
 func (panickingAuth) Logout(context.Context, string) error {
+	panic("handler exploded")
+}
+
+// The operator surface's two use cases, on the same terms as every method above.
+// They are here rather than inherited from fakeAuth because this double's whole
+// claim is that EVERY method blows up, and a missing one would make that claim a
+// narrower statement than it reads as.
+func (panickingAuth) Disable(context.Context, id.UUID, time.Time) error {
+	panic("handler exploded")
+}
+func (panickingAuth) Enable(context.Context, id.UUID) error {
 	panic("handler exploded")
 }

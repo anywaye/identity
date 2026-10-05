@@ -259,6 +259,42 @@ func anonymousFamilyAudit() []auditRoute {
 				"an unknown subject IS a deliberate disclosure — see DECISIONS.md D12",
 		},
 		{
+			// A row because the `/v1/users` PREFIX catches these two, not because
+			// they are anonymous in the sense the question is about. They are
+			// OPERATOR routes: the credential is a scoped api key holding
+			// `users:disable`, and a caller presenting anything else is refused before
+			// the path is parsed — so a user id reaches no use case from outside the
+			// trust boundary, which is the answer this column records.
+			//
+			// IT IS 403 AND NOT 401 FOR THE SAME REASON THE MINT ABOVE IS: the gate
+			// refuses on the credential's SHAPE, so "you are not a scoped token" is
+			// true of a stranger exactly as it is of a signed-in person. A 401 would
+			// send a client hunting a login problem on a route where having a login is
+			// the wrong thing to have.
+			name: "disable a user", method: http.MethodPost,
+			pattern:   "/v1/users/{userID}/disable",
+			probe:     `{}`,
+			anonymous: http.StatusForbidden,
+			discloses: "nothing: 403 without a scoped api key holding users:disable, and the refusal " +
+				"happens BEFORE the user id in the path is parsed — so this is one answer for a real " +
+				"user id, a made-up one and no id at all, and there is no row to tell apart. Behind the " +
+				"credential the 404 for an id this service never issued is deliberate — see D12",
+		},
+		{
+			// The same row for the other direction, restated rather than pointed at
+			// the one above: the census compares (method, path) keys, so a row covering
+			// "the operator surface" would leave one of the two routes unlisted, and a
+			// future third route would be unlisted too.
+			name: "re-enable a user", method: http.MethodPost,
+			pattern:   "/v1/users/{userID}/enable",
+			probe:     `{}`,
+			anonymous: http.StatusForbidden,
+			discloses: "nothing, and it is the same nothing the disable route discloses: 403 without a " +
+				"scoped api key holding users:disable, before the path is parsed. There is deliberately no " +
+				"way to learn a user's disabled state from either direction anonymously — the only " +
+				"answer that names it is the login, and it is behind the password (DECISIONS.md D13)",
+		},
+		{
 			name: "introspect a token", method: http.MethodPost, pattern: "/v1/introspections",
 			identifier: "token",
 			probe:      `{"token":"` + scopedTokenForTheMatrix + `"}`,

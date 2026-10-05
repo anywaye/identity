@@ -577,7 +577,13 @@ func TestTheDocumentIsOpenAPI31AndCarriesAVersion(t *testing.T) {
 			v1Document, doc.SpecVersion)
 	}
 
-	const want = "1.9.0"
+	// 1.10.0 for the two operator routes. It is a NON-BREAKING addition and a
+	// GENERATED-SOURCE change at once: `POST /v1/users/{user_id}/disable` and its
+	// `/enable` beside it, and an eighth value in the `APIKeyScope` enum — which
+	// adds a generated constant without removing one, so the failure mode is a Go
+	// consumer that compiles against a naming shift rather than a wire change. Both
+	// are what this pin is for.
+	const want = "1.10.0"
 	if doc.InfoVersion != want {
 		t.Errorf("%s declares info.version %q, not %q. core's sync rule is that the /v1 "+
 			"prefix says which contract and this says which build of it, and a non-breaking "+

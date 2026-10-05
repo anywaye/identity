@@ -134,7 +134,7 @@ const LastUsedResolution = 5 * time.Minute
 
 // The scope vocabulary.
 //
-// FOUR NAMES, and every one of them is a capability an EXISTING route already
+// EIGHT NAMES, and every one of them is a capability an EXISTING route already
 // enforces a different way. That is the test of a real scope: it names something
 // this service actually does, and removing it removes access to something that
 // exists. A scope for a capability this service does not have is a promise about
@@ -158,6 +158,10 @@ const LastUsedResolution = 5 * time.Minute
 //	                       to say so.
 //	oidc_clients:write     register, read and revoke the account's OpenID
 //	                       Connect registrations.
+//	audit_log:read         read one account's admin trail.
+//	account_invitations:write  revoke pending invitations, one or in bulk.
+//	sessions:write         mint a delegated session link.
+//	users:disable          turn a user's account off, and back on.
 //
 // WHAT IS NOT IN THE LIST IS THE MOST IMPORTANT PART OF IT, and every one of
 // these is a refusal rather than an oversight:
@@ -196,6 +200,15 @@ const LastUsedResolution = 5 * time.Minute
 // against a different one is refused even if it holds every scope in this list.
 // core: "Every query is scoped by `account_id` from the token, never from the
 // request body."
+//
+// EXCEPT `users:disable`, WHICH IS NOT A WEAKENING OF THAT RULE BUT ITS LIMIT.
+// It is the one name here whose route names no account, so there is no tenancy to
+// scope by — and pretending otherwise by hanging it off an account path would mean
+// inventing an account for a person who belongs to several. What the rule above
+// buys is that a token cannot reach ACROSS tenants with the scopes it was minted
+// for; a token holding `users:disable` reaches across tenants BY BEING GRANTED IT
+// DELIBERATELY, which is a deployment decision and not a tenancy bypass. See the
+// constant's own comment, and DECISIONS.md D14.
 const (
 	// ScopeAccountsRead is the tenancy read surface.
 	ScopeAccountsRead = "accounts:read"
@@ -266,6 +279,46 @@ const (
 	// link" and behaves as "log somebody in" is the shape of thing a grant has to be
 	// deliberate about.
 	ScopeSessionsWrite = "sessions:write"
+
+	// ScopeUsersDisable is POST /v1/users/{userID}/disable and the /enable beside
+	// it, and nothing else.
+	//
+	// IT IS NOT AN ACCOUNT SCOPE, and that is the whole of what it buys and the
+	// reason it is in a vocabulary where everything else is. A USER IS NOT AN
+	// ACCOUNT: the same person belongs to as many accounts as they like, and one
+	// account's admin has no authority over the person who happens to also be a
+	// member of somebody else's tenant. So there is deliberately no route under
+	// `/v1/accounts/…` that consults this scope, no role minimum that can reach
+	// these routes, and no account admin — owner included — who can call them. An
+	// account-scoped credential is refused on this surface, and that refusal is the
+	// boundary rather than a gap in it: a scope an account admin could hold would be
+	// a scope one tenant could use to reach a user who also works for another.
+	//
+	// WHAT THE GRANT BUYS, STATED AS WHAT IT DOES NOT: it does not restrict by
+	// tenancy at all, because there is no account in the path. A token holding this
+	// scope may name ANY user on the deployment. That is a fact about the scope
+	// rather than a shortcut around the tenancy rules — the rows above can restrict
+	// by account because an account is what they act ON, and this one acts on a
+	// person — and it is why the grant has to be deliberate, minted per deployment,
+	// and revocable on its next request like any other.
+	//
+	// WHY IT IS ITS OWN SCOPE AND NOT accounts:write. `accounts:write` is what a
+	// tenant's admin holds to MANAGE that tenant, and every operation it names
+	// creates something the account wants. Disabling a person is the opposite: it
+	// ends every session they hold, closes every door they can sign in through, and
+	// reaches past the account whose admin granted it. Narrowing it is what makes it
+	// a decision a person makes twice rather than one they make once, and it is the
+	// same narrowing `account_invitations:write` records, on the other side of the
+	// same argument: authority over somebody's access is not authority over their
+	// content.
+	//
+	// WHY IT IS A MACHINE CREDENTIAL AND NOT A SESSION. An operator is a deployment
+	// fact, not a login: the thing being acted on here is a person, so a browser
+	// session would be an account turning itself off or on, and there is no version
+	// of that which is not either a self-harm button or a privilege escalation. It
+	// is the same rule `requireAdminToken` enforces and for the same reason — a
+	// session is a cookie, and a cookie is one CSRF away from being somebody else's.
+	ScopeUsersDisable = "users:disable"
 )
 
 // AllScopes is the vocabulary, in a fixed order.
@@ -277,7 +330,7 @@ func AllScopes() []string {
 	return []string{
 		ScopeAccountsRead, ScopeAccountsWrite, ScopeAccountsDelete,
 		ScopeOIDCClientsWrite, ScopeAuditLogRead, ScopeAccountInvitationsWrite,
-		ScopeSessionsWrite,
+		ScopeSessionsWrite, ScopeUsersDisable,
 	}
 }
 

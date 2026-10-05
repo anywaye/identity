@@ -231,6 +231,13 @@ func TestEveryScopeIsWiredToARoute(t *testing.T) {
 		ScopeSessionsWrite: {
 			"POST /v1/session-links",
 		},
+		// The operator surface, and the second set of rows on a route with no account
+		// in its path. Two rather than one because the vocabulary is enforced per
+		// route and a direction nobody can reach is not a capability.
+		ScopeUsersDisable: {
+			"POST /v1/users/{userID}/disable",
+			"POST /v1/users/{userID}/enable",
+		},
 	}
 
 	if len(want) != len(AllScopes()) {

@@ -299,6 +299,8 @@ service quietly listening on the wrong port.
 | `GET /v1/accounts/:id/admin/audit-log` | `200 {entries, next?}` | The account's admin audit trail, newest first, **append-only**. Bounded: `limit` defaults to 25 and is refused above 100; `before` is an opaque cursor. **Admin, `audit_log:read`, scoped api key only.** |
 | `DELETE /v1/accounts/:id/admin/invitations/:invitationId` | `204` | Revoke one pending invitation. The row is kept with `revoked_at`, and the address is freed to be invited again. `409 conflict` if already accepted or revoked, `404` for an id not in this account. **Admin, `account_invitations:write`, scoped api key only.** |
 | `POST /v1/accounts/:id/admin/invitation-revocations` | `200 {requested, revoked}` | Revoke up to 50 pending invitations in one transaction, **one** audit record for the lot. `confirm: true` and a non-empty array are both required. **Owner, `account_invitations:write`, scoped api key only.** |
+| `POST /v1/users/:userId/disable` | `204` | **Turn a person's account off**, and end every session it holds in the same transaction. `users:disable`, **scoped api key only**, and **no account anywhere** — an account admin, `owner` included, cannot call this, because no route under `/v1/accounts/…` consults `users:disable`. A browser session is `403`, so is presenting no credential, and so is an account-scoped token with any other scope. `404` for a user id this service never issued, which is deliberate here and the opposite of the anonymous routes below. Repeating a disable is a `204`, not a `409`. |
+| `POST /v1/users/:userId/enable` | `204` | Lift a disable. **Restores the column and nothing else** — the sessions the disable ended are gone and the owner signs in again, and a recovery link they already hold works again because a refused redemption never spent its token. Same credential, same `403`s. |
 | `POST /v1/password-resets` | `202 {"status":"accepted"}` | Mail a single-use link, valid 30 minutes. **The same body for every address** — registered, unregistered, or inside the one-minute cooldown — so it cannot be used to discover who has an account. `503` when the deployment cannot send mail. |
 | `POST /v1/password-resets/confirm` | `204` | Set the new password and **revoke every session and every live access token**, in one transaction. Mints no session; sign in again. `404` for anything that is not a live token — never existed, expired, spent, or another flow's. |
 | `POST /v1/email-verifications` | `202 {"status":"accepted"}` | Mail a link proving the address **already on the account**. Registration does not send one. **The same body for every address, including one whose account has already proved it** — the route needs no credential, so a status that differed would publish a list of verified accounts. Ask `GET /v1/email-verification` if you need to know. |
@@ -752,16 +754,21 @@ Three properties, each with a test:
   state to exactly the person the operator acted about. The owner's next stop is the
   login, which tells them the truth.
 
-**What is not built: an operator.** There is no route, no scope and no audit record
-that can disable an account — `auth.Service.Disable` and `.Enable` are the use case
-and nothing is mounted on them. That is a deliberate gap, not an oversight:
-`internal/admin` is **account**-scoped (its audit rows carry an `account_id`, its
-privilege boundary is one sentence about account admins and invitations) and a user
-is not an account — the same person belongs to several — so mounting this behind
-that boundary would widen a boundary D2–D5 spent five entries drawing, in a packet
-whose subject is something else. The operator surface, with the role question that
-goes with it, is named in [HANDOFF-identity-disabled-01.md](HANDOFF-identity-disabled-01.md).
-**This is a foundation, not a feature.**
+**There is an operator, and it is deliberately not the admin surface.**
+`POST /v1/users/:userId/disable` and `/enable` are reachable by a **scoped api key
+holding `users:disable`** and by nothing else. `internal/admin` is **account**-scoped
+— its audit rows carry an `account_id`, its privilege boundary is one sentence about
+account admins and invitations — and a user is not an account, so mounting this there
+would have meant inventing a tenancy for an action whose subject is a person. The
+obvious invention, "the caller's own account", is the defect: a user who belongs to
+ten tenants would grant tenant one the power to reach the employee tenant two also
+employs, ten times over. So there is **no account in the path, no role minimum, and
+no route under `/v1/accounts/…` that consults `users:disable` at all** — an
+account-scoped credential is refused on these routes whatever its role and whatever
+else it holds, and that refusal is the boundary rather than a gap in it. A browser
+session is refused too: an operator is a deployment fact, not a login, and the
+subject here is a person, so a session would be an account turning itself off or on.
+The whole decision is [DECISIONS.md D14](DECISIONS.md).
 
 Re-enabling ships, because an irreversible disable is a different feature with a
 different name. It restores the column and nothing else: **the sessions the disable
@@ -936,7 +943,7 @@ stores no role, so there is no stored role to go stale.
 
 #### The scope vocabulary
 
-Four names, a closed set, and every one of them is a capability an existing route
+Eight names, a closed set, and every one of them is a capability an existing route
 already enforces a different way. That is the test of a real scope: removing it
 removes access to something that exists. The shape is core's
 (`resource:action`, from `docs/openapi-conventions.md`'s `invoices:write`), and
@@ -951,6 +958,7 @@ removes access to something that exists. The shape is core's
 | `audit_log:read` | `GET /v1/accounts/:id/admin/audit-log` |
 | `account_invitations:write` | `DELETE /v1/accounts/:id/admin/invitations/:invitationId`, `POST /v1/accounts/:id/admin/invitation-revocations` |
 | `sessions:write` | `POST /v1/session-links` — **the only scope whose route turns an opaque value into an authenticated browser session** |
+| `users:disable` | `POST /v1/users/:userId/disable`, `POST /v1/users/:userId/enable` — **the only scope with no account behind it**, and no account route consults it |
 
 **Where the vocabulary came from:** `openapi/v1.yaml` and the route table, read
 rather than invented. `accounts:delete` is separate from `accounts:write` because
@@ -991,6 +999,19 @@ oversight:**
   "which accounts does this **user** belong to", and a token is bound to one
   account. A CI job holding a credential for one tenant is not entitled to an
   inventory of every other tenant its owner is in.
+
+**And the one scope that is not bounded by an account, which is the rule above with
+its limit rather than an exception to it.** Every other scope here can only be used
+against the account the token was minted for — core's "every query is scoped by
+`account_id` from the token". `users:disable` names **no account at all**, because a
+user is not an account: the same person belongs to as many accounts as they like,
+so there is no single account whose tenancy would mean "the accounts this token may
+act on" for an action whose subject is the person rather than one of their
+memberships. A token holding it may name **any** user on the deployment, so it is
+minted per deployment, deliberately, and it is revocable on its next request like any
+other. What the tenancy rule buys is that a token cannot reach *across* tenants with
+the scopes it was issued; this one reaches across tenants **by being granted it on
+purpose**. See [DECISIONS.md D14](DECISIONS.md).
 
 **A session carries no scopes and is not refused for that.** A session is a human's
 credential with the full authority of its role; a token is a narrowed one. That

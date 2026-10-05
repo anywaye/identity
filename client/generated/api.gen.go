@@ -27,6 +27,7 @@ const (
 	AuditLogRead            APIKeyScope = "audit_log:read"
 	OidcClientsWrite        APIKeyScope = "oidc_clients:write"
 	SessionsWrite           APIKeyScope = "sessions:write"
+	UsersDisable            APIKeyScope = "users:disable"
 )
 
 // Valid indicates whether the value is a known member of the APIKeyScope enum.
@@ -45,6 +46,8 @@ func (e APIKeyScope) Valid() bool {
 	case OidcClientsWrite:
 		return true
 	case SessionsWrite:
+		return true
+	case UsersDisable:
 		return true
 	default:
 		return false
@@ -528,16 +531,22 @@ type APIKey struct {
 	UserID openapi_types.UUID `json:"user_id"`
 }
 
-// APIKeyScope One of seven names, in core's `resource:action` shape. The set is closed and
+// APIKeyScope One of eight names, in core's `resource:action` shape. The set is closed and
 // adding one is a code change rather than a migration, which is why a token
 // holding a name this build does not know is refused at the point of use
 // rather than being treated as "and so anything goes".
 //
 // **`sessions:write` is the only one whose route turns an opaque value into an
-// authenticated browser session**, and it is last in this list for that reason.
-// It mints a single-use, ten-minute link for a subject the caller names; it does
-// not create, read or revoke a session, and the redemption route that spends it
-// cannot be reached by a token at all.
+// authenticated browser session.** It mints a single-use, ten-minute link for a
+// subject the caller names; it does not create, read or revoke a session, and
+// the redemption route that spends it cannot be reached by a token at all.
+//
+// **`users:disable` is the only one with no account anywhere behind it**, and
+// that is a fact about what it buys rather than a shortcut around the tenancy
+// rules: a token holding it may name ANY user on the deployment. It is granted
+// per deployment, deliberately, and no account route consults it — an
+// account-scoped credential is refused on those routes whatever its role.
+// See DECISIONS.md D14.
 type APIKeyScope string
 
 // AcceptInvitationRequest defines model for AcceptInvitationRequest.
@@ -4250,6 +4259,98 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/users (the `RegisterUser` operationId).
 	RegisterUser(ctx context.Context, body RegisterUserJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DisableUser Turn a user's account off
+	//
+	// Stamps `users.disabled_at` and **deletes every session the account holds,
+	// in one transaction**. Not a flag and not a sweep: a column write and a later
+	// sweep is a window whose length is not a number anybody chose, and a request
+	// already in flight dies at its next store read because the row it reads is
+	// gone.
+	//
+	// ### The three credentials, and which one is allowed
+	//
+	// | presented | answer |
+	// |---|---|
+	// | a scoped api key holding `users:disable` | `204` |
+	// | a browser session | `403` |
+	// | **any account-scoped credential, whatever its role and whatever else it holds** | `403` |
+	// | no credential at all | `403` |
+	// | a token that resolves to no key | `401` |
+	//
+	// **The third row is the boundary, and it is the reason this is not the admin
+	// surface.** A user is not an account: the same person belongs to as many
+	// accounts as they like, so "may this account's admin disable this user" has
+	// no answer inside the account boundary. An account admin — `owner` included —
+	// cannot call this, because no route under `/v1/accounts/…` consults
+	// `users:disable` at all. There is no role minimum, because there is no
+	// account in the path to hold one. See DECISIONS.md D14.
+	//
+	// **`403` rather than `401` for a session and for no credential at all**, for
+	// the same reason the session-link mint and the admin surface answer that way:
+	// this surface is reachable by a scoped api key and by nothing else, so "you
+	// are not a token" is a statement about the surface and is true of a stranger
+	// exactly as it is of a signed-in person. A `401` would send a client hunting a
+	// login problem that does not exist.
+	//
+	// **`401` rather than `403` for a token that resolves to nothing**, and the
+	// difference is contract: `403` means "your credential may not use this route"
+	// while a value belonging to no key is not a credential at all. No such token,
+	// a revoked one, an expired one, and one whose user has since gone are one
+	// answer.
+	//
+	// ### The 404 is deliberate, and it is the opposite of the self-service routes
+	//
+	// A user id this service never issued answers `404`, and it is safe **here
+	// only** because the route is behind the operator credential: there is no
+	// anonymous stranger to protect, and an operator told "no user with that id"
+	// can act on it. Everywhere else on this service an unknown subject answers
+	// `202` with a constant body — `POST /v1/password-resets`,
+	// `POST /v1/email-verifications` — precisely because those routes have **no
+	// credential** and "no such account" there would be a free enumeration oracle.
+	// See DECISIONS.md D12 for the contrast written out.
+	//
+	// ### No body, no `confirm`, and no state in the answer
+	//
+	// The URL names the one thing being changed, so there is nothing in the request
+	// that could be misread as "and everything else" — which is the difference from
+	// the bulk admin revocation, where the subject is an array and a `confirm` is
+	// required in the body. A disable of an already-disabled account is a `204`,
+	// not a `409`: an operator re-applying a state is not making a mistake and
+	// should not have to read the column first to find out.
+	//
+	// The response says nothing about the subject at all. The answer to "is this
+	// account disabled?" is on `POST /v1/session`, and it is behind the password —
+	// naming the state here would publish it to whoever asked.
+	//
+	// Corresponds with POST /v1/users/{user_id}/disable (the `DisableUser` operationId).
+	DisableUser(ctx context.Context, userID UserID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// EnableUser Lift a disable
+	//
+	// Clears `users.disabled_at`. **It restores nothing else, and that is the
+	// whole of what it promises.** "Enable" reads like the inverse of everything a
+	// disable did, but the sessions the disable ended were deleted, and a route
+	// that resurrected them would hand back credentials minted before the account
+	// was turned off — which is the thing the revocation exists to prevent. The
+	// owner signs in again, like anybody else.
+	//
+	// A recovery link the owner already has keeps working too: a refused redemption
+	// does not spend its token, so lifting the disable restores the flow they
+	// started.
+	//
+	// ### The same three credentials as the disable
+	//
+	// The gate, the statuses and the reasons are identical, and they are the same
+	// middleware rather than a copy of it — so a route added next to these two
+	// inherits the check by being wrapped. An account-scoped credential is
+	// `403`, for the same boundary. See the `/disable` description above.
+	//
+	// Enabling an account that is not disabled is a `204`, not a `409`, on the
+	// same reasoning.
+	//
+	// Corresponds with POST /v1/users/{user_id}/enable (the `EnableUser` operationId).
+	EnableUser(ctx context.Context, userID UserID, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
 // Liveness Liveness
@@ -7165,6 +7266,118 @@ func (c *Client) RegisterUser(ctx context.Context, body RegisterUserJSONRequestB
 	return c.Client.Do(req)
 }
 
+// DisableUser Turn a user's account off
+//
+// Stamps `users.disabled_at` and **deletes every session the account holds,
+// in one transaction**. Not a flag and not a sweep: a column write and a later
+// sweep is a window whose length is not a number anybody chose, and a request
+// already in flight dies at its next store read because the row it reads is
+// gone.
+//
+// ### The three credentials, and which one is allowed
+//
+// | presented | answer |
+// |---|---|
+// | a scoped api key holding `users:disable` | `204` |
+// | a browser session | `403` |
+// | **any account-scoped credential, whatever its role and whatever else it holds** | `403` |
+// | no credential at all | `403` |
+// | a token that resolves to no key | `401` |
+//
+// **The third row is the boundary, and it is the reason this is not the admin
+// surface.** A user is not an account: the same person belongs to as many
+// accounts as they like, so "may this account's admin disable this user" has
+// no answer inside the account boundary. An account admin — `owner` included —
+// cannot call this, because no route under `/v1/accounts/…` consults
+// `users:disable` at all. There is no role minimum, because there is no
+// account in the path to hold one. See DECISIONS.md D14.
+//
+// **`403` rather than `401` for a session and for no credential at all**, for
+// the same reason the session-link mint and the admin surface answer that way:
+// this surface is reachable by a scoped api key and by nothing else, so "you
+// are not a token" is a statement about the surface and is true of a stranger
+// exactly as it is of a signed-in person. A `401` would send a client hunting a
+// login problem that does not exist.
+//
+// **`401` rather than `403` for a token that resolves to nothing**, and the
+// difference is contract: `403` means "your credential may not use this route"
+// while a value belonging to no key is not a credential at all. No such token,
+// a revoked one, an expired one, and one whose user has since gone are one
+// answer.
+//
+// ### The 404 is deliberate, and it is the opposite of the self-service routes
+//
+// A user id this service never issued answers `404`, and it is safe **here
+// only** because the route is behind the operator credential: there is no
+// anonymous stranger to protect, and an operator told "no user with that id"
+// can act on it. Everywhere else on this service an unknown subject answers
+// `202` with a constant body — `POST /v1/password-resets`,
+// `POST /v1/email-verifications` — precisely because those routes have **no
+// credential** and "no such account" there would be a free enumeration oracle.
+// See DECISIONS.md D12 for the contrast written out.
+//
+// ### No body, no `confirm`, and no state in the answer
+//
+// The URL names the one thing being changed, so there is nothing in the request
+// that could be misread as "and everything else" — which is the difference from
+// the bulk admin revocation, where the subject is an array and a `confirm` is
+// required in the body. A disable of an already-disabled account is a `204`,
+// not a `409`: an operator re-applying a state is not making a mistake and
+// should not have to read the column first to find out.
+//
+// The response says nothing about the subject at all. The answer to "is this
+// account disabled?" is on `POST /v1/session`, and it is behind the password —
+// naming the state here would publish it to whoever asked.
+//
+// Corresponds with POST /v1/users/{user_id}/disable (the `DisableUser` operationId).
+func (c *Client) DisableUser(ctx context.Context, userID UserID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDisableUserRequest(c.Server, userID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// EnableUser Lift a disable
+//
+// Clears `users.disabled_at`. **It restores nothing else, and that is the
+// whole of what it promises.** "Enable" reads like the inverse of everything a
+// disable did, but the sessions the disable ended were deleted, and a route
+// that resurrected them would hand back credentials minted before the account
+// was turned off — which is the thing the revocation exists to prevent. The
+// owner signs in again, like anybody else.
+//
+// A recovery link the owner already has keeps working too: a refused redemption
+// does not spend its token, so lifting the disable restores the flow they
+// started.
+//
+// ### The same three credentials as the disable
+//
+// The gate, the statuses and the reasons are identical, and they are the same
+// middleware rather than a copy of it — so a route added next to these two
+// inherits the check by being wrapped. An account-scoped credential is
+// `403`, for the same boundary. See the `/disable` description above.
+//
+// Enabling an account that is not disabled is a `204`, not a `409`, on the
+// same reasoning.
+//
+// Corresponds with POST /v1/users/{user_id}/enable (the `EnableUser` operationId).
+func (c *Client) EnableUser(ctx context.Context, userID UserID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewEnableUserRequest(c.Server, userID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // NewLivenessRequest constructs an http.Request for the Liveness method
 func NewLivenessRequest(server string) (*http.Request, error) {
 	var err error
@@ -8942,6 +9155,74 @@ func NewRegisterUserRequestWithBody(server string, contentType string, body io.R
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDisableUserRequest constructs an http.Request for the DisableUser method
+func NewDisableUserRequest(server string, userID UserID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "user_id", userID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/users/%s/disable", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewEnableUserRequest constructs an http.Request for the EnableUser method
+func NewEnableUserRequest(server string, userID UserID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "user_id", userID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/users/%s/enable", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -11250,6 +11531,102 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/users (the `RegisterUser` operationId).
 	RegisterUserWithResponse(ctx context.Context, body RegisterUserJSONRequestBody, reqEditors ...RequestEditorFn) (*RegisterUserResponse, error)
+
+	// DisableUserWithResponse Turn a user's account off
+	//
+	// Stamps `users.disabled_at` and **deletes every session the account holds,
+	// in one transaction**. Not a flag and not a sweep: a column write and a later
+	// sweep is a window whose length is not a number anybody chose, and a request
+	// already in flight dies at its next store read because the row it reads is
+	// gone.
+	//
+	// ### The three credentials, and which one is allowed
+	//
+	// | presented | answer |
+	// |---|---|
+	// | a scoped api key holding `users:disable` | `204` |
+	// | a browser session | `403` |
+	// | **any account-scoped credential, whatever its role and whatever else it holds** | `403` |
+	// | no credential at all | `403` |
+	// | a token that resolves to no key | `401` |
+	//
+	// **The third row is the boundary, and it is the reason this is not the admin
+	// surface.** A user is not an account: the same person belongs to as many
+	// accounts as they like, so "may this account's admin disable this user" has
+	// no answer inside the account boundary. An account admin — `owner` included —
+	// cannot call this, because no route under `/v1/accounts/…` consults
+	// `users:disable` at all. There is no role minimum, because there is no
+	// account in the path to hold one. See DECISIONS.md D14.
+	//
+	// **`403` rather than `401` for a session and for no credential at all**, for
+	// the same reason the session-link mint and the admin surface answer that way:
+	// this surface is reachable by a scoped api key and by nothing else, so "you
+	// are not a token" is a statement about the surface and is true of a stranger
+	// exactly as it is of a signed-in person. A `401` would send a client hunting a
+	// login problem that does not exist.
+	//
+	// **`401` rather than `403` for a token that resolves to nothing**, and the
+	// difference is contract: `403` means "your credential may not use this route"
+	// while a value belonging to no key is not a credential at all. No such token,
+	// a revoked one, an expired one, and one whose user has since gone are one
+	// answer.
+	//
+	// ### The 404 is deliberate, and it is the opposite of the self-service routes
+	//
+	// A user id this service never issued answers `404`, and it is safe **here
+	// only** because the route is behind the operator credential: there is no
+	// anonymous stranger to protect, and an operator told "no user with that id"
+	// can act on it. Everywhere else on this service an unknown subject answers
+	// `202` with a constant body — `POST /v1/password-resets`,
+	// `POST /v1/email-verifications` — precisely because those routes have **no
+	// credential** and "no such account" there would be a free enumeration oracle.
+	// See DECISIONS.md D12 for the contrast written out.
+	//
+	// ### No body, no `confirm`, and no state in the answer
+	//
+	// The URL names the one thing being changed, so there is nothing in the request
+	// that could be misread as "and everything else" — which is the difference from
+	// the bulk admin revocation, where the subject is an array and a `confirm` is
+	// required in the body. A disable of an already-disabled account is a `204`,
+	// not a `409`: an operator re-applying a state is not making a mistake and
+	// should not have to read the column first to find out.
+	//
+	// The response says nothing about the subject at all. The answer to "is this
+	// account disabled?" is on `POST /v1/session`, and it is behind the password —
+	// naming the state here would publish it to whoever asked.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/users/{user_id}/disable (the `DisableUser` operationId).
+	DisableUserWithResponse(ctx context.Context, userID UserID, reqEditors ...RequestEditorFn) (*DisableUserResponse, error)
+
+	// EnableUserWithResponse Lift a disable
+	//
+	// Clears `users.disabled_at`. **It restores nothing else, and that is the
+	// whole of what it promises.** "Enable" reads like the inverse of everything a
+	// disable did, but the sessions the disable ended were deleted, and a route
+	// that resurrected them would hand back credentials minted before the account
+	// was turned off — which is the thing the revocation exists to prevent. The
+	// owner signs in again, like anybody else.
+	//
+	// A recovery link the owner already has keeps working too: a refused redemption
+	// does not spend its token, so lifting the disable restores the flow they
+	// started.
+	//
+	// ### The same three credentials as the disable
+	//
+	// The gate, the statuses and the reasons are identical, and they are the same
+	// middleware rather than a copy of it — so a route added next to these two
+	// inherits the check by being wrapped. An account-scoped credential is
+	// `403`, for the same boundary. See the `/disable` description above.
+	//
+	// Enabling an account that is not disabled is a `204`, not a `409`, on the
+	// same reasoning.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/users/{user_id}/enable (the `EnableUser` operationId).
+	EnableUserWithResponse(ctx context.Context, userID UserID, reqEditors ...RequestEditorFn) (*EnableUserResponse, error)
 }
 
 // LivenessResponse200Headers the declared response headers of an HTTP 200 response for Liveness
@@ -16418,6 +16795,186 @@ func (r RegisterUserResponse) ContentType() string {
 	return ""
 }
 
+// DisableUserResponse401Headers the declared response headers of an HTTP 401 response for DisableUser
+type DisableUserResponse401Headers struct {
+	XTraceID string
+}
+
+// DisableUserResponse403Headers the declared response headers of an HTTP 403 response for DisableUser
+type DisableUserResponse403Headers struct {
+	XTraceID string
+}
+
+// DisableUserResponse404Headers the declared response headers of an HTTP 404 response for DisableUser
+type DisableUserResponse404Headers struct {
+	XTraceID string
+}
+
+// DisableUserResponse500Headers the declared response headers of an HTTP 500 response for DisableUser
+type DisableUserResponse500Headers struct {
+	XTraceID string
+}
+
+type DisableUserResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthenticated
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Problem
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *Problem
+	// ApplicationProblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationProblemJSON500 *InternalError
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *DisableUserResponse401Headers
+	// Headers403 the parsed response headers for an HTTP 403 response
+	Headers403 *DisableUserResponse403Headers
+	// Headers404 the parsed response headers for an HTTP 404 response
+	Headers404 *DisableUserResponse404Headers
+	// Headers500 the parsed response headers for an HTTP 500 response
+	Headers500 *DisableUserResponse500Headers
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r DisableUserResponse) GetApplicationProblemJSON401() *Unauthenticated {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r DisableUserResponse) GetApplicationProblemJSON403() *Problem {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r DisableUserResponse) GetApplicationProblemJSON404() *Problem {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r DisableUserResponse) GetApplicationProblemJSON500() *InternalError {
+	return r.ApplicationProblemJSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r DisableUserResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DisableUserResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DisableUserResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DisableUserResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// EnableUserResponse401Headers the declared response headers of an HTTP 401 response for EnableUser
+type EnableUserResponse401Headers struct {
+	XTraceID string
+}
+
+// EnableUserResponse403Headers the declared response headers of an HTTP 403 response for EnableUser
+type EnableUserResponse403Headers struct {
+	XTraceID string
+}
+
+// EnableUserResponse404Headers the declared response headers of an HTTP 404 response for EnableUser
+type EnableUserResponse404Headers struct {
+	XTraceID string
+}
+
+// EnableUserResponse500Headers the declared response headers of an HTTP 500 response for EnableUser
+type EnableUserResponse500Headers struct {
+	XTraceID string
+}
+
+type EnableUserResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthenticated
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Problem
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *Problem
+	// ApplicationProblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationProblemJSON500 *InternalError
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *EnableUserResponse401Headers
+	// Headers403 the parsed response headers for an HTTP 403 response
+	Headers403 *EnableUserResponse403Headers
+	// Headers404 the parsed response headers for an HTTP 404 response
+	Headers404 *EnableUserResponse404Headers
+	// Headers500 the parsed response headers for an HTTP 500 response
+	Headers500 *EnableUserResponse500Headers
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r EnableUserResponse) GetApplicationProblemJSON401() *Unauthenticated {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r EnableUserResponse) GetApplicationProblemJSON403() *Problem {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r EnableUserResponse) GetApplicationProblemJSON404() *Problem {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r EnableUserResponse) GetApplicationProblemJSON500() *InternalError {
+	return r.ApplicationProblemJSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r EnableUserResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r EnableUserResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r EnableUserResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r EnableUserResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // LivenessWithResponse Liveness
 //
 // Answers whether this process is running. It never touches a dependency, so
@@ -19091,6 +19648,114 @@ func (c *ClientWithResponses) RegisterUserWithResponse(ctx context.Context, body
 		return nil, err
 	}
 	return ParseRegisterUserResponse(rsp)
+}
+
+// DisableUserWithResponse Turn a user's account off
+//
+// Stamps `users.disabled_at` and **deletes every session the account holds,
+// in one transaction**. Not a flag and not a sweep: a column write and a later
+// sweep is a window whose length is not a number anybody chose, and a request
+// already in flight dies at its next store read because the row it reads is
+// gone.
+//
+// ### The three credentials, and which one is allowed
+//
+// | presented | answer |
+// |---|---|
+// | a scoped api key holding `users:disable` | `204` |
+// | a browser session | `403` |
+// | **any account-scoped credential, whatever its role and whatever else it holds** | `403` |
+// | no credential at all | `403` |
+// | a token that resolves to no key | `401` |
+//
+// **The third row is the boundary, and it is the reason this is not the admin
+// surface.** A user is not an account: the same person belongs to as many
+// accounts as they like, so "may this account's admin disable this user" has
+// no answer inside the account boundary. An account admin — `owner` included —
+// cannot call this, because no route under `/v1/accounts/…` consults
+// `users:disable` at all. There is no role minimum, because there is no
+// account in the path to hold one. See DECISIONS.md D14.
+//
+// **`403` rather than `401` for a session and for no credential at all**, for
+// the same reason the session-link mint and the admin surface answer that way:
+// this surface is reachable by a scoped api key and by nothing else, so "you
+// are not a token" is a statement about the surface and is true of a stranger
+// exactly as it is of a signed-in person. A `401` would send a client hunting a
+// login problem that does not exist.
+//
+// **`401` rather than `403` for a token that resolves to nothing**, and the
+// difference is contract: `403` means "your credential may not use this route"
+// while a value belonging to no key is not a credential at all. No such token,
+// a revoked one, an expired one, and one whose user has since gone are one
+// answer.
+//
+// ### The 404 is deliberate, and it is the opposite of the self-service routes
+//
+// A user id this service never issued answers `404`, and it is safe **here
+// only** because the route is behind the operator credential: there is no
+// anonymous stranger to protect, and an operator told "no user with that id"
+// can act on it. Everywhere else on this service an unknown subject answers
+// `202` with a constant body — `POST /v1/password-resets`,
+// `POST /v1/email-verifications` — precisely because those routes have **no
+// credential** and "no such account" there would be a free enumeration oracle.
+// See DECISIONS.md D12 for the contrast written out.
+//
+// ### No body, no `confirm`, and no state in the answer
+//
+// The URL names the one thing being changed, so there is nothing in the request
+// that could be misread as "and everything else" — which is the difference from
+// the bulk admin revocation, where the subject is an array and a `confirm` is
+// required in the body. A disable of an already-disabled account is a `204`,
+// not a `409`: an operator re-applying a state is not making a mistake and
+// should not have to read the column first to find out.
+//
+// The response says nothing about the subject at all. The answer to "is this
+// account disabled?" is on `POST /v1/session`, and it is behind the password —
+// naming the state here would publish it to whoever asked.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/users/{user_id}/disable (the `DisableUser` operationId).
+func (c *ClientWithResponses) DisableUserWithResponse(ctx context.Context, userID UserID, reqEditors ...RequestEditorFn) (*DisableUserResponse, error) {
+	rsp, err := c.DisableUser(ctx, userID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDisableUserResponse(rsp)
+}
+
+// EnableUserWithResponse Lift a disable
+//
+// Clears `users.disabled_at`. **It restores nothing else, and that is the
+// whole of what it promises.** "Enable" reads like the inverse of everything a
+// disable did, but the sessions the disable ended were deleted, and a route
+// that resurrected them would hand back credentials minted before the account
+// was turned off — which is the thing the revocation exists to prevent. The
+// owner signs in again, like anybody else.
+//
+// A recovery link the owner already has keeps working too: a refused redemption
+// does not spend its token, so lifting the disable restores the flow they
+// started.
+//
+// ### The same three credentials as the disable
+//
+// The gate, the statuses and the reasons are identical, and they are the same
+// middleware rather than a copy of it — so a route added next to these two
+// inherits the check by being wrapped. An account-scoped credential is
+// `403`, for the same boundary. See the `/disable` description above.
+//
+// Enabling an account that is not disabled is a `204`, not a `409`, on the
+// same reasoning.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/users/{user_id}/enable (the `EnableUser` operationId).
+func (c *ClientWithResponses) EnableUserWithResponse(ctx context.Context, userID UserID, reqEditors ...RequestEditorFn) (*EnableUserResponse, error) {
+	rsp, err := c.EnableUser(ctx, userID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseEnableUserResponse(rsp)
 }
 
 // ParseLivenessResponse parses an HTTP response from a LivenessWithResponse call
@@ -24639,6 +25304,192 @@ func ParseRegisterUserResponse(rsp *http.Response) (*RegisterUserResponse, error
 		response.Headers422 = &headers
 	case rsp.StatusCode == 500:
 		var headers RegisterUserResponse500Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers500 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseDisableUserResponse parses an HTTP response from a DisableUserWithResponse call
+func ParseDisableUserResponse(rsp *http.Response) (*DisableUserResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DisableUserResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthenticated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON500 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers DisableUserResponse401Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers401 = &headers
+	case rsp.StatusCode == 403:
+		var headers DisableUserResponse403Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers403 = &headers
+	case rsp.StatusCode == 404:
+		var headers DisableUserResponse404Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers404 = &headers
+	case rsp.StatusCode == 500:
+		var headers DisableUserResponse500Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers500 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseEnableUserResponse parses an HTTP response from a EnableUserWithResponse call
+func ParseEnableUserResponse(rsp *http.Response) (*EnableUserResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &EnableUserResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthenticated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON500 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers EnableUserResponse401Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers401 = &headers
+	case rsp.StatusCode == 403:
+		var headers EnableUserResponse403Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers403 = &headers
+	case rsp.StatusCode == 404:
+		var headers EnableUserResponse404Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers404 = &headers
+	case rsp.StatusCode == 500:
+		var headers EnableUserResponse500Headers
 		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
