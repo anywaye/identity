@@ -87,6 +87,17 @@ code rather than a pipeline that is wired wrong, and that is the whole reason th
 two are separate commands. [CI](../.github/workflows/ci.yml) runs them as two
 steps in that order and asserts the order.
 
+**`TEST_DATABASE_URL` IS THE OWNER, and the pool under test is not.** One
+variable, two roles, because no single role can both apply migrations and seed
+fixtures the application is then supposed to be unable to see. `dbtest.Pool`
+connects as `<that user>_app` — kit's rule, and the same one `protect_table`
+defaults to — so a suite run against an owner DSN exercises the role production
+runs under, with production's policies on. Anything a test does as DDL or
+`TRUNCATE` (a `DROP TABLE` to force a 500, a `CREATE TRIGGER` to fail an audit
+write) goes through `dbtest.OwnerPool` or the owner half of
+`dbtest.SchemaWithOwner`, because those are ownership privileges and
+`identity_app` must not have them.
+
 `docker-compose.yml` publishes Postgres on host port 5432. If something already
 listens there — a local Postgres install is the common case — the compose port
 bind fails, or a host-side DSN silently reaches the *other* server and fails with
