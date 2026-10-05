@@ -206,22 +206,40 @@ services:
       # the developer and the host-side test suite, and is not how the service
       # reaches its own database.
       #
-      # `identity:...` is the ROLE that `KIT_POSTGRES_DATABASES: identity` above
-      # provisioned, and `identity` at the end is that role's own database. The
-      # password is the CLUSTER's development password rather than a per-service
-      # one, and that is kit's stated arrangement rather than a shortcut here:
-      # every role in a development cluster takes `$POSTGRES_PASSWORD`, and
-      # isolation is by privilege and never by secret — which is exactly why the
-      # boundary can be demonstrated by anyone who has the file. Production roles
-      # carry distinct passwords from the deployment secret store, and nothing
-      # about the boundary changes.
+      # `identity_app:...` is the LOGIN ROLE, and `identity` at the end is the
+      # DATABASE — two different roles of the same service, and the distinction is
+      # the point of this line rather than a detail of it.
+      #
+      # kit's cluster provisions BOTH per service: `identity` OWNS the database
+      # and every table in it and is what `bin/migrate` connects as, and
+      # `identity_app` owns NOTHING and is what the RUNNING SERVICE logs in as.
+      # That split is the whole account boundary: Postgres exempts a table's
+      # owner from its own row-level-security policies, so a service whose pool
+      # ran as the owner read every account's rows while every policy on the table
+      # sat in the catalog looking like a boundary. `identity_app` cannot
+      # `ALTER TABLE … DISABLE ROW LEVEL SECURITY`, cannot drop a policy, and is
+      # named in all four of them — migration 00016, which installs them.
+      #
+      # THE OWNER IS NOT NAMED HERE ANYWHERE ELSE, and that is deliberate: the
+      # service must never migrate itself at boot (config/deploy.yml says why), so
+      # nothing the running process reads gives it the owner role. A DSN that did
+      # would put the migration credential and the request credential in the same
+      # environment, one variable away from each other.
+      #
+      # The password is the CLUSTER's development password rather than a
+      # per-service one, and that is kit's stated arrangement rather than a
+      # shortcut here: every role in a development cluster takes
+      # `$POSTGRES_PASSWORD`, and isolation is by privilege and never by secret —
+      # which is exactly why the boundary can be demonstrated by anyone who has
+      # the file. Production roles carry distinct passwords from the deployment
+      # secret store, and nothing about the boundary changes.
       #
       # The literal password `identity` this used to carry was correct only while
       # identity ran its OWN container with its own POSTGRES_PASSWORD. Against the
       # shared cluster it is simply the wrong password: the role's password is
       # the cluster's, so leaving it here is an authentication failure at boot,
       # not a security improvement.
-      DATABASE_URL: postgres://identity:${KIT_POSTGRES_PASSWORD:-cafaye}@postgres:5432/identity?sslmode=disable
+      DATABASE_URL: postgres://identity_app:${KIT_POSTGRES_PASSWORD:-cafaye}@postgres:5432/identity?sslmode=disable
 
       # ---------------------------------------------------------------------
       # SOCIAL LOGIN, OFF BY DEFAULT
