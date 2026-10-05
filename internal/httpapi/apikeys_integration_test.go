@@ -40,9 +40,13 @@ import (
 type apiKeyServer struct {
 	handler http.Handler
 	pool    *pgxpool.Pool
-	clk     *clock.Fake
-	keys    *apikeys.Service
-	logs    *recordingHandler
+	// owner is the same private schema logged in as the database owner, for the
+	// setup steps that are DDL. `identity_app` — the role pool is connected as, and
+	// the role production runs as — cannot drop a table, and must not be able to.
+	owner *pgxpool.Pool
+	clk   *clock.Fake
+	keys  *apikeys.Service
+	logs  *recordingHandler
 
 	// session is the browser credential for the fixture's user, and token is the
 	// scoped credential the tests mint through the API. The plaintext is held here
@@ -67,7 +71,7 @@ type apiKeyServer struct {
 func newAPIKeyServer(t *testing.T) *apiKeyServer {
 	t.Helper()
 
-	pool := dbtest.Schema(t)
+	pool, owner := dbtest.SchemaWithOwner(t)
 	clk := clock.NewFake(time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC))
 	tenancy := realTenancy(pool, clk)
 	authSvc := authServiceFor(pool, clk)
@@ -75,7 +79,7 @@ func newAPIKeyServer(t *testing.T) *apiKeyServer {
 	logs := &recordingHandler{}
 
 	s := &apiKeyServer{
-		pool: pool, clk: clk, keys: keys, logs: logs,
+		pool: pool, owner: owner, clk: clk, keys: keys, logs: logs,
 		handler: New(nil,
 			WithAuth(authSvc),
 			WithTenancy(tenancy),
@@ -834,7 +838,7 @@ func TestNoCredentialReachesTheLogs(t *testing.T) {
 	// AND A 500, which is where a driver error is most likely to carry a query, a
 	// column name and whatever the driver had in its string. Dropping the table the
 	// list reads is the same technique the MFA canary uses.
-	if _, err := s.pool.Exec(context.Background(), `DROP TABLE api_keys`); err != nil {
+	if _, err := s.owner.Exec(context.Background(), `DROP TABLE api_keys`); err != nil {
 		t.Fatalf("dropping api_keys: %v", err)
 	}
 	rec := apiKeyGet(t, s.handler, apiKeyPath(s.account), s.session)

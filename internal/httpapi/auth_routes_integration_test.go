@@ -534,7 +534,7 @@ func TestEndToEndExpiredSessionIs401(t *testing.T) {
 // second write fail.
 func TestEndToEndWriteFailureIs500AndLeaksNothing(t *testing.T) {
 	logs := &recordingHandler{}
-	pool := dbtest.Schema(t)
+	pool, owner := dbtest.SchemaWithOwner(t)
 	clk := clock.NewFake(time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC))
 
 	svc := auth.NewService(
@@ -553,7 +553,11 @@ func TestEndToEndWriteFailureIs500AndLeaksNothing(t *testing.T) {
 	)
 	h := New(nil, WithAuth(svc), WithTenancy(realTenancy(pool, clk)), WithLogger(slogLogger(logs)))
 
-	if _, err := pool.Exec(t.Context(), `DROP TABLE outbox_events`); err != nil {
+	// The DROP is on the OWNER's pool: dropping a table is an ownership privilege,
+	// and the role the request actually runs as — `identity_app`, which is what
+	// dbtest hands `pool` — is precisely the one that must not have it. A role that
+	// can drop a table can drop the row-level-security policies on it.
+	if _, err := owner.Exec(t.Context(), `DROP TABLE outbox_events`); err != nil {
 		t.Fatalf("dropping outbox_events: %v", err)
 	}
 

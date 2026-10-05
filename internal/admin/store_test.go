@@ -535,7 +535,7 @@ func TestTheServiceIsUsableOverARealPool(t *testing.T) {
 // the property under test is precisely about what the database does with the
 // half-finished work.
 func TestAFailedAuditWriteRollsBackARealMutation(t *testing.T) {
-	pool := dbtest.Schema(t)
+	pool, owner := dbtest.SchemaWithOwner(t)
 	ctx := t.Context()
 
 	// THE INJECTION, and it is a trigger rather than a fake because the property
@@ -554,7 +554,13 @@ func TestAFailedAuditWriteRollsBackARealMutation(t *testing.T) {
 	// the function by name when the trigger is created, not when it fires, so the
 	// other order fails with "function does not exist" and a reader looking at that
 	// error would reasonably conclude the trigger syntax was wrong.
-	if _, err := pool.Exec(ctx, `
+	// THE INJECTION IS ON THE OWNER'S POOL. Creating a function and a trigger is DDL,
+	// and `identity_app` — the role `pool` is connected as, and the role production
+	// runs as — has no way to do either. That is deliberate and it is the same
+	// privilege that makes the append-only guarantee on this table worth anything:
+	// a login role that could add a trigger could make every audit write fail, or
+	// stop failing, at will.
+	if _, err := owner.Exec(ctx, `
 		CREATE FUNCTION account_audit_log_injected_failure() RETURNS trigger AS $$
 		BEGIN
 			RAISE EXCEPTION 'injected audit write failure';
@@ -562,7 +568,7 @@ func TestAFailedAuditWriteRollsBackARealMutation(t *testing.T) {
 		$$ LANGUAGE plpgsql`); err != nil {
 		t.Fatalf("installing the failing trigger function: %v", err)
 	}
-	if _, err := pool.Exec(ctx, `
+	if _, err := owner.Exec(ctx, `
 		CREATE TRIGGER account_audit_log_injected_insert_failure
 		BEFORE INSERT ON account_audit_log
 		FOR EACH ROW EXECUTE FUNCTION account_audit_log_injected_failure()`); err != nil {

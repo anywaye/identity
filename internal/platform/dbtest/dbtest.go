@@ -36,26 +36,84 @@ import (
 )
 
 // EnvVar names the environment variable that points at a throwaway database.
+//
+// IT IS THE OWNER, and that is a decision with two credentials behind it rather
+// than one. `docker-compose.yml` logs the running service in as `identity_app`;
+// the role here is the OWNER, because a test has to do two things at once and no
+// single role can do both. It applies migrations, creates the private schemas in
+// Schema, truncates in Reset, and seeds fixture rows the application is then
+// supposed to be unable to see — none of which the application role may do at
+// all. Meanwhile the pool UNDER TEST is the app role, so a query in a test is
+// answered under the same policies and the same grants production answers it
+// under. One DSN, two roles, and the split is the only arrangement in which both
+// claims are true at once.
 const EnvVar = "TEST_DATABASE_URL"
 
-// Pool returns a pool against TEST_DATABASE_URL, skipping the test when the
-// variable is unset. The schema must already be applied — migrations are a deploy
+// appRoleSuffix is kit's rule for the login role's name, and it is the same rule
+// migrations/00016's `protect_table` defaults to (`current_user || '_app'`).
+//
+// Writing it here as a suffix rather than taking a second variable is the point:
+// a second DSN would be a second thing to configure, and a second thing to get
+// wrong in a way nothing notices — a test DSN left naming the owner is a suite
+// that reports the boundary proven while running as the one role the boundary
+// exempts. Deriving it means there is no configuration in which the pool under
+// test is the owner, and assertAppRole reads the role back off the connection so
+// a derivation that stops deriving is a red build rather than a quiet one.
+const appRoleSuffix = "_app"
+
+// AppDSN returns EnvVar with the user replaced by the app login role, and is the
+// DSN every pool under test is opened with.
+//
+// IT IS DERIVED, NOT CONFIGURED, and the reason is appRoleSuffix's. The password
+// is left alone: every role in a development cluster takes the cluster password by
+// design (kit's `10-cluster.sh`), and CI's job creates `identity_app` with the same
+// literal it creates the owner with, so this is a real login with real
+// authentication — not a `SET ROLE`, which would succeed against a role that
+// cannot log in at all and so would prove nothing about the one that can.
+func AppDSN(t *testing.T) string {
+	t.Helper()
+
+	owner := dsn(t)
+	parsed, err := url.Parse(owner)
+	if err != nil {
+		// Pool already validated this DSN, so a parse failure here would be a bug
+		// in this helper rather than bad configuration.
+		panic("dbtest: parsing " + EnvVar + ": " + err.Error())
+	}
+
+	login := parsed.User.Username() + appRoleSuffix
+	if login == appRoleSuffix {
+		t.Fatalf("%s carries no user name, so the app role derived from it is %q. "+
+			"%s is the OWNER credential: it has to name a role, and the pool under "+
+			"test connects as that role plus %q.", EnvVar, login, EnvVar, appRoleSuffix)
+	}
+	password, _ := parsed.User.Password()
+	parsed.User = url.UserPassword(login, password)
+
+	return parsed.String()
+}
+
+// Pool returns a pool connected as the app login role, skipping the test when
+// EnvVar is unset. The schema must already be applied — migrations are a deploy
 // step, not a test step — so run `goose -dir migrations postgres "$DATABASE_URL"
 // up` first, as migrations/README.md describes.
+//
+// NOT the owner, and assertAppRole below is what stops that from being a claim.
+// Postgres exempts a table's owner from its own row-level-security policies, so
+// every account boundary in migrations/00016 was inert for a pool that ran as it:
+// `select count(*) from account_users` would have answered with the whole table
+// and the assertion beside it would have passed for the wrong reason.
 func Pool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 
-	dsn := os.Getenv(EnvVar)
-	if dsn == "" {
-		t.Skipf("%s is not set; skipping the integration test", EnvVar)
-	}
+	dsn := AppDSN(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	pool, err := db.Open(ctx, dsn, db.DefaultOptions())
 	if err != nil {
-		t.Fatalf("opening a pool against %s: %v", EnvVar, err)
+		t.Fatalf("opening a pool against %s as the app role: %v", EnvVar, err)
 	}
 	t.Cleanup(pool.Close)
 
@@ -65,6 +123,65 @@ func Pool(t *testing.T) *pgxpool.Pool {
 	if err := pool.Ping(ctx); err != nil {
 		t.Fatalf("%s is set but not reachable (%v). Is the server up, and are the "+
 			"migrations applied? `goose -dir migrations postgres \"$DATABASE_URL\" up`", EnvVar, err)
+	}
+
+	assertAppRole(t, pool)
+
+	return pool
+}
+
+// assertAppRole fails the test unless the pool is logged in as the app role.
+//
+// It is four lines and it is the only thing standing between this package and a
+// silent regression to the owner: nothing about connecting successfully says which
+// role you are, and a pool that had quietly gone back to the owner would pass
+// every test in the repository while testing nothing about the boundary.
+// `current_user` is the name a policy is evaluated against, so it is the one worth
+// reading back.
+func assertAppRole(t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var who string
+	if err := pool.QueryRow(ctx, `select current_user`).Scan(&who); err != nil {
+		t.Fatalf("reading current_user from the pool under test: %v", err)
+	}
+	if !strings.HasSuffix(who, appRoleSuffix) {
+		t.Fatalf("the pool under test is logged in as %q, which is not an app login role. "+
+			"A pool on the owner bypasses every row-level-security policy in "+
+			"migrations/00016, so this run did not test the account boundary.", who)
+	}
+}
+
+// OwnerPool returns a pool on EnvVar — the OWNER — skipping the test when the
+// variable is unset.
+//
+// FOR SETUP THAT IS NOT DML, and only for that. DDL, TRUNCATE and the private
+// schemas of Schema are ownership privileges, `identity_app` cannot hold any of
+// them, and migrations/00019 grants it DML and nothing else on purpose: a role
+// that can drop a table can drop the row-level-security policies on it, which is
+// the one privilege this architecture exists to withhold.
+//
+// The distinction to keep is WHERE the privilege is used, not who holds it. Setup
+// through here, assertions through Pool. A test that asserted through an owner
+// pool would report the account boundary proven while running as the one role the
+// boundary exempts.
+func OwnerPool(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	pool, err := db.Open(ctx, dsn(t), db.DefaultOptions())
+	if err != nil {
+		t.Fatalf("opening an owner pool against %s: %v", EnvVar, err)
+	}
+	t.Cleanup(pool.Close)
+
+	if err := pool.Ping(ctx); err != nil {
+		t.Fatalf("%s is set but not reachable as the owner (%v).", EnvVar, err)
 	}
 
 	return pool
@@ -116,11 +233,26 @@ func UniqueEmail(t *testing.T) string {
 // database or reproduce a failure from an empty state. Calling it from two tests
 // at once, or from a test running beside another package's tests, will delete
 // their rows.
-func Reset(t *testing.T, pool *pgxpool.Pool) {
+//
+// IT OPENS ITS OWN POOL ON EnvVar, and the argument it used to take is gone.
+// TRUNCATE is an OWNER privilege: it is not in the grant set migrations/00019
+// gives the app role and could not be, because a role that can truncate its own
+// tables can empty an account boundary from underneath it. A pool handed in by a
+// caller is the app role by construction — see Pool — so passing one would have
+// been a way to call this with a credential guaranteed to fail. There were no
+// callers when it changed, which is the only reason a signature change was
+// available at all rather than a second function with a misleading name.
+func Reset(t *testing.T) {
 	t.Helper()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+
+	pool, err := db.Open(ctx, dsn(t), db.DefaultOptions())
+	if err != nil {
+		t.Fatalf("opening an owner pool against %s: %v", EnvVar, err)
+	}
+	defer pool.Close()
 
 	if _, err := pool.Exec(ctx, `TRUNCATE TABLE account_audit_log, api_keys, mfa_challenges, mfa_used_totp_steps, mfa_recovery_codes, mfa_credentials, oidc_access_tokens, oidc_auth_requests, oidc_clients, outbox_events, connected_accounts, sessions, account_invitations, account_users, accounts, users CASCADE`); err != nil {
 		t.Fatalf("truncating: %v", err)
@@ -154,6 +286,28 @@ func Reset(t *testing.T, pool *pgxpool.Pool) {
 // account_audit_log, whose `action` column is the same kind of closed set and is
 // validated in Go for the same reason.
 func Schema(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+
+	pool, _ := SchemaWithOwner(t)
+	return pool
+}
+
+// SchemaWithOwner is Schema plus a second pool on the SAME private schema, logged
+// in as the owner.
+//
+// It exists for the handful of assertions that cannot be made as the application
+// role, because the thing they do is DDL: `ALTER TABLE … ADD CONSTRAINT`,
+// `ALTER TABLE … DISABLE TRIGGER`, `CREATE INDEX`. Those are ownership
+// privileges, migrations/00019 cannot grant them to `identity_app` and should
+// not, and a test that reaches for one now fails with `must be owner of table …`.
+// That failure is correct — the fix is not a grant, it is a second credential in
+// the test — and this is where the second credential is.
+//
+// THE OWNER POOL IS FOR SETUP, NOT FOR THE ASSERTION. A test that seeded its
+// fixture and then asserted through the owner would prove nothing about the
+// boundary, which is the entire reason Pool is the app role at all. The split is
+// the same one production makes: the owner migrates, the app role serves.
+func SchemaWithOwner(t *testing.T) (app, owner *pgxpool.Pool) {
 	t.Helper()
 
 	base := dsn(t)
@@ -309,6 +463,34 @@ func Schema(t *testing.T) *pgxpool.Pool {
 			t.Fatalf("preparing the %s schema: %v\n%s", schema, err, stmt)
 		}
 	}
+
+	// THE APP ROLE GETS ITS OWN SCHEMA TOO, and this is the only statement in this
+	// function that is about credentials rather than about schema.
+	//
+	// `CREATE SCHEMA` grants nothing. From PostgreSQL 15 the owner of a new schema
+	// holds everything on it and PUBLIC holds nothing, so a private schema built by
+	// the owner is invisible to the pool under test: every unqualified name in the
+	// test's SQL resolves to nothing, and the first statement fails with `permission
+	// denied for schema test_…`. The clones likewise carry no grants, because
+	// `LIKE … INCLUDING ALL` copies columns, indexes and constraints and not
+	// privileges.
+	//
+	// The grant is at SCHEMA scope and covers every clone in one statement rather
+	// than naming the twenty tables above, for the reason 00019 gives: a list that
+	// names its tables is a list somebody has to remember to extend, and a list that
+	// does not name them cannot quietly lose one. These clones carry no row-level
+	// security — LIKE does not copy it, which is exactly why the tests that use them
+	// can read a fixture the production table would refuse — so there is no policy
+	// to grant and nothing here is a second copy of the boundary.
+	for _, grant := range []string{
+		`GRANT USAGE ON SCHEMA ` + schema + ` TO ` + appRoleName(t),
+		`GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA ` + schema + ` TO ` + appRoleName(t),
+	} {
+		if _, err := admin.Exec(ctx, grant); err != nil {
+			t.Fatalf("granting the app role access to the %s schema: %v\n%s", schema, err, grant)
+		}
+	}
+
 	t.Cleanup(func() {
 		dropCtx, dropCancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer dropCancel()
@@ -320,13 +502,43 @@ func Schema(t *testing.T) *pgxpool.Pool {
 	// search_path is a plain GUC, so pgx passes it as a connection runtime
 	// parameter. Every unqualified name in the test's SQL then resolves inside the
 	// private schema.
-	pool, err := db.Open(ctx, withSearchPath(base, schema), db.DefaultOptions())
+	pool, err := db.Open(ctx, withSearchPath(AppDSN(t), schema), db.DefaultOptions())
 	if err != nil {
 		t.Fatalf("opening a pool scoped to %s: %v", schema, err)
 	}
 	t.Cleanup(pool.Close)
 
-	return pool
+	assertAppRole(t, pool)
+
+	// The owner's pool on the same schema, opened after the app role's so that the
+	// two cleanups run in the reverse of this order: the app pool closes first, then
+	// this one, then the schema drop, which still has the admin pool above.
+	ownerPool, err := db.Open(ctx, withSearchPath(base, schema), db.DefaultOptions())
+	if err != nil {
+		t.Fatalf("opening an owner pool scoped to %s: %v", schema, err)
+	}
+	t.Cleanup(ownerPool.Close)
+
+	return pool, ownerPool
+}
+
+// appRoleName is the role the grants above name, read off the DSN the pool will
+// actually use rather than spelled out here.
+//
+// The name is derived in one place — AppDSN — and a GRANT is SQL, so it cannot
+// take a parameter the way a DSN can. Writing `identity_app` into a second file
+// is a second answer to a question that already has one, and the way it fails is
+// the quiet way: the grant lands on a role nobody logs in as and the schema is
+// then unreadable by the pool for a reason that names a permission and not a
+// role.
+func appRoleName(t *testing.T) string {
+	t.Helper()
+
+	parsed, err := url.Parse(AppDSN(t))
+	if err != nil {
+		panic("dbtest: parsing the app DSN: " + err.Error())
+	}
+	return parsed.User.Username()
 }
 
 // dsn returns the configured DSN, skipping the test when it is unset.

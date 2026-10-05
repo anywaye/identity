@@ -736,7 +736,7 @@ func TestAResetEndsTheAccessTokensIssuedBeforeIt(t *testing.T) {
 // existed, and the logger really was called. A test that passed because nothing was
 // logged would be asserting nothing at all.
 func TestNoRecoveryTokenReachesTheLogs(t *testing.T) {
-	pool := dbtest.Schema(t)
+	pool, owner := dbtest.SchemaWithOwner(t)
 	clk := clock.NewFake(time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC))
 	mailer := &captureMailer{}
 	logs := &recordingHandler{}
@@ -800,7 +800,10 @@ func TestNoRecoveryTokenReachesTheLogs(t *testing.T) {
 	// The forced failure, which is the request that DOES log: a store error is the
 	// one place a token is most likely to leak, because the error string carries a
 	// driver message with a host and a query fragment in it.
-	if _, err := pool.Exec(t.Context(), `DROP TABLE recovery_tokens`); err != nil {
+	// ON THE OWNER'S POOL: a DROP is an ownership privilege, and `identity_app` — the
+	// role the request under test runs as — must not have it, so the harness gives
+	// this one statement a second credential rather than a wider grant.
+	if _, err := owner.Exec(t.Context(), `DROP TABLE recovery_tokens`); err != nil {
 		t.Fatalf("dropping recovery_tokens: %v", err)
 	}
 	if rec := sendWith(t, handler, http.MethodPost, "/v1/password-resets/confirm", "", "",

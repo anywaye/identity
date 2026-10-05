@@ -158,7 +158,10 @@ func TestNoSecretReachesTheLogs(t *testing.T) {
 	// driver had in the error string. So the canary has to see that path, and
 	// dropping a table is the way to reach it — the same technique the
 	// registration-failure test uses.
-	if _, err := s.pool.Exec(t.Context(), `DROP TABLE mfa_used_totp_steps`); err != nil {
+	// On the OWNER's pool: dropping a table is an ownership privilege, and `identity_app`
+	// — the role the request under test runs as, and the role `pool` is connected
+	// as — must not have it.
+	if _, err := s.owner.Exec(t.Context(), `DROP TABLE mfa_used_totp_steps`); err != nil {
 		t.Fatalf("dropping mfa_used_totp_steps: %v", err)
 	}
 	if rec := s.finish(t, s.challenge(t, s.email).Challenge, mustTOTPCode(t, serviceSecret, s.clock.Now())); rec.Code != http.StatusInternalServerError {

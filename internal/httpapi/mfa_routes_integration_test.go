@@ -25,8 +25,12 @@ import (
 type mfaServer struct {
 	handler http.Handler
 	pool    *pgxpool.Pool
-	clock   *clock.Fake
-	second  *mfa.Service
+	// owner is the same private schema logged in as the database owner, for setup
+	// that is DDL. The pool above is the app role — the one production runs as —
+	// and dropping a table is exactly the privilege that role must not have.
+	owner  *pgxpool.Pool
+	clock  *clock.Fake
+	second *mfa.Service
 	// token is the current session token for the fixture's user. It is REFRESHED
 	// after an enrollment, because confirming one revokes every session the user
 	// holds — including the one the enrollment was made with. That is the packet's
@@ -57,7 +61,7 @@ type mfaServer struct {
 func newMFAServer(t *testing.T) *mfaServer {
 	t.Helper()
 
-	pool := dbtest.Schema(t)
+	pool, owner := dbtest.SchemaWithOwner(t)
 	clk := clock.NewFake(time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC))
 	second := testMFAService(pool, clk)
 	svc := authServiceFor(pool, clk)
@@ -69,7 +73,10 @@ func newMFAServer(t *testing.T) *mfaServer {
 			WithMFA(second),
 			WithLogger(slogLogger(logs)),
 		),
-		pool:   pool,
+		pool: pool,
+		// owner is the same schema as the database owner, for the setup that is DDL.
+		// See the canary test that uses it.
+		owner:  owner,
 		clock:  clk,
 		second: second,
 		logs:   logs,

@@ -81,11 +81,15 @@ func realTenancy(pool *pgxpool.Pool, clk clock.Clock) *accounts.Service {
 // mints a token" are both tests about somebody who is NOT the owner, and a fixture
 // with one user cannot make either of them.
 type serviceFixture struct {
-	pool    *pgxpool.Pool
-	clk     *clock.Fake
-	svc     *Service
-	store   *Store
-	tenancy *accounts.Service
+	pool *pgxpool.Pool
+	// ownerPool is the same private schema logged in as the database owner, for
+	// the fixture setup that is DDL and cannot be done as the application role.
+	// Nothing in an ASSERTION reads through it; see breakTheOutbox.
+	ownerPool *pgxpool.Pool
+	clk       *clock.Fake
+	svc       *Service
+	store     *Store
+	tenancy   *accounts.Service
 	// seq numbers the fixture's account names. accounts.Slugify truncates at 63
 	// characters and two long test names sharing a prefix truncate to one slug,
 	// which is a 409 in the harness rather than in the code under test.
@@ -103,12 +107,12 @@ func newServiceFixture(t *testing.T) *serviceFixture {
 	t.Helper()
 
 	ctx := context.Background()
-	pool := dbtest.Schema(t)
+	pool, ownerPool := dbtest.SchemaWithOwner(t)
 	clk := clock.NewFake(testInstant)
 	tenancy := realTenancy(pool, clk)
 
 	f := &serviceFixture{
-		pool: pool, clk: clk, tenancy: tenancy,
+		pool: pool, ownerPool: ownerPool, clk: clk, tenancy: tenancy,
 		store: NewStore(pool),
 		svc:   realService(pool, clk),
 	}
@@ -217,9 +221,16 @@ func (f *serviceFixture) outboxRows(t *testing.T) []outbox.Envelope {
 // the constraint is NOT VALID — Postgres then enforces it for new rows and leaves
 // the existing ones alone, which is exactly the "the platform can no longer
 // announce anything" state this test needs.
+//
+// ON THE OWNER POOL, and that is the second half of this test's honesty. Adding a
+// constraint is DDL, DDL is an ownership privilege, and `identity_app` has no way
+// to hold one — migrations/00019 grants it DML and nothing else, deliberately,
+// because a role that can alter the tables an account boundary is written on can
+// remove the boundary. The runtime pool under test is that role; this setup step
+// is the owner's, which is the same split migrations and serving already have.
 func (f *serviceFixture) breakTheOutbox(t *testing.T) {
 	t.Helper()
-	if _, err := f.pool.Exec(context.Background(),
+	if _, err := f.ownerPool.Exec(context.Background(),
 		`ALTER TABLE outbox_events ADD CONSTRAINT reject_everything CHECK (false) NOT VALID`); err != nil {
 		t.Fatalf("disabling the outbox: %v", err)
 	}
