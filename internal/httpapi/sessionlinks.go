@@ -37,6 +37,7 @@ package httpapi
 import (
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/cafaye/identity/internal/apikeys"
@@ -66,6 +67,17 @@ func (o options) registerSessionLinkRoutes(r chiRouter) {
 	// The MINT. Token-only, and the scope check is here rather than in the handler
 	// so that a route added next to it inherits it by being wrapped.
 	r.Post("/v1/session-links", o.requireSessionLinkMint(o.handleMintSessionLink))
+
+	// THE REDEMPTION. Public, and `sessionCredentialOnly` for the reason every other
+	// redemption on this service carries it: the token in the body IS the credential,
+	// so a session is neither required nor refused here, and a SCOPED API KEY is
+	// refused. That last half is the load-bearing one — the mint is reachable by a
+	// credential holding `sessions:write`, and a credential that could mint the link
+	// AND redeem it would take a browser session without a browser and without the
+	// mint's delegation check meaning anything. `sessionCredentialOnly` is a
+	// middleware rather than a branch, so the property belongs to the surface and not
+	// to whatever this handler remembered.
+	r.Post("/v1/session-links/redeem", o.sessionCredentialOnly(o.handleRedeemSessionLink))
 }
 
 // requireSessionLinkMint is the mint's credential gate: a scoped api key holding
@@ -209,8 +221,114 @@ func (o options) handleMintSessionLink(w http.ResponseWriter, r *http.Request) {
 }
 
 // ---------------------------------------------------------------------------
-// error mapping
+// the redemption
 // ---------------------------------------------------------------------------
+
+// redeemSessionLinkRequest is the body of POST /v1/session-links/redeem.
+//
+// ONE FIELD, and the field is the credential. There is no `redirect`, no `return_to`
+// and no landing page, and the absence is the design: the caller that minted the
+// link already owns the channel it arrived over and therefore already knows where
+// the browser is. A parameter here would be a value this service stored about
+// somebody else's front end and handed back on a PUBLIC route, which is an open
+// redirector with a session attached — and there would be nothing to allow-list,
+// because the route has no allow-list to consult.
+//
+// `DisallowUnknownFields` in `decodeBody` is what makes that promise enforceable: a
+// body carrying `redirect` is a 422 rather than a request that quietly ignores the
+// field, so a client that believed it had been told where to send the browser finds
+// out at the point it still controls.
+type redeemSessionLinkRequest struct {
+	Token string `json:"token"`
+}
+
+// handleRedeemSessionLink turns a link into a session.
+//
+//	POST /v1/session-links/redeem  {token}
+//	  →  200 {token, expires_at}  + the session cookie
+//	  →  404 no such link, or it has already been used
+//
+// # THE TWO LINES THAT MAT ARE THE LOGIN'S TWO LINES
+//
+//	o.setSessionCookie(w, session.Token, session.ExpiresAt)
+//	writeJSON(w, http.StatusOK, sessionResponse{...})
+//
+// Which are `handleLogin`'s, verbatim and in the same order — the cookie before the
+// body, so a client which crashes mid-write is left signed out rather than holding
+// a token it never saw. A redemption that re-created either of them would be a third
+// definition of what this service's browser session looks like, and the third is the
+// one that drifts: a `SameSite`, a `Path` or a `__Host-` prefix that matches the
+// other two routes but not this one is a session that works in one client and is
+// dropped in another. So this handler CALLS them, and
+// `TestTheRedeemedSessionIsByteForByteTheSessionAPasswordLoginMints` walks both
+// responses field by field to say that calling them is not a claim.
+func (o options) handleRedeemSessionLink(w http.ResponseWriter, r *http.Request) {
+	var body *redeemSessionLinkRequest
+	if !decodeBody(w, r, &body) {
+		return
+	}
+
+	// An empty token is refused HERE rather than digested and asked about, and the
+	// reason is that it would otherwise reach the store: `Store.Live` short-circuits
+	// an empty digest itself, so the query would never see it, but a value that no
+	// row can hold is a 422 about the caller's own input rather than a 404 about a
+	// link. It is also what keeps a length a matter of refusal rather than of
+	// measurement — a 422 for a short token and a 404 for a long one would be a
+	// length oracle for nothing at all.
+	if strings.TrimSpace(body.Token) == "" {
+		writeProblem(w, r, newProblem(http.StatusUnprocessableEntity, CodeValidationFailed).
+			withDetail("the request has an invalid field").
+			withFieldErrors([]FieldError{{Field: "token", Code: "required"}}))
+		return
+	}
+
+	session, err := o.recovery.RedeemSessionLink(r.Context(), recovery.RedeemSessionLinkInput{
+		Token:     body.Token,
+		UserAgent: r.UserAgent(),
+		IP:        remoteIP(r),
+	})
+	if err != nil {
+		o.writeSessionLinkRedeemError(w, r, err)
+		return
+	}
+
+	o.setSessionCookie(w, session.Token, session.ExpiresAt)
+	writeJSON(w, http.StatusOK, sessionResponse{Token: session.Token, ExpiresAt: session.ExpiresAt})
+}
+
+// writeSessionLinkRedeemError maps the redemption's refusals.
+//
+//	404  one answer for five cases: a link that never existed, one that expired, one
+//	     already spent, one whose subject has been disabled, and one whose subject
+//	     enrolled a second factor. Plus one whose purpose is not this one.
+//	     404 rather than 401 because the caller is not asking who they are — they are
+//	     following a link, and "there is no such link" is the answer for every link
+//	     they did not receive.
+//	503  this deployment cannot say whether anybody has a second factor. The ONE
+//	     refusal that is not the shape of an unknown token, and it is deliberately
+//	     not: the fact is about the server rather than about any account, so it is
+//	     true of every caller, and folding it into the 404 would let a
+//	     misconfigured deployment present as a very quiet successful attack.
+//
+// IT IS NOT `writeSessionLinkError`, and the reason is the same one keeps
+// `writeAdminError` separate from `writeRecoveryError`: the two surfaces answer
+// different questions, and the mint's 404 names a subject while this one's 404 must
+// name nothing. Reusing the mapper would put a 404 about a USER ID on a route whose
+// body has never seen one.
+func (o options) writeSessionLinkRedeemError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, recovery.ErrTokenNotFound):
+		problemFor(w, r, http.StatusNotFound, CodeNotFound,
+			"no such link, or it has already been used")
+
+	case errors.Is(err, recovery.ErrMFAUnavailable):
+		problemFor(w, r, http.StatusServiceUnavailable, CodeServiceUnavailable,
+			"this deployment cannot say whether an account has a second factor, so it redeems no links")
+
+	default:
+		unexpected(w, r, o.logger, err)
+	}
+}
 
 // writeSessionLinkError maps the mint's refusals onto problem documents.
 //

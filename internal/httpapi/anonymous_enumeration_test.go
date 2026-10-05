@@ -239,6 +239,34 @@ func anonymousFamilyAudit() []auditRoute {
 				"holding a token that cannot exist before two inbox proofs",
 		},
 		{
+			// THE REDEMPTION, and the one row on this surface whose identifier is a
+			// CREDENTIAL rather than a name — which is the question this file asks in its
+			// sharpest form.
+			//
+			// Nothing is disclosed, and the reason is four refusals with ONE status, ONE
+			// fixed sentence and ONE round trip. Two of them are about ROWS (never
+			// existed, expired, spent, minted for another flow) and two are about an
+			// ACCOUNT: a disabled subject and a subject who enrolled MFA. The account two
+			// are the ones this row exists to protect, because the caller here is the
+			// subject OR whoever took the link — so a `403 disabled` or a `409 second
+			// factor` would publish the account's state to exactly the person an operator
+			// acted about. They are `404` instead, and the link is left LIVE so that
+			// un-disabling or un-enrolling restores the flow rather than leaving the user
+			// with a dead link and no explanation.
+			name: "redeem a session link", method: http.MethodPost, pattern: "/v1/session-links/redeem",
+			identifier: "token",
+			probe:      `{"token":"a-token-that-is-not-one"}`,
+			anonymous:  http.StatusNotFound,
+			discloses: "nothing about any ACCOUNT, and nothing about whether any link exists. One " +
+				"404 with a fixed `detail` for all six ways of being wrong: never existed, " +
+				"expired, spent, minted for another flow, a disabled subject, and a subject who " +
+				"enrolled a second factor. The last two are facts about an account rather than a " +
+				"row, and the token IS the credential here, so naming either would publish it to " +
+				"the person the operator acted about. Not answerable by guessing either — 256 bits " +
+				"of entropy and no space to enumerate. Held by " +
+				"TestTheRedemptionCannotBeToldApartFromALinkThatNeverExisted",
+		},
+		{
 			// A row because the `/v1/session` PREFIX catches it, not because it is
 			// anonymous in the sense the question is about: the mint demands a scoped
 			// api key, and a stranger presenting none gets the surface's 403. So the

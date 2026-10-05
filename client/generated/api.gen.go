@@ -1473,6 +1473,28 @@ type RecoveryTokenRequest struct {
 	Token string `json:"token"`
 }
 
+// RedeemSessionLinkRequest The token from a link the CALLER delivered, and **nothing else**.
+//
+// There is no `redirect`, no `return_to` and no landing page, and the absence
+// is the design rather than an omission. The caller that minted the link
+// already owns the channel it arrived over and therefore already knows where
+// the browser is; a parameter here would be a value this service stored about
+// somebody else's front end and handed back on a **public** route, which is an
+// open redirector with a session attached. There is no allow-list here because
+// there is nothing to allow-list.
+//
+// `additionalProperties: false` is what makes that promise enforceable rather
+// than aspirational: a body carrying `redirect` is a `422`, not a request that
+// quietly ignores the field, so a client that believed it had been told where
+// to send the browser finds out at the point it still controls.
+type RedeemSessionLinkRequest struct {
+	// Token The plaintext the mint returned, presented once. An empty or whitespace
+	// value is a `422` about the caller's own input rather than a `404` about a
+	// link, and a value longer than a token cannot be one — which is the whole
+	// of what there is to validate here.
+	Token string `json:"token"`
+}
+
 // RegisterOIDCClientRequest defines model for RegisterOIDCClientRequest.
 type RegisterOIDCClientRequest struct {
 	GrantTypes   []RegisterOIDCClientRequestGrantTypes `json:"grant_types"`
@@ -1894,6 +1916,9 @@ type CreateSessionJSONRequestBody = LoginRequest
 
 // MintSessionLinkJSONRequestBody defines body for MintSessionLink for application/json ContentType.
 type MintSessionLinkJSONRequestBody = MintSessionLinkRequest
+
+// RedeemSessionLinkJSONRequestBody defines body for RedeemSessionLink for application/json ContentType.
+type RedeemSessionLinkJSONRequestBody = RedeemSessionLinkRequest
 
 // CompleteSecondFactorJSONRequestBody defines body for CompleteSecondFactor for application/json ContentType.
 type CompleteSecondFactorJSONRequestBody = CompleteSecondFactorRequest
@@ -4151,6 +4176,200 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/session-links (the `MintSessionLink` operationId).
 	MintSessionLink(ctx context.Context, body MintSessionLinkJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RedeemSessionLinkWithBody Redeem a delegated session link for a browser session
+	//
+	// Turns one live, unspent `session_link` token into **exactly the session a
+	// password login would have produced** — the same body, the same
+	// `Set-Cookie`, the same expiry — and spends the link in the same transaction.
+	//
+	// ### This route is PUBLIC, and the token IS the credential
+	//
+	// **`security: []`.** There is nothing else to present: the link is 256 bits
+	// of entropy with a ten-minute window and one use, delivered by the caller
+	// over a channel the caller owns. This is the same shape as
+	// `POST /v1/session/mfa`, where a challenge is the credential.
+	//
+	// A browser session is **neither required nor refused** here, and that is a
+	// decision: a caller holding a valid session and presenting no link is
+	// exactly the hijacked-browser case, and a session in the header changes
+	// nothing about whether the link is right.
+	//
+	// **A scoped api key is refused with `403`.** The mint is reachable by a
+	// credential holding `sessions:write`, and a credential that could mint the
+	// link *and* redeem it would take a browser session without a browser — with
+	// the mint's delegation check meaning nothing. No such scope is invented
+	// here.
+	//
+	// ### There is no redirect, no landing URL and no `return_to`
+	//
+	// The caller that minted the link already owns the channel it arrived over
+	// and therefore already knows where the browser is. A parameter on a
+	// **public** route that this service stored and handed back would be an open
+	// redirector with a session attached, and there would be nothing to
+	// allow-list. A body carrying `redirect` is a `422`, not a request that
+	// quietly ignores the field.
+	//
+	// ### Every refusal is the shape of a link that never existed
+	//
+	// **`404`, one status, one body, one round trip** for all six:
+	//
+	// | the link | refused because |
+	// |---|---|
+	// | never existed | the digest matches no row |
+	// | has expired | it is past `expires_at` |
+	// | has been spent | `token_consumed_at` is set |
+	// | was minted for another flow | it is a `password_reset` token |
+	// | belongs to a disabled account | `users.disabled_at` is set |
+	// | belongs to an enrolled account | a live `mfa_credentials` row exists |
+	//
+	// The last two are the reason this is written down rather than assumed. They
+	// are facts about an **account**, not about a row, and they reach a caller
+	// holding a link they may have taken rather than somebody who has proved
+	// anything. `409` for "that account has MFA" and `403` for "that account is
+	// disabled" would publish both to exactly the person the operator acted
+	// about — the opposite of the mint, where the caller is a machine credential
+	// and naming the state is free. See DECISIONS.md D13.
+	//
+	// ### The two state checks are repeated here, and they are not redundant
+	//
+	// The **mint** refuses an enrolled subject (`409`) and a disabled one
+	// (`403`), so at mint time no link exists for either. A ten-minute window is
+	// long enough for both to change inside it. A user who enrolls MFA *after*
+	// the link was minted must not redeem it: that would turn a delegated link
+	// into a **complete login** for an account whose owner chose two, which is
+	// precisely the downgrade the mint's refusal exists to prevent, arriving
+	// through the other door. The mint's refusal is necessary and not sufficient.
+	//
+	// The alternative would be a threaded challenge flow on an unauthenticated
+	// route — a second authentication surface, with its own state, expiry and
+	// failure modes. That is a packet of its own.
+	//
+	// ### A refusal spends nothing
+	//
+	// Both checks run **before** the conditional write, so a refused redemption
+	// leaves the link live. A refusal that consumed it would be an irreversible
+	// decision made on somebody's behalf: un-disabling the account, or
+	// un-enrolling the second factor, would leave the user holding a link that no
+	// longer works and no session, which is indistinguishable from a service that
+	// lost their state.
+	//
+	// ### The spend is a conditional write, and it is the single-use guarantee
+	//
+	// Two requests carrying the same token both resolve it and both reach the
+	// spend, and the `UPDATE … WHERE token_consumed_at IS NULL` is what makes
+	// exactly one of them win. The session insert is in the same transaction, so
+	// a failure to write it rolls the spend back rather than handing over a spent
+	// link and no session.
+	//
+	// ### `503` is the one refusal that is not the shape of a link
+	//
+	// When this deployment cannot say whether anybody has a second factor it
+	// redeems nothing. That is a fact about the **server** rather than about any
+	// account — true of every caller — and folding it into the `404` would let a
+	// misconfigured deployment present as a very quiet successful attack.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/session-links/redeem (the `RedeemSessionLink` operationId).
+	RedeemSessionLinkWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RedeemSessionLink Redeem a delegated session link for a browser session
+	//
+	// Turns one live, unspent `session_link` token into **exactly the session a
+	// password login would have produced** — the same body, the same
+	// `Set-Cookie`, the same expiry — and spends the link in the same transaction.
+	//
+	// ### This route is PUBLIC, and the token IS the credential
+	//
+	// **`security: []`.** There is nothing else to present: the link is 256 bits
+	// of entropy with a ten-minute window and one use, delivered by the caller
+	// over a channel the caller owns. This is the same shape as
+	// `POST /v1/session/mfa`, where a challenge is the credential.
+	//
+	// A browser session is **neither required nor refused** here, and that is a
+	// decision: a caller holding a valid session and presenting no link is
+	// exactly the hijacked-browser case, and a session in the header changes
+	// nothing about whether the link is right.
+	//
+	// **A scoped api key is refused with `403`.** The mint is reachable by a
+	// credential holding `sessions:write`, and a credential that could mint the
+	// link *and* redeem it would take a browser session without a browser — with
+	// the mint's delegation check meaning nothing. No such scope is invented
+	// here.
+	//
+	// ### There is no redirect, no landing URL and no `return_to`
+	//
+	// The caller that minted the link already owns the channel it arrived over
+	// and therefore already knows where the browser is. A parameter on a
+	// **public** route that this service stored and handed back would be an open
+	// redirector with a session attached, and there would be nothing to
+	// allow-list. A body carrying `redirect` is a `422`, not a request that
+	// quietly ignores the field.
+	//
+	// ### Every refusal is the shape of a link that never existed
+	//
+	// **`404`, one status, one body, one round trip** for all six:
+	//
+	// | the link | refused because |
+	// |---|---|
+	// | never existed | the digest matches no row |
+	// | has expired | it is past `expires_at` |
+	// | has been spent | `token_consumed_at` is set |
+	// | was minted for another flow | it is a `password_reset` token |
+	// | belongs to a disabled account | `users.disabled_at` is set |
+	// | belongs to an enrolled account | a live `mfa_credentials` row exists |
+	//
+	// The last two are the reason this is written down rather than assumed. They
+	// are facts about an **account**, not about a row, and they reach a caller
+	// holding a link they may have taken rather than somebody who has proved
+	// anything. `409` for "that account has MFA" and `403` for "that account is
+	// disabled" would publish both to exactly the person the operator acted
+	// about — the opposite of the mint, where the caller is a machine credential
+	// and naming the state is free. See DECISIONS.md D13.
+	//
+	// ### The two state checks are repeated here, and they are not redundant
+	//
+	// The **mint** refuses an enrolled subject (`409`) and a disabled one
+	// (`403`), so at mint time no link exists for either. A ten-minute window is
+	// long enough for both to change inside it. A user who enrolls MFA *after*
+	// the link was minted must not redeem it: that would turn a delegated link
+	// into a **complete login** for an account whose owner chose two, which is
+	// precisely the downgrade the mint's refusal exists to prevent, arriving
+	// through the other door. The mint's refusal is necessary and not sufficient.
+	//
+	// The alternative would be a threaded challenge flow on an unauthenticated
+	// route — a second authentication surface, with its own state, expiry and
+	// failure modes. That is a packet of its own.
+	//
+	// ### A refusal spends nothing
+	//
+	// Both checks run **before** the conditional write, so a refused redemption
+	// leaves the link live. A refusal that consumed it would be an irreversible
+	// decision made on somebody's behalf: un-disabling the account, or
+	// un-enrolling the second factor, would leave the user holding a link that no
+	// longer works and no session, which is indistinguishable from a service that
+	// lost their state.
+	//
+	// ### The spend is a conditional write, and it is the single-use guarantee
+	//
+	// Two requests carrying the same token both resolve it and both reach the
+	// spend, and the `UPDATE … WHERE token_consumed_at IS NULL` is what makes
+	// exactly one of them win. The session insert is in the same transaction, so
+	// a failure to write it rolls the spend back rather than handing over a spent
+	// link and no session.
+	//
+	// ### `503` is the one refusal that is not the shape of a link
+	//
+	// When this deployment cannot say whether anybody has a second factor it
+	// redeems nothing. That is a fact about the **server** rather than about any
+	// account — true of every caller — and folding it into the `404` would let a
+	// misconfigured deployment present as a very quiet successful attack.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/session-links/redeem (the `RedeemSessionLink` operationId).
+	RedeemSessionLink(ctx context.Context, body RedeemSessionLinkJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CompleteSecondFactorWithBody Answer a second factor and start the session
 	//
@@ -7118,6 +7337,220 @@ func (c *Client) MintSessionLink(ctx context.Context, body MintSessionLinkJSONRe
 	return c.Client.Do(req)
 }
 
+// RedeemSessionLinkWithBody Redeem a delegated session link for a browser session
+//
+// Turns one live, unspent `session_link` token into **exactly the session a
+// password login would have produced** — the same body, the same
+// `Set-Cookie`, the same expiry — and spends the link in the same transaction.
+//
+// ### This route is PUBLIC, and the token IS the credential
+//
+// **`security: []`.** There is nothing else to present: the link is 256 bits
+// of entropy with a ten-minute window and one use, delivered by the caller
+// over a channel the caller owns. This is the same shape as
+// `POST /v1/session/mfa`, where a challenge is the credential.
+//
+// A browser session is **neither required nor refused** here, and that is a
+// decision: a caller holding a valid session and presenting no link is
+// exactly the hijacked-browser case, and a session in the header changes
+// nothing about whether the link is right.
+//
+// **A scoped api key is refused with `403`.** The mint is reachable by a
+// credential holding `sessions:write`, and a credential that could mint the
+// link *and* redeem it would take a browser session without a browser — with
+// the mint's delegation check meaning nothing. No such scope is invented
+// here.
+//
+// ### There is no redirect, no landing URL and no `return_to`
+//
+// The caller that minted the link already owns the channel it arrived over
+// and therefore already knows where the browser is. A parameter on a
+// **public** route that this service stored and handed back would be an open
+// redirector with a session attached, and there would be nothing to
+// allow-list. A body carrying `redirect` is a `422`, not a request that
+// quietly ignores the field.
+//
+// ### Every refusal is the shape of a link that never existed
+//
+// **`404`, one status, one body, one round trip** for all six:
+//
+// | the link | refused because |
+// |---|---|
+// | never existed | the digest matches no row |
+// | has expired | it is past `expires_at` |
+// | has been spent | `token_consumed_at` is set |
+// | was minted for another flow | it is a `password_reset` token |
+// | belongs to a disabled account | `users.disabled_at` is set |
+// | belongs to an enrolled account | a live `mfa_credentials` row exists |
+//
+// The last two are the reason this is written down rather than assumed. They
+// are facts about an **account**, not about a row, and they reach a caller
+// holding a link they may have taken rather than somebody who has proved
+// anything. `409` for "that account has MFA" and `403` for "that account is
+// disabled" would publish both to exactly the person the operator acted
+// about — the opposite of the mint, where the caller is a machine credential
+// and naming the state is free. See DECISIONS.md D13.
+//
+// ### The two state checks are repeated here, and they are not redundant
+//
+// The **mint** refuses an enrolled subject (`409`) and a disabled one
+// (`403`), so at mint time no link exists for either. A ten-minute window is
+// long enough for both to change inside it. A user who enrolls MFA *after*
+// the link was minted must not redeem it: that would turn a delegated link
+// into a **complete login** for an account whose owner chose two, which is
+// precisely the downgrade the mint's refusal exists to prevent, arriving
+// through the other door. The mint's refusal is necessary and not sufficient.
+//
+// The alternative would be a threaded challenge flow on an unauthenticated
+// route — a second authentication surface, with its own state, expiry and
+// failure modes. That is a packet of its own.
+//
+// ### A refusal spends nothing
+//
+// Both checks run **before** the conditional write, so a refused redemption
+// leaves the link live. A refusal that consumed it would be an irreversible
+// decision made on somebody's behalf: un-disabling the account, or
+// un-enrolling the second factor, would leave the user holding a link that no
+// longer works and no session, which is indistinguishable from a service that
+// lost their state.
+//
+// ### The spend is a conditional write, and it is the single-use guarantee
+//
+// Two requests carrying the same token both resolve it and both reach the
+// spend, and the `UPDATE … WHERE token_consumed_at IS NULL` is what makes
+// exactly one of them win. The session insert is in the same transaction, so
+// a failure to write it rolls the spend back rather than handing over a spent
+// link and no session.
+//
+// ### `503` is the one refusal that is not the shape of a link
+//
+// When this deployment cannot say whether anybody has a second factor it
+// redeems nothing. That is a fact about the **server** rather than about any
+// account — true of every caller — and folding it into the `404` would let a
+// misconfigured deployment present as a very quiet successful attack.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/session-links/redeem (the `RedeemSessionLink` operationId).
+func (c *Client) RedeemSessionLinkWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRedeemSessionLinkRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RedeemSessionLink Redeem a delegated session link for a browser session
+//
+// Turns one live, unspent `session_link` token into **exactly the session a
+// password login would have produced** — the same body, the same
+// `Set-Cookie`, the same expiry — and spends the link in the same transaction.
+//
+// ### This route is PUBLIC, and the token IS the credential
+//
+// **`security: []`.** There is nothing else to present: the link is 256 bits
+// of entropy with a ten-minute window and one use, delivered by the caller
+// over a channel the caller owns. This is the same shape as
+// `POST /v1/session/mfa`, where a challenge is the credential.
+//
+// A browser session is **neither required nor refused** here, and that is a
+// decision: a caller holding a valid session and presenting no link is
+// exactly the hijacked-browser case, and a session in the header changes
+// nothing about whether the link is right.
+//
+// **A scoped api key is refused with `403`.** The mint is reachable by a
+// credential holding `sessions:write`, and a credential that could mint the
+// link *and* redeem it would take a browser session without a browser — with
+// the mint's delegation check meaning nothing. No such scope is invented
+// here.
+//
+// ### There is no redirect, no landing URL and no `return_to`
+//
+// The caller that minted the link already owns the channel it arrived over
+// and therefore already knows where the browser is. A parameter on a
+// **public** route that this service stored and handed back would be an open
+// redirector with a session attached, and there would be nothing to
+// allow-list. A body carrying `redirect` is a `422`, not a request that
+// quietly ignores the field.
+//
+// ### Every refusal is the shape of a link that never existed
+//
+// **`404`, one status, one body, one round trip** for all six:
+//
+// | the link | refused because |
+// |---|---|
+// | never existed | the digest matches no row |
+// | has expired | it is past `expires_at` |
+// | has been spent | `token_consumed_at` is set |
+// | was minted for another flow | it is a `password_reset` token |
+// | belongs to a disabled account | `users.disabled_at` is set |
+// | belongs to an enrolled account | a live `mfa_credentials` row exists |
+//
+// The last two are the reason this is written down rather than assumed. They
+// are facts about an **account**, not about a row, and they reach a caller
+// holding a link they may have taken rather than somebody who has proved
+// anything. `409` for "that account has MFA" and `403` for "that account is
+// disabled" would publish both to exactly the person the operator acted
+// about — the opposite of the mint, where the caller is a machine credential
+// and naming the state is free. See DECISIONS.md D13.
+//
+// ### The two state checks are repeated here, and they are not redundant
+//
+// The **mint** refuses an enrolled subject (`409`) and a disabled one
+// (`403`), so at mint time no link exists for either. A ten-minute window is
+// long enough for both to change inside it. A user who enrolls MFA *after*
+// the link was minted must not redeem it: that would turn a delegated link
+// into a **complete login** for an account whose owner chose two, which is
+// precisely the downgrade the mint's refusal exists to prevent, arriving
+// through the other door. The mint's refusal is necessary and not sufficient.
+//
+// The alternative would be a threaded challenge flow on an unauthenticated
+// route — a second authentication surface, with its own state, expiry and
+// failure modes. That is a packet of its own.
+//
+// ### A refusal spends nothing
+//
+// Both checks run **before** the conditional write, so a refused redemption
+// leaves the link live. A refusal that consumed it would be an irreversible
+// decision made on somebody's behalf: un-disabling the account, or
+// un-enrolling the second factor, would leave the user holding a link that no
+// longer works and no session, which is indistinguishable from a service that
+// lost their state.
+//
+// ### The spend is a conditional write, and it is the single-use guarantee
+//
+// Two requests carrying the same token both resolve it and both reach the
+// spend, and the `UPDATE … WHERE token_consumed_at IS NULL` is what makes
+// exactly one of them win. The session insert is in the same transaction, so
+// a failure to write it rolls the spend back rather than handing over a spent
+// link and no session.
+//
+// ### `503` is the one refusal that is not the shape of a link
+//
+// When this deployment cannot say whether anybody has a second factor it
+// redeems nothing. That is a fact about the **server** rather than about any
+// account — true of every caller — and folding it into the `404` would let a
+// misconfigured deployment present as a very quiet successful attack.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/session-links/redeem (the `RedeemSessionLink` operationId).
+func (c *Client) RedeemSessionLink(ctx context.Context, body RedeemSessionLinkJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRedeemSessionLinkRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // CompleteSecondFactorWithBody Answer a second factor and start the session
 //
 // The second half of a login for an account with a second factor, and **the
@@ -9060,6 +9493,46 @@ func NewMintSessionLinkRequestWithBody(server string, contentType string, body i
 	}
 
 	operationPath := fmt.Sprintf("/v1/session-links")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRedeemSessionLinkRequest calls the generic RedeemSessionLink builder with application/json body
+func NewRedeemSessionLinkRequest(server string, body RedeemSessionLinkJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRedeemSessionLinkRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewRedeemSessionLinkRequestWithBody constructs an http.Request for the RedeemSessionLink method, with any body, and a specified content type
+func NewRedeemSessionLinkRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/session-links/redeem")
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -11423,6 +11896,200 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/session-links (the `MintSessionLink` operationId).
 	MintSessionLinkWithResponse(ctx context.Context, body MintSessionLinkJSONRequestBody, reqEditors ...RequestEditorFn) (*MintSessionLinkResponse, error)
+
+	// RedeemSessionLinkWithBodyWithResponse Redeem a delegated session link for a browser session
+	//
+	// Turns one live, unspent `session_link` token into **exactly the session a
+	// password login would have produced** — the same body, the same
+	// `Set-Cookie`, the same expiry — and spends the link in the same transaction.
+	//
+	// ### This route is PUBLIC, and the token IS the credential
+	//
+	// **`security: []`.** There is nothing else to present: the link is 256 bits
+	// of entropy with a ten-minute window and one use, delivered by the caller
+	// over a channel the caller owns. This is the same shape as
+	// `POST /v1/session/mfa`, where a challenge is the credential.
+	//
+	// A browser session is **neither required nor refused** here, and that is a
+	// decision: a caller holding a valid session and presenting no link is
+	// exactly the hijacked-browser case, and a session in the header changes
+	// nothing about whether the link is right.
+	//
+	// **A scoped api key is refused with `403`.** The mint is reachable by a
+	// credential holding `sessions:write`, and a credential that could mint the
+	// link *and* redeem it would take a browser session without a browser — with
+	// the mint's delegation check meaning nothing. No such scope is invented
+	// here.
+	//
+	// ### There is no redirect, no landing URL and no `return_to`
+	//
+	// The caller that minted the link already owns the channel it arrived over
+	// and therefore already knows where the browser is. A parameter on a
+	// **public** route that this service stored and handed back would be an open
+	// redirector with a session attached, and there would be nothing to
+	// allow-list. A body carrying `redirect` is a `422`, not a request that
+	// quietly ignores the field.
+	//
+	// ### Every refusal is the shape of a link that never existed
+	//
+	// **`404`, one status, one body, one round trip** for all six:
+	//
+	// | the link | refused because |
+	// |---|---|
+	// | never existed | the digest matches no row |
+	// | has expired | it is past `expires_at` |
+	// | has been spent | `token_consumed_at` is set |
+	// | was minted for another flow | it is a `password_reset` token |
+	// | belongs to a disabled account | `users.disabled_at` is set |
+	// | belongs to an enrolled account | a live `mfa_credentials` row exists |
+	//
+	// The last two are the reason this is written down rather than assumed. They
+	// are facts about an **account**, not about a row, and they reach a caller
+	// holding a link they may have taken rather than somebody who has proved
+	// anything. `409` for "that account has MFA" and `403` for "that account is
+	// disabled" would publish both to exactly the person the operator acted
+	// about — the opposite of the mint, where the caller is a machine credential
+	// and naming the state is free. See DECISIONS.md D13.
+	//
+	// ### The two state checks are repeated here, and they are not redundant
+	//
+	// The **mint** refuses an enrolled subject (`409`) and a disabled one
+	// (`403`), so at mint time no link exists for either. A ten-minute window is
+	// long enough for both to change inside it. A user who enrolls MFA *after*
+	// the link was minted must not redeem it: that would turn a delegated link
+	// into a **complete login** for an account whose owner chose two, which is
+	// precisely the downgrade the mint's refusal exists to prevent, arriving
+	// through the other door. The mint's refusal is necessary and not sufficient.
+	//
+	// The alternative would be a threaded challenge flow on an unauthenticated
+	// route — a second authentication surface, with its own state, expiry and
+	// failure modes. That is a packet of its own.
+	//
+	// ### A refusal spends nothing
+	//
+	// Both checks run **before** the conditional write, so a refused redemption
+	// leaves the link live. A refusal that consumed it would be an irreversible
+	// decision made on somebody's behalf: un-disabling the account, or
+	// un-enrolling the second factor, would leave the user holding a link that no
+	// longer works and no session, which is indistinguishable from a service that
+	// lost their state.
+	//
+	// ### The spend is a conditional write, and it is the single-use guarantee
+	//
+	// Two requests carrying the same token both resolve it and both reach the
+	// spend, and the `UPDATE … WHERE token_consumed_at IS NULL` is what makes
+	// exactly one of them win. The session insert is in the same transaction, so
+	// a failure to write it rolls the spend back rather than handing over a spent
+	// link and no session.
+	//
+	// ### `503` is the one refusal that is not the shape of a link
+	//
+	// When this deployment cannot say whether anybody has a second factor it
+	// redeems nothing. That is a fact about the **server** rather than about any
+	// account — true of every caller — and folding it into the `404` would let a
+	// misconfigured deployment present as a very quiet successful attack.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/session-links/redeem (the `RedeemSessionLink` operationId).
+	RedeemSessionLinkWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RedeemSessionLinkResponse, error)
+
+	// RedeemSessionLinkWithResponse Redeem a delegated session link for a browser session
+	//
+	// Turns one live, unspent `session_link` token into **exactly the session a
+	// password login would have produced** — the same body, the same
+	// `Set-Cookie`, the same expiry — and spends the link in the same transaction.
+	//
+	// ### This route is PUBLIC, and the token IS the credential
+	//
+	// **`security: []`.** There is nothing else to present: the link is 256 bits
+	// of entropy with a ten-minute window and one use, delivered by the caller
+	// over a channel the caller owns. This is the same shape as
+	// `POST /v1/session/mfa`, where a challenge is the credential.
+	//
+	// A browser session is **neither required nor refused** here, and that is a
+	// decision: a caller holding a valid session and presenting no link is
+	// exactly the hijacked-browser case, and a session in the header changes
+	// nothing about whether the link is right.
+	//
+	// **A scoped api key is refused with `403`.** The mint is reachable by a
+	// credential holding `sessions:write`, and a credential that could mint the
+	// link *and* redeem it would take a browser session without a browser — with
+	// the mint's delegation check meaning nothing. No such scope is invented
+	// here.
+	//
+	// ### There is no redirect, no landing URL and no `return_to`
+	//
+	// The caller that minted the link already owns the channel it arrived over
+	// and therefore already knows where the browser is. A parameter on a
+	// **public** route that this service stored and handed back would be an open
+	// redirector with a session attached, and there would be nothing to
+	// allow-list. A body carrying `redirect` is a `422`, not a request that
+	// quietly ignores the field.
+	//
+	// ### Every refusal is the shape of a link that never existed
+	//
+	// **`404`, one status, one body, one round trip** for all six:
+	//
+	// | the link | refused because |
+	// |---|---|
+	// | never existed | the digest matches no row |
+	// | has expired | it is past `expires_at` |
+	// | has been spent | `token_consumed_at` is set |
+	// | was minted for another flow | it is a `password_reset` token |
+	// | belongs to a disabled account | `users.disabled_at` is set |
+	// | belongs to an enrolled account | a live `mfa_credentials` row exists |
+	//
+	// The last two are the reason this is written down rather than assumed. They
+	// are facts about an **account**, not about a row, and they reach a caller
+	// holding a link they may have taken rather than somebody who has proved
+	// anything. `409` for "that account has MFA" and `403` for "that account is
+	// disabled" would publish both to exactly the person the operator acted
+	// about — the opposite of the mint, where the caller is a machine credential
+	// and naming the state is free. See DECISIONS.md D13.
+	//
+	// ### The two state checks are repeated here, and they are not redundant
+	//
+	// The **mint** refuses an enrolled subject (`409`) and a disabled one
+	// (`403`), so at mint time no link exists for either. A ten-minute window is
+	// long enough for both to change inside it. A user who enrolls MFA *after*
+	// the link was minted must not redeem it: that would turn a delegated link
+	// into a **complete login** for an account whose owner chose two, which is
+	// precisely the downgrade the mint's refusal exists to prevent, arriving
+	// through the other door. The mint's refusal is necessary and not sufficient.
+	//
+	// The alternative would be a threaded challenge flow on an unauthenticated
+	// route — a second authentication surface, with its own state, expiry and
+	// failure modes. That is a packet of its own.
+	//
+	// ### A refusal spends nothing
+	//
+	// Both checks run **before** the conditional write, so a refused redemption
+	// leaves the link live. A refusal that consumed it would be an irreversible
+	// decision made on somebody's behalf: un-disabling the account, or
+	// un-enrolling the second factor, would leave the user holding a link that no
+	// longer works and no session, which is indistinguishable from a service that
+	// lost their state.
+	//
+	// ### The spend is a conditional write, and it is the single-use guarantee
+	//
+	// Two requests carrying the same token both resolve it and both reach the
+	// spend, and the `UPDATE … WHERE token_consumed_at IS NULL` is what makes
+	// exactly one of them win. The session insert is in the same transaction, so
+	// a failure to write it rolls the spend back rather than handing over a spent
+	// link and no session.
+	//
+	// ### `503` is the one refusal that is not the shape of a link
+	//
+	// When this deployment cannot say whether anybody has a second factor it
+	// redeems nothing. That is a fact about the **server** rather than about any
+	// account — true of every caller — and folding it into the `404` would let a
+	// misconfigured deployment present as a very quiet successful attack.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/session-links/redeem (the `RedeemSessionLink` operationId).
+	RedeemSessionLinkWithResponse(ctx context.Context, body RedeemSessionLinkJSONRequestBody, reqEditors ...RequestEditorFn) (*RedeemSessionLinkResponse, error)
 
 	// CompleteSecondFactorWithBodyWithResponse Answer a second factor and start the session
 	//
@@ -16514,6 +17181,125 @@ func (r MintSessionLinkResponse) ContentType() string {
 	return ""
 }
 
+// RedeemSessionLinkResponse200Headers the declared response headers of an HTTP 200 response for RedeemSessionLink
+type RedeemSessionLinkResponse200Headers struct {
+	SetCookie *string
+	XTraceID  string
+}
+
+// RedeemSessionLinkResponse403Headers the declared response headers of an HTTP 403 response for RedeemSessionLink
+type RedeemSessionLinkResponse403Headers struct {
+	XTraceID string
+}
+
+// RedeemSessionLinkResponse404Headers the declared response headers of an HTTP 404 response for RedeemSessionLink
+type RedeemSessionLinkResponse404Headers struct {
+	XTraceID string
+}
+
+// RedeemSessionLinkResponse422Headers the declared response headers of an HTTP 422 response for RedeemSessionLink
+type RedeemSessionLinkResponse422Headers struct {
+	XTraceID string
+}
+
+// RedeemSessionLinkResponse500Headers the declared response headers of an HTTP 500 response for RedeemSessionLink
+type RedeemSessionLinkResponse500Headers struct {
+	XTraceID string
+}
+
+// RedeemSessionLinkResponse503Headers the declared response headers of an HTTP 503 response for RedeemSessionLink
+type RedeemSessionLinkResponse503Headers struct {
+	XTraceID string
+}
+
+type RedeemSessionLinkResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Session
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Problem
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *Problem
+	// ApplicationProblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationProblemJSON422 *ValidationFailed
+	// ApplicationProblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationProblemJSON500 *InternalError
+	// ApplicationProblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationProblemJSON503 *Problem
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *RedeemSessionLinkResponse200Headers
+	// Headers403 the parsed response headers for an HTTP 403 response
+	Headers403 *RedeemSessionLinkResponse403Headers
+	// Headers404 the parsed response headers for an HTTP 404 response
+	Headers404 *RedeemSessionLinkResponse404Headers
+	// Headers422 the parsed response headers for an HTTP 422 response
+	Headers422 *RedeemSessionLinkResponse422Headers
+	// Headers500 the parsed response headers for an HTTP 500 response
+	Headers500 *RedeemSessionLinkResponse500Headers
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *RedeemSessionLinkResponse503Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r RedeemSessionLinkResponse) GetJSON200() *Session {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r RedeemSessionLinkResponse) GetApplicationProblemJSON403() *Problem {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r RedeemSessionLinkResponse) GetApplicationProblemJSON404() *Problem {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r RedeemSessionLinkResponse) GetApplicationProblemJSON422() *ValidationFailed {
+	return r.ApplicationProblemJSON422
+}
+
+// GetApplicationProblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r RedeemSessionLinkResponse) GetApplicationProblemJSON500() *InternalError {
+	return r.ApplicationProblemJSON500
+}
+
+// GetApplicationProblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r RedeemSessionLinkResponse) GetApplicationProblemJSON503() *Problem {
+	return r.ApplicationProblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r RedeemSessionLinkResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RedeemSessionLinkResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RedeemSessionLinkResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RedeemSessionLinkResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // CompleteSecondFactorResponse200Headers the declared response headers of an HTTP 200 response for CompleteSecondFactor
 type CompleteSecondFactorResponse200Headers struct {
 	SetCookie *string
@@ -19516,6 +20302,212 @@ func (c *ClientWithResponses) MintSessionLinkWithResponse(ctx context.Context, b
 		return nil, err
 	}
 	return ParseMintSessionLinkResponse(rsp)
+}
+
+// RedeemSessionLinkWithBodyWithResponse Redeem a delegated session link for a browser session
+//
+// Turns one live, unspent `session_link` token into **exactly the session a
+// password login would have produced** — the same body, the same
+// `Set-Cookie`, the same expiry — and spends the link in the same transaction.
+//
+// ### This route is PUBLIC, and the token IS the credential
+//
+// **`security: []`.** There is nothing else to present: the link is 256 bits
+// of entropy with a ten-minute window and one use, delivered by the caller
+// over a channel the caller owns. This is the same shape as
+// `POST /v1/session/mfa`, where a challenge is the credential.
+//
+// A browser session is **neither required nor refused** here, and that is a
+// decision: a caller holding a valid session and presenting no link is
+// exactly the hijacked-browser case, and a session in the header changes
+// nothing about whether the link is right.
+//
+// **A scoped api key is refused with `403`.** The mint is reachable by a
+// credential holding `sessions:write`, and a credential that could mint the
+// link *and* redeem it would take a browser session without a browser — with
+// the mint's delegation check meaning nothing. No such scope is invented
+// here.
+//
+// ### There is no redirect, no landing URL and no `return_to`
+//
+// The caller that minted the link already owns the channel it arrived over
+// and therefore already knows where the browser is. A parameter on a
+// **public** route that this service stored and handed back would be an open
+// redirector with a session attached, and there would be nothing to
+// allow-list. A body carrying `redirect` is a `422`, not a request that
+// quietly ignores the field.
+//
+// ### Every refusal is the shape of a link that never existed
+//
+// **`404`, one status, one body, one round trip** for all six:
+//
+// | the link | refused because |
+// |---|---|
+// | never existed | the digest matches no row |
+// | has expired | it is past `expires_at` |
+// | has been spent | `token_consumed_at` is set |
+// | was minted for another flow | it is a `password_reset` token |
+// | belongs to a disabled account | `users.disabled_at` is set |
+// | belongs to an enrolled account | a live `mfa_credentials` row exists |
+//
+// The last two are the reason this is written down rather than assumed. They
+// are facts about an **account**, not about a row, and they reach a caller
+// holding a link they may have taken rather than somebody who has proved
+// anything. `409` for "that account has MFA" and `403` for "that account is
+// disabled" would publish both to exactly the person the operator acted
+// about — the opposite of the mint, where the caller is a machine credential
+// and naming the state is free. See DECISIONS.md D13.
+//
+// ### The two state checks are repeated here, and they are not redundant
+//
+// The **mint** refuses an enrolled subject (`409`) and a disabled one
+// (`403`), so at mint time no link exists for either. A ten-minute window is
+// long enough for both to change inside it. A user who enrolls MFA *after*
+// the link was minted must not redeem it: that would turn a delegated link
+// into a **complete login** for an account whose owner chose two, which is
+// precisely the downgrade the mint's refusal exists to prevent, arriving
+// through the other door. The mint's refusal is necessary and not sufficient.
+//
+// The alternative would be a threaded challenge flow on an unauthenticated
+// route — a second authentication surface, with its own state, expiry and
+// failure modes. That is a packet of its own.
+//
+// ### A refusal spends nothing
+//
+// Both checks run **before** the conditional write, so a refused redemption
+// leaves the link live. A refusal that consumed it would be an irreversible
+// decision made on somebody's behalf: un-disabling the account, or
+// un-enrolling the second factor, would leave the user holding a link that no
+// longer works and no session, which is indistinguishable from a service that
+// lost their state.
+//
+// ### The spend is a conditional write, and it is the single-use guarantee
+//
+// Two requests carrying the same token both resolve it and both reach the
+// spend, and the `UPDATE … WHERE token_consumed_at IS NULL` is what makes
+// exactly one of them win. The session insert is in the same transaction, so
+// a failure to write it rolls the spend back rather than handing over a spent
+// link and no session.
+//
+// ### `503` is the one refusal that is not the shape of a link
+//
+// When this deployment cannot say whether anybody has a second factor it
+// redeems nothing. That is a fact about the **server** rather than about any
+// account — true of every caller — and folding it into the `404` would let a
+// misconfigured deployment present as a very quiet successful attack.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/session-links/redeem (the `RedeemSessionLink` operationId).
+func (c *ClientWithResponses) RedeemSessionLinkWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RedeemSessionLinkResponse, error) {
+	rsp, err := c.RedeemSessionLinkWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRedeemSessionLinkResponse(rsp)
+}
+
+// RedeemSessionLinkWithResponse Redeem a delegated session link for a browser session
+//
+// Turns one live, unspent `session_link` token into **exactly the session a
+// password login would have produced** — the same body, the same
+// `Set-Cookie`, the same expiry — and spends the link in the same transaction.
+//
+// ### This route is PUBLIC, and the token IS the credential
+//
+// **`security: []`.** There is nothing else to present: the link is 256 bits
+// of entropy with a ten-minute window and one use, delivered by the caller
+// over a channel the caller owns. This is the same shape as
+// `POST /v1/session/mfa`, where a challenge is the credential.
+//
+// A browser session is **neither required nor refused** here, and that is a
+// decision: a caller holding a valid session and presenting no link is
+// exactly the hijacked-browser case, and a session in the header changes
+// nothing about whether the link is right.
+//
+// **A scoped api key is refused with `403`.** The mint is reachable by a
+// credential holding `sessions:write`, and a credential that could mint the
+// link *and* redeem it would take a browser session without a browser — with
+// the mint's delegation check meaning nothing. No such scope is invented
+// here.
+//
+// ### There is no redirect, no landing URL and no `return_to`
+//
+// The caller that minted the link already owns the channel it arrived over
+// and therefore already knows where the browser is. A parameter on a
+// **public** route that this service stored and handed back would be an open
+// redirector with a session attached, and there would be nothing to
+// allow-list. A body carrying `redirect` is a `422`, not a request that
+// quietly ignores the field.
+//
+// ### Every refusal is the shape of a link that never existed
+//
+// **`404`, one status, one body, one round trip** for all six:
+//
+// | the link | refused because |
+// |---|---|
+// | never existed | the digest matches no row |
+// | has expired | it is past `expires_at` |
+// | has been spent | `token_consumed_at` is set |
+// | was minted for another flow | it is a `password_reset` token |
+// | belongs to a disabled account | `users.disabled_at` is set |
+// | belongs to an enrolled account | a live `mfa_credentials` row exists |
+//
+// The last two are the reason this is written down rather than assumed. They
+// are facts about an **account**, not about a row, and they reach a caller
+// holding a link they may have taken rather than somebody who has proved
+// anything. `409` for "that account has MFA" and `403` for "that account is
+// disabled" would publish both to exactly the person the operator acted
+// about — the opposite of the mint, where the caller is a machine credential
+// and naming the state is free. See DECISIONS.md D13.
+//
+// ### The two state checks are repeated here, and they are not redundant
+//
+// The **mint** refuses an enrolled subject (`409`) and a disabled one
+// (`403`), so at mint time no link exists for either. A ten-minute window is
+// long enough for both to change inside it. A user who enrolls MFA *after*
+// the link was minted must not redeem it: that would turn a delegated link
+// into a **complete login** for an account whose owner chose two, which is
+// precisely the downgrade the mint's refusal exists to prevent, arriving
+// through the other door. The mint's refusal is necessary and not sufficient.
+//
+// The alternative would be a threaded challenge flow on an unauthenticated
+// route — a second authentication surface, with its own state, expiry and
+// failure modes. That is a packet of its own.
+//
+// ### A refusal spends nothing
+//
+// Both checks run **before** the conditional write, so a refused redemption
+// leaves the link live. A refusal that consumed it would be an irreversible
+// decision made on somebody's behalf: un-disabling the account, or
+// un-enrolling the second factor, would leave the user holding a link that no
+// longer works and no session, which is indistinguishable from a service that
+// lost their state.
+//
+// ### The spend is a conditional write, and it is the single-use guarantee
+//
+// Two requests carrying the same token both resolve it and both reach the
+// spend, and the `UPDATE … WHERE token_consumed_at IS NULL` is what makes
+// exactly one of them win. The session insert is in the same transaction, so
+// a failure to write it rolls the spend back rather than handing over a spent
+// link and no session.
+//
+// ### `503` is the one refusal that is not the shape of a link
+//
+// When this deployment cannot say whether anybody has a second factor it
+// redeems nothing. That is a fact about the **server** rather than about any
+// account — true of every caller — and folding it into the `404` would let a
+// misconfigured deployment present as a very quiet successful attack.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/session-links/redeem (the `RedeemSessionLink` operationId).
+func (c *ClientWithResponses) RedeemSessionLinkWithResponse(ctx context.Context, body RedeemSessionLinkJSONRequestBody, reqEditors ...RequestEditorFn) (*RedeemSessionLinkResponse, error) {
+	rsp, err := c.RedeemSessionLink(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRedeemSessionLinkResponse(rsp)
 }
 
 // CompleteSecondFactorWithBodyWithResponse Answer a second factor and start the session
@@ -24984,6 +25976,137 @@ func ParseMintSessionLinkResponse(rsp *http.Response) (*MintSessionLinkResponse,
 		response.Headers500 = &headers
 	case rsp.StatusCode == 503:
 		var headers MintSessionLinkResponse503Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers503 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseRedeemSessionLinkResponse parses an HTTP response from a RedeemSessionLinkWithResponse call
+func ParseRedeemSessionLinkResponse(rsp *http.Response) (*RedeemSessionLinkResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RedeemSessionLinkResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Session
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ValidationFailed
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers RedeemSessionLinkResponse200Headers
+		if values := rsp.Header.Values("Set-Cookie"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Set-Cookie", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.SetCookie = &value
+		}
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 403:
+		var headers RedeemSessionLinkResponse403Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers403 = &headers
+	case rsp.StatusCode == 404:
+		var headers RedeemSessionLinkResponse404Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers404 = &headers
+	case rsp.StatusCode == 422:
+		var headers RedeemSessionLinkResponse422Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers422 = &headers
+	case rsp.StatusCode == 500:
+		var headers RedeemSessionLinkResponse500Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers500 = &headers
+	case rsp.StatusCode == 503:
+		var headers RedeemSessionLinkResponse503Headers
 		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {

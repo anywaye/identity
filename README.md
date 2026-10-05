@@ -296,6 +296,7 @@ service quietly listening on the wrong port.
 | `DELETE /v1/accounts/:id/api-keys/:keyId` | `204` | Revoke a credential. The row is kept. `409 conflict` if already revoked, `404` for an id that is not there or not in this account. **Owner only.** |
 | `POST /v1/introspections` | `200 {active, …}` or `200 {"active":false}` | What a presented token may do, and for which account. Needed because the token is opaque. |
 | `POST /v1/session-links` | `201 {token, expires_at}` | **Mint a delegated session link** for a subject you name. `sessions:write`, **scoped api key only** — a browser session is `403`, and so is presenting no credential at all. `404` for a subject that is not a user, which is deliberate here and the opposite of the self-service routes below; `409 conflict` for a subject with a second factor, because a link cannot answer a challenge; `422` for a window over the hour ceiling. The link is **not delivered by this service** and there is no redirect parameter — the caller owns both. |
+| `POST /v1/session-links/redeem` | `200 {token, expires_at}` | **Redeem a delegated session link** for a browser session, **byte-for-byte what a correct password on `POST /v1/session` produces**. The link **is** the credential: no other credential is required, a browser session changes nothing, and a scoped api key is `403`. `404` for all six ways of being wrong — never existed, expired, spent, another flow's, a disabled subject, an enrolled one — with one fixed sentence, so a holder of a dead link learns nothing about the account it was for. A refused redemption **does not spend the link**. |
 | `GET /v1/accounts/:id/admin/audit-log` | `200 {entries, next?}` | The account's admin audit trail, newest first, **append-only**. Bounded: `limit` defaults to 25 and is refused above 100; `before` is an opaque cursor. **Admin, `audit_log:read`, scoped api key only.** |
 | `DELETE /v1/accounts/:id/admin/invitations/:invitationId` | `204` | Revoke one pending invitation. The row is kept with `revoked_at`, and the address is freed to be invited again. `409 conflict` if already accepted or revoked, `404` for an id not in this account. **Admin, `account_invitations:write`, scoped api key only.** |
 | `POST /v1/accounts/:id/admin/invitation-revocations` | `200 {requested, revoked}` | Revoke up to 50 pending invitations in one transaction, **one** audit record for the lot. `confirm: true` and a non-empty array are both required. **Owner, `account_invitations:write`, scoped api key only.** |
@@ -427,6 +428,36 @@ been told a lie about a credential it is about to hand to somebody else.
 **A subject with a second factor is refused at the mint, not challenged at the
 redeem.** See [DECISIONS.md D12](DECISIONS.md) for why a subject that does not exist
 is a `404` here and a `202` on every self-service route above.
+
+**THE REDEMPTION IS PUBLIC, AND THE TOKEN IS THE CREDENTIAL.** No other credential is
+required, a browser session in the header changes nothing, and a scoped api key is
+`403` — the mint is reachable by a credential holding `sessions:write`, and one that
+could both mint and redeem would take a browser session without a browser. On success
+it answers **byte-for-byte what a correct password produces on `POST /v1/session`**:
+the same body, the same `Set-Cookie` attributes and the same expiry, because the
+handler calls `sessionResponse` and `setSessionCookie` rather than re-creating them,
+and `TestTheRedeemedSessionIsByteForByteTheSessionAPasswordLoginMints` walks both
+responses to say that calling them is not merely a claim.
+
+**The mint's two refusals are REPEATED at the redemption, because they were about a
+moment that has passed.** No link for an enrolled or a disabled subject exists *at mint
+time*, and ten minutes is long enough for both to change inside it. A user who enrolls
+in MFA after the link was minted must not redeem it: that would turn a delegated link
+into a complete login for an account whose owner chose two, which is the same downgrade
+the mint's `409` exists to prevent arriving through the other door. A threaded
+challenge here would be a second authentication surface on an unauthenticated route,
+and it is a packet of its own.
+
+**Every refusal on that route is the shape of a link that never existed, and a refusal
+spends nothing.** One `404`, one fixed sentence, for all six ways of being wrong —
+including a disabled subject and an enrolled one, because those are facts about an
+**account** and the token is the credential: the caller is the subject or whoever took
+the link, so a `403 disabled` or a `409 second factor` would publish the account's state
+to exactly the person the operator acted about. The link is left **live**, so
+un-disabling or un-enrolling restores the flow the operator interrupted instead of
+leaving the user with a dead link and no explanation. The `503` is the one answer that
+is not that shape, because "this deployment cannot ask" is a fact about the server and
+not about anybody's account.
 
 **Delivery goes through one seam with two methods, and this repository does not
 implement the delivery.** `recovery.Mailer` is `Send` and `Ready`; the second exists

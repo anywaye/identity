@@ -95,6 +95,7 @@ type Transport interface {
 	RevokeAPIKey(ctx context.Context, accountId openapiTypes.UUID, keyId openapiTypes.UUID, body generated.RevokeAPIKeyJSONRequestBody, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	IntrospectAPIKey(ctx context.Context, body generated.IntrospectAPIKeyJSONRequestBody, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	MintSessionLink(ctx context.Context, body generated.MintSessionLinkJSONRequestBody, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
+	RedeemSessionLink(ctx context.Context, body generated.RedeemSessionLinkJSONRequestBody, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	Liveness(ctx context.Context, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	Readiness(ctx context.Context, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	ListAccountAuditLog(ctx context.Context, accountId openapiTypes.UUID, params *generated.ListAccountAuditLogParams, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
