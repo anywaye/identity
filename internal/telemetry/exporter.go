@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"path"
 	"strings"
 	"time"
 
@@ -94,8 +95,66 @@ func normaliseEndpoint(endpoint string) (string, error) {
 	// A trailing slash on the path is the difference between a request for `/` and
 	// a request for `//v1/traces` once the exporter appends its own path.
 	parsed.Path = strings.TrimSuffix(parsed.Path, "/")
+
+	// APPEND THE SIGNAL PATH, and this is a defect that was MEASURED rather than
+	// anticipated — it is the whole of why the fleet found this service emitting
+	// nothing on 2026-09-30 while every span test in the repository was green.
+	//
+	// `otlptracehttp.WithEndpointURL` does NOT do this. Its documentation says the
+	// default path is not appended, and the SDK carries a test named
+	// `TestWithEndpointURLNoPathUsesRootPath` asserting that a pathless endpoint
+	// normalises to `/`. That is a defensible reading of "endpoint URL" as a
+	// complete address, and it is the wrong reading of what `<SERVICE>_OTEL_ENDPOINT`
+	// MEANS in this fleet.
+	//
+	// The fleet's default is `http://otel-collector:4318` — scheme, host and port,
+	// no path — and the collector's OTLP receiver serves `/v1/traces`. So every
+	// export went to `http://otel-collector:4318/`, which that receiver answers with
+	// 404, and the SDK — with retry disabled and the queue off, both deliberate —
+	// dropped every span it had tried to send. The service was constructing spans,
+	// building a valid exporter, reaching the collector's port, and recording
+	// nothing anywhere. From HyperDX the two states are identical: no data.
+	//
+	// WHY NOTHING CAUGHT IT, and the reason matters more than the fix. Every
+	// observability test in `internal/telemetry` and `internal/httpapi` asserts
+	// against a `tracetest.SpanRecorder` — a recorder installed IN PLACE OF the
+	// exporter, which never builds a client and never sends a byte. A suite that
+	// cannot see the wire cannot see a request to the wrong URL. The collector
+	// stand-in in cmd/identity/telemetry_emission_test.go is the first thing in
+	// this repository that looks at where the bytes went, and it failed on this
+	// line.
+	//
+	// THE APPEND LIVES HERE, IN NORMALISATION, rather than in a switch to
+	// `WithEndpoint(host, port)` plus `WithURLPath`. `path.Join` below is the
+	// SDK's own rule — its env-config reader uses exactly
+	// `path.Join(u.Path, DefaultTracesPath)` for the environment-variable path — so
+	// a self-hoster pointing at `https://otlp.example.com/cafaye` gets
+	// `/cafaye/v1/traces`, precisely as they would have from the SDK's own
+	// configuration. One implementation of that rule, in the place that already
+	// normalises every other spelling.
+	//
+	// AN OPERATOR WHO NAMED THE SIGNAL PATH IS LEFT ALONE. `otel-collector:4318/v1/traces`
+	// is an address somebody chose, and a normalisation layer that appended to it
+	// would be the layer making that choice for them.
+	if !strings.HasSuffix(parsed.Path, tracesPathSuffix) {
+		parsed.Path = path.Join(parsed.Path, defaultTracesPath)
+	}
 	return parsed.String(), nil
 }
+
+// defaultTracesPath and tracesPathSuffix are the OTLP/HTTP traces path, spelled
+// once.
+//
+// The suffix check exists so the append is IDEMPOTENT: an endpoint that already
+// names `/v1/traces` must not become `/v1/traces/v1/traces` on a restart with a
+// doubled value, and normaliseEndpoint is called once per boot but is also the
+// function a reader will call twice while working out what an operator's variable
+// means. The SDK's `path.Join` cleans the path but does not know that
+// `/v1/traces/v1/traces` was not intended.
+const (
+	defaultTracesPath = "/v1/traces"
+	tracesPathSuffix  = "/v1/traces"
+)
 
 // compile-time proof that the OTLP exporter satisfies the seam Install takes, so
 // a signature change in the SDK is caught here rather than at the first boot of

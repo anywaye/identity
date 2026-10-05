@@ -719,6 +719,80 @@ func TestTheExporterAcceptsEveryShapeAnOperatorTypes(t *testing.T) {
 	}
 }
 
+// TestTheNormalisedEndpointNamesTheSignalPath is the assertion the test above
+// could not make, and the defect this packet found.
+//
+// `TestTheExporterAcceptsEveryShapeAnOperatorTypes` asks only whether the
+// constructor returns an error. That is the wrong question, and it stayed green
+// through a service that built a perfectly valid exporter pointed at the
+// collector's root path — which the OTLP receiver answers with 404, and which the
+// SDK then drops on the floor with retry disabled. A constructor that does not
+// complain is not a constructor that sends a span anywhere.
+//
+// So this asserts the PATH, which is the only part of the endpoint the SDK will not
+// fill in for us: `WithEndpointURL` treats the string as a complete address and
+// normalises a pathless one to `/` (the SDK ships a test asserting exactly that),
+// whereas `<SERVICE>_OTEL_ENDPOINT` in this fleet is a BASE url and the SDK's own
+// env-config reader joins the signal path onto it.
+//
+// The idempotence row is here because the fix is an append, and an append without
+// a guard produces `/v1/traces/v1/traces` the first time somebody sets the
+// variable to the URL their documentation already told them to use. It is the
+// shape of the bug this file is here to prevent, appearing in the fix for it.
+func TestTheNormalisedEndpointNamesTheSignalPath(t *testing.T) {
+	for _, tc := range []struct {
+		endpoint string
+		want     string
+	}{
+		// The fleet's documented default, in every spelling an operator types.
+		{"http://otel-collector:4318", "http://otel-collector:4318/v1/traces"},
+		{"otel-collector:4318", "http://otel-collector:4318/v1/traces"},
+		{"http://otel-collector:4318/", "http://otel-collector:4318/v1/traces"},
+		{"https://otlp.example.com", "https://otlp.example.com/v1/traces"},
+		// A self-hoster behind a reverse proxy keeps their base path — this is
+		// path.Join, the SDK's own rule, so a base path is preserved rather than
+		// overwritten.
+		{"https://otlp.example.com/cafaye", "https://otlp.example.com/cafaye/v1/traces"},
+		// Already naming it: left exactly as it is.
+		{"http://otel-collector:4318/v1/traces", "http://otel-collector:4318/v1/traces"},
+		{"https://otlp.example.com/cafaye/v1/traces", "https://otlp.example.com/cafaye/v1/traces"},
+	} {
+		t.Run(tc.endpoint, func(t *testing.T) {
+			got, err := normaliseEndpoint(tc.endpoint)
+			if err != nil {
+				t.Fatalf("normaliseEndpoint(%q) error = %v", tc.endpoint, err)
+			}
+			if got != tc.want {
+				t.Errorf("normaliseEndpoint(%q) = %q, want %q.\n\nAn endpoint with no signal "+
+					"path makes every export a request the collector does not serve, and a "+
+					"span that is never received is indistinguishable from a span that was "+
+					"never created.", tc.endpoint, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestTheSignalPathAppendIsIdempotent is the narrower form of the row above, and
+// it exists because normaliseEndpoint is a pure function that a reader will call
+// twice while working out what a variable means, and because a deployment that
+// set the variable to the URL it had been given must not get a doubled path on the
+// boot after an upgrade.
+func TestTheSignalPathAppendIsIdempotent(t *testing.T) {
+	const endpoint = "http://otel-collector:4318"
+
+	once, err := normaliseEndpoint(endpoint)
+	if err != nil {
+		t.Fatalf("normaliseEndpoint(%q) error = %v", endpoint, err)
+	}
+	twice, err := normaliseEndpoint(once)
+	if err != nil {
+		t.Fatalf("normaliseEndpoint(%q) error = %v", once, err)
+	}
+	if once != twice {
+		t.Errorf("normalising twice is not stable: %q then %q", once, twice)
+	}
+}
+
 // TestTheExporterRefusesWhatNobodyCouldHaveMeant is the other half. A transport
 // that silently accepts a nonsense endpoint and exports nowhere is worse than one
 // that says so at boot.
