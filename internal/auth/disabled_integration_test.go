@@ -35,6 +35,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/cafaye/identity/internal/oidc"
 	"github.com/cafaye/identity/internal/outbox"
 	"github.com/cafaye/identity/internal/platform/clock"
 	"github.com/cafaye/identity/internal/platform/db"
@@ -85,6 +86,12 @@ func newDisabledIntegrationFixture(t *testing.T) integrationFixture {
 		outbox.NewStore(pool),
 		realTenancy(pool, clk),
 		realSecondFactor(t, pool, clk),
+		// THE REAL SWEEP, over the real table — because the doubles in
+		// access_token_sweep_test.go prove the use case ASKS and cannot prove the
+		// ask REACHES the rows. Every assertion in that file would pass against a
+		// store that swept nothing at all, since the double is what stands in for
+		// this one.
+		oidc.NewStore(pool),
 		users.NewHasherWithParams(&argon2id.Params{
 			Memory: 8 * 1024, Iterations: 1, Parallelism: 1, SaltLength: 16, KeyLength: 32,
 		}),
@@ -348,6 +355,23 @@ func TestTheRevocationIsNotSomethingThatMerelyExpires(t *testing.T) {
 // ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
+
+// countLiveTokens counts the access tokens a subject holds that are NOT revoked.
+//
+// IT COUNTS THE LIVE ONES RATHER THAN ALL OF THEM, because "the sweep matched no
+// rows" and "the sweep revoked every live row" are both consistent with a count of
+// all rows being right — and the first of those is the failure the tests above
+// would otherwise accept as success.
+func countLiveTokens(t *testing.T, pool *pgxpool.Pool, subject id.UUID) int {
+	t.Helper()
+	var n int
+	err := pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM oidc_access_tokens WHERE subject = $1 AND revoked_at IS NULL`, subject).Scan(&n)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("counting live access tokens: %v", err)
+	}
+	return n
+}
 
 // refuseTableWrites puts a trigger on one table that raises on one operation.
 //

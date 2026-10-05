@@ -475,6 +475,18 @@ func buildAuth(
 		events,
 		tenancy,
 		secondFactor,
+		// oidc.Store rather than the storage adapter, and for recovery's exact
+		// reason: this is one UPDATE over `oidc_access_tokens` that needs no signing
+		// key, and `users:disable` has to be able to end a user's JWTs on a
+		// deployment where the OIDC provider is not mounted at all. A deployment
+		// with no OIDC_SIGNING_KEY still has the table, and a disable that could
+		// not reach it would answer 500 to an operator holding a valid key.
+		//
+		// IT IS NOT AN OPTIONAL ARGUMENT, and `auth.ErrNoAccessTokenRevoker` is
+		// what a nil here would produce at the first disable rather than at boot.
+		// See that error for why the degraded "revoked the sessions, left the
+		// tokens" is not on the table.
+		oidc.NewStore(pool),
 		// Built once by newApp and shared with the recovery surface, because the
 		// constructor derives a dummy digest in the login's timing equaliser and a
 		// second Hasher would derive a second one for the same purpose.

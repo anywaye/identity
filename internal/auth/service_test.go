@@ -255,6 +255,40 @@ func (f *fakeUnitOfWork) Do(ctx context.Context, fn func(context.Context, db.Que
 	return fn(ctx, f.querier)
 }
 
+// fakeAccessRevoker records what the disable asked of the OIDC token table.
+//
+// IT RECORDS THE QUERIER AND NOT JUST THE ARGS, and that is the point of it
+// existing: the claim under test is that the sweep runs INSIDE the transaction, and
+// a double that only counted calls could not tell a sweep on the transaction's
+// `q` from a sweep on the pool. `markerQuerier` is what makes the two
+// distinguishable.
+type fakeAccessRevoker struct {
+	sweeps []accessSweepCall
+	// err is returned instead of recording a successful sweep, so a test can
+	// program a failure at the exact statement the atomicity claim is about.
+	err error
+}
+
+// accessSweepCall is one recorded RevokeAccessTokensForUser.
+type accessSweepCall struct {
+	userID  id.UUID
+	at      time.Time
+	querier db.Querier
+}
+
+// IT RECORDS THE CALL BEFORE IT RETURNS THE ERROR, and that order is what lets a
+// test prove the sweep was REACHED rather than that something failed. A double
+// that returned `err` without appending would leave `sweeps` empty on the failure
+// path, so every assertion about "the one sweep that failed" would be an assertion
+// about a slice holding nothing — green by having nothing to be wrong about.
+func (f *fakeAccessRevoker) RevokeAccessTokensForUser(_ context.Context, q db.Querier, userID id.UUID, at time.Time) error {
+	f.sweeps = append(f.sweeps, accessSweepCall{userID: userID, at: at, querier: q})
+	if f.err != nil {
+		return f.err
+	}
+	return nil
+}
+
 // fixture wires a Service over the doubles with a fake clock and a cheap hasher.
 type fixture struct {
 	svc      *Service
@@ -263,6 +297,7 @@ type fixture struct {
 	events   *fakeEvents
 	tenancy  *fakeTenancy
 	mfa      *fakeSecondFactor
+	access   *fakeAccessRevoker
 	uow      *fakeUnitOfWork
 	reader   *fakeReader
 	clock    *clock.Fake
@@ -304,6 +339,7 @@ func newFixture() *fixture {
 	f.uow = &fakeUnitOfWork{querier: markerQuerier{name: "transaction"}}
 
 	f.mfa = newFakeSecondFactor()
+	f.access = &fakeAccessRevoker{}
 	f.svc = NewService(
 		f.uow,
 		f.reader,
@@ -312,6 +348,7 @@ func newFixture() *fixture {
 		f.events,
 		f.tenancy,
 		f.mfa,
+		f.access,
 		users.NewHasherWithParams(&argon2id.Params{
 			Memory: 8 * 1024, Iterations: 1, Parallelism: 1, SaltLength: 16, KeyLength: 32,
 		}),
@@ -319,6 +356,48 @@ func newFixture() *fixture {
 		24*time.Hour,
 	)
 	return f
+}
+
+// newFixtureWithoutAccessRevoker wires the same service with the sweep MISSING.
+//
+// It exists because "an unwired sweeper must not silently skip" is a property of
+// the constructor as well as of the use case: the argument is a required positional
+// parameter, and this is the only way a test can reach the nil that a mistake in
+// `cmd/identity` would produce. Every other fixture wires a working one, so a test
+// that did not ask for this would pass against an implementation that skipped a nil
+// sweep — because nothing would ever have been nil.
+func newFixtureWithoutAccessRevoker() *fixture {
+	f := newFixture()
+	f.access = nil
+	f.svc = NewService(
+		f.uow,
+		f.reader,
+		f.users,
+		f.sessions,
+		f.events,
+		f.tenancy,
+		f.mfa,
+		nil,
+		users.NewHasherWithParams(&argon2id.Params{
+			Memory: 8 << 10, Iterations: 1, Parallelism: 1, SaltLength: 16, KeyLength: 32,
+		}),
+		f.clock,
+		24*time.Hour,
+	)
+	return f
+}
+
+// seedSession puts one live session row in the double, so a test can claim that a
+// session SURVIVED something. `f.sessions.live` and `owners` are private to this
+// file, and reaching into them here is what keeps that privacy worth having.
+func (f *fixture) seedSession(userID id.UUID) {
+	f.sessions.nextID++
+	var raw id.UUID
+	raw[15] = byte(f.sessions.nextID)
+	sid := raw
+	digest := "digest-" + sid.String()
+	f.sessions.live[digest] = sid
+	f.sessions.owners[sid] = userID
 }
 
 // register creates a user directly, bypassing the use case, so a test can set up

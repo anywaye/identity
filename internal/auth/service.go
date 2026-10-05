@@ -123,6 +123,53 @@ type SecondFactor interface {
 	Commit(ctx context.Context, q db.Querier, claim mfa.Claim, now time.Time) error
 }
 
+// AccessTokenRevoker ends every OpenID Connect access token a user holds.
+//
+// IT IS `internal/recovery`'s `AccessTokenRevoker` with the same signature, and it
+// is declared here rather than imported from there for the reason recovery's is
+// declared at the consumer: the RULE is this package's and the TABLE is
+// `internal/oidc`'s, and an import in both directions would be an edge between two
+// tables with nothing to say to each other. Two declarations of the same one-method
+// interface is a real cost — a type satisfying one satisfies the other, silently —
+// and it is paid here rather than paid as an edge.
+//
+// `*oidc.Store` satisfies it by signature. So does a test's recording double, which
+// is how "the sweep is asked for" is separated from "the sweep reaches the rows":
+// the latter is proven in disabled_integration_test.go against the real store.
+type AccessTokenRevoker interface {
+	RevokeAccessTokensForUser(ctx context.Context, q db.Querier, userID id.UUID, at time.Time) error
+}
+
+// ErrNoAccessTokenRevoker means this auth service has no access-token sweep wired,
+// so `Disable` cannot revoke the OpenID Connect tokens a user holds.
+//
+// It is an error and not a degraded "revoked the sessions, left the tokens", and the
+// direction of the refusal is the whole point — the same argument
+// ErrNoSecondFactor makes, with the credential on the other side of it. That
+// sentinel exists because a login proceeding without being able to ask about a
+// second factor IS the bypass MFA exists to prevent; here the bypass is the one
+// users:disable exists to prevent, and "revoked the sessions, left the tokens"
+// would answer an operator's disable with success while a fifteen-minute JWT keeps
+// authenticating in every third party that holds one. That is a caller told their
+// disable succeeded while it did not, which is worse than a 500 because nothing
+// looks wrong.
+//
+// main wires the real sweep whenever it has a database, so reaching this is a
+// wiring bug at a call site rather than a supported configuration.
+//
+// # WHY IT IS A 500 AND NOT RECOVERY'S 503
+//
+// `recovery.ErrNoMailer` and `recovery.ErrMFAUnavailable` are 503s, and this
+// deliberately is not. Both of those describe a DEPLOYMENT CAPABILITY that can be
+// absent in a steady state — a deployment with no SMTP, a deployment with no MFA
+// provider mounted — so "come back later" is a true contract. This one has no such
+// state: `oidc.NewStore(pool)` is constructed from a pool, so any process that has
+// a database can wire it, and a nil here means a call site forgot rather than a
+// deployment lacks. 503 would tell a client to retry a request whose failure is
+// permanent, and the operator surface's documented refusal table has no 503 arm to
+// widen for a wiring bug.
+var ErrNoAccessTokenRevoker = errors.New("disabling a user: no access token revoker is configured")
+
 // EventAppender is the part of outbox.Store that registration needs.
 type EventAppender interface {
 	Append(ctx context.Context, q db.Querier, e outbox.Envelope) error
@@ -158,6 +205,7 @@ type Service struct {
 	events     EventAppender
 	tenancy    PersonalAccountProvisioner
 	mfa        SecondFactor
+	access     AccessTokenRevoker
 	hasher     *users.Hasher
 	clock      clock.Clock
 	sessionTTL time.Duration
@@ -183,7 +231,10 @@ var ErrNoSecondFactor = errors.New("logging in: no second-factor service is conf
 // challenge it answers and the two failure counters it clears. read is used for
 // everything else, so those lookups do not pay for a transaction.
 //
-// secondFactor is required. See ErrNoSecondFactor.
+// secondFactor and access are both required. See ErrNoSecondFactor and
+// ErrNoAccessTokenRevoker — neither has a supported "absent" configuration, and a
+// nil that reads as "there is nothing to sweep" is the failure neither of them can
+// detect from the inside.
 func NewService(
 	uow UnitOfWork,
 	read db.QuerierSource,
@@ -192,6 +243,7 @@ func NewService(
 	events EventAppender,
 	tenancy PersonalAccountProvisioner,
 	secondFactor SecondFactor,
+	access AccessTokenRevoker,
 	hasher *users.Hasher,
 	clk clock.Clock,
 	sessionTTL time.Duration,
@@ -207,6 +259,7 @@ func NewService(
 		events:     events,
 		tenancy:    tenancy,
 		mfa:        secondFactor,
+		access:     access,
 		hasher:     hasher,
 		clock:      clk,
 		sessionTTL: sessionTTL,
@@ -788,12 +841,70 @@ func (s *Service) recordFailure(ctx context.Context, userID id.UUID, next sessio
 // This is the same rule MFA and a password reset already follow with their own
 // RevokeAllForUser calls, and the reasoning is theirs: a credential minted before
 // a change is not a credential after it.
+//
+// # AND THE THIRD STATEMENT IS AN OIDC ACCESS TOKEN, BECAUSE A ROW IS NOT A
+// RECALL FOR A JWT
+//
+// disabled-01 shipped this as two statements and named the gap in its own commit
+// message: the session DELETE and the column, with "no sweep of
+// `oidc_access_tokens`" written down as something the packet did not do. That gap
+// is why there are three statements here, and the middle one is not optional in the
+// way a reader might assume.
+//
+// Every other credential this service issues can be recalled by deleting a row,
+// because resolving it means reading that row. An OpenID Connect access token
+// cannot: it is a JWT, verified by whoever holds it against the published JWKS from
+// the moment it is minted until `exp`, and this service is not the verifier. So the
+// row behind the token is not the credential — it is the only place this service
+// can record that the credential is meant to be dead, and a third party checking
+// the token locally has no way to ask. Without the sweep a disable leaves a
+// credential valid for up to fifteen more minutes in the hands of every relying
+// party that took it, and no amount of column-writing brings that window down.
+//
+// This is the SAME call `internal/recovery` makes in the SAME transaction shape for
+// a password reset (`recovery.Service.revokeEveryCredential`), and it is one rule
+// with two tables under it rather than two rules that happen to agree: "a
+// credential minted before this moment is not a credential after it" does not get
+// to have a session-shaped half and a token-shaped half.
+//
+// # THE ORDER, AND IT IS THE SAME ORDER `startSession` USES FOR THE SAME REASON
+//
+// Revocations first, state change last: sessions, then access tokens, then the
+// column. Every failure mode of that order rolls back, and the one that matters most
+// is the reverse — a column write before the sweeps would leave an account that
+// reads as turned off to an operator inspecting the table while its tokens are still
+// live, which is the half-applied state nothing else in this service models.
+//
+// # AND `Authenticate` STILL DOES NOT READ disabled_at, ON PURPOSE
+//
+// disabled-01 left that check out with the argument that revocation is the stronger
+// guarantee because it deletes the rows. That argument now HOLDS for OpenID Connect
+// as well as for sessions, which is the only reason it was ever safe to make: as of
+// this commit, revocation covers every credential this service has issued, so a
+// revoked-but-present row is no longer a way in. Adding a `disabled_at` check here
+// would be a second mechanism for one fact, and the row is already the answer —
+// except for a token whose revocation failed, and that transaction rolled back
+// nothing at all rather than writing the column.
 func (s *Service) Disable(ctx context.Context, userID id.UUID, at time.Time) error {
+	// BEFORE the transaction, not inside it. A wiring bug should not open a
+	// transaction and abort it, and — the reason this ordering is load-bearing
+	// rather than tidiness — a nil check that ran after the session DELETE would
+	// have ended every session the user holds and then reported failure, which is
+	// a signed-out user who is not disabled and cannot sign back in.
+	if s.access == nil {
+		return ErrNoAccessTokenRevoker
+	}
+
 	return s.uow.Do(ctx, func(ctx context.Context, q db.Querier) error {
 		// First, as above.
 		if err := s.sessions.RevokeAllForUser(ctx, q, userID); err != nil {
 			return fmt.Errorf("ending a disabled user's sessions: %w", err)
 		}
+		// Second: the credential that deleting a row cannot recall.
+		if err := s.access.RevokeAccessTokensForUser(ctx, q, userID, at); err != nil {
+			return fmt.Errorf("ending a disabled user's access tokens: %w", err)
+		}
+		// Last, and only if both of the above held.
 		if err := s.users.Disable(ctx, q, userID, at); err != nil {
 			return fmt.Errorf("marking the user disabled: %w", err)
 		}

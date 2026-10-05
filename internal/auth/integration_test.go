@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/cafaye/identity/internal/mfa"
+	"github.com/cafaye/identity/internal/oidc"
 	"github.com/cafaye/identity/internal/outbox"
 	"github.com/cafaye/identity/internal/platform/clock"
 	"github.com/cafaye/identity/internal/platform/db"
@@ -51,6 +52,10 @@ func newIntegrationServiceWithMFA(t *testing.T) (*Service, *pgxpool.Pool, *clock
 		outbox.NewStore(pool),
 		realTenancy(pool, clk),
 		second,
+		// The real sweep over the real table, as main wires it. The use case
+		// refuses to disable anybody without it, so a nil here would make every
+		// disable in this file answer ErrNoAccessTokenRevoker.
+		oidc.NewStore(pool),
 		users.NewHasherWithParams(&argon2id.Params{
 			Memory: 8 * 1024, Iterations: 1, Parallelism: 1, SaltLength: 16, KeyLength: 32,
 		}),
@@ -271,6 +276,10 @@ func TestIntegrationLockIsVisibleToAnotherServiceInstance(t *testing.T) {
 		outbox.NewStore(pool),
 		realTenancy(pool, clock.NewFake(start)),
 		realSecondFactor(t, pool, clock.NewFake(start)),
+		// The real sweep over the real table, as main wires it — the second
+		// instance must see the same table the first one does, because that is
+		// what the disable's sweep revokes in.
+		oidc.NewStore(pool),
 		users.NewHasherWithParams(&argon2id.Params{
 			Memory: 8 * 1024, Iterations: 1, Parallelism: 1, SaltLength: 16, KeyLength: 32,
 		}),
@@ -314,6 +323,9 @@ func TestIntegrationRegisterIsAtomicWhenTheEventIsRejected(t *testing.T) {
 		failingEvents,
 		realTenancy(pool, clock.NewFake(start)),
 		realSecondFactor(t, pool, clock.NewFake(start)),
+		// The real sweep, as main wires it: this test is about a registration
+		// rolling back, and nothing about it turns on the disable's sweep.
+		oidc.NewStore(pool),
 		users.NewHasherWithParams(&argon2id.Params{
 			Memory: 8 * 1024, Iterations: 1, Parallelism: 1, SaltLength: 16, KeyLength: 32,
 		}),

@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/cafaye/identity/internal/mfa"
+	"github.com/cafaye/identity/internal/oidc"
 	"github.com/cafaye/identity/internal/outbox"
 	"github.com/cafaye/identity/internal/platform/clock"
 	"github.com/cafaye/identity/internal/platform/db"
@@ -408,6 +409,10 @@ func TestAServiceWithNoSecondFactorDependencyRefusesToLogIn(t *testing.T) {
 		outbox.NewStore(pool),
 		realTenancy(pool, clk),
 		nil,
+		// The sweep is wired even in the deliberately-unwired service: this test
+		// is about the MISSING SECOND FACTOR, and a nil here would make every
+		// answer it reads about the login irrelevant.
+		oidc.NewStore(pool),
 		users.NewHasherWithParams(&argon2id.Params{
 			Memory: 8 * 1024, Iterations: 1, Parallelism: 1, SaltLength: 16, KeyLength: 32,
 		}),
