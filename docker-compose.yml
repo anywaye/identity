@@ -395,6 +395,16 @@ services:
     # the decision: the receiver is still the collector's `syslog/crash`, still
     # unpublished, still the same `tag`.
     #
+    # AND THE ADDRESS MOVES WHEN THE NETWORK IS RECREATED, which `bin/dev nuke`
+    # does. Measured across three fresh volumes here: 192.168.158.2, then .3,
+    # then .4. So the loop after a nuke is: bring the stack up once, read the
+    # address, write it into `.env`, run `bin/dev up` again — and the second run
+    # is the one that comes up complete. Two commands where one works on a Linux
+    # daemon, and
+    # it is the price of the daemon resolving the name at all rather than a gap in
+    # the crash layer. Recorded here because the failure without it names the
+    # daemon's resolver and nothing about this variable.
+    #
     # WHY NOT FALL BACK TO `json-file` ON A NON-LINUX HOST. Docker has no way to
     # ask "which host am I on" from a compose file, and a driver chosen by
     # anything else — a second `-f` override a developer forgets to pass, a CI
