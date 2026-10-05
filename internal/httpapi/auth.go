@@ -15,6 +15,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/cafaye/identity/internal/auth"
+	"github.com/cafaye/identity/internal/platform/id"
 	"github.com/cafaye/identity/internal/telemetry"
 	"github.com/cafaye/identity/internal/users"
 )
@@ -58,6 +59,19 @@ type Auth interface {
 	// transaction, and splitting them would be an invitation to mint a session in
 	// one and not the other.
 	CompleteSecondFactor(ctx context.Context, in auth.CompleteSecondFactorInput) (auth.LoginResult, error)
+
+	// Disable and Enable are the operator surface's two use cases, and they are on
+	// THIS interface rather than on a new one because they are what auth.Service
+	// already has: a disable is not a column write, it is a column write plus the
+	// revocation of every session the account holds, in one transaction, and that
+	// transaction belongs to the package that owns "which sessions may exist".
+	//
+	// Their AUTHORIZATION is not here and must not be: it is the route's, because the
+	// scope a caller needs is `users:disable` and no account role reaches it. A
+	// handler cannot be the only thing standing between a tenant and a colleague in
+	// another tenant.
+	Disable(ctx context.Context, userID id.UUID, at time.Time) error
+	Enable(ctx context.Context, userID id.UUID) error
 }
 
 // WithAuth mounts the v1 routes.
@@ -203,6 +217,13 @@ func (o options) registerRoutes(r chiRouter) {
 	// one, and gating this on a mailer would refuse a capability that does not need
 	// it.
 	o.registerSessionLinkRoutes(r)
+
+	// And the operator surface: a machine credential holding `users:disable` turns a
+	// user's account off, and back on. It hangs off `auth` — the use cases are
+	// `auth.Service.Disable` and `.Enable` — so it needs nothing this registrar does
+	// not already have, and it has its own registrar for the same reason every other
+	// surface does: a name a reader can go looking for.
+	o.registerOperatorRoutes(r)
 }
 
 // chiRouter is the slice of *chi.Mux these routes need. Naming it keeps the

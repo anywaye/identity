@@ -98,6 +98,12 @@ type Transport interface {
 	Liveness(ctx context.Context, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	Readiness(ctx context.Context, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	ListAccountAuditLog(ctx context.Context, accountId openapiTypes.UUID, params *generated.ListAccountAuditLogParams, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
+	// The operator surface. `userId` is a PERSON and not a member of `accountId`,
+	// which is why there is no account parameter at all — a token holding
+	// `users:disable` names any user on the deployment, and this service's own mint
+	// will not hand one to a tenant's owner. See DECISIONS.md D14.
+	DisableUser(ctx context.Context, userId openapiTypes.UUID, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
+	EnableUser(ctx context.Context, userId openapiTypes.UUID, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	RevokeAccountInvitation(ctx context.Context, accountId openapiTypes.UUID, invitationId openapiTypes.UUID, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	RevokeAccountInvitations(ctx context.Context, accountId openapiTypes.UUID, body generated.BulkInvitationRevocation, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	// The social-login round trip is here for completeness of the METHOD SET, which

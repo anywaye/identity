@@ -469,8 +469,12 @@ func TestADemotionStopsTheTokenOnOwnerOnlyRoutes(t *testing.T) {
 // with the caller holding every scope in the vocabulary.
 func TestATokenIsBoundToTheAccountItWasMintedFor(t *testing.T) {
 	s := newAPIKeyServer(t)
-	// Every scope, so nothing about the refusal can be a missing scope.
-	_, secret := s.mint(t, "deploy", apikeys.AllScopes()...)
+	// Every scope an account can be given, so nothing about the refusal can be a
+	// missing scope. NOT `AllScopes()`: `users:disable` is deliberately not
+	// mintable here, and a token holding it would be the operator credential rather
+	// than an account-scoped one — which is the whole point of the two being
+	// different. See `TestTheMintRefusesToGrantTheOperatorScope`.
+	_, secret := s.mint(t, "deploy", everyAccountScope()...)
 
 	// Its own account: fine.
 	own := s.bearer(t, http.MethodGet, "/v1/accounts/"+s.account.String(), secret, "")
@@ -521,7 +525,13 @@ func TestScopeEnforcementIsWiredToTheRoutes(t *testing.T) {
 	// would take the account out from under the three subtests after it, and the
 	// next mint would 404 for a reason that has nothing to do with scopes. The
 	// paths are built per server for the same reason: each has its own account id.
-	for _, scope := range apikeys.AllScopes() {
+	// NOT `AllScopes()`: `users:disable` has no account route to be enforced on, and
+	// it cannot be minted through this surface at all — it is the operator
+	// credential. Walking it here would fail at the mint rather than at a route, and
+	// the failure would read as a broken scope gate rather than as the boundary it is.
+	// Its enforcement is asserted in `TestTheOperatorRoutesAreReachableByExactlyOneCredential`
+	// and its non-mintability in `internal/apikeys`.
+	for _, scope := range everyAccountScope() {
 		t.Run(scope, func(t *testing.T) {
 			s := newAPIKeyServer(t)
 			account := s.account.String()
@@ -652,7 +662,7 @@ func matchesPattern(pattern, path string) bool {
 // have no scope for them.
 func TestATokenCannotManageTheCredentialSurfaceOverTheRealRouter(t *testing.T) {
 	s := newAPIKeyServer(t)
-	_, secret := s.mint(t, "everything", apikeys.AllScopes()...)
+	_, secret := s.mint(t, "everything", everyAccountScope()...)
 
 	for _, tt := range []struct {
 		method string
@@ -681,7 +691,7 @@ func TestATokenCannotManageTheCredentialSurfaceOverTheRealRouter(t *testing.T) {
 // decision from a typo.
 func TestATokenCannotReachTheSecondFactor(t *testing.T) {
 	s := newAPIKeyServer(t)
-	_, secret := s.mint(t, "deploy", apikeys.AllScopes()...)
+	_, secret := s.mint(t, "deploy", everyAccountScope()...)
 
 	for _, tt := range []struct {
 		method string

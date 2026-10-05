@@ -1458,3 +1458,137 @@ closed by a disable**, because a disable that ends browser sessions and leaves
 fifteen-minute access tokens in third parties' hands is half a revocation and the
 other half is a product decision about how quickly an identity provider can be made
 to disbelieve its own key.
+
+---
+
+## D14: the operator is a machine credential with `users:disable`, and no account at all
+
+**Raised** 2026-10-06 by packet `identity-disabled-02`, which mounted the operator
+surface D13 said was missing.
+
+D13 named the gap honestly: `Disable` and `Enable` were a use case and nothing was
+mounted on them, "because the honest answer to 'who may turn an account off' is a
+role decision this packet should not make for the fleet." This entry is that
+decision.
+
+### What it is
+
+`POST /v1/users/{userId}/disable` and `POST /v1/users/{userId}/enable`, reachable by
+a **scoped api key holding `users:disable`** and by nothing else. `204`, no body. The
+gate is `requireOperatorToken` in `internal/httpapi/operator.go`, and the scope is
+declared by two rows in `accountRouteScopes` beside the session-link mint's — read
+through the same `scopeRequiredBy`, so deleting a row **closes the route to tokens**
+rather than ungating it.
+
+### Why not the account-admin surface
+
+**A user is not an account.** The same person belongs to as many accounts as they
+like, so an account admin's authority is over *their account* and its members'
+pending access, and the person in front of them is also somebody else's employee.
+Granting account admin the power to disable would mean one tenant could reach a user
+who also works for another tenant, which is precisely the reach D2–D5 spent five
+entries refusing.
+
+There is no honest way to scope it by account instead. The tenancy rules rest on
+"every query is scoped by `account_id` from the token", and this action has no
+account to scope by — its subject is the person rather than one of their
+memberships. Inventing one is where the danger is: the obvious invention is "the
+caller's own account", and a user belonging to ten tenants would then grant tenant
+one that power ten times over, once per membership.
+
+So the surface has **no account in the path, no role minimum, and no route under
+`/v1/accounts/…` that consults `users:disable`**. An account-scoped credential is
+refused on these routes whatever its role and whatever else it holds, and that
+refusal is a check with a name —
+`TestAnAccountScopedCredentialCannotDisableAUser` — because it is the boundary
+D2–D5 drew and a future packet widening this to "admins may too" would be invisible
+everywhere else.
+
+**What the scope buys, stated as what it does not:** it does not restrict by tenancy
+at all. A token holding `users:disable` may name **any** user on the deployment.
+That is a fact about the scope rather than a shortcut around the tenancy rules — the
+rows beside it restrict by account because an account is what they act *on*, and this
+one acts on a person — and it is why the grant is per deployment, deliberate, and
+revocable on its next request like any other.
+
+### Why a machine credential and not a session
+
+An operator is a deployment fact, not a login, and the subject of the action is a
+person. A browser session here would be an account turning **itself** off or on, and
+there is no version of that which is not either a self-harm button or a privilege
+escalation. It is the same rule `requireAdminToken` and `requireSessionLinkMint`
+already enforce and for the same reason: a session is a cookie, and a cookie is one
+CSRF away from being somebody else's.
+
+The second reason is audit-shaped and is why the credential kind is load-bearing
+rather than tidiness: a machine credential has a **row id** an audit record can name,
+and a session does not. That argument is D4's, and it is inherited rather than
+re-decided.
+
+### The refusals, and where the enumeration line sits
+
+| presented | answer |
+|---|---|
+| a scoped api key holding `users:disable` | `204` |
+| a browser session | `403` |
+| an account-scoped credential, any role, any other scope | `403` |
+| no credential at all | `403` |
+| a token that resolves to no key | `401` |
+| a user id this service never issued | `404` |
+
+**403 for a session and for no credential, 401 for a token that resolves to nothing.**
+The first two are statements about the *surface* — it is reachable by a scoped api key
+and by nothing else, so "you are not a token" is true of a stranger exactly as it is
+of a signed-in person, and a 401 would send a client hunting a login problem that does
+not exist. The third caller HAS a credential; 403 says it may not use this route.
+`Allows("")` is false for every granted set, so deleting the scope row closes the route
+rather than opening it.
+
+**The 404 is deliberate and is D12 pointed the same way.** These routes are behind
+the operator credential, so there is no anonymous stranger to protect and an operator
+told "no user with that id" can act on it. Everywhere else an unknown subject answers
+`202` with a constant body, because those routes have **no credential** and "no such
+account" there is a free enumeration oracle. This surface's anonymous answer is a
+**403 that arrives before the path is parsed**, so a real user id, an invented one and
+a malformed one are all the same answer — which is the row
+`anonymous_enumeration_test.go` records, and the reason a stranger learns nothing
+about which users exist.
+
+**A user's disabled state is published in exactly one place**, and it is unchanged
+from D13: the login, after the password verifies. Naming it here would publish it to
+whoever asked, for no benefit — a client asking "is this account disabled?" is asking
+about a person, and the operator surface's answer is about performing an action.
+
+### Idempotence, and why there is no `409`
+
+Disabling a disabled account is a `204`, and so is enabling an enabled one. An
+operator re-applying a state from a script is not making a mistake, and a caller that
+had to read the column first to find out would be doing an extra round trip to learn
+something the row's absence already tells it. There is no `409` for "it was already in
+that state" to be wrong about, and no `confirm` field, because the URL names the one
+thing being changed — the difference from the bulk admin revocation, where the subject
+is an array.
+
+### What is deliberately NOT here
+
+- **No audit record.** `account_audit_log` is account-scoped and its trigger refuses
+  `UPDATE` and `DELETE`; a user-scoped audit table is a real decision with a real
+  shape, and it is the next commit of this packet rather than a guess made while
+  mounting a route. **A disable is currently unattributable.** That is named rather
+  than hidden, and it is the reason the handoff leads with it.
+- **No OIDC access-token sweep.** D13 named it as the other half of the revocation;
+  `auth.Service.Disable` sweeps sessions today and the OIDC table is untouched. The
+  password reset sweeps `oidc_access_tokens` in the same transaction as its own
+  revocation, so the pattern exists to extend — and until it is extended, **a disable
+  leaves fifteen-minute access tokens valid in third parties' hands.** Half a
+  revocation is the reason this packet exists, so this gap is the one to close first.
+- **No interactive OIDC refusal.** The four unre-showable refusals in
+  `internal/httpapi/oidc.go` have no disabled branch. The interactive flow resolves
+  through sessions, which the revocation ends, so the practical exposure is a
+  challenge minted before the disable — the same window `CompleteSecondFactor` closes
+  and this surface does not.
+- **No notification, no bulk, no expiry, no soft disable, no read-only tier.** Disabled
+  is disabled, and one user is one request.
+- **No platform-admin role.** The role question was answered as a *scope on a machine
+  credential*, which is a smaller invention; there is still no `platform_admin` role
+  on this service and this entry does not create one.

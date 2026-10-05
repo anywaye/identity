@@ -51,6 +51,17 @@ var (
 	// the membership; this layer does not, and asking it to distinguish the two
 	// would mean a second membership read.
 	ErrNotAuthorized = errors.New("caller may not manage api keys in this account")
+
+	// ErrScopeNotMintableHere means the requested scope set is well-formed and every
+	// name in it is one this build knows, but one of them is not GRANTABLE by this
+	// surface. Only `users:disable` is: it names no account, so a credential minted
+	// for one account must not carry it. See refuseNonAccountScope.
+	//
+	// IT IS 403 AND NOT 422, and the difference is the point: the caller's request is
+	// not malformed and the scope does not exist — they asked a settings page for a
+	// capability it is not allowed to hand out. A 422 naming `scopes` as invalid would
+	// send a developer to the vocabulary table to look for a typo that is not there.
+	ErrScopeNotMintableHere = errors.New("this surface cannot mint a credential carrying that scope")
 )
 
 // ErrNameTaken and ErrAlreadyRevoked are the STORE's, and they are returned from
@@ -60,6 +71,14 @@ var (
 // match against the other, and the 409 would silently become a 500.
 
 // Caller is who a presented credential turned out to be.
+//
+// AND THE ACCOUNT BOUNDARY IS DECLARED HERE TOO, not only in the mint: every scope
+// in the vocabulary except `users:disable` is a capability over ONE account, and a
+// key minted here belongs to the account in `MintInput`. `users:disable` names no
+// account, so a key minted here carrying it would hand a tenant's owner a credential
+// reaching every user on the deployment. `refuseNonAccountScope` is where that is
+// enforced — inside the use case, because a check only a handler performs is a check
+// the next caller does not inherit.
 //
 // THE ROLE IS NOT ON THE KEY. It is read from the membership at the instant of
 // resolution, which is the whole of this packet's answer to "a token outlives the
@@ -265,6 +284,9 @@ func (s *Service) Mint(ctx context.Context, in MintInput) (IssuedKey, error) {
 	if err != nil {
 		return IssuedKey{}, err
 	}
+	if err := refuseNonAccountScope(scopes); err != nil {
+		return IssuedKey{}, err
+	}
 
 	now := s.clk.Now()
 	expiresAt, err := ResolveExpiry(now, in.ExpiresIn)
@@ -315,6 +337,38 @@ func (s *Service) Mint(ctx context.Context, in MintInput) (IssuedKey, error) {
 	}
 
 	return IssuedKey{Key: created, Token: token}, nil
+}
+
+// refuseNonAccountScope is the mint's account boundary, and it is here rather than
+// in the HTTP layer because a check only a handler performs is a check the next
+// caller does not inherit.
+//
+// `users:disable` is IN THE VOCABULARY — a token holding it reaches
+// `POST /v1/users/{userID}/disable` — and it is the one scope that must never be
+// GRANTED here. This method mints a credential **for an account**, and it requires
+// that account's owner; a token minted through it therefore belongs to one tenant.
+// Granting it the operator scope would let any account owner mint a credential that
+// names any user on the deployment, which is exactly the reach D2–D5 spent five
+// entries refusing — handed out through a settings page, by a role check that has
+// nothing to do with the capability being granted.
+//
+// So the operator credential is NOT minted by this service's account surface. It is
+// a deployment fact: the row is provisioned for the deployment by whoever operates
+// it, and it is revoked by revoking that row. That is the honest shape — the
+// vocabulary says a scope exists, and this entry says the route that hands it out is
+// not an account route, rather than the vocabulary lying by omission.
+//
+// THE ERROR IS `ErrScopeNotMintableHere` RATHER THAN A VALIDATION FAILURE, because
+// the request is well-formed and the value is a scope this build knows. A 422 naming
+// `scopes` as invalid would tell a developer their vocabulary is wrong; what is
+// wrong is the surface.
+func refuseNonAccountScope(scopes []string) error {
+	for _, scope := range scopes {
+		if scope == ScopeUsersDisable {
+			return ErrScopeNotMintableHere
+		}
+	}
+	return nil
 }
 
 // List returns an account's credentials, newest first, revoked ones included.

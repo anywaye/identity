@@ -126,8 +126,8 @@ info:
   # service means "locked, retry at" and clients render it as a countdown. A
   # disabled account is not coming back, so a client that treated the 403 as
   # retryable would poll a route whose answer cannot change.
-  version: 1.9.0
-  summary: Authentication, sessions, multi-factor authentication, account recovery, accounts, tenancy, scoped API tokens, the admin surface and OIDC registrations.
+  version: 1.10.0
+  summary: Authentication, sessions, multi-factor authentication, account recovery, accounts, tenancy, scoped API tokens, the admin surface, the operator surface and OIDC registrations.
   description: |
     `identity` is the cafaye platform's security boundary: it is what every other
     service asks to identify a caller.
@@ -348,6 +348,26 @@ tags:
       A bulk revocation requires a `confirm` field and a named array, and a single
       revocation requires neither. The difference is in the request shape, not in a
       dialog, because a dialog is not something an API client has.
+  - name: operator
+    description: |
+      **Turning a person's account off, and back on.** Two routes, one scope
+      (`users:disable`), and no account anywhere in either path.
+
+      They are deliberately NOT part of the `admin` tag's surface, and the reason
+      is a user is not an account: the same person belongs to as many accounts as
+      they like, and one account's admin has no authority over the person who also
+      works for somebody else's tenant. So there is no route under
+      `/v1/accounts/…` that consults `users:disable`, no role minimum that reaches
+      these two, and an account-scoped credential is refused here whatever it
+      holds.
+
+      **Reachable by a scoped API token only — never by a browser session.** An
+      operator is a deployment fact, not a login, and the subject here is a person,
+      so a session would be an account turning itself off or on.
+
+      A disable ends **every session the account holds, in the same transaction**
+      that writes the column, and re-enabling restores the column and nothing
+      else: those sessions are gone and the owner signs in again.
   - name: recovery
     description: |
       The three flows a person can only finish by proving they can read an inbox:
@@ -487,6 +507,229 @@ paths:
           $ref: '#/components/responses/BodyTooLarge'
         '422':
           $ref: '#/components/responses/ValidationFailed'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /v1/users/{user_id}/disable:
+    post:
+      tags: [operator]
+      operationId: disableUser
+      summary: Turn a user's account off
+      description: |
+        Stamps `users.disabled_at` and **deletes every session the account holds,
+        in one transaction**. Not a flag and not a sweep: a column write and a later
+        sweep is a window whose length is not a number anybody chose, and a request
+        already in flight dies at its next store read because the row it reads is
+        gone.
+
+        ### The three credentials, and which one is allowed
+
+        | presented | answer |
+        |---|---|
+        | a scoped api key holding `users:disable` | `204` |
+        | a browser session | `403` |
+        | **any account-scoped credential, whatever its role and whatever else it holds** | `403` |
+        | no credential at all | `403` |
+        | a token that resolves to no key | `401` |
+
+        **The third row is the boundary, and it is the reason this is not the admin
+        surface.** A user is not an account: the same person belongs to as many
+        accounts as they like, so "may this account's admin disable this user" has
+        no answer inside the account boundary. An account admin — `owner` included —
+        cannot call this, because no route under `/v1/accounts/…` consults
+        `users:disable` at all. There is no role minimum, because there is no
+        account in the path to hold one. See DECISIONS.md D14.
+
+        **`403` rather than `401` for a session and for no credential at all**, for
+        the same reason the session-link mint and the admin surface answer that way:
+        this surface is reachable by a scoped api key and by nothing else, so "you
+        are not a token" is a statement about the surface and is true of a stranger
+        exactly as it is of a signed-in person. A `401` would send a client hunting a
+        login problem that does not exist.
+
+        **`401` rather than `403` for a token that resolves to nothing**, and the
+        difference is contract: `403` means "your credential may not use this route"
+        while a value belonging to no key is not a credential at all. No such token,
+        a revoked one, an expired one, and one whose user has since gone are one
+        answer.
+
+        ### The 404 is deliberate, and it is the opposite of the self-service routes
+
+        A user id this service never issued answers `404`, and it is safe **here
+        only** because the route is behind the operator credential: there is no
+        anonymous stranger to protect, and an operator told "no user with that id"
+        can act on it. Everywhere else on this service an unknown subject answers
+        `202` with a constant body — `POST /v1/password-resets`,
+        `POST /v1/email-verifications` — precisely because those routes have **no
+        credential** and "no such account" there would be a free enumeration oracle.
+        See DECISIONS.md D12 for the contrast written out.
+
+        ### No body, no `confirm`, and no state in the answer
+
+        The URL names the one thing being changed, so there is nothing in the request
+        that could be misread as "and everything else" — which is the difference from
+        the bulk admin revocation, where the subject is an array and a `confirm` is
+        required in the body. A disable of an already-disabled account is a `204`,
+        not a `409`: an operator re-applying a state is not making a mistake and
+        should not have to read the column first to find out.
+
+        The response says nothing about the subject at all. The answer to "is this
+        account disabled?" is on `POST /v1/session`, and it is behind the password —
+        naming the state here would publish it to whoever asked.
+      security:
+        - bearerToken: []
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      responses:
+        '204':
+          description: |
+            The account is disabled and every session it held is gone. No body.
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          description: |
+            The credential is not permitted on this route — a browser session, no
+            credential at all, or a token that does not carry `users:disable`. **An
+            account-scoped credential lands here too**, whatever its role: this is
+            not the admin surface and no account admin may call it.
+
+            The two refusals share a status and are told apart by the `detail`,
+            which is fixed per reason.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                notAToken:
+                  summary: A browser session, or no credential
+                  value:
+                    type: https://errors.cafaye.com/forbidden
+                    title: Forbidden
+                    status: 403
+                    detail: >-
+                      this route turns a person's account off, which is a deployment
+                      decision and not something an account does to itself. It is
+                      reachable by a scoped api key holding the users:disable scope;
+                      a browser session may not use it, and neither may an
+                      account-scoped credential
+                    instance: /v1/users/ab000000-0000-0000-0000-000000000000/disable
+                    code: forbidden
+                    trace_id: 0af7651916cd43dd8448eb211c80319c
+                missingScope:
+                  summary: A token without the scope
+                  value:
+                    type: https://errors.cafaye.com/forbidden
+                    title: Forbidden
+                    status: 403
+                    detail: this api key does not carry the users:disable scope
+                    instance: /v1/users/ab000000-0000-0000-0000-000000000000/disable
+                    code: forbidden
+                    trace_id: 0af7651916cd43dd8448eb211c80319c
+        '404':
+          description: |
+            No user with that id exists on this deployment — or the id in the path is
+            not one this service issued, which is the same answer on purpose. See
+            the description above for why that is safe here and not on the anonymous
+            routes.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /v1/users/{user_id}/enable:
+    post:
+      tags: [operator]
+      operationId: enableUser
+      summary: Lift a disable
+      description: |
+        Clears `users.disabled_at`. **It restores nothing else, and that is the
+        whole of what it promises.** "Enable" reads like the inverse of everything a
+        disable did, but the sessions the disable ended were deleted, and a route
+        that resurrected them would hand back credentials minted before the account
+        was turned off — which is the thing the revocation exists to prevent. The
+        owner signs in again, like anybody else.
+
+        A recovery link the owner already has keeps working too: a refused redemption
+        does not spend its token, so lifting the disable restores the flow they
+        started.
+
+        ### The same three credentials as the disable
+
+        The gate, the statuses and the reasons are identical, and they are the same
+        middleware rather than a copy of it — so a route added next to these two
+        inherits the check by being wrapped. An account-scoped credential is
+        `403`, for the same boundary. See the `/disable` description above.
+
+        Enabling an account that is not disabled is a `204`, not a `409`, on the
+        same reasoning.
+      security:
+        - bearerToken: []
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      responses:
+        '204':
+          description: |
+            The account is enabled. **No session was restored** — the owner signs in
+            again. No body.
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          description: |
+            The credential is not permitted on this route — a browser session, no
+            credential at all, or a token that does not carry `users:disable`. An
+            account-scoped credential lands here too, whatever its role.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                notAToken:
+                  summary: A browser session, or no credential
+                  value:
+                    type: https://errors.cafaye.com/forbidden
+                    title: Forbidden
+                    status: 403
+                    detail: >-
+                      this route turns a person's account off, which is a deployment
+                      decision and not something an account does to itself. It is
+                      reachable by a scoped api key holding the users:disable scope;
+                      a browser session may not use it, and neither may an
+                      account-scoped credential
+                    instance: /v1/users/ab000000-0000-0000-0000-000000000000/enable
+                    code: forbidden
+                    trace_id: 0af7651916cd43dd8448eb211c80319c
+                missingScope:
+                  summary: A token without the scope
+                  value:
+                    type: https://errors.cafaye.com/forbidden
+                    title: Forbidden
+                    status: 403
+                    detail: this api key does not carry the users:disable scope
+                    instance: /v1/users/ab000000-0000-0000-0000-000000000000/enable
+                    code: forbidden
+                    trace_id: 0af7651916cd43dd8448eb211c80319c
+        '404':
+          description: |
+            No user with that id exists on this deployment — or the id in the path is
+            not one this service issued, which is the same answer on purpose.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
         '500':
           $ref: '#/components/responses/InternalError'
 
@@ -4507,16 +4750,22 @@ components:
     APIKeyScope:
       type: string
       description: |
-        One of seven names, in core's `resource:action` shape. The set is closed and
+        One of eight names, in core's `resource:action` shape. The set is closed and
         adding one is a code change rather than a migration, which is why a token
         holding a name this build does not know is refused at the point of use
         rather than being treated as "and so anything goes".
 
         **`sessions:write` is the only one whose route turns an opaque value into an
-        authenticated browser session**, and it is last in this list for that reason.
-        It mints a single-use, ten-minute link for a subject the caller names; it does
-        not create, read or revoke a session, and the redemption route that spends it
-        cannot be reached by a token at all.
+        authenticated browser session.** It mints a single-use, ten-minute link for a
+        subject the caller names; it does not create, read or revoke a session, and
+        the redemption route that spends it cannot be reached by a token at all.
+
+        **`users:disable` is the only one with no account anywhere behind it**, and
+        that is a fact about what it buys rather than a shortcut around the tenancy
+        rules: a token holding it may name ANY user on the deployment. It is granted
+        per deployment, deliberately, and no account route consults it — an
+        account-scoped credential is refused on those routes whatever its role.
+        See DECISIONS.md D14.
       enum:
         - accounts:read
         - accounts:write
@@ -4525,6 +4774,7 @@ components:
         - audit_log:read
         - account_invitations:write
         - sessions:write
+        - users:disable
 
     IssuedAPIKey:
       allOf:

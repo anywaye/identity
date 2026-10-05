@@ -1035,6 +1035,39 @@ func (c *Client) ListAccountAuditLog(ctx context.Context, accountId openapiTypes
 	return &out, err
 }
 
+// DisableUser turns a person's account off. Corresponds to
+// `POST /v1/users/{user_id}/disable`.
+//
+// **This is the widest capability in the document and the credential is not
+// obtainable through this client.** It needs a scoped api key holding
+// `users:disable`, and `MintAPIKey` will refuse that scope: the credential names no
+// account, so one minted for a tenant would reach every user on the deployment. It
+// is provisioned for the deployment instead.
+//
+// The `userId` is a PERSON rather than a member of an account, which is why there is
+// no `accountId` here and why no role in any account authorises it. **A `204` is a
+// promise about somebody else's sessions**: every session the account held is deleted
+// in the same transaction that stamps the column, and the owner signs in again if and
+// when it is re-enabled. There is no body to inspect and no `confirm` to send — the
+// path names the one thing being changed.
+func (c *Client) DisableUser(ctx context.Context, userId openapiTypes.UUID) error {
+	return callVoid(ctx, c, "disableUser", func() (*http.Response, error) {
+		return c.transport.DisableUser(ctx, userId)
+	})
+}
+
+// EnableUser lifts a disable. Corresponds to `POST /v1/users/{user_id}/enable`.
+//
+// **It restores the column and NOTHING ELSE.** The sessions the disable ended are
+// gone and do not come back; the owner signs in again like anybody else. A caller
+// reading "enable" as the inverse of everything the disable did would be wrong about
+// the credential half of it.
+func (c *Client) EnableUser(ctx context.Context, userId openapiTypes.UUID) error {
+	return callVoid(ctx, c, "enableUser", func() (*http.Response, error) {
+		return c.transport.EnableUser(ctx, userId)
+	})
+}
+
 // RevokeAccountInvitation withdraws one pending invitation. Corresponds to
 // `DELETE /v1/accounts/{account_id}/admin/invitations/{invitation_id}`.
 //

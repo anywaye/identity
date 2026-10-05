@@ -6,6 +6,62 @@ All notable changes to identity are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added (packet identity-disabled-02: an operator, and the scope it needs)
+
+`POST /v1/users/:userId/disable` and `POST /v1/users/:userId/enable`, reachable by a
+**scoped api key holding the new `users:disable` scope** and by nothing else. `204`,
+no body. `auth.Service.Disable` and `.Enable` were a use case with nothing mounted
+on them since `identity-disabled-01`; they are mounted now.
+
+**The scope is `users:disable`, and it is the first name in the vocabulary with no
+account behind it.** A user is not an account — the same person belongs to as many
+accounts as they like — so an account admin has no authority over the person who
+also works for somebody else's tenant, and there is no honest tenancy to scope an
+action whose subject is a person by. The two routes therefore carry **no account in
+the path and no role minimum**, and no route under `/v1/accounts/…` consults
+`users:disable` at all. An account-scoped credential is refused on them whatever its
+role and whatever else it holds; a browser session and no credential at all are `403`;
+a token that resolves to no key is `401`; a user id this service never issued is
+`404`, which is safe here only because the route is behind the operator credential.
+
+- **`internal/apikeys`** gains `ScopeUsersDisable`, last in `AllScopes`, and the block
+  comment's "not one of them grants tenancy" sentence now carries its one exception
+  and says why it is a limit rather than a bypass.
+- **`internal/apikeys.Service.Mint` refuses to grant it**, with a new
+  `ErrScopeNotMintableHere` → `403`. A credential minted for one account must not be
+  able to name any user on the deployment, so the operator credential is a deployment
+  fact provisioned for the deployment rather than one a tenant's owner can mint from
+  a settings page. The check is in the use case, not the handler.
+- **`internal/httpapi/operator.go`** is the surface: `requireOperatorToken` (token,
+  then scope, both 403, read out of `accountRouteScopes` so deleting a row closes the
+  route), two handlers, and `writeOperatorError`.
+- **`openapi/v1.yaml`** 1.9.0 → 1.10.0: an `operator` tag, both operations with
+  `operationId`s, the eighth `APIKeyScope` value, and the `UserId` parameter
+  parameterised once for both.
+- **The generated client is regenerated** and `Transport`/`Client` gain
+  `DisableUser` and `EnableUser`. `coverage-exclusions` is restated with the new
+  `lines=`/`files=` fingerprint; the floor did not move.
+- **DECISIONS.md D14** is the role decision: why not account-admin, why a machine
+  credential, and what the refusals disclose.
+
+### Fixed (nothing was broken; see the packet's own red-proofs)
+
+Nothing pre-existing changed behaviour. The `mint` refusal above is a new refusal on
+a request that previously would have been accepted *if* the scope had existed, so no
+shipped request is affected.
+
+### Not built yet (named, not omitted)
+
+- **No audit record for a disable or an enable.** `account_audit_log` is
+  account-scoped and its subject is not; a user-scoped table is a real decision and it
+  is the next commit. A disable is currently unattributable.
+- **No OIDC access-token sweep.** `auth.Service.Disable` sweeps sessions in one
+  transaction and the OIDC table is untouched, so a disable still leaves
+  fifteen-minute access tokens valid in third parties' hands. The password reset
+  already sweeps `oidc_access_tokens` in the same transaction as its own revocation,
+  so the pattern exists to extend.
+- **No disabled branch in the four unre-showable OIDC refusals.**
+
 ### Fixed (packet identity-caller-scope: `GET /v1/accounts` answered `[]` for a user who owned three accounts)
 
 `GET /v1/accounts` listed the accounts an authenticated user belongs to, and
