@@ -3400,6 +3400,18 @@ paths:
         asking for a user who is not there is entitled to be told. See DECISIONS.md
         D12 for the contrast written out.
 
+        ### A disabled subject is refused at the mint
+
+        **`403 forbidden`** for a subject somebody has turned off. The window and
+        the `expires_in` validation never run, so no row is written at all — the same
+        property the second-factor refusal below has.
+
+        It is `403` and **not** `404` even though the subject certainly exists,
+        because the caller here is a machine credential with `sessions:write`: an
+        operator told "no user with that id" would go looking for a missing user.
+        The redemption will answer differently, and that difference is the point —
+        see DECISIONS.md D13.
+
         ### A subject with a second factor is refused, not challenged
 
         **`409 conflict`** for a subject who has enrolled MFA. A link redeems into a
@@ -3458,7 +3470,34 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthenticated'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          description: |
+            The credential is not permitted on this route — a browser session
+            rather than a scoped api key — **or the named subject is disabled.**
+
+            The two share a status and are told apart by the `detail`, which is
+            fixed per reason. Naming the disabled state is safe HERE and is the
+            whole contrast with the redemption: this route is behind a machine
+            credential, so the caller is an operator with authority over somebody
+            else's account and there is no stranger to protect. A `404` would send
+            them looking for a user id that is not missing. See DECISIONS.md D13.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                disabled:
+                  summary: The subject has been turned off by a person
+                  value:
+                    type: https://errors.cafaye.com/forbidden
+                    title: Forbidden
+                    status: 403
+                    detail: that account is disabled and cannot be given a session
+                    instance: /v1/session-links
+                    code: forbidden
+                    trace_id: 0af7651916cd43dd8448eb211c80319c
         '404':
           description: No user with that id exists on this deployment.
           headers:

@@ -239,6 +239,30 @@ func (s *Service) RequestPasswordReset(ctx context.Context, email string) error 
 		return nil
 	}
 
+	// (4b) A DISABLED ACCOUNT GETS NO LINK, and the answer is the one an
+	// unregistered address gets.
+	//
+	// # THIS IS THE ONE DOOR THAT EXISTS TO LET SOMEBODY BACK IN
+	//
+	// A reset link proves control of a mailbox, which is genuinely how a locked-out
+	// user recovers — and it is also the credential somebody holding a stolen or
+	// previously-read mailbox can present. It is the single route through which a
+	// disabled account could be recovered past the decision that disabled it, so
+	// this is where the packet's fourth requirement is spent.
+	//
+	// # AND IT REFUSES BY LOOKING LIKE A MISS, WHICH IS THE WHOLE ARGUMENT
+	//
+	// The route needs no credential, so a status that differed here would publish a
+	// list of disabled accounts to anybody posting a list of addresses. That is the
+	// same oracle identity-27 removed from this package's sibling route and D9
+	// records. So this is not `return nil quietly` as a separate branch from the
+	// miss above either: the two are the SAME answer, produced by the same code
+	// path, and TestADisabledAccountAndAnUnregisteredAddressAreIndistinguishableToTheMint
+	// holds that by running both.
+	if user.IsDisabled() {
+		return nil
+	}
+
 	// (5)
 	return s.mintAndSend(ctx, mintParams{
 		UserID:  user.ID,
@@ -321,6 +345,13 @@ func (s *Service) RedeemPasswordReset(ctx context.Context, in RedeemPasswordRese
 
 	var out RedeemPasswordResult
 	err = s.uow.Do(ctx, func(ctx context.Context, q db.Querier) error {
+		// BEFORE the spend, and inside the transaction. See redeemableFor: this is
+		// the one flow that exists to let somebody who cannot get in get in, and it
+		// must not be the way back in past a person having turned the account off.
+		if err := s.redeemableFor(ctx, q, live.UserID); err != nil {
+			return err
+		}
+
 		spent, err := s.tokens.Consume(ctx, q, live.ID, now)
 		if err != nil {
 			return err
@@ -427,6 +458,13 @@ func (s *Service) RequestVerification(ctx context.Context, email string) error {
 		return nil
 	}
 
+	// A disabled account is asked for a link and is sent none, for the same reason
+	// RequestPasswordReset does not send one: the route is anonymous and a branch
+	// that showed up in the response would publish which accounts are disabled.
+	if user.IsDisabled() {
+		return nil
+	}
+
 	return s.mintAndSend(ctx, mintParams{
 		UserID:  user.ID,
 		Purpose: PurposeVerifyEmail,
@@ -465,6 +503,11 @@ func (s *Service) RedeemVerification(ctx context.Context, in RedeemVerificationI
 	}
 
 	return s.uow.Do(ctx, func(ctx context.Context, q db.Querier) error {
+		// Same rule as the reset, for the same reason. See redeemableFor.
+		if err := s.redeemableFor(ctx, q, live.UserID); err != nil {
+			return err
+		}
+
 		spent, err := s.tokens.Consume(ctx, q, live.ID, now)
 		if err != nil {
 			return err
@@ -618,6 +661,18 @@ func (s *Service) ConfirmEmailChangeCurrent(ctx context.Context, in ConfirmEmail
 		return EmailChange{}, err
 	}
 
+	// # THIS STEP MINTS A CREDENTIAL, SO IT IS THE ONE THAT MUST NOT RUN
+	//
+	// Confirming the current address writes the SECOND token — a live, time-boxed
+	// credential — and mails it. Letting it run for a disabled account produces a
+	// second link in an inbox for an account nobody may use, and the flow's
+	// remaining half then has something real to answer with. The check is on the
+	// `user` row already read above rather than inside the transaction, because this
+	// read is what the message body is built from anyway: one read, both answers.
+	if user.IsDisabled() {
+		return EmailChange{}, ErrTokenNotFound
+	}
+
 	targetToken, targetDigest, err := sessions.NewToken()
 	if err != nil {
 		return EmailChange{}, fmt.Errorf("recovery: minting an email change token for the new address: %w", err)
@@ -685,6 +740,13 @@ func (s *Service) ConfirmEmailChangeNew(ctx context.Context, in ConfirmEmailChan
 
 	var out users.User
 	err = s.uow.Do(ctx, func(ctx context.Context, q db.Querier) error {
+		// Same rule, and here it is the last door: this is the step that MOVES the
+		// address and revokes every credential, so an account somebody disabled must
+		// not be reachable from a link minted before they did.
+		if err := s.redeemableFor(ctx, q, live.UserID); err != nil {
+			return err
+		}
+
 		spent, err := s.tokens.ConsumeTarget(ctx, q, live.ID, now)
 		if err != nil {
 			return err
@@ -727,6 +789,43 @@ func (s *Service) ConfirmEmailChangeNew(ctx context.Context, in ConfirmEmailChan
 // ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
+
+// redeemableFor turns "this token belongs to somebody who cannot be served" into
+// the answer a token that never existed gets.
+//
+// # ONE HELPER FOR FOUR DOORS, BECAUSE IT IS ONE RULE
+//
+// The token in the body of every redemption route IS the credential — core
+// consents that by giving those operations `security: []`. So the caller is either
+// the account's owner or whoever took the link, and there is no stranger between
+// them. That is what makes ErrTokenNotFound the honest answer rather than a
+// convenient one: it says "this link is not redeemable" without saying WHY, and the
+// why is a fact about an account the caller may not read.
+//
+// # WHY NOT "THE ACCOUNT IS DISABLED"
+//
+// The login names the state, and it can: it is asked by somebody who has just
+// proved the password, and 403 to that caller leaks nothing. Here it would be a
+// different answer on an anonymous route for a credential that may be in an
+// attacker's hands, so it publishes the state to exactly the person the operator
+// was acting about. The owner's next stop is the login, which tells them the truth.
+//
+// # AND IT IS CALLED BEFORE THE TOKEN IS SPENT
+//
+// A refusal that consumed the token would be a second irreversible decision made by
+// an operator who did not make it. The link stays live, every redemption here
+// refuses while the account is disabled, and re-enabling restores the flow the
+// user started — which is what makes `Enable` mean what it says.
+func (s *Service) redeemableFor(ctx context.Context, q db.Querier, userID id.UUID) error {
+	user, err := s.users.ByID(ctx, q, userID)
+	if err != nil {
+		return err
+	}
+	if user.IsDisabled() {
+		return ErrTokenNotFound
+	}
+	return nil
+}
 
 // deliverable reports whether this deployment can send a message at all.
 //

@@ -214,7 +214,7 @@ func (o options) handleMintSessionLink(w http.ResponseWriter, r *http.Request) {
 
 // writeSessionLinkError maps the mint's refusals onto problem documents.
 //
-// FOUR ANSWERS, and each is chosen rather than defaulted:
+// FIVE ANSWERS, and each is chosen rather than defaulted:
 //
 //	ErrSubjectNotFound       404  a named user id that is not there. This is the
 //	                              ONE place in this service where a subject that
@@ -227,6 +227,14 @@ func (o options) handleMintSessionLink(w http.ResponseWriter, r *http.Request) {
 //	                              unknown address for exactly the opposite reason —
 //	                              they have no credential, so "no such account" would
 //	                              be a free enumeration oracle. See DECISIONS.md D12.
+//	ErrSubjectDisabled       403  the subject has been turned off by a person. Same
+//	                              argument as ErrSubjectNotFound and the same
+//	                              credential behind it: there is no stranger here,
+//	                              so naming the state is free — and a 404 would send
+//	                              an operator looking for a user id that is not
+//	                              missing. NOT the redemption's answer: on that
+//	                              route the token IS the credential, so the caller
+//	                              may be whoever took the link. See DECISIONS.md D13.
 //	ErrSubjectHasSecond…     409  the subject has a second factor and a link cannot
 //	                              answer a challenge. A distinct status and a
 //	                              sentence that names the reason, because the caller
@@ -250,6 +258,10 @@ func (o options) writeSessionLinkError(w http.ResponseWriter, r *http.Request, e
 	case errors.Is(err, recovery.ErrSubjectNotFound):
 		problemFor(w, r, http.StatusNotFound, CodeNotFound,
 			"no user with that id exists on this deployment")
+
+	case errors.Is(err, recovery.ErrSubjectDisabled):
+		problemFor(w, r, http.StatusForbidden, CodeForbidden,
+			"that account is disabled and cannot be given a session")
 
 	case errors.Is(err, recovery.ErrSubjectHasSecondFactor):
 		problemFor(w, r, http.StatusConflict, CodeConflict,

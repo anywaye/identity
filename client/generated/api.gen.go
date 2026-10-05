@@ -4022,6 +4022,18 @@ type ClientInterface interface {
 	// asking for a user who is not there is entitled to be told. See DECISIONS.md
 	// D12 for the contrast written out.
 	//
+	// ### A disabled subject is refused at the mint
+	//
+	// **`403 forbidden`** for a subject somebody has turned off. The window and
+	// the `expires_in` validation never run, so no row is written at all — the same
+	// property the second-factor refusal below has.
+	//
+	// It is `403` and **not** `404` even though the subject certainly exists,
+	// because the caller here is a machine credential with `sessions:write`: an
+	// operator told "no user with that id" would go looking for a missing user.
+	// The redemption will answer differently, and that difference is the point —
+	// see DECISIONS.md D13.
+	//
 	// ### A subject with a second factor is refused, not challenged
 	//
 	// **`409 conflict`** for a subject who has enrolled MFA. A link redeems into a
@@ -4089,6 +4101,18 @@ type ClientInterface interface {
 	// `sessions:write`, so there is no anonymous stranger to protect and a caller
 	// asking for a user who is not there is entitled to be told. See DECISIONS.md
 	// D12 for the contrast written out.
+	//
+	// ### A disabled subject is refused at the mint
+	//
+	// **`403 forbidden`** for a subject somebody has turned off. The window and
+	// the `expires_in` validation never run, so no row is written at all — the same
+	// property the second-factor refusal below has.
+	//
+	// It is `403` and **not** `404` even though the subject certainly exists,
+	// because the caller here is a machine credential with `sessions:write`: an
+	// operator told "no user with that id" would go looking for a missing user.
+	// The redemption will answer differently, and that difference is the point —
+	// see DECISIONS.md D13.
 	//
 	// ### A subject with a second factor is refused, not challenged
 	//
@@ -6852,6 +6876,18 @@ func (c *Client) CreateSession(ctx context.Context, body CreateSessionJSONReques
 // asking for a user who is not there is entitled to be told. See DECISIONS.md
 // D12 for the contrast written out.
 //
+// ### A disabled subject is refused at the mint
+//
+// **`403 forbidden`** for a subject somebody has turned off. The window and
+// the `expires_in` validation never run, so no row is written at all — the same
+// property the second-factor refusal below has.
+//
+// It is `403` and **not** `404` even though the subject certainly exists,
+// because the caller here is a machine credential with `sessions:write`: an
+// operator told "no user with that id" would go looking for a missing user.
+// The redemption will answer differently, and that difference is the point —
+// see DECISIONS.md D13.
+//
 // ### A subject with a second factor is refused, not challenged
 //
 // **`409 conflict`** for a subject who has enrolled MFA. A link redeems into a
@@ -6929,6 +6965,18 @@ func (c *Client) MintSessionLinkWithBody(ctx context.Context, contentType string
 // `sessions:write`, so there is no anonymous stranger to protect and a caller
 // asking for a user who is not there is entitled to be told. See DECISIONS.md
 // D12 for the contrast written out.
+//
+// ### A disabled subject is refused at the mint
+//
+// **`403 forbidden`** for a subject somebody has turned off. The window and
+// the `expires_in` validation never run, so no row is written at all — the same
+// property the second-factor refusal below has.
+//
+// It is `403` and **not** `404` even though the subject certainly exists,
+// because the caller here is a machine credential with `sessions:write`: an
+// operator told "no user with that id" would go looking for a missing user.
+// The redemption will answer differently, and that difference is the point —
+// see DECISIONS.md D13.
 //
 // ### A subject with a second factor is refused, not challenged
 //
@@ -10974,6 +11022,18 @@ type ClientWithResponsesInterface interface {
 	// asking for a user who is not there is entitled to be told. See DECISIONS.md
 	// D12 for the contrast written out.
 	//
+	// ### A disabled subject is refused at the mint
+	//
+	// **`403 forbidden`** for a subject somebody has turned off. The window and
+	// the `expires_in` validation never run, so no row is written at all — the same
+	// property the second-factor refusal below has.
+	//
+	// It is `403` and **not** `404` even though the subject certainly exists,
+	// because the caller here is a machine credential with `sessions:write`: an
+	// operator told "no user with that id" would go looking for a missing user.
+	// The redemption will answer differently, and that difference is the point —
+	// see DECISIONS.md D13.
+	//
 	// ### A subject with a second factor is refused, not challenged
 	//
 	// **`409 conflict`** for a subject who has enrolled MFA. A link redeems into a
@@ -11041,6 +11101,18 @@ type ClientWithResponsesInterface interface {
 	// `sessions:write`, so there is no anonymous stranger to protect and a caller
 	// asking for a user who is not there is entitled to be told. See DECISIONS.md
 	// D12 for the contrast written out.
+	//
+	// ### A disabled subject is refused at the mint
+	//
+	// **`403 forbidden`** for a subject somebody has turned off. The window and
+	// the `expires_in` validation never run, so no row is written at all — the same
+	// property the second-factor refusal below has.
+	//
+	// It is `403` and **not** `404` even though the subject certainly exists,
+	// because the caller here is a machine credential with `sessions:write`: an
+	// operator told "no user with that id" would go looking for a missing user.
+	// The redemption will answer differently, and that difference is the point —
+	// see DECISIONS.md D13.
 	//
 	// ### A subject with a second factor is refused, not challenged
 	//
@@ -15967,7 +16039,7 @@ type MintSessionLinkResponse struct {
 	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
 	ApplicationProblemJSON401 *Unauthenticated
 	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
-	ApplicationProblemJSON403 *Forbidden
+	ApplicationProblemJSON403 *Problem
 	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
 	ApplicationProblemJSON404 *Problem
 	// ApplicationProblemJSON409 the response for an HTTP 409 `application/problem+json` response
@@ -16007,7 +16079,7 @@ func (r MintSessionLinkResponse) GetApplicationProblemJSON401() *Unauthenticated
 }
 
 // GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
-func (r MintSessionLinkResponse) GetApplicationProblemJSON403() *Forbidden {
+func (r MintSessionLinkResponse) GetApplicationProblemJSON403() *Problem {
 	return r.ApplicationProblemJSON403
 }
 
@@ -18756,6 +18828,18 @@ func (c *ClientWithResponses) CreateSessionWithResponse(ctx context.Context, bod
 // asking for a user who is not there is entitled to be told. See DECISIONS.md
 // D12 for the contrast written out.
 //
+// ### A disabled subject is refused at the mint
+//
+// **`403 forbidden`** for a subject somebody has turned off. The window and
+// the `expires_in` validation never run, so no row is written at all — the same
+// property the second-factor refusal below has.
+//
+// It is `403` and **not** `404` even though the subject certainly exists,
+// because the caller here is a machine credential with `sessions:write`: an
+// operator told "no user with that id" would go looking for a missing user.
+// The redemption will answer differently, and that difference is the point —
+// see DECISIONS.md D13.
+//
 // ### A subject with a second factor is refused, not challenged
 //
 // **`409 conflict`** for a subject who has enrolled MFA. A link redeems into a
@@ -18829,6 +18913,18 @@ func (c *ClientWithResponses) MintSessionLinkWithBodyWithResponse(ctx context.Co
 // `sessions:write`, so there is no anonymous stranger to protect and a caller
 // asking for a user who is not there is entitled to be told. See DECISIONS.md
 // D12 for the contrast written out.
+//
+// ### A disabled subject is refused at the mint
+//
+// **`403 forbidden`** for a subject somebody has turned off. The window and
+// the `expires_in` validation never run, so no row is written at all — the same
+// property the second-factor refusal below has.
+//
+// It is `403` and **not** `404` even though the subject certainly exists,
+// because the caller here is a machine credential with `sessions:write`: an
+// operator told "no user with that id" would go looking for a missing user.
+// The redemption will answer differently, and that difference is the point —
+// see DECISIONS.md D13.
 //
 // ### A subject with a second factor is refused, not challenged
 //
@@ -24107,7 +24203,7 @@ func ParseMintSessionLinkResponse(rsp *http.Response) (*MintSessionLinkResponse,
 		response.ApplicationProblemJSON401 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
+		var dest Problem
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

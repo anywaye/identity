@@ -71,6 +71,21 @@ var (
 	// packet of its own and this one does not pretend to be it. The refusal is
 	// therefore exact: 409, and a code that says what it is.
 	ErrSubjectHasSecondFactor = errors.New("that account has a second factor, which a session link cannot answer")
+
+	// ErrSubjectDisabled means the named subject has been turned off by a person.
+	//
+	// IT IS ITS OWN SENTINEL AND NOT ErrSubjectNotFound, and the reason is the
+	// opposite of that one's: a 404 here would tell an operator with `sessions:write`
+	// that the user id they named does not exist, and it does — it exists, somebody
+	// disabled it, and an operator sent to look for a missing user is being sent the
+	// wrong way. This surface is machine-credential-only precisely so that naming the
+	// state is free (DECISIONS.md D12); that ruling would be worth nothing if the
+	// answer collapsed into the neighbouring 404.
+	//
+	// IT IS NOT `users.DisabledError`, for the reason ErrSubjectNotFound is not
+	// `users.ErrNotFound`: two statuses cannot sit behind one `errors.Is`, and the
+	// second mapping written would silently win the first.
+	ErrSubjectDisabled = errors.New("that account is disabled and cannot be minted a session for")
 )
 
 // ErrMFAUnavailable means this deployment cannot answer whether anybody has a
@@ -142,16 +157,25 @@ type SessionLink struct {
 //
 // # WHAT IS NOT CHECKED HERE, AND WHY IT IS NOT AN OVERSIGHT
 //
-// There is no "may this account hold a session" step, because `users` has no
-// column that says an account cannot: the table carries a lockout and a verified
-// address and nothing else. A check written against a column that does not exist
-// would be a check that passes for every subject, which is worse than no check —
-// so the redemption carries no disabled-user branch either, and says so where a
-// reader will look for one. The rule that a link must not outlive an account's
-// ability to sign in is currently vacuous because every account can; the moment
-// `users` grows a state that says otherwise, the redemption is where the refusal
-// belongs, and it must be the SHAPE of an unknown token rather than its own
-// status.
+// It is checked, as of packet identity-disabled-01 (step 2b above): `users` grew
+// `disabled_at` on 2026-10-05 and the mint now refuses a disabled subject.
+//
+// WHAT IS STILL NOT HERE IS THE REDEMPTION'S REFUSAL, and that is the next packet
+// rather than an oversight. The redeem route does not exist yet, so there is
+// nothing to refuse today and no link can currently become a session at all — which
+// is why the mint is the right half to wire first and why wiring the other one
+// without a route to wire it into would be code with no caller.
+//
+// # WHERE THAT REFUSAL BELONGS WHEN IT IS WRITTEN, because the file said so and
+// the sentence is still true
+//
+// It must be the SHAPE OF AN UNKNOWN TOKEN and not its own status. On the redeem
+// route the token IS the credential (`security: []`), so the caller is the owner or
+// whoever took the link, and an answer that named the account's state would publish
+// it to exactly the person the operator acted about. `TestTheSubjectDisabledRefusalIsItsOwnErrorAndNotA404`
+// above is the other half of that pair: on THIS surface the caller is a machine
+// credential and naming the state is correct, so the two answers differ and neither
+// is the other's.
 func (s *Service) MintSessionLink(ctx context.Context, in MintSessionLinkInput) (SessionLink, error) {
 	// (1)
 	window := in.Window
@@ -182,6 +206,21 @@ func (s *Service) MintSessionLink(ctx context.Context, in MintSessionLinkInput) 
 			return SessionLink{}, ErrSubjectNotFound
 		}
 		return SessionLink{}, fmt.Errorf("recovery: looking up the subject for a session link: %w", err)
+	}
+
+	// (2b) A DISABLED SUBJECT GETS NO LINK, and it is its own error rather than the
+	// 404 above — DECISIONS.md D12's reason, pointed the other way.
+	//
+	// `users` grew a state that says an account cannot hold a session on
+	// 2026-10-05 (migrations/00021), so the file header's "there is no such column"
+	// paragraph below is no longer true and this is where the mint's half of the
+	// answer went. A machine credential holding `sessions:write` is an operator
+	// with authority over somebody else's account, not a stranger, so "that subject
+	// is disabled" is the same kind of answer as "that subject does not exist" on
+	// this surface — and it is more useful, because the 404 sends them looking for a
+	// user id that is not there.
+	if user.IsDisabled() {
+		return SessionLink{}, ErrSubjectDisabled
 	}
 
 	// (3) A subject that cannot be asked about gets no link, and the error says the
