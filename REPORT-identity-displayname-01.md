@@ -2,7 +2,7 @@
 
 **Packet:** identity-w20-displayname — a user has a display name, readable and writable.
 **Branch:** `worker/identity-w20-displayname`
-**Commits:** `cb4dbf3` (implementation) + `36900c5` (first report) + this review's fix commit (below)
+**Commits:** `cb4dbf3` (implementation) + `36900c5` (first report) + `9798b09` (this review's fixes)
 **Date:** 2026-10-06
 
 ## What shipped
