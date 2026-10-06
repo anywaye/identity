@@ -99,6 +99,20 @@ type SessionStore interface {
 	// RevokeAllForUser ends every session a user holds. It is on this interface
 	// because a disable is not a column write: see Service.Disable.
 	RevokeAllForUser(ctx context.Context, q db.Querier, userID id.UUID) error
+	// ListLiveForUser and RevokeOneForUser are the two halves of "sign out of one
+	// of these", and they are BOTH on this interface rather than being reached for
+	// through a store the handlers hold separately. The reason is that the user id
+	// they are given comes from the presented credential, and a use case is the
+	// only place in this service where "who is asking" is a fact rather than a
+	// parameter — see Service.ListSessions and Service.RevokeSession.
+	//
+	// A hypothetical `*sessions.Store` on the HTTP layer would work and be wrong:
+	// it would hand every handler a query that takes a user id, and the day one of
+	// them read that id from a path parameter instead of from the session the
+	// tenant boundary would be a comment. Here it is a parameter of a method on a
+	// service that resolved the caller first.
+	ListLiveForUser(ctx context.Context, q db.Querier, userID id.UUID, now time.Time) ([]sessions.Session, error)
+	RevokeOneForUser(ctx context.Context, q db.Querier, userID, sessionID id.UUID) (bool, error)
 }
 
 // SecondFactor is the part of internal/mfa that login needs, and it is REQUIRED.
@@ -1161,6 +1175,159 @@ func (s *Service) Logout(ctx context.Context, token string) error {
 	if err := s.sessions.Revoke(ctx, s.read.Queryer(), session.ID); err != nil {
 		return fmt.Errorf("revoking a session: %w", err)
 	}
+	return nil
+}
+
+// Session is one row of GET /v1/sessions: a session a caller can recognise and
+// name, with nothing on it that is a credential.
+//
+// # WHY IT IS NOT sessions.Session
+//
+// The domain type carries the two things this response must never carry, and
+// neither is removed rather than renamed: it has the row's id, which is fine, but
+// the store is the thing that knows how to turn that row back into a credential
+// only through `token_digest`, and `sessions.Session` does not carry the digest
+// — so the type is nearly safe already. What it does carry is `UserID`, and
+// `UserID` is not a secret but it IS somebody else's business on a shared
+// surface: a route that renders the caller's own user id back to them has told
+// them nothing, and a route that renders it from a row has made the row the
+// authority on whose session this is.
+//
+// So this is a dedicated projection rather than a struct tag. The rule this
+// service keeps elsewhere is that a response shape is a type of its own so a field
+// cannot reach a body by being added to a domain struct (see `userResponse` in
+// internal/httpapi), and this is that rule applied to a list.
+//
+// `Current` is the only field here that is not in the row, and it is computed
+// rather than stored because it is a fact about THIS REQUEST — which session the
+// caller is holding — and a column would be true for exactly one request at a time
+// and wrong for all the others.
+type Session struct {
+	ID        id.UUID
+	ExpiresAt time.Time
+	CreatedAt time.Time
+	// UserAgent is the caller's own header as recorded at sign-in. It is shown
+	// because it is the only thing in the row a person recognises — "Chrome on my
+	// laptop" — and it is shown raw rather than parsed because a device label this
+	// service invents is a label that can be wrong, and a UI that trusts a
+	// server-side label shows somebody the wrong laptop. The caller parses it.
+	//
+	// It is also caller-supplied text: anything can be in a User-Agent header, so
+	// a front end rendering it has the same obligation as every other untrusted
+	// string in this service (see the login-redirect argument in AGENTS.md).
+	UserAgent string
+	// IP is recorded, never trusted, and shown for the same reason. It is behind a
+	// proxy in most deployments, so it is frequently the proxy's address — which
+	// is a reason to present it as evidence rather than as a location.
+	IP *netip.Addr
+	// Current marks the session the request itself authenticated with, so a
+	// client can render "this device" without comparing a token it does not have.
+	Current bool
+}
+
+// ListSessions returns the caller's live sessions, newest first.
+//
+// IT TAKES THE TOKEN, NOT A USER ID, and that is the whole reason the boundary
+// holds. Every other method on this service that acts on somebody's data either
+// takes a subject and an actor (Disable, Enable — where the distinction is the
+// audit row's business) or takes no subject at all. This one takes the
+// credential, resolves the user from it, and asks only about that user's rows. A
+// handler cannot pass anybody else's id because there is no parameter to pass one
+// in, and the alternative signature — `ListSessions(ctx, userID)` — would put the
+// tenant boundary in the discipline of every call site.
+//
+// A token that resolves to nothing is ErrUnauthenticated, the same as
+// Authenticate's: an expired session is not a session the caller may enumerate,
+// and treating it as an empty list would answer a 200 to a credential that is
+// dead, which is a client told its session is fine.
+func (s *Service) ListSessions(ctx context.Context, token string) ([]Session, error) {
+	session, err := s.sessions.ByToken(ctx, s.read.Queryer(), token, s.clock.Now())
+	if err != nil {
+		if errors.Is(err, sessions.ErrNotFound) {
+			return nil, ErrUnauthenticated
+		}
+		return nil, fmt.Errorf("resolving the caller's own session: %w", err)
+	}
+
+	rows, err := s.sessions.ListLiveForUser(ctx, s.read.Queryer(), session.UserID, s.clock.Now())
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]Session, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, Session{
+			ID:        row.ID,
+			ExpiresAt: row.ExpiresAt,
+			CreatedAt: row.CreatedAt,
+			UserAgent: row.UserAgent,
+			IP:        row.IP,
+			Current:   row.ID == session.ID,
+		})
+	}
+
+	return out, nil
+}
+
+// ErrSessionNotFound means the caller named a session that is not one of theirs, or
+// is one that has already ended.
+//
+// FOUR CASES, ONE ERROR, and the reason is the same one sessions.ErrNotFound gives:
+// the caller is already authenticated, so nothing here is protected by hiding it —
+// and the two cases that WOULD be protected by hiding it are "that session id is
+// somebody else's" and "that session id does not exist", which a 403 against a 404
+// would tell apart. A user may name their own session ids; they may not learn
+// anybody else's.
+//
+// It is NOT auth.ErrUnauthenticated. That one is about the caller's credential and
+// this one is about a row in the caller's own account, and a client that saw 401
+// here would go looking for a login problem it does not have.
+var ErrSessionNotFound = errors.New("session not found")
+
+// RevokeSession revokes one of the caller's own sessions by id.
+//
+// # IT TAKES THE TOKEN FOR THE SAME REASON ListSessions DOES
+//
+// The user id is resolved from the credential and the session id is the only thing
+// the caller supplies, so "is this session mine" is asked of the database with the
+// owner in the predicate (see `Store.RevokeOneForUser`) rather than asked here and
+// then acted on. There is no code path in which a resolved user id and a
+// caller-supplied session id meet without the ownership clause between them.
+//
+// # REVOKING THE SESSION YOU ARE USING IS ALLOWED, AND HERE IS WHY
+//
+// The packet offered two answers and this is the first: a caller may revoke the
+// session that authenticated this very request. The consequence is stated rather
+// than prevented — the response is a 204 and the caller is signed out, so the next
+// request with that credential is a 401 and the browser must clear its cookie.
+//
+// The alternative — refusing the current session with a 409 — was rejected for a
+// reason that is about the API rather than about security. `DELETE /v1/session`
+// already revokes the caller's current session with no complaint; a route that
+// refuses to do the same thing when the id is spelled out is a route whose refusal
+// is a puzzle. "Sign out everywhere" is a separate operation and this is not it: the
+// other sessions are untouched, and the response says which one is gone.
+//
+// There is no third refusal here — an expired or already-revoked session is the
+// same 404 as somebody else's, and a session belonging to another user never
+// reaches a DELETE at all.
+func (s *Service) RevokeSession(ctx context.Context, token string, sessionID id.UUID) error {
+	present, err := s.sessions.ByToken(ctx, s.read.Queryer(), token, s.clock.Now())
+	if err != nil {
+		if errors.Is(err, sessions.ErrNotFound) {
+			return ErrUnauthenticated
+		}
+		return fmt.Errorf("resolving the caller's own session: %w", err)
+	}
+
+	revoked, err := s.sessions.RevokeOneForUser(ctx, s.read.Queryer(), present.UserID, sessionID)
+	if err != nil {
+		return err
+	}
+	if !revoked {
+		return ErrSessionNotFound
+	}
+
 	return nil
 }
 

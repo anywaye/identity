@@ -1669,6 +1669,69 @@ type SessionLink struct {
 	Token string `json:"token"`
 }
 
+// SessionList One entry of `GET /v1/sessions`: a session the caller can recognise and
+// name, with **nothing on it that is a credential**.
+//
+// There is no `token` property and no `digest` property, and `additionalProperties`
+// is `false` so neither can be added by a later edit without this schema
+// refusing it. A digest is one SHA-256 away from a live session, which makes
+// it a credential for anybody holding a copy of this response.
+type SessionList struct {
+	// Sessions The caller's **live** sessions, newest first. Empty is `[]` and never
+	// `null`, and expired rows are omitted — an expired session cannot
+	// authenticate, so offering to revoke it is a button that does nothing.
+	//
+	// The order is `created_at DESC, id DESC`. The id tiebreaker is not
+	// decoration: `created_at` is the database's clock and two logins in the
+	// same millisecond are ordinary, so without it the relative order of two
+	// rows is undefined and the list renders differently on two runs over the
+	// same data.
+	Sessions []SessionSummary `json:"sessions"`
+}
+
+// SessionSummary One row of `SessionList`. The four facts a person needs to recognise a
+// session — when it started, when it dies, what it presented and from where —
+// and the row's id, which is the whole of what identifies it.
+type SessionSummary struct {
+	// CreatedAt When the session was minted — the database's clock, so it is evidence
+	// about when the row was written rather than a value the service
+	// asserted.
+	CreatedAt time.Time `json:"created_at"`
+
+	// Current True for the session **this request arrived on**, and false for every
+	// other entry. Exactly one entry is `true` whenever the list is not
+	// empty.
+	//
+	// It exists because a client cannot compute it: the browser holds a
+	// cookie and this is a list of row ids, so without it the only way to
+	// render "this device" is to ask the user which device they are on.
+	Current bool `json:"current"`
+
+	// ExpiresAt When it stops working. Judged against the service's injected clock on
+	// every request, and the same instant is used to decide whether this row
+	// appears in the listing at all.
+	ExpiresAt time.Time `json:"expires_at"`
+
+	// ID The session row's id, and the value to name in
+	// `DELETE /v1/sessions/{session_id}`. **Not** the token and not derived
+	// from it: this is an opaque identifier for a row, not a credential.
+	ID openapi_types.UUID `json:"id"`
+
+	// IP The address recorded at sign-in, empty string when there was none —
+	// behind a proxy this is usually the proxy's. **Evidence, not location**,
+	// and not trusted for any decision anywhere in this service.
+	IP string `json:"ip"`
+
+	// UserAgent The `User-Agent` header **as recorded at sign-in**, raw. Empty string
+	// when the client sent none, which is not the same fact as "we never
+	// learned one" and is rendered the same way on purpose.
+	//
+	// **Untrusted text.** Anything can be in a header, so escape it before
+	// rendering it. It is shown unparsed because a device label this service
+	// invents is a label that can be wrong.
+	UserAgent string `json:"user_agent"`
+}
+
 // SocialLinked The 200 from the **link** path of `completeSocialLogin`: a provider
 // identity was attached to the account the caller was already signed in as,
 // and **no session was minted**.
@@ -4632,6 +4695,88 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/session/mfa (the `CompleteSecondFactor` operationId).
 	CompleteSecondFactor(ctx context.Context, body CompleteSecondFactorJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListSessions List the caller's own sessions
+	//
+	// Every live session this account holds, newest first, so a person can see
+	// **where they are signed in** and end the ones they do not recognise.
+	//
+	// **Nothing on an entry is a credential.** There is no `token` field and no
+	// field derived from one — not the token, and not its SHA-256 digest either.
+	// A digest is one hash away from a live session, so it is a credential for
+	// anybody holding a log of this response, and the entry carries the row's id
+	// and the four things a person recognises instead: when the session started,
+	// when it expires, the user agent and the address as recorded at sign-in.
+	//
+	// `user_agent` and `ip` are **evidence, not identity**. Neither is trusted
+	// anywhere in this service, both are caller-supplied or best-effort, and
+	// behind a proxy `ip` is frequently the proxy's address. They are shown so a
+	// user can recognise a row, and `user_agent` is shown **raw rather than
+	// parsed**: a device label this service invents is a label that can be wrong,
+	// and a UI that trusts one shows somebody the wrong laptop. Parse it in the
+	// client, and treat it as untrusted text there.
+	//
+	// `current` marks the session **this request arrived on**, which is the one
+	// field a client cannot compute for itself: the browser holds a cookie and
+	// this is a list of row ids, so without `current` the only way to render
+	// "this device" is to ask the user.
+	//
+	// Expired rows are omitted, so every entry is a credential that still works
+	// and a button that does something. The response is `{ "sessions": [...] }` —
+	// an object with a named field rather than a bare array, so a `total` or a
+	// cursor can be added later without a second breaking change — and it is `[]`
+	// and never `null`.
+	//
+	// **A session belongs to a USER, not to an account.** One person is in as
+	// many accounts as they like, so there is no account whose tenancy would mean
+	// "the sessions this caller may act on", and these two routes are not under
+	// `/v1/accounts/{account_id}` for that reason rather than by accident.
+	//
+	// **Session only.** A scoped api key is refused with `403`, on the same terms
+	// as `DELETE /v1/session`: an api key acts on the account it was issued for,
+	// and enumerating browser sessions is not something it does.
+	//
+	// Corresponds with GET /v1/sessions (the `ListSessions` operationId).
+	ListSessions(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteSessionByID Revoke one of the caller's own sessions
+	//
+	// Ends one session — the "sign out of that device" action — leaving every
+	// other session of this account untouched. This is **not** "sign out
+	// everywhere": a password reset, an MFA change and an operator disable all
+	// revoke every session, and none of them is this route.
+	//
+	// **THE OWNERSHIP CHECK IS THE POINT, and it is not in the path.** A session
+	// id here is a candidate and nothing else. This service resolves the caller
+	// from the presented credential and deletes `WHERE id = :id AND user_id = :caller`
+	// in one statement, so there is no interval in which "is this mine" and
+	// "delete it" are separate questions, and no handler anywhere holds both a
+	// caller-supplied id and the authority to use it.
+	//
+	// **ONE 404 FOR ALL FOUR WAYS OF NOT OWNING IT** — never existed, somebody
+	// else's, already revoked, and the nil uuid — with one fixed sentence. A
+	// `403` against a `404` would let any signed-in caller probe whether a given
+	// session id belongs to a live session anywhere in this deployment, which is
+	// a question about another person's credential. A **malformed** id is a `404`
+	// and not a `422`, for the same reason: the path is part of a resource's
+	// identity, so "this is not an id this service issued" has to be the same
+	// answer as "this id is one this service issued and it is not yours".
+	//
+	// **REVOKING THE SESSION YOU ARE USING IS ALLOWED**, and the consequence is
+	// that you are signed out: the response is a `204` and your next request with
+	// that credential is a `401`. It is not refused with a `409` because
+	// `DELETE /v1/session` already revokes your current session without
+	// complaint, and a route that refused to do the same thing when the id was
+	// spelled out would be a puzzle rather than a policy.
+	//
+	// **NO COOKIE IS CLEARED, EVEN WHEN YOU REVOKED YOURSELF.** The `204` sets no
+	// `Set-Cookie`, and it cannot: this route is not told which session the
+	// request arrived on, so clearing the cookie would be a guess — and a wrong
+	// guess signs you out of the device you are using in order to end a session
+	// on another one. Call `DELETE /v1/session` when you want the cookie gone.
+	//
+	// Corresponds with DELETE /v1/sessions/{session_id} (the `DeleteSessionByID` operationId).
+	DeleteSessionByID(ctx context.Context, sessionID openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RegisterUserWithBody Register an account
 	//
@@ -7987,6 +8132,108 @@ func (c *Client) CompleteSecondFactor(ctx context.Context, body CompleteSecondFa
 	return c.Client.Do(req)
 }
 
+// ListSessions List the caller's own sessions
+//
+// Every live session this account holds, newest first, so a person can see
+// **where they are signed in** and end the ones they do not recognise.
+//
+// **Nothing on an entry is a credential.** There is no `token` field and no
+// field derived from one — not the token, and not its SHA-256 digest either.
+// A digest is one hash away from a live session, so it is a credential for
+// anybody holding a log of this response, and the entry carries the row's id
+// and the four things a person recognises instead: when the session started,
+// when it expires, the user agent and the address as recorded at sign-in.
+//
+// `user_agent` and `ip` are **evidence, not identity**. Neither is trusted
+// anywhere in this service, both are caller-supplied or best-effort, and
+// behind a proxy `ip` is frequently the proxy's address. They are shown so a
+// user can recognise a row, and `user_agent` is shown **raw rather than
+// parsed**: a device label this service invents is a label that can be wrong,
+// and a UI that trusts one shows somebody the wrong laptop. Parse it in the
+// client, and treat it as untrusted text there.
+//
+// `current` marks the session **this request arrived on**, which is the one
+// field a client cannot compute for itself: the browser holds a cookie and
+// this is a list of row ids, so without `current` the only way to render
+// "this device" is to ask the user.
+//
+// Expired rows are omitted, so every entry is a credential that still works
+// and a button that does something. The response is `{ "sessions": [...] }` —
+// an object with a named field rather than a bare array, so a `total` or a
+// cursor can be added later without a second breaking change — and it is `[]`
+// and never `null`.
+//
+// **A session belongs to a USER, not to an account.** One person is in as
+// many accounts as they like, so there is no account whose tenancy would mean
+// "the sessions this caller may act on", and these two routes are not under
+// `/v1/accounts/{account_id}` for that reason rather than by accident.
+//
+// **Session only.** A scoped api key is refused with `403`, on the same terms
+// as `DELETE /v1/session`: an api key acts on the account it was issued for,
+// and enumerating browser sessions is not something it does.
+//
+// Corresponds with GET /v1/sessions (the `ListSessions` operationId).
+func (c *Client) ListSessions(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListSessionsRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeleteSessionByID Revoke one of the caller's own sessions
+//
+// Ends one session — the "sign out of that device" action — leaving every
+// other session of this account untouched. This is **not** "sign out
+// everywhere": a password reset, an MFA change and an operator disable all
+// revoke every session, and none of them is this route.
+//
+// **THE OWNERSHIP CHECK IS THE POINT, and it is not in the path.** A session
+// id here is a candidate and nothing else. This service resolves the caller
+// from the presented credential and deletes `WHERE id = :id AND user_id = :caller`
+// in one statement, so there is no interval in which "is this mine" and
+// "delete it" are separate questions, and no handler anywhere holds both a
+// caller-supplied id and the authority to use it.
+//
+// **ONE 404 FOR ALL FOUR WAYS OF NOT OWNING IT** — never existed, somebody
+// else's, already revoked, and the nil uuid — with one fixed sentence. A
+// `403` against a `404` would let any signed-in caller probe whether a given
+// session id belongs to a live session anywhere in this deployment, which is
+// a question about another person's credential. A **malformed** id is a `404`
+// and not a `422`, for the same reason: the path is part of a resource's
+// identity, so "this is not an id this service issued" has to be the same
+// answer as "this id is one this service issued and it is not yours".
+//
+// **REVOKING THE SESSION YOU ARE USING IS ALLOWED**, and the consequence is
+// that you are signed out: the response is a `204` and your next request with
+// that credential is a `401`. It is not refused with a `409` because
+// `DELETE /v1/session` already revokes your current session without
+// complaint, and a route that refused to do the same thing when the id was
+// spelled out would be a puzzle rather than a policy.
+//
+// **NO COOKIE IS CLEARED, EVEN WHEN YOU REVOKED YOURSELF.** The `204` sets no
+// `Set-Cookie`, and it cannot: this route is not told which session the
+// request arrived on, so clearing the cookie would be a guess — and a wrong
+// guess signs you out of the device you are using in order to end a session
+// on another one. Call `DELETE /v1/session` when you want the cookie gone.
+//
+// Corresponds with DELETE /v1/sessions/{session_id} (the `DeleteSessionByID` operationId).
+func (c *Client) DeleteSessionByID(ctx context.Context, sessionID openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteSessionByIDRequest(c.Server, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // RegisterUserWithBody Register an account
 //
 // Creates a user and, in the same database transaction, records an
@@ -9979,6 +10226,67 @@ func NewCompleteSecondFactorRequestWithBody(server string, contentType string, b
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewListSessionsRequest constructs an http.Request for the ListSessions method
+func NewListSessionsRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/sessions")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewDeleteSessionByIDRequest constructs an http.Request for the DeleteSessionByID method
+func NewDeleteSessionByIDRequest(server string, sessionID openapi_types.UUID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "session_id", sessionID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/sessions/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -12687,6 +12995,92 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/session/mfa (the `CompleteSecondFactor` operationId).
 	CompleteSecondFactorWithResponse(ctx context.Context, body CompleteSecondFactorJSONRequestBody, reqEditors ...RequestEditorFn) (*CompleteSecondFactorResponse, error)
+
+	// ListSessionsWithResponse List the caller's own sessions
+	//
+	// Every live session this account holds, newest first, so a person can see
+	// **where they are signed in** and end the ones they do not recognise.
+	//
+	// **Nothing on an entry is a credential.** There is no `token` field and no
+	// field derived from one — not the token, and not its SHA-256 digest either.
+	// A digest is one hash away from a live session, so it is a credential for
+	// anybody holding a log of this response, and the entry carries the row's id
+	// and the four things a person recognises instead: when the session started,
+	// when it expires, the user agent and the address as recorded at sign-in.
+	//
+	// `user_agent` and `ip` are **evidence, not identity**. Neither is trusted
+	// anywhere in this service, both are caller-supplied or best-effort, and
+	// behind a proxy `ip` is frequently the proxy's address. They are shown so a
+	// user can recognise a row, and `user_agent` is shown **raw rather than
+	// parsed**: a device label this service invents is a label that can be wrong,
+	// and a UI that trusts one shows somebody the wrong laptop. Parse it in the
+	// client, and treat it as untrusted text there.
+	//
+	// `current` marks the session **this request arrived on**, which is the one
+	// field a client cannot compute for itself: the browser holds a cookie and
+	// this is a list of row ids, so without `current` the only way to render
+	// "this device" is to ask the user.
+	//
+	// Expired rows are omitted, so every entry is a credential that still works
+	// and a button that does something. The response is `{ "sessions": [...] }` —
+	// an object with a named field rather than a bare array, so a `total` or a
+	// cursor can be added later without a second breaking change — and it is `[]`
+	// and never `null`.
+	//
+	// **A session belongs to a USER, not to an account.** One person is in as
+	// many accounts as they like, so there is no account whose tenancy would mean
+	// "the sessions this caller may act on", and these two routes are not under
+	// `/v1/accounts/{account_id}` for that reason rather than by accident.
+	//
+	// **Session only.** A scoped api key is refused with `403`, on the same terms
+	// as `DELETE /v1/session`: an api key acts on the account it was issued for,
+	// and enumerating browser sessions is not something it does.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/sessions (the `ListSessions` operationId).
+	ListSessionsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListSessionsResponse, error)
+
+	// DeleteSessionByIDWithResponse Revoke one of the caller's own sessions
+	//
+	// Ends one session — the "sign out of that device" action — leaving every
+	// other session of this account untouched. This is **not** "sign out
+	// everywhere": a password reset, an MFA change and an operator disable all
+	// revoke every session, and none of them is this route.
+	//
+	// **THE OWNERSHIP CHECK IS THE POINT, and it is not in the path.** A session
+	// id here is a candidate and nothing else. This service resolves the caller
+	// from the presented credential and deletes `WHERE id = :id AND user_id = :caller`
+	// in one statement, so there is no interval in which "is this mine" and
+	// "delete it" are separate questions, and no handler anywhere holds both a
+	// caller-supplied id and the authority to use it.
+	//
+	// **ONE 404 FOR ALL FOUR WAYS OF NOT OWNING IT** — never existed, somebody
+	// else's, already revoked, and the nil uuid — with one fixed sentence. A
+	// `403` against a `404` would let any signed-in caller probe whether a given
+	// session id belongs to a live session anywhere in this deployment, which is
+	// a question about another person's credential. A **malformed** id is a `404`
+	// and not a `422`, for the same reason: the path is part of a resource's
+	// identity, so "this is not an id this service issued" has to be the same
+	// answer as "this id is one this service issued and it is not yours".
+	//
+	// **REVOKING THE SESSION YOU ARE USING IS ALLOWED**, and the consequence is
+	// that you are signed out: the response is a `204` and your next request with
+	// that credential is a `401`. It is not refused with a `409` because
+	// `DELETE /v1/session` already revokes your current session without
+	// complaint, and a route that refused to do the same thing when the id was
+	// spelled out would be a puzzle rather than a policy.
+	//
+	// **NO COOKIE IS CLEARED, EVEN WHEN YOU REVOKED YOURSELF.** The `204` sets no
+	// `Set-Cookie`, and it cannot: this route is not told which session the
+	// request arrived on, so clearing the cookie would be a guess — and a wrong
+	// guess signs you out of the device you are using in order to end a session
+	// on another one. Call `DELETE /v1/session` when you want the cookie gone.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/sessions/{session_id} (the `DeleteSessionByID` operationId).
+	DeleteSessionByIDWithResponse(ctx context.Context, sessionID openapi_types.UUID, reqEditors ...RequestEditorFn) (*DeleteSessionByIDResponse, error)
 
 	// RegisterUserWithBodyWithResponse Register an account
 	//
@@ -18133,6 +18527,193 @@ func (r CompleteSecondFactorResponse) ContentType() string {
 	return ""
 }
 
+// ListSessionsResponse200Headers the declared response headers of an HTTP 200 response for ListSessions
+type ListSessionsResponse200Headers struct {
+	XTraceID string
+}
+
+// ListSessionsResponse401Headers the declared response headers of an HTTP 401 response for ListSessions
+type ListSessionsResponse401Headers struct {
+	XTraceID string
+}
+
+// ListSessionsResponse403Headers the declared response headers of an HTTP 403 response for ListSessions
+type ListSessionsResponse403Headers struct {
+	XTraceID string
+}
+
+// ListSessionsResponse500Headers the declared response headers of an HTTP 500 response for ListSessions
+type ListSessionsResponse500Headers struct {
+	XTraceID string
+}
+
+type ListSessionsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *SessionList
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Problem
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Problem
+	// ApplicationProblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationProblemJSON500 *InternalError
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *ListSessionsResponse200Headers
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ListSessionsResponse401Headers
+	// Headers403 the parsed response headers for an HTTP 403 response
+	Headers403 *ListSessionsResponse403Headers
+	// Headers500 the parsed response headers for an HTTP 500 response
+	Headers500 *ListSessionsResponse500Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListSessionsResponse) GetJSON200() *SessionList {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ListSessionsResponse) GetApplicationProblemJSON401() *Problem {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ListSessionsResponse) GetApplicationProblemJSON403() *Problem {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r ListSessionsResponse) GetApplicationProblemJSON500() *InternalError {
+	return r.ApplicationProblemJSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ListSessionsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListSessionsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListSessionsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListSessionsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// DeleteSessionByIDResponse204Headers the declared response headers of an HTTP 204 response for DeleteSessionByID
+type DeleteSessionByIDResponse204Headers struct {
+	XTraceID string
+}
+
+// DeleteSessionByIDResponse401Headers the declared response headers of an HTTP 401 response for DeleteSessionByID
+type DeleteSessionByIDResponse401Headers struct {
+	XTraceID string
+}
+
+// DeleteSessionByIDResponse403Headers the declared response headers of an HTTP 403 response for DeleteSessionByID
+type DeleteSessionByIDResponse403Headers struct {
+	XTraceID string
+}
+
+// DeleteSessionByIDResponse404Headers the declared response headers of an HTTP 404 response for DeleteSessionByID
+type DeleteSessionByIDResponse404Headers struct {
+	XTraceID string
+}
+
+// DeleteSessionByIDResponse500Headers the declared response headers of an HTTP 500 response for DeleteSessionByID
+type DeleteSessionByIDResponse500Headers struct {
+	XTraceID string
+}
+
+type DeleteSessionByIDResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Problem
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Problem
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *Problem
+	// ApplicationProblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationProblemJSON500 *InternalError
+	// Headers204 the parsed response headers for an HTTP 204 response
+	Headers204 *DeleteSessionByIDResponse204Headers
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *DeleteSessionByIDResponse401Headers
+	// Headers403 the parsed response headers for an HTTP 403 response
+	Headers403 *DeleteSessionByIDResponse403Headers
+	// Headers404 the parsed response headers for an HTTP 404 response
+	Headers404 *DeleteSessionByIDResponse404Headers
+	// Headers500 the parsed response headers for an HTTP 500 response
+	Headers500 *DeleteSessionByIDResponse500Headers
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r DeleteSessionByIDResponse) GetApplicationProblemJSON401() *Problem {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r DeleteSessionByIDResponse) GetApplicationProblemJSON403() *Problem {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r DeleteSessionByIDResponse) GetApplicationProblemJSON404() *Problem {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r DeleteSessionByIDResponse) GetApplicationProblemJSON500() *InternalError {
+	return r.ApplicationProblemJSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteSessionByIDResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteSessionByIDResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteSessionByIDResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteSessionByIDResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // RegisterUserResponse201Headers the declared response headers of an HTTP 201 response for RegisterUser
 type RegisterUserResponse201Headers struct {
 	XTraceID string
@@ -21409,6 +21990,104 @@ func (c *ClientWithResponses) CompleteSecondFactorWithResponse(ctx context.Conte
 		return nil, err
 	}
 	return ParseCompleteSecondFactorResponse(rsp)
+}
+
+// ListSessionsWithResponse List the caller's own sessions
+//
+// Every live session this account holds, newest first, so a person can see
+// **where they are signed in** and end the ones they do not recognise.
+//
+// **Nothing on an entry is a credential.** There is no `token` field and no
+// field derived from one — not the token, and not its SHA-256 digest either.
+// A digest is one hash away from a live session, so it is a credential for
+// anybody holding a log of this response, and the entry carries the row's id
+// and the four things a person recognises instead: when the session started,
+// when it expires, the user agent and the address as recorded at sign-in.
+//
+// `user_agent` and `ip` are **evidence, not identity**. Neither is trusted
+// anywhere in this service, both are caller-supplied or best-effort, and
+// behind a proxy `ip` is frequently the proxy's address. They are shown so a
+// user can recognise a row, and `user_agent` is shown **raw rather than
+// parsed**: a device label this service invents is a label that can be wrong,
+// and a UI that trusts one shows somebody the wrong laptop. Parse it in the
+// client, and treat it as untrusted text there.
+//
+// `current` marks the session **this request arrived on**, which is the one
+// field a client cannot compute for itself: the browser holds a cookie and
+// this is a list of row ids, so without `current` the only way to render
+// "this device" is to ask the user.
+//
+// Expired rows are omitted, so every entry is a credential that still works
+// and a button that does something. The response is `{ "sessions": [...] }` —
+// an object with a named field rather than a bare array, so a `total` or a
+// cursor can be added later without a second breaking change — and it is `[]`
+// and never `null`.
+//
+// **A session belongs to a USER, not to an account.** One person is in as
+// many accounts as they like, so there is no account whose tenancy would mean
+// "the sessions this caller may act on", and these two routes are not under
+// `/v1/accounts/{account_id}` for that reason rather than by accident.
+//
+// **Session only.** A scoped api key is refused with `403`, on the same terms
+// as `DELETE /v1/session`: an api key acts on the account it was issued for,
+// and enumerating browser sessions is not something it does.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/sessions (the `ListSessions` operationId).
+func (c *ClientWithResponses) ListSessionsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListSessionsResponse, error) {
+	rsp, err := c.ListSessions(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListSessionsResponse(rsp)
+}
+
+// DeleteSessionByIDWithResponse Revoke one of the caller's own sessions
+//
+// Ends one session — the "sign out of that device" action — leaving every
+// other session of this account untouched. This is **not** "sign out
+// everywhere": a password reset, an MFA change and an operator disable all
+// revoke every session, and none of them is this route.
+//
+// **THE OWNERSHIP CHECK IS THE POINT, and it is not in the path.** A session
+// id here is a candidate and nothing else. This service resolves the caller
+// from the presented credential and deletes `WHERE id = :id AND user_id = :caller`
+// in one statement, so there is no interval in which "is this mine" and
+// "delete it" are separate questions, and no handler anywhere holds both a
+// caller-supplied id and the authority to use it.
+//
+// **ONE 404 FOR ALL FOUR WAYS OF NOT OWNING IT** — never existed, somebody
+// else's, already revoked, and the nil uuid — with one fixed sentence. A
+// `403` against a `404` would let any signed-in caller probe whether a given
+// session id belongs to a live session anywhere in this deployment, which is
+// a question about another person's credential. A **malformed** id is a `404`
+// and not a `422`, for the same reason: the path is part of a resource's
+// identity, so "this is not an id this service issued" has to be the same
+// answer as "this id is one this service issued and it is not yours".
+//
+// **REVOKING THE SESSION YOU ARE USING IS ALLOWED**, and the consequence is
+// that you are signed out: the response is a `204` and your next request with
+// that credential is a `401`. It is not refused with a `409` because
+// `DELETE /v1/session` already revokes your current session without
+// complaint, and a route that refused to do the same thing when the id was
+// spelled out would be a puzzle rather than a policy.
+//
+// **NO COOKIE IS CLEARED, EVEN WHEN YOU REVOKED YOURSELF.** The `204` sets no
+// `Set-Cookie`, and it cannot: this route is not told which session the
+// request arrived on, so clearing the cookie would be a guess — and a wrong
+// guess signs you out of the device you are using in order to end a session
+// on another one. Call `DELETE /v1/session` when you want the cookie gone.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/sessions/{session_id} (the `DeleteSessionByID` operationId).
+func (c *ClientWithResponses) DeleteSessionByIDWithResponse(ctx context.Context, sessionID openapi_types.UUID, reqEditors ...RequestEditorFn) (*DeleteSessionByIDResponse, error) {
+	rsp, err := c.DeleteSessionByID(ctx, sessionID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteSessionByIDResponse(rsp)
 }
 
 // RegisterUserWithBodyWithResponse Register an account
@@ -27279,6 +27958,199 @@ func ParseCompleteSecondFactorResponse(rsp *http.Response) (*CompleteSecondFacto
 			headers.XTraceID = value
 		}
 		response.Headers503 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseListSessionsResponse parses an HTTP response from a ListSessionsWithResponse call
+func ParseListSessionsResponse(rsp *http.Response) (*ListSessionsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListSessionsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SessionList
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON500 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers ListSessionsResponse200Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 401:
+		var headers ListSessionsResponse401Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers401 = &headers
+	case rsp.StatusCode == 403:
+		var headers ListSessionsResponse403Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers403 = &headers
+	case rsp.StatusCode == 500:
+		var headers ListSessionsResponse500Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers500 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseDeleteSessionByIDResponse parses an HTTP response from a DeleteSessionByIDWithResponse call
+func ParseDeleteSessionByIDResponse(rsp *http.Response) (*DeleteSessionByIDResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteSessionByIDResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON500 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		var headers DeleteSessionByIDResponse204Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers204 = &headers
+	case rsp.StatusCode == 401:
+		var headers DeleteSessionByIDResponse401Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers401 = &headers
+	case rsp.StatusCode == 403:
+		var headers DeleteSessionByIDResponse403Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers403 = &headers
+	case rsp.StatusCode == 404:
+		var headers DeleteSessionByIDResponse404Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers404 = &headers
+	case rsp.StatusCode == 500:
+		var headers DeleteSessionByIDResponse500Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers500 = &headers
 	}
 
 	return response, nil

@@ -12,9 +12,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/cafaye/identity/internal/auth"
+	"github.com/cafaye/identity/internal/platform/id"
 	"github.com/cafaye/identity/internal/telemetry"
 	"github.com/cafaye/identity/internal/users"
 )
@@ -52,6 +54,19 @@ type Auth interface {
 	Login(ctx context.Context, in auth.LoginInput) (auth.LoginResult, error)
 	Authenticate(ctx context.Context, token string) (users.User, error)
 	Logout(ctx context.Context, token string) error
+	// ListSessions and RevokeSession are "sign out of one of these", and they take
+	// the CREDENTIAL rather than a user id. That is deliberate and it is the
+	// reason they are on this interface: a method whose signature accepts a user id
+	// hands every caller the ability to name somebody else's account, and the day
+	// one handler reads that id out of a URL instead of out of a session the
+	// boundary is a habit. Here the service resolves the caller and asks only about
+	// the resolved caller's rows.
+	//
+	// RevokeSession's ErrSessionNotFound covers "not yours" and "does not exist"
+	// together, which is why the two are one method rather than one method plus a
+	// lookup.
+	ListSessions(ctx context.Context, token string) ([]auth.Session, error)
+	RevokeSession(ctx context.Context, token string, sessionID id.UUID) error
 	// CompleteSecondFactor is the rest of a login for an account with a second
 	// factor, and it is on this interface rather than on a separate one because it
 	// IS the rest of Login: the two halves share the session store and the
@@ -175,6 +190,28 @@ func (o options) registerRoutes(r chiRouter) {
 	// session.
 	r.Delete("/v1/session", o.sessionCredentialOnly(o.handleLogout))
 	r.Get("/v1/me", o.handleMe)
+
+	// THE LISTING AND THE SINGLE REVOCATION, and the plural is deliberate:
+	// `DELETE /v1/session` above is the caller's own current session and takes no
+	// id, because the id of the session you are using is the one you already have.
+	// These two are the rest of the surface — "which devices am I signed in on"
+	// and "end that one" — and they are session-only for the same reason the route
+	// above is: a scoped api key cannot enumerate or revoke browser sessions, and
+	// `sessionCredentialOnly` is a middleware so the property belongs to the
+	// surface rather than to whatever the handlers remembered.
+	//
+	// They are mounted HERE, on the auth routes, and not under registerTenancyRoutes,
+	// which is the whole tenancy registrar. A session belongs to a USER and not to
+	// an account: one person is in as many accounts as they like, so there is no
+	// account whose tenancy would mean "the sessions this caller may act on". The
+	// same argument the operator surface's rows in accountRouteScopes make, and the
+	// consequence here is that these two routes are absent from accountRouteScopes
+	// deliberately — a row there would be a scope gating nothing, which
+	// TestEveryScopeIsEnforcedOnItsRoutes exists to catch. They carry no scope at
+	// all, and a scoped token is refused by the middleware above rather than by a
+	// scope check.
+	r.Get("/v1/sessions", o.sessionCredentialOnly(o.handleListSessions))
+	r.Delete("/v1/sessions/{sessionID}", o.sessionCredentialOnly(o.handleRevokeSession))
 
 	// THE SECOND STEP OF A LOGIN, mounted beside the first and deliberately NOT
 	// gated on the MFA management routes' condition.
@@ -504,6 +541,189 @@ func (o options) handleMe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, userResponse{ID: user.ID.String(), Email: user.Email})
+}
+
+// sessionListItem is one entry of GET /v1/sessions.
+//
+// # NOTHING HERE IS A CREDENTIAL, AND THAT IS THE PROPERTY OF THIS TYPE
+//
+// There is no `token` field and no field derived from one. The row behind it holds
+// a SHA-256 digest, so the list cannot leak the token itself — and the digest is
+// NOT rendered either, on the reasoning client/errors.go gives for a different
+// table: a value that is one SHA-256 away from a live credential is a credential
+// for anybody holding the database, and a response body is a worse place for it
+// than a row nobody reads. So the id is here and nothing derived from the
+// credential is.
+//
+// A dedicated type rather than `auth.Session` or `sessions.Session`, for the same
+// reason `userResponse` is not `users.User`: a field cannot reach a body by being
+// added to a domain struct. Two of the four types above could each gain a field
+// that renders a credential, and neither would fail a test.
+//
+// `current` is the field a client needs and cannot compute: which of these is the
+// session this request arrived on. Without it a UI has to compare the browser's
+// cookie against a list it cannot see into, which means asking the user which one
+// is this one.
+type sessionListItem struct {
+	ID        string    `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	ExpiresAt time.Time `json:"expires_at"`
+	UserAgent string    `json:"user_agent"`
+	// IP is a string rather than a nullable struct so the field is absent-by-empty
+	// on the wire: a session created through a client that sent no address has no
+	// IP, and `null` in a field a UI renders as "last seen from" is a thing every
+	// caller has to special-case. Same reasoning as the empty user agent.
+	IP      string `json:"ip"`
+	Current bool   `json:"current"`
+}
+
+// sessionListResponse is the 200 from GET /v1/sessions.
+//
+// AN OBJECT WITH A NAMED FIELD, NOT A BARE ARRAY. `GET /v1/accounts` answers a bare
+// array because it predates this and changing it would break a generated client;
+// the difference it buys is the room to add `total` or a cursor later without a
+// second breaking change, and a list that is going to grow a `next_cursor` — as
+// this one will, once a user has enough devices for the response to be worth
+// paging — should not start as the shape that cannot grow.
+type sessionListResponse struct {
+	Sessions []sessionListItem `json:"sessions"`
+}
+
+// handleListSessions returns the caller's live sessions.
+//
+//	GET /v1/sessions  →  200 {sessions: [{id, created_at, expires_at, user_agent, ip, current}]}
+//
+// The caller is resolved from the credential and the use case asks about that
+// user's rows, so there is no user id anywhere in this handler to get wrong. The
+// one thing worth naming is the 401: a dead or unknown token is a 401 and not an
+// empty list, because an empty list is a client concluding its session is fine.
+func (o options) handleListSessions(w http.ResponseWriter, r *http.Request) {
+	token := o.presentedToken(r)
+	if token == "" {
+		unauthorized(w, r)
+		return
+	}
+
+	list, err := o.auth.ListSessions(r.Context(), token)
+	if err != nil {
+		if errors.Is(err, auth.ErrUnauthenticated) {
+			unauthorized(w, r)
+			return
+		}
+		unexpected(w, r, o.logger, err)
+		return
+	}
+
+	// The non-nil slice, so a user with no live sessions gets `[]` and not `null`.
+	// It matters more here than on the account list for a reason that is about the
+	// question being asked: "where am I signed in" has the ordinary answer "nowhere
+	// you are still using", and a client that has to handle null to render it is a
+	// client that will eventually render it wrong.
+	items := make([]sessionListItem, 0, len(list))
+	for _, s := range list {
+		items = append(items, sessionListItem{
+			ID:        s.ID.String(),
+			CreatedAt: s.CreatedAt,
+			ExpiresAt: s.ExpiresAt,
+			UserAgent: s.UserAgent,
+			IP:        ipString(s.IP),
+			Current:   s.Current,
+		})
+	}
+
+	writeJSON(w, http.StatusOK, sessionListResponse{Sessions: items})
+}
+
+// ipString renders a recorded address, or "" for a session that never had one.
+func ipString(addr *netip.Addr) string {
+	if addr == nil {
+		return ""
+	}
+	return addr.String()
+}
+
+// sessionIDParam is the chi URL parameter naming the session being revoked.
+//
+// A CONSTANT FOR THE REASON keyIDParam IS ONE: the name appears in the route
+// pattern and in the handler, and two spellings of it is two chances to read the
+// wrong one — which on this route is a handler reading no parameter at all and
+// revoking something it chose itself.
+const sessionIDParam = "sessionID"
+
+// handleRevokeSession revokes one of the caller's own sessions.
+//
+//	DELETE /v1/sessions/{sessionID}  →  204
+//	                                 404 no such session of yours
+//
+// # THE 404 IS THE TENANT BOUNDARY
+//
+// There is no ownership check in this handler and there is deliberately no way to
+// add one: the use case resolves the caller from the credential and the DELETE
+// carries the owner in its predicate (`Store.RevokeOneForUser`). A handler that
+// read the id, asked "is this mine" and then deleted would be the same boundary
+// with a window in it.
+//
+// A session id belonging to somebody else is the SAME 404 as one that does not
+// exist, and that is the whole disclosure decision. The caller is authenticated, so
+// they cannot use this route to learn about accounts they are not in — but a 403
+// against a 404 would let any signed-in user probe whether a given session id is
+// live anywhere in this deployment, which is a question about another person's
+// credential answered to a stranger.
+//
+// # A MALFORMED ID IS A 404 AND NOT A 422
+//
+// On the reasoning accountIDFrom gives: the path is part of a resource's identity,
+// so "this is not an id this service issued" has to be the same answer as "this id
+// is one this service issued and it is not yours". A 422 would be a distinct,
+// observable answer to a probe over the same space of strings.
+//
+// # NO COOKIE IS CLEARED, EVEN WHEN THE REVOKED SESSION IS THIS ONE
+//
+// That is the consequence `Service.RevokeSession` documents, and it is stated in
+// the response rather than performed here. Clearing the cookie from this handler
+// would clear it whenever the id in the path happened to be the caller's current
+// session — which the handler cannot know, because `Authenticate` resolves a token
+// to a user and does not say which session row it came from. `DELETE /v1/session`
+// is the route that clears the cookie, it already does, and a client that wants
+// "and sign me out here too" calls it. Guessing wrong in the other direction is
+// worse: clearing a browser's cookie for a session the caller did not revoke logs
+// them out of the device they are using to end a session on another one.
+func (o options) handleRevokeSession(w http.ResponseWriter, r *http.Request) {
+	token := o.presentedToken(r)
+	if token == "" {
+		unauthorized(w, r)
+		return
+	}
+
+	sessionID, ok := sessionIDFrom(r)
+	if !ok {
+		notFound(w, r)
+		return
+	}
+
+	if err := o.auth.RevokeSession(r.Context(), token, sessionID); err != nil {
+		switch {
+		case errors.Is(err, auth.ErrUnauthenticated):
+			unauthorized(w, r)
+		case errors.Is(err, auth.ErrSessionNotFound):
+			notFound(w, r)
+		default:
+			unexpected(w, r, o.logger, err)
+		}
+		return
+	}
+
+	noContent(w)
+}
+
+// sessionIDFrom reads and parses the session id in the path, on the same terms as
+// accountIDFrom: a malformed id and the nil uuid are both "not a session of yours".
+func sessionIDFrom(r *http.Request) (id.UUID, bool) {
+	parsed, err := id.Parse(chi.URLParam(r, sessionIDParam))
+	if err != nil || parsed.IsZero() {
+		return id.UUID{}, false
+	}
+	return parsed, true
 }
 
 // presentedToken returns the credential the request is making, preferring an

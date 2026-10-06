@@ -490,6 +490,51 @@ func (c *Client) DeleteSession(ctx context.Context) error {
 	})
 }
 
+// ListSessions returns the caller's own live sessions. Corresponds to
+// `GET /v1/sessions`.
+//
+// IT IS SESSION-ONLY, and a caller holding an api key gets a 403 rather than a
+// list — which is worth saying here because this client's credential is attached
+// once, for every call, so the mistake is available and it is silent until the
+// server refuses it. `ListAPIKeys` is the operation a machine credential is FOR;
+// this one is a person's own devices.
+//
+// THE RETURNED TYPE IS `[]generated.SessionSummary`, and that is the strongest
+// guarantee in this document rather than an accident of naming: the summary schema
+// has `additionalProperties: false` and no `token` property, so there is nothing on
+// it to redact, and the client's credential-leak sweep has nothing to find because
+// the server never sent one. A caller cannot log this value into a breach report.
+func (c *Client) ListSessions(ctx context.Context) ([]generated.SessionSummary, error) {
+	var out generated.SessionList
+	err := call(c, "listSessions", func() (*http.Response, error) {
+		return c.transport.ListSessions(ctx)
+	}, &out)
+	return out.Sessions, err
+}
+
+// DeleteSessionByID revokes one of the caller's own sessions. Corresponds to
+// `DELETE /v1/sessions/{session_id}`.
+//
+// NOT `DeleteSession`, and the difference is the whole feature: that one ends the
+// session this client is using, this one ends a session by the row id from
+// `ListSessions`. The other devices are untouched either way — neither of these is
+// "sign out everywhere".
+//
+// A 404 comes back as an `*UnknownProblemError` or a `*ProblemError` carrying
+// `not_found`, and it is the answer for a session that does not exist, one that
+// belongs to somebody else and one already revoked alike, so a caller cannot use
+// this to ask whether an id is live anywhere in the deployment.
+//
+// Revoking the session THIS client is using is allowed and signs you out: the
+// credential stops working on the next call. It does not clear a browser cookie,
+// because the service is not told which session the request arrived on — see
+// `Client.DeleteSession` for the route that does.
+func (c *Client) DeleteSessionByID(ctx context.Context, sessionId openapiTypes.UUID) error {
+	return callVoid(ctx, c, "deleteSessionById", func() (*http.Response, error) {
+		return c.transport.DeleteSessionByID(ctx, sessionId)
+	})
+}
+
 // CompleteSecondFactor answers a second factor and starts the session. Corresponds
 // to `POST /v1/session/mfa`.
 func (c *Client) CompleteSecondFactor(ctx context.Context, body generated.CompleteSecondFactorJSONRequestBody) (*generated.Session, error) {
