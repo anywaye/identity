@@ -29,6 +29,26 @@ import (
 func TestAMailerIsCouriersOrUnavailableAndNothingElse(t *testing.T) {
 	const token = "svc-7f3a9c1e4b8d2056-the-credential"
 
+// signupKey is the SIGNUP_SIGNING_KEY every config.Load in this file supplies:
+// 32 bytes, base64url, the shape the environment takes.
+//
+// It is a constant rather than a generated value because these tests assert on
+// the LOG the wiring produces, and a key that changed per run would not change
+// the log — but a missing key would change the outcome from a mailer to a
+// startup failure, which is not what any test here is about.
+const signupKey = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY"
+
+// withSignupKey returns a copy of env with SIGNUP_SIGNING_KEY set, for the
+// cases that expect Load to succeed.
+func withSignupKey(env map[string]string) map[string]string {
+	out := make(map[string]string, len(env)+1)
+	for k, v := range env {
+		out[k] = v
+	}
+	out["SIGNUP_SIGNING_KEY"] = signupKey
+	return out
+}
+
 	cases := []struct {
 		name string
 		env  map[string]string
@@ -58,7 +78,10 @@ func TestAMailerIsCouriersOrUnavailableAndNothingElse(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			cfg, err := config.Load(lookupFrom(tc.env))
+			// SIGNUP_SIGNING_KEY is the one secret a boot cannot go without,
+			// so both cases supply it: they are about the mailer the wiring
+			// produces, and a deployment that cannot boot produces none.
+			cfg, err := config.Load(lookupFrom(withSignupKey(tc.env)))
 			if err != nil {
 				t.Fatalf("config.Load: %v", err)
 			}
@@ -113,7 +136,7 @@ func TestAMailerIsCouriersOrUnavailableAndNothingElse(t *testing.T) {
 // operator reading "cannot send email" without being told what to set has been told
 // a symptom.
 func TestAnUnconfiguredDeploymentIsLoudAtStartup(t *testing.T) {
-	cfg, err := config.Load(lookupFrom(map[string]string{}))
+	cfg, err := config.Load(lookupFrom(withSignupKey(map[string]string{})))
 	if err != nil {
 		t.Fatalf("config.Load: %v", err)
 	}
@@ -145,11 +168,11 @@ func TestAnUnconfiguredDeploymentIsLoudAtStartup(t *testing.T) {
 // of this service's flows cannot be delivered, because the alternative is a 503
 // somebody reads as an identity bug.
 func TestAConfiguredDeploymentSaysWhatItCanAndCannotSend(t *testing.T) {
-	cfg, err := config.Load(lookupFrom(map[string]string{
+	cfg, err := config.Load(lookupFrom(withSignupKey(map[string]string{
 		"COURIER_BASE_URL":       "https://courier.example.com",
 		"COURIER_TOKEN":          "svc-7f3a9c1e4b8d2056-the-credential",
 		"RECOVERY_LINK_TEMPLATE": "https://app.example.com/reset?token={token}",
-	}))
+	})))
 	if err != nil {
 		t.Fatalf("config.Load: %v", err)
 	}
@@ -189,7 +212,7 @@ func TestAConfiguredDeploymentSaysWhatItCanAndCannotSend(t *testing.T) {
 // deployment with no mail path actually do", and the answer has to be the same
 // whichever package you ask.
 func TestTheRefusingMailerStillRefuses(t *testing.T) {
-	cfg, err := config.Load(lookupFrom(map[string]string{}))
+	cfg, err := config.Load(lookupFrom(withSignupKey(map[string]string{})))
 	if err != nil {
 		t.Fatalf("config.Load: %v", err)
 	}

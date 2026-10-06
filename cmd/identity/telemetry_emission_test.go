@@ -434,8 +434,18 @@ func TestAPerSignalSwitchOffAlsoDialsNothing(t *testing.T) {
 // No pool and no /v1 routes, so the test needs no database and no migration, and
 // what it exercises is the serving path itself — which is the thing under test.
 // Every request below is a real request through the real router.
+//
+// It carries SIGNUP_SIGNING_KEY because a boot without it is a startup failure:
+// the lookup answers "" for everything else, which is the "no environment" of a
+// process with nothing configured.
 func probeOnlyConfig() config.Config {
-	cfg, err := config.Load(func(string) (string, bool) { return "", false })
+	const signupKey = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY"
+	cfg, err := config.Load(func(key string) (string, bool) {
+		if key == "SIGNUP_SIGNING_KEY" {
+			return signupKey, true
+		}
+		return "", false
+	})
 	if err != nil {
 		panic("probeOnlyConfig: " + err.Error())
 	}

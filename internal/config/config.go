@@ -97,6 +97,23 @@ var (
 	// refuses to start, and conflating them would either refuse to boot a
 	// legitimate deployment or silently boot a broken one.
 	ErrNoCourierToken = errors.New("COURIER_TOKEN is not configured")
+
+	// ErrNoSignupSigningKey means SIGNUP_SIGNING_KEY is not set at all. Unlike
+	// every other sentinel above this is a STARTUP FAILURE rather than a
+	// supported state, and the difference is the reason it exists: spam
+	// protection is not a feature a deployment enables or skips. A process
+	// without the key would boot, serve its /v1 surface, and verify nothing —
+	// a signup form with no defence, discovered by a bot rather than by a boot
+	// log. The check must not vanish where a feature is not configured, so
+	// there is no configuration in which this process starts without it.
+	ErrNoSignupSigningKey = errors.New("SIGNUP_SIGNING_KEY is not configured")
+
+	// ErrInvalidSignupSigningKey means SIGNUP_SIGNING_KEY is present and
+	// unreadable: not base64url, or not 32 bytes once decoded. A startup
+	// failure for the reason ErrInvalidMFA is — an operator who pasted a
+	// 16-byte key has configured half the entropy they think they have, and a
+	// timestamp signed under a short key is a timestamp anybody can forge.
+	ErrInvalidSignupSigningKey = errors.New("invalid SIGNUP_SIGNING_KEY")
 )
 
 // DefaultMFAIssuer is what an authenticator app displays next to the entry when
@@ -212,6 +229,23 @@ type Config struct {
 	//
 	// The dependency runs one way: internal/oauth does not import internal/config.
 	OAuth oauth.Settings
+
+	// SignupSigningKeyValue is the raw key a signup timestamp is signed and
+	// verified under, decoded from SIGNUP_SIGNING_KEY.
+	//
+	// IT IS ALWAYS PRESENT in a Config that Load accepts, and that is the whole
+	// of this field's contract: the one secret this service cannot boot without,
+	// because the signed timestamp is the second half of signup bot defence and
+	// a deployment that could turn it off would be a deployment whose signup
+	// form is undefended. It is read from the environment rather than a file so
+	// the secret is whatever the deployment's secret store already is, it is
+	// never logged, and it is never rendered in a response.
+	//
+	// It is 32 bytes because that is the HMAC-SHA256 key length, and a shorter
+	// one is refused at Load rather than stretched — the same rule
+	// MFA_ENCRYPTION_KEY follows, for the same reason: quietly stretching a
+	// short key hides a typo until the day the entropy matters.
+	SignupSigningKeyValue []byte
 }
 
 // The social-login environment variables, named in one place.
@@ -499,6 +533,25 @@ func (c Config) LinkPurposesUsingTheDefault() []recovery.Purpose {
 	return shared
 }
 
+// SignupSigningKey returns the configured key, or ErrNoSignupSigningKey.
+//
+// The split sentinel matters for the same reason ErrNoMFAEncryptionKey is
+// distinct from ErrInvalidMFA: the two lead to different places. Here, though,
+// BOTH are startup failures — the distinction is only in the message an
+// operator reads. "Not configured" names the variable to set; "invalid" names
+// the value to fix. A caller that cannot tell them apart has been told one
+// thing when the fix is the other.
+func (c Config) SignupSigningKey() ([]byte, error) {
+	if len(c.SignupSigningKeyValue) == 0 {
+		return nil, ErrNoSignupSigningKey
+	}
+	if len(c.SignupSigningKeyValue) != 32 {
+		return nil, fmt.Errorf("%w: it decodes to %d bytes, want exactly 32",
+			ErrInvalidSignupSigningKey, len(c.SignupSigningKeyValue))
+	}
+	return c.SignupSigningKeyValue, nil
+}
+
 // Load reads the environment through lookup and returns a validated Config.
 //
 // A nil lookup means "no environment": the defaults apply. Values that are
@@ -546,6 +599,17 @@ func Load(lookup Lookup) (Config, error) {
 	}
 
 	if err := cfg.loadOAuth(lookup); err != nil {
+		return Config{}, err
+	}
+
+	// THE ONE UNCONDITIONAL SECRET, checked last so that a deployment with
+	// several things wrong reports the feature blocks first: each of those
+	// has its own variable to fix, and an operator who fixes them one at a
+	// time should meet them in the order the boot log prints them. This one
+	// has no feature to be configured or skipped — it is either there or
+	// the process does not start — so there is no earlier check it could
+	// mask that an operator would rather see first.
+	if err := cfg.loadSignupSigningKey(lookup); err != nil {
 		return Config{}, err
 	}
 
@@ -1068,6 +1132,49 @@ func (c *Config) loadOIDC(lookup Lookup) error {
 	c.OIDCKeyID = keyID
 	c.OIDCAllowInsecure = allowInsecure
 	c.OIDCLoginUIURL = loginUI
+	return nil
+}
+
+// loadSignupSigningKey reads and validates SIGNUP_SIGNING_KEY.
+//
+// # WHY ABSENT IS A STARTUP FAILURE HERE AND NOWHERE ELSE
+//
+// Every other secret in this package has a supported absent state, because
+// every other secret belongs to a feature a deployment may not have turned on:
+// no MFA_ENCRYPTION_KEY means no second factor, no COURIER_TOKEN means no mail
+// path, no OIDC_* means the process is not a provider. SIGNUP_SIGNING_KEY
+// belongs to no feature. It is the second half of signup bot defence, and a
+// deployment that could boot without it would be a deployment whose signup
+// form is undefended — silently, because the honeypot still refuses the bots
+// that fill every field and the timestamp check is the only thing that stops
+// the ones that do not.
+//
+// So the rule is the OIDC block's all-or-nothing with the "or nothing" branch
+// removed: present and readable, or the process does not start. The message
+// names the variable, because that is the whole of the fix.
+//
+// # THE SHAPE IS MFA'S
+//
+// base64url without padding, exactly 32 bytes — the same as MFA_ENCRYPTION_KEY,
+// so an operator pasting from the same secret store does not have to think
+// about it, and a value that does not decode to 32 bytes is a startup failure
+// rather than a stretch, for the same reason: an operator who configured a
+// 16-byte key believes they have 128 bits of entropy, and they do not.
+func (c *Config) loadSignupSigningKey(lookup Lookup) error {
+	encoded := lookupValue(lookup, "SIGNUP_SIGNING_KEY")
+	if encoded == "" {
+		return ErrNoSignupSigningKey
+	}
+
+	decoded, err := base64.RawURLEncoding.DecodeString(encoded)
+	if err != nil {
+		return fmt.Errorf("%w: it is not base64url: %v", ErrInvalidSignupSigningKey, err)
+	}
+	if len(decoded) != 32 {
+		return fmt.Errorf("%w: it decodes to %d bytes, want exactly 32",
+			ErrInvalidSignupSigningKey, len(decoded))
+	}
+	c.SignupSigningKeyValue = decoded
 	return nil
 }
 

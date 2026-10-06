@@ -42,7 +42,7 @@ func TestNewAppServesTheAuthSurfaceWithADatabase(t *testing.T) {
 	dsn := testDatabaseURL(t)
 	ctx := context.Background()
 
-	cfg := config.Config{Port: "0", LogLevel: "error", DatabaseURL: dsn}
+	cfg := withSignupKey(config.Config{Port: "0", LogLevel: "error", DatabaseURL: dsn})
 	a, err := newApp(ctx, cfg, discardLogger())
 	if err != nil {
 		t.Fatalf("newApp: %v", err)
@@ -107,7 +107,7 @@ func TestNewAppServesTheAuthSurfaceWithADatabase(t *testing.T) {
 // The v1 routes are absent rather than present-and-broken, so the failure mode of
 // a missing DATABASE_URL is a clear 404 instead of a pile of 500s.
 func TestNewAppWithoutADatabaseStillServesTheProbes(t *testing.T) {
-	cfg := config.Config{Port: "0", LogLevel: "error"}
+	cfg := withSignupKey(config.Config{Port: "0", LogLevel: "error"})
 
 	a, err := newApp(context.Background(), cfg, discardLogger())
 	if err != nil {

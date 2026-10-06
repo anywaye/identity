@@ -148,7 +148,15 @@ func TestTheCourierBlockIsAllOrNothing(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			cfg, err := Load(lookupFrom(tc.env))
+			env := tc.env
+			if tc.wantErr == nil {
+				// SIGNUP_SIGNING_KEY is the one secret a boot cannot go
+				// without, so the two success cases supply it. The error
+				// cases are unaffected: the courier block is checked before
+				// the signup key, so they refuse for their own reason first.
+				env = withSignupKey(env)
+			}
+			cfg, err := Load(lookupFrom(env))
 
 			if tc.wantErr != nil {
 				if !errors.Is(err, tc.wantErr) {
@@ -199,7 +207,10 @@ func TestTheCourierBlockIsAllOrNothing(t *testing.T) {
 // the confusion costs an afternoon: "it started, so the mail is configured" against
 // a deployment whose COURIER_BASE_URL has a typo in it.
 func TestAnAbsentCourierBlockIsDistinguishableFromABrokenOne(t *testing.T) {
-	absent, err := Load(lookupFrom(map[string]string{}))
+	// The signup key is supplied because a boot without it is a startup
+	// failure: this test is about the COURIER block's two states, and a
+	// deployment that cannot boot has neither.
+	absent, err := Load(lookupFrom(withSignupKey(map[string]string{})))
 	if err != nil {
 		t.Fatalf("an absent courier block must not be an error: %v", err)
 	}

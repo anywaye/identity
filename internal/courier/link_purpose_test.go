@@ -2,6 +2,7 @@ package courier
 
 import (
 	"context"
+	"encoding/base64"
 	"net/url"
 	"strings"
 	"testing"
@@ -83,6 +84,10 @@ func deploymentEnv(overrides map[string]string) map[string]string {
 		"COURIER_TOKEN":                    "svc-4b1d7e0a3c95f28",
 		"PASSWORD_RESET_LINK_TEMPLATE":     "https://app.example.com/reset?token={token}",
 		"EMAIL_VERIFICATION_LINK_TEMPLATE": "https://app.example.com/verify-email?token={token}",
+		// SIGNUP_SIGNING_KEY is the one secret a boot cannot go without, so
+		// every deployment in this file supplies it. The value is the same
+		// 32-byte shape the other secrets take, base64url.
+		"SIGNUP_SIGNING_KEY": base64.RawURLEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef")),
 	}
 	for key, value := range overrides {
 		if value == "" {
