@@ -447,6 +447,77 @@ func TestRegisterUnknownFieldsAreRejected(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// The honeypot
+// ---------------------------------------------------------------------------
+
+// A submission that carries a populated honeypot field did not come from the form.
+// The form renders the field hidden (DECISIONS.md D10: the page belongs to parlor),
+// so a person never sees it and never fills it; a bot fills every field it finds.
+//
+// THE CHECK RUNS BEFORE THE USE CASE. A bot that gets a row in the database has won,
+// even if the row is later deleted: the address is now taken, and the 409 of
+// DECISIONS.md D9 is a disclosure a stranger can read. So the refusal is here, at
+// the handler, before auth.Register is called — not inside the use case, where a
+// future caller could bypass it.
+func TestRegisterHoneypotFieldIsRefusedBeforeTheServiceIsCalled(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		website string
+	}{
+		{name: "a filled honeypot", website: "http://spam.example.com"},
+		{name: "a whitespace-only honeypot", website: "   "},
+		{name: "a single character", website: "x"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			f := newFakeAuth()
+			rec := post(t, New(nil, WithAuth(f)), "/v1/users",
+				`{"email":"kaka@example.com","password":"correct horse battery","website":"`+tt.website+`"}`)
+
+			if rec.Code != http.StatusUnprocessableEntity {
+				t.Fatalf("status = %d, want 422; body: %s", rec.Code, rec.Body)
+			}
+			p := decodeProblem(t, rec)
+			if p.Code != CodeValidationFailed {
+				t.Errorf("code = %q, want %q", p.Code, CodeValidationFailed)
+			}
+			// The refusal must not name the field: a bot that learns which field is
+			// the trap learns to skip it.
+			if strings.Contains(rec.Body.String(), "website") {
+				t.Errorf("the 422 names the honeypot field: %s", rec.Body)
+			}
+			// And the service was never called, so no row exists.
+			if f.hasRegistered() {
+				t.Error("a populated honeypot reached the registration service")
+			}
+		})
+	}
+}
+
+// An empty honeypot is what the form sends for every legitimate submission: the
+// field is present (so the API accepts the form's shape) and empty (because nobody
+// typed into a field they could not see). It must not refuse a real registration.
+func TestRegisterEmptyHoneypotIsAccepted(t *testing.T) {
+	t.Parallel()
+
+	f := newFakeAuth()
+	rec := post(t, New(nil, WithAuth(f)), "/v1/users",
+		`{"email":"kaka@example.com","password":"correct horse battery","website":""}`)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body: %s", rec.Code, rec.Body)
+	}
+	if !f.hasRegistered() {
+		t.Error("an empty honeypot was refused")
+	}
+}
+
+// ---------------------------------------------------------------------------
 // POST /v1/session
 // ---------------------------------------------------------------------------
 

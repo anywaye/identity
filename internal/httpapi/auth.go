@@ -130,9 +130,25 @@ type challengeResponse struct {
 }
 
 // registerRequest is the body of POST /v1/users.
+//
+// Website is the honeypot field. It is not a field any human fills in: the sign-in
+// form (rendered by parlor, not by this service — see DECISIONS.md D10) carries it
+// hidden, so a person never sees it and never types into it. A bot fills every field
+// it finds, including this one. A populated value therefore means the submission did
+// not come from the form, and it is refused before the use case is called — before
+// any row exists.
+//
+// IT IS DELIBERATELY ABSENT FROM THE OPENAPI DOCUMENT. The schema in openapi/v1.yaml
+// is the contract for API clients, and a honeypot that is documented is a honeypot
+// the next bot skips. The field is accepted here so the form can send it (empty) and
+// so a bot's populated value is refused with the same generic 422 a validation
+// failure gets, rather than with an "unknown field" that names the trap.
 type registerRequest struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
+	// Website is the honeypot. See the type's comment for why it is here and why it
+	// is not in the OpenAPI document.
+	Website string `json:"website"`
 }
 
 // loginRequest is the body of POST /v1/session.
@@ -329,6 +345,26 @@ func (t *tracedRouter) Delete(pattern string, h http.HandlerFunc) {
 func (o options) handleRegister(w http.ResponseWriter, r *http.Request) {
 	var body *registerRequest
 	if !decodeBody(w, r, &body) {
+		return
+	}
+
+	// THE HONEYPOT, checked before the use case is called. A bot that gets a row in
+	// the database has won, even if the row is later deleted: the address is now
+	// taken, and the 409 of DECISIONS.md D9 is a disclosure a stranger can read. So
+	// the refusal is here, at the handler, before auth.Register is called — not
+	// inside the use case, where a future caller could bypass it.
+	//
+	// The check is on the raw value, untrimmed. A human who never saw the field
+	// sends nothing at all — the form renders it empty and nobody types into a
+	// hidden input — so any non-empty value, whitespace included, is a bot. Trimming
+	// would let a whitespace-only submission through, and the form sends exactly
+	// the empty string, so there is no legitimate value to protect.
+	if body.Website != "" {
+		// The detail is generic on purpose. Naming the field would tell a bot which
+		// one is the trap, and the refusal is indistinguishable from any other
+		// validation failure — which is the point.
+		problemFor(w, r, http.StatusUnprocessableEntity, CodeValidationFailed,
+			"the request has an invalid field")
 		return
 	}
 
