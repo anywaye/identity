@@ -108,6 +108,37 @@ var (
 	// its own name because the packet names it and a client should be able to
 	// tell the two apart.
 	ErrSelfRoleChange = errors.New("the only owner of an account cannot change their own role")
+
+	// ErrNotOwner is returned when a caller who is not the account's OWNER tries
+	// to transfer it. It is separate from ErrOwnerProtected on purpose: that one
+	// is about an admin acting on an owner's membership ("you may not remove or
+	// change this person"), while this is about the caller themselves not holding
+	// the role a particular action requires. It is a 403 for the same reason
+	// ErrOwnerProtected is — the caller can see the account, so the refusal leaks
+	// nothing about it.
+	//
+	// The rule is checked against the MEMBERSHIP on this account rather than
+	// against anything the request carries, which is what makes an owner of a
+	// different account a refusal here too: ownership is per-account.
+	ErrNotOwner = errors.New("only an account's owner may do this")
+
+	// ErrNotTransferable is returned when an account cannot be transferred at
+	// all, for either of the two reasons there are: it is PERSONAL, or it has
+	// fewer than two members. One error for two facts because both are 422 —
+	// "understood, and describes something that does not exist here" — and because
+	// the client-facing repair is the same in both cases: this account is not one
+	// that changes hands.
+	//
+	// It is deliberately NOT ErrLastOwner. That one is about a role change that
+	// would leave nobody in charge, which a transfer can never do: the heir is
+	// promoted before the previous owner is demoted, in one transaction.
+	ErrNotTransferable = errors.New("this account cannot be transferred")
+
+	// ErrTransferToSelf is returned when the owner names themselves as the new
+	// owner. It is distinct from ErrNotTransferable because it is the one case
+	// where the account IS transferable and the REQUEST is wrong, and answering it
+	// 422 would tell an owner that their own account is untransferable.
+	ErrTransferToSelf = errors.New("an owner cannot transfer an account to themselves")
 )
 
 // Field validation codes. These land verbatim in the `errors[]` array of the

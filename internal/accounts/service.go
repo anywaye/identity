@@ -811,6 +811,192 @@ func (s *Service) RemoveMember(ctx context.Context, in RemoveMemberInput) error 
 	})
 }
 
+// TransferInput is a request to hand an account to another member.
+type TransferInput struct {
+	AccountID id.UUID
+	// ToUserID is the member who becomes the owner. It must ALREADY be a member:
+	// a transfer is not an invitation, and it takes no token, has no expiry and
+	// cannot be refused by the person it names. Someone who is not in the account
+	// has to be invited first, by a route that says so.
+	ToUserID id.UUID
+	// Actor is the authenticated caller. It is the OWNER's id, resolved from the
+	// request's credential and never from a body field, because "am I the owner"
+	// is the first question and answering it from the request would answer it from
+	// the requester's own sentence.
+	Actor id.UUID
+}
+
+// Transferred is the result of a successful transfer: both memberships, at the
+// roles they now hold.
+//
+// It returns both rather than only the new owner because the interesting half is
+// the demotion, and a caller that receives only the heir cannot render "you are
+// no longer the owner of this account" without a second request to find out what
+// they are now.
+type Transferred struct {
+	// Account is the account that changed hands. Nothing about it changed — the
+	// id, name, slug and personal flag are all untouched — and it is here so the
+	// response does not have to be assembled from the path.
+	Account Account
+	// PreviousOwner is the former owner's membership, at RoleAdmin.
+	PreviousOwner Membership
+	// NewOwner is the heir's membership, at RoleOwner.
+	NewOwner Membership
+}
+
+// TransferOwnership hands an account to another member.
+//
+// FOUR RULES, AND THE ORDER IS THE ARGUMENT.
+//
+// The caller's authority is settled FIRST, before anything is said about whether
+// this account could be transferred at all. That order is what keeps the
+// refusals from being an oracle: an admin who asks learns they are not the owner
+// and nothing about the account itself — not whether it is personal, not how many
+// members it has. Reordering these two checks would let any admin of an account
+// interrogate its shape.
+//
+//  1. the caller holds RoleOwner on THIS account   ErrNotOwner
+//  2. the account is not personal                  ErrNotTransferable
+//  3. the account has at least two members         ErrNotTransferable
+//  4. the target is not the caller                 ErrTransferToSelf
+//     and then the target must already be a member, which is ErrNotAMember from the
+//     membership read rather than a rule of its own.
+//
+// Rule 2 IS JUMPSTART'S `team?` and rule 3 IS ITS `users.size >= 2`, ported
+// rather than invented. Both say the same thing from two directions: a personal
+// account has exactly one member by construction, so the second rule subsumes the
+// first — and it is kept anyway, because a personal account is refused with the
+// reason a person can act on. "You can hand this account to somebody" is a
+// different answer from "there is nobody else in here to hand it to", and a
+// future packet that adds a second member to a personal account must not
+// silently make personal accounts transferable.
+//
+// # THE PREVIOUS OWNER BECOMES AN ADMIN
+//
+// This is jumpstart's "previous owner roles are unchanged", and it is the one
+// place where its model and this one disagree about what unchanged MEANS.
+// jumpstart stores ownership as a boolean on the account alongside a separate
+// `admin` boolean on the membership, so an owner who was also an admin keeps the
+// admin flag. Here a membership is exactly one of three ordered roles, so
+// "everything they had except ownership" is precisely RoleAdmin: every
+// capability owner carries over admin, and admin is the weakest role that has all
+// of them.
+//
+// Choosing RoleMember instead would be a real loss of authority on the day of the
+// handoff, and it is the reason transferring stays reversible: an heir who turns
+// out to be unavailable is a problem, and a previous owner who can no longer
+// rename the account, invite a member or remove one cannot fix it.
+//
+// # THE PROMOTION HAPPENS FIRST
+//
+// Inside one transaction the heir is promoted and only then is the previous owner
+// demoted, and guardLastOwner is never consulted because it does not have to be:
+// at every instant between the two statements the account has either one owner or
+// two, and the transaction's commit is what makes the two-owner state unobservable
+// from outside. Demoting first would pass through zero owners, and a concurrent
+// request that read that state would conclude the account has nobody to administer
+// it.
+//
+// The event is written in the same transaction as both role changes, which is the
+// same rule every other use case in this file follows and the reason the event
+// names both sides: see outbox.EventAccountOwnershipTransferred.
+func (s *Service) TransferOwnership(ctx context.Context, in TransferInput) (Transferred, error) {
+	if in.AccountID.IsZero() || in.ToUserID.IsZero() || in.Actor.IsZero() {
+		return Transferred{}, ErrNotAMember
+	}
+
+	now := s.clock.Now()
+	var out Transferred
+
+	err := s.uow.Do(ctx, func(ctx context.Context, q db.Querier) error {
+		// (1) The caller, on THIS account. Read from the membership table rather
+		// than taken from the middleware's resolved role, for the same reason
+		// Invite reads its inviter: the rule is about the use case, so it holds
+		// however the use case is reached.
+		actor, err := s.store.Member(ctx, q, in.AccountID, in.Actor)
+		if err != nil {
+			if errors.Is(err, ErrNotAMember) {
+				// A stranger is refused the same way an admin is. Ownership is
+				// per-account, so holding the owner role somewhere else is
+				// nothing, and ErrNotOwner says nothing about this account.
+				return ErrNotOwner
+			}
+			return err
+		}
+		if !actor.Role.AtLeast(RoleOwner) {
+			return ErrNotOwner
+		}
+
+		account, err := s.store.ByID(ctx, q, in.AccountID)
+		if err != nil {
+			if errors.Is(err, ErrNotFound) {
+				return ErrNotFound
+			}
+			return err
+		}
+
+		// (2) Personal accounts are the system's, not a team's.
+		if account.Personal {
+			return ErrNotTransferable
+		}
+
+		// (4) Before the member count, because it is the caller's own mistake and
+		// the sentence that answers it is different. Checked here rather than
+		// after the target read so that "you cannot transfer this to yourself" is
+		// not gated behind whether the account had two members.
+		if in.ToUserID == in.Actor {
+			return ErrTransferToSelf
+		}
+
+		// (3) Two members, counted inside the transaction so a concurrent removal
+		// cannot land between the count and the promotion.
+		members, err := s.store.Members(ctx, q, in.AccountID)
+		if err != nil {
+			return err
+		}
+		if len(members) < 2 {
+			return ErrNotTransferable
+		}
+
+		// The target must already be in the account. ErrNotAMember here is the
+		// same sentinel a stranger gets, which is right: this request does not
+		// admit anybody, so "not a member" is the whole of what it knows. The
+		// membership is read for the role it holds today, which travels in no
+		// response field and is here only so the promotion's precondition is a
+		// read rather than an assumption.
+		if _, err := s.store.Member(ctx, q, in.AccountID, in.ToUserID); err != nil {
+			return err
+		}
+
+		// THE HEIR FIRST. See the method comment: at no point does the account
+		// pass through a state with no owner.
+		promoted, err := s.store.SetRole(ctx, q, in.AccountID, in.ToUserID, RoleOwner)
+		if err != nil {
+			return err
+		}
+
+		demoted, err := s.store.SetRole(ctx, q, in.AccountID, in.Actor, RoleAdmin)
+		if err != nil {
+			return err
+		}
+
+		event, err := outbox.NewAccountOwnershipTransferred(now, in.AccountID, actor.UserID, promoted.UserID, in.Actor)
+		if err != nil {
+			return err
+		}
+		if err := s.events.Append(ctx, q, event); err != nil {
+			return err
+		}
+
+		out = Transferred{Account: account, PreviousOwner: demoted, NewOwner: promoted}
+		return nil
+	})
+	if err != nil {
+		return Transferred{}, err
+	}
+	return out, nil
+}
+
 // truncateName shortens an over-long personal account name to MaxNameLength.
 //
 // It exists for one case: a registration whose email local part is longer than a

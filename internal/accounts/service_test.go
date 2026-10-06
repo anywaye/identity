@@ -99,11 +99,27 @@ func (r *recordedRevocations) count() int {
 // written rather than only that a method was called.
 type recordedEvents struct {
 	appended []outbox.Envelope
+	// failWith makes every Append fail, which is how a test proves a use case
+	// writes its event INSIDE the transaction it is tested for: a service that
+	// appended afterwards would have committed its writes by the time this fired.
+	failWith error
 }
 
 func (r *recordedEvents) Append(_ context.Context, _ db.Querier, e outbox.Envelope) error {
+	if r.failWith != nil {
+		return r.failWith
+	}
 	r.appended = append(r.appended, e)
 	return nil
+}
+
+// reset drops the recorded events, so a test can assert about the events ITS OWN
+// action produced rather than about the ones a fixture's setup emitted. Every
+// event assertion in the transfer tests needs it: building the fixture writes an
+// identity.account.created, and "appended exactly [ownership_transferred]" is
+// only a statement about the transfer if the create has been cleared first.
+func (r *recordedEvents) reset() {
+	r.appended = nil
 }
 
 // types is the list of event types appended so far, for failure messages.

@@ -75,6 +75,21 @@ const (
 	// payload carries the old and the new role, per core's catalog.
 	EventMemberRoleChanged = "identity.member.role_changed"
 
+	// EventAccountOwnershipTransferred is emitted when an account changes hands.
+	//
+	// IT IS ONE EVENT AND NOT TWO role_changed EVENTS, and that is the whole
+	// reason this constant exists. A transfer changes two memberships at once —
+	// the heir is promoted, the previous owner is demoted — and emitting those as
+	// two `identity.member.role_changed` events would publish two independently
+	// ordered facts about a single atomic change. A consumer that received them
+	// could interleave either with any other event in the account's stream and
+	// reconstruct a state that never existed: an account with two owners, or with
+	// none. Both of those are exactly the states the transfer exists to prevent.
+	//
+	// So the event names BOTH sides — data.previous_owner_id and
+	// data.new_owner_id — and a consumer applies it as the one thing it is.
+	EventAccountOwnershipTransferred = "identity.account.ownership_transferred"
+
 	// EventMemberRemoved is emitted when a member is removed. The payload carries
 	// the role they held, because "who was removed" is not the question a
 	// downstream service asks; "what could they do until now" is.
@@ -180,6 +195,34 @@ func NewMemberRemoved(now time.Time, accountID, userID id.UUID, role string) (En
 		AccountID: accountID.String(),
 		UserID:    userID.String(),
 		Role:      role,
+	})
+}
+
+// NewAccountOwnershipTransferred builds the event emitted when an account
+// changes hands.
+//
+// BOTH sides are in the payload and neither is derivable from the other, which
+// is the property that makes this one event rather than two: `new_owner_id` is
+// the heir and `previous_owner_id` is the account's owner before this, and a
+// consumer keeping its own member list up to date needs both — it has to promote
+// one and demote the other, and which is which is not a thing it can work out
+// from the current list alone.
+//
+// Actor is the authenticated caller rather than the previous owner, and the two
+// are separate fields for the same reason: every transfer an operator investigates
+// is either "the owner did this" or "somebody with a stolen session did this",
+// and an event that cannot tell them apart answers neither question.
+func NewAccountOwnershipTransferred(now time.Time, accountID, previousOwnerID, newOwnerID, actorID id.UUID) (Envelope, error) {
+	return newTenancyEvent(now, EventAccountOwnershipTransferred, accountID, struct {
+		AccountID       string `json:"account_id"`
+		PreviousOwnerID string `json:"previous_owner_id"`
+		NewOwnerID      string `json:"new_owner_id"`
+		TransferredByID string `json:"transferred_by_id"`
+	}{
+		AccountID:       accountID.String(),
+		PreviousOwnerID: previousOwnerID.String(),
+		NewOwnerID:      newOwnerID.String(),
+		TransferredByID: actorID.String(),
 	})
 }
 
