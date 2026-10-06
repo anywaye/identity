@@ -385,8 +385,75 @@ func (s *Service) Get(ctx context.Context, accountID, userID id.UUID) (Account, 
 // the service two answers to the same question. This is a use case for the
 // authorized caller, and the tests above prove the middleware calls it in the
 // right order.
+//
+// # WHY IT OPENS A TRANSACTION, AND WHY THAT IS THE WHOLE FIX
+//
+// `account_users` is scoped by the ACCOUNT — `account_users_cafaye_select` from
+// 00016, `account_id = (select cafaye.current_account_id())` — so listing an
+// account's members needs the ACCOUNT identity, and `begin_account` is
+// `is_local`: on a bare pooled connection it expires at the end of the statement
+// that set it. Reading on `s.read.Queryer()` therefore saw no identity at all,
+// every predicate was false, and the DATABASE filtered every membership row out.
+//
+// There is no error to notice. `Members` returned `[]` and a nil error for an
+// account with two real members, so `GET /v1/accounts/:id/members` answered
+// `200 []`, and an owner watching a member list render empty had no signal that
+// it was wrong. It is the silent half of the defect `Get` had: `Get` at least
+// mapped the miss to a 404 the caller could report.
+//
+// `tenancy.TxRunner` sets the account from the CONTEXT, and
+// `requireAccountRole` is the one place in this service that puts an account
+// there — after a membership read has established that the account is the
+// caller's. So the identity this read runs under is a fact rather than the
+// caller's argument, which is the only reason the account seam is the right one
+// here: naming the account from `accountID` instead would hand the policy a
+// value no membership check ever approved.
+//
+// WHICH IS WHY IT REFUSES A CONTEXT THAT NAMES NOTHING, or names something
+// else. Both cases leave the same two questions in the query and no predicate
+// true, so both answer `[]` — and an empty member list is a real answer as far
+// as any caller can tell. `tenancy.BeginUser` refuses the nil caller for
+// precisely this reason ("a membership read with no membership to find is not a
+// thing anybody meant to ask for"), and this is the same rule about the other
+// half of the identity. The HTTP layer renders an unrecognised error as a 500
+// with a trace id, which is the right answer for a route reached without the
+// middleware that is supposed to have authorized it.
 func (s *Service) Members(ctx context.Context, accountID id.UUID) ([]MemberSummary, error) {
-	return s.store.Members(ctx, s.read.Queryer(), accountID)
+	scoped, ok := tenancy.AccountFrom(ctx)
+	if !ok {
+		return nil, fmt.Errorf("%w: listing the members of %s with no account on the context. "+
+			"A request chooses its account in requireAccountRole, which is also what "+
+			"authorizes the caller for it; reaching this without one is a wiring bug, and "+
+			"answering [] instead would say the account has nobody in it",
+			tenancy.ErrNoIdentity, accountID)
+	}
+	if scoped != accountID {
+		return nil, fmt.Errorf("%w: listing the members of %s while the request is standing in %s. "+
+			"The two have to be one account — the rows are filtered by both, so a mismatch "+
+			"returns neither account's members and says [] about the one that was asked for",
+			tenancy.ErrNoIdentity, accountID, scoped)
+	}
+
+	var out []MemberSummary
+	err := s.uow.Do(ctx, func(ctx context.Context, q db.Querier) error {
+		rows, err := s.store.Members(ctx, q, accountID)
+		if err != nil {
+			return err
+		}
+		out = rows
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	// Never nil, so a JSON encoder renders `[]` rather than `null`. The store
+	// already guarantees it on both of its returns; restated for the same reason
+	// ListMine restates it — this method hands back whatever the callback
+	// captured, and a nil slice captured there is a `null` one level out.
+	if out == nil {
+		out = []MemberSummary{}
+	}
+	return out, nil
 }
 
 // Member returns one user's membership, for the assertions above and for the
@@ -469,6 +536,21 @@ type Invited struct {
 // and there is one more hop between the request and this decision than there is
 // for the caller's minimum role. Checking it in one place means the rule holds
 // however the use case is reached.
+//
+// THE READ IS `s.Member`, and that is the whole fix for a defect that stopped
+// anybody being invited at all. It used to be
+// `s.store.Member(ctx, s.read.Queryer(), …)` — a bare pooled connection, no
+// transaction, no `tenancy.BeginUser` — so the `account_users_cafaye_members`
+// policy (00018, `user_id = cafaye.current_user_id()`) filtered the OWNER'S OWN
+// membership row out, `ErrNotAMember` came back, and the mapping a few lines
+// below turned it into ErrOwnerProtected. An owner could not invite anybody,
+// and the error said something about owners, which is the hardest kind of wrong
+// answer to notice from the outside.
+//
+// Reading it through `Member` rather than repeating the transaction here is what
+// keeps that from being a fifth copy of the rule: there is one method that reads
+// a membership for a caller, it knows the GUC has to be named on a transaction,
+// and every caller of it inherits both.
 func (s *Service) Invite(ctx context.Context, in InviteInput) (Invited, error) {
 	email := users.NormalizeEmail(in.Email)
 	if err := users.ValidateEmail(email); err != nil {
@@ -485,7 +567,7 @@ func (s *Service) Invite(ctx context.Context, in InviteInput) (Invited, error) {
 		return Invited{}, ErrRoleNotInvitable
 	}
 
-	inviter, err := s.store.Member(ctx, s.read.Queryer(), in.AccountID, in.InvitedBy)
+	inviter, err := s.Member(ctx, in.AccountID, in.InvitedBy)
 	if err != nil {
 		if errors.Is(err, ErrNotAMember) {
 			return Invited{}, ErrOwnerProtected

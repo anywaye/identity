@@ -10,6 +10,7 @@ import (
 	"github.com/cafaye/identity/internal/platform/db"
 	"github.com/cafaye/identity/internal/platform/dbtest"
 	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/cafaye/identity/internal/tenancy"
 )
 
 // Ownership transfer: the jumpstart `Account::Transfer` rules, expressed here.
@@ -298,10 +299,16 @@ func TestTransferFailsWithoutMutatingAnythingWhenTheEventCannotBeWritten(t *test
 }
 
 // otherOwner reads the single owner of an account the fixture already built.
+//
+// The context names the account, because `Members` refuses to run without one: its
+// rows are filtered by the account a request is standing in, so it refuses rather
+// than answering `[]`. In production `requireAccountRole` puts that identity on
+// the context before any handler runs — a fixture calling the use case directly
+// has to do the same thing rather than get an empty list.
 func otherOwner(t *testing.T, h *harness, account Account) id.UUID {
 	t.Helper()
 
-	members, err := h.svc.Members(t.Context(), account.ID)
+	members, err := h.svc.Members(tenancy.WithAccount(t.Context(), account.ID), account.ID)
 	if err != nil {
 		t.Fatalf("Members: %v", err)
 	}

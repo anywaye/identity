@@ -6,6 +6,49 @@ All notable changes to identity are recorded here. The format follows
 
 ## [Unreleased]
 
+### Fixed (packet W7: an owner could not invite anybody, and a member list rendered empty)
+
+Two reads reached for a bare pooled connection instead of a transaction, so
+`cafaye.account_id` was never set on the connection that ran them and **the
+database filtered the rows out**. Neither was an error, and one was not even a
+wrong answer a caller could report.
+
+| Use case | Symptom | Cause |
+|---|---|---|
+| `accounts.Service.Invite` | **every invitation failed** with `ErrOwnerProtected`, including the account owner's own | the inviter's membership read had no transaction, so `account_users_cafaye_members` (00018) hid the caller's own row |
+| `accounts.Service.Members` | **`GET /v1/accounts/:id/members` answered `200 []`** for an account with real members | the list is scoped by the ACCOUNT (`account_users_cafaye_select`, 00016), and no transaction meant no account identity |
+
+Both are the recipe `Get` and `Member` had — fixed earlier on this same branch by
+the previous packet, and never written here, so this is the first CHANGELOG entry
+the class has had. `account_users` is the only table in this schema carrying a
+caller-scoped select policy, so this was the last of it.
+
+- **`Invite` now reads the inviter through `Member`**, which opens a transaction
+  and names the caller with `begin_user`. Reading it through the one method that
+  already does this is what keeps it from being a fifth copy of the rule. The
+  owner restriction is unchanged and is still decided from the membership: an
+  admin still cannot invite an admin, a member still cannot invite anybody.
+- **`Members` now opens a transaction through `tenancy.TxRunner`**, which sets the
+  account identity from the request context — put there by `requireAccountRole`
+  after a membership read established the account is the caller's, which is why
+  the account seam is the right one and naming the account from the argument
+  would hand the policy a value no membership check ever approved.
+- **`Members` REFUSES a context that names no account, or a different one**,
+  rather than answering `[]`. Both cases leave the same two questions in the
+  query and no predicate true, and an empty member list is a real answer as far
+  as any caller can tell. The refusal is `tenancy.ErrNoIdentity`, which
+  `writeTenancyError` does not recognise, so it renders as a **500 with a trace
+  id** — the right answer for a route reached without the middleware meant to
+  have authorized it.
+
+`internal/accounts/invite_members_rls_test.go` runs the real `Service` against
+`dbtest.Pool` — public tables, app role, policies live — which is the only
+arrangement in which "a member being refused" is observable at all. Every other
+test in the package runs against a schema cloned with `LIKE … INCLUDING ALL`, and
+LIKE does not copy row-level security: those tests have been asserting against a
+table where every row is visible to every caller, which is why
+`TestOnlyAnOwnerMayInviteAnAdmin` was green while the owner could not invite.
+
 ### Added (packet identity-disabled-02: an operator, and the scope it needs)
 
 `POST /v1/users/:userId/disable` and `POST /v1/users/:userId/enable`, reachable by a
