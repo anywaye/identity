@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/cafaye/identity/internal/outbox"
 	"github.com/cafaye/identity/internal/platform/clock"
 	"github.com/cafaye/identity/internal/platform/db"
@@ -31,6 +33,13 @@ type harness struct {
 	revokes *recordedRevocations
 	clock   *clock.Fake
 	q       db.Querier
+
+	// pool is q's concrete type, kept so a fixture can open a transaction of its
+	// own. q is typed as the interface because most fixtures only ever issue a
+	// statement, and a type assertion in each of those would be noise. The one
+	// fixture that needs `db.TxRunner` — which takes a pool — is
+	// addRealMember in get_rls_test.go.
+	pool *pgxpool.Pool
 }
 
 func newHarness(t *testing.T) *harness {
@@ -48,6 +57,7 @@ func newHarness(t *testing.T) *harness {
 		revokes: revokes,
 		clock:   clk,
 		q:       pool,
+		pool:    pool,
 		svc: NewService(
 			db.TxRunner{Pool: pool},
 			store,

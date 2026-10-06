@@ -194,7 +194,7 @@ func (f *fakeTenancy) TransferOwnership(_ context.Context, in accounts.TransferI
 		return accounts.Transferred{}, f.transferErr
 	}
 	return accounts.Transferred{
-		Account:       accounts.Account{ID: in.AccountID, Name: "Acme", Slug: "acme"},
+		Account:       f.account,
 		NewOwner:      accounts.Membership{AccountID: in.AccountID, UserID: in.ToUserID, Role: accounts.RoleOwner, CreatedAt: testInstant},
 		PreviousOwner: accounts.Membership{AccountID: in.AccountID, UserID: in.Actor, Role: accounts.RoleAdmin, CreatedAt: testInstant},
 	}, nil

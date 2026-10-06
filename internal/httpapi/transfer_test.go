@@ -27,7 +27,6 @@ import (
 // it. Both are wrong in a way only the body shows.
 func TestTheTransferResponseCarriesBothMembershipsAndTheDemotion(t *testing.T) {
 	accountID := id.MustNew()
-	owner := id.MustNew()
 	heir := id.MustNew()
 
 	fake := newFakeTenancy()
@@ -35,6 +34,11 @@ func TestTheTransferResponseCarriesBothMembershipsAndTheDemotion(t *testing.T) {
 	fake.role = accounts.RoleOwner
 
 	auth := newFakeAuth()
+	// The caller is the fake session's user, not a local variable: the whole
+	// point of this route is that the previous owner is whoever presented the
+	// credential, and a test that named its own would not notice if the handler
+	// invented one.
+	owner := auth.user.ID
 	h := New(nil, WithAuth(auth), WithTenancy(fake))
 
 	rec := requestAs(t, h, auth.token, http.MethodPost,
@@ -91,23 +95,63 @@ func TestTheCallerComesFromTheCredentialAndTheHeirFromTheBody(t *testing.T) {
 	h := New(nil, WithAuth(auth), WithTenancy(fake))
 
 	heir := id.MustNew()
-	// A body naming somebody ELSE as the actor. There is no such field, and
-	// additionalProperties is false in the document — so this is a body that
-	// arrives with an unknown key and the handler must ignore it rather than
-	// honour it.
-	requestAs(t, h, auth.token, http.MethodPost,
+	rec := requestAs(t, h, auth.token, http.MethodPost,
 		"/v1/accounts/"+accountID.String()+"/ownership-transfers",
-		`{"new_owner_user_id":"`+heir.String()+`","actor":"`+id.MustNew().String()+`"}`)
+		`{"new_owner_user_id":"`+heir.String()+`"}`)
+
+	// The status is asserted BEFORE the recorded call, and that ordering is the
+	// fix for a version of this test that read the recorded call and nothing
+	// else: when the body below is rejected the handler is never reached, the
+	// recorded call is all zeros, and the three assertions pass vacuously. It
+	// passed for a whole commit that way — `go test -run Transfer` ran it alone,
+	// where a *different* body reached the handler, and the full suite did not.
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body)
+	}
 
 	got := fake.transferredFor
-	if got.Actor != auth.user {
-		t.Errorf("the use case was given Actor = %s, want the authenticated user %s — the actor is never read from the body", got.Actor, auth.user)
+	if got.Actor != auth.user.ID {
+		t.Errorf("the use case was given Actor = %s, want the authenticated user %s — the actor is never read from the body", got.Actor, auth.user.ID)
 	}
 	if got.Heir != heir {
 		t.Errorf("the use case was given Heir = %s, want %s from the body", got.Heir, heir)
 	}
 	if got.AccountID != accountID {
 		t.Errorf("the use case was given AccountID = %s, want the path's %s", got.AccountID, accountID)
+	}
+}
+
+// A body that names an ACTOR is refused outright, and the document says so with
+// `additionalProperties: false`.
+//
+// This is the same property as the test above reached from the other direction,
+// and it is here because it is enforced by `decodeBody`'s DisallowUnknownFields
+// rather than by this route: there is no `actor` field to honour, so a caller who
+// sends one gets a 400 and a use case call with all three ids zero. That is
+// stronger than ignoring the field, and it is worth a test that names the
+// mechanism — a handler that grew an actor field would still pass the test above
+// on a body that did not carry one.
+func TestABodyThatNamesAnActorIsRefusedRatherThanHonoured(t *testing.T) {
+	accountID := id.MustNew()
+
+	fake := newFakeTenancy()
+	fake.account = accounts.Account{ID: accountID, Name: "Acme Corp", Slug: "acme-corp"}
+	fake.role = accounts.RoleOwner
+
+	auth := newFakeAuth()
+	rec := requestAs(t, New(nil, WithAuth(auth), WithTenancy(fake)), auth.token, http.MethodPost,
+		"/v1/accounts/"+accountID.String()+"/ownership-transfers",
+		`{"new_owner_user_id":"`+id.MustNew().String()+`","actor":"`+id.MustNew().String()+`"}`)
+
+	// 422 and not 400: the body parsed as JSON and one of its fields is not one
+	// this endpoint accepts, which is exactly what decodeBody's
+	// DisallowUnknownFields answers with. The status is measured, not assumed —
+	// it was 400 in the first draft of this assertion and the test said so.
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422; body: %s", rec.Code, rec.Body)
+	}
+	if !fake.transferredFor.AccountID.IsZero() {
+		t.Errorf("the use case was reached (%+v) for a body carrying an actor field", fake.transferredFor)
 	}
 }
 
@@ -203,7 +247,7 @@ func TestAMalformedHeirIsRefusedLikeAnInvisibleAccount(t *testing.T) {
 
 	// And the use case was never reached — a 404 that had already called the
 	// service would mean the refusal is decided after a write attempt.
-	if fake.transferredFor.AccountID != id.UUID{} {
+	if !fake.transferredFor.AccountID.IsZero() {
 		t.Errorf("the use case was called for %+v on a malformed heir; the 404 happens first", fake.transferredFor)
 	}
 }

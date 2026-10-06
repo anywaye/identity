@@ -319,27 +319,63 @@ func (s *Service) ListMine(ctx context.Context, userID id.UUID) ([]MemberSummary
 //
 // The second return value is the caller's own Role, which the handler needs to
 // render "you are an admin of this" without a second query.
+//
+// # WHY IT OPENS ITS OWN TRANSACTION
+//
+// This read runs BEFORE a request has chosen an account — `requireAccountRole`
+// calls it to decide whether the account in the path is this caller's at all — so
+// nothing has set `cafaye.account_id` and the four account policies on
+// `account_users` cannot let this row through. Migration 00018 added the fifth,
+// `account_users_cafaye_members`, which filters on
+// `user_id = cafaye.current_user_id()`, and `cafaye.begin_user` is what puts the
+// caller there.
+//
+// So without the transaction below this returns ErrNotAMember to the OWNER of
+// the account, which the handler renders as `404 Account not found`: the
+// database filtered the row out rather than any assertion refusing it, and
+// nothing anywhere went red. `begin_user` is `is_local`, so on a pooled
+// connection outside a transaction it expires at the end of the statement that
+// set it, which is why this opens one through the same `s.uow` every write here
+// already uses rather than reading on `s.read.Queryer()`.
+//
+// It is the SECOND call site of `tenancy.BeginUser`, not the first, and that is
+// the defect's real shape: `ListMine` above had the reasoning in a comment and
+// `Get` did not, so the rule lived in the doc comment of the one function that
+// happened to be fixed. `get_rls_test.go` is what holds it now.
 func (s *Service) Get(ctx context.Context, accountID, userID id.UUID) (Account, Role, error) {
-	q := s.read.Queryer()
+	var out Account
+	var role Role
 
-	membership, err := s.store.Member(ctx, q, accountID, userID)
-	if err != nil {
-		if errors.Is(err, ErrNotAMember) {
-			return Account{}, "", ErrNotAMember
+	err := s.uow.Do(ctx, func(ctx context.Context, q db.Querier) error {
+		if err := tenancy.BeginUser(ctx, q, userID); err != nil {
+			return fmt.Errorf("naming the caller for the account read: %w", err)
 		}
-		return Account{}, "", fmt.Errorf("looking up a membership: %w", err)
-	}
 
-	account, err := s.store.ByID(ctx, q, accountID)
+		membership, err := s.store.Member(ctx, q, accountID, userID)
+		if err != nil {
+			if errors.Is(err, ErrNotAMember) {
+				return ErrNotAMember
+			}
+			return fmt.Errorf("looking up a membership: %w", err)
+		}
+
+		account, err := s.store.ByID(ctx, q, accountID)
+		if err != nil {
+			// A membership with no account is not a state the foreign keys allow, so
+			// this is a database problem rather than a caller one. It is mapped to
+			// the same error anyway: the caller learns nothing about the account's
+			// existence either way.
+			return ErrNotAMember
+		}
+
+		out, role = account, membership.Role
+		return nil
+	})
 	if err != nil {
-		// A membership with no account is not a state the foreign keys allow, so
-		// this is a database problem rather than a caller one. It is mapped to
-		// the same error anyway: the caller learns nothing about the account's
-		// existence either way.
-		return Account{}, "", ErrNotAMember
+		return Account{}, "", err
 	}
 
-	return account, membership.Role, nil
+	return out, role, nil
 }
 
 // Members lists an account's memberships.
@@ -355,8 +391,30 @@ func (s *Service) Members(ctx context.Context, accountID id.UUID) ([]MemberSumma
 
 // Member returns one user's membership, for the assertions above and for the
 // removal path. A miss is ErrNotAMember, not ErrNotFound.
+//
+// IT OPENS A TRANSACTION AND NAMES THE CALLER for the reason Get gives, and it is
+// here rather than not because `TransferOwnership` reads the membership to
+// authorize its actor on an account nobody has stood in yet. Left on
+// `s.read.Queryer()` it refuses the owner who asked for the transfer with
+// ErrNotOwner — indistinguishable from an admin being correctly refused, so the
+// only symptom would have been a transfer that 403s its own owner.
 func (s *Service) Member(ctx context.Context, accountID, userID id.UUID) (Membership, error) {
-	return s.store.Member(ctx, s.read.Queryer(), accountID, userID)
+	var out Membership
+	err := s.uow.Do(ctx, func(ctx context.Context, q db.Querier) error {
+		if err := tenancy.BeginUser(ctx, q, userID); err != nil {
+			return fmt.Errorf("naming the caller for the membership read: %w", err)
+		}
+		m, err := s.store.Member(ctx, q, accountID, userID)
+		if err != nil {
+			return err
+		}
+		out = m
+		return nil
+	})
+	if err != nil {
+		return Membership{}, err
+	}
+	return out, nil
 }
 
 // Account returns an account without any authorization check, for the handlers
