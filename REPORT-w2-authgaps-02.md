@@ -222,6 +222,27 @@ and the packet did not ask; the coverage exclusions I touched are nil.
 |---|---|
 | `d6eb144` | transfer use case (prior) |
 | `587efee` | transfer route, document, matrix (prior) |
+| `ee5dda4` | transfer handler tests (prior) |
 | `238d864` | **this packet**: `Get` + `Member` open a transaction and call `BeginUser`; `get_rls_test.go` against the real policies |
+| `010ed16` | **this packet**: this report |
 
 Not pushed, as instructed.
+
+### Two commits landed that I did not write — read this before reviewing
+
+**1. `2377fe5` — `HANDOFF-w2-authgaps.md`, authored at 06:39:14, between my two
+commits.** Something else wrote it into this branch while I was working. I did not
+author it and did not review it in advance.
+
+It covers the **same packet** and reaches the same conclusion on transfer and the
+same "sudo and impersonation are untouched" position, so there is no contradiction.
+But it was written at 06:39 and describes the branch as of then — **it therefore
+does not know about the `Get` 404**, which is fixed in `238d864` (06:37) and is
+this packet's main deliverable. **This report supersedes it on that point.** Its
+migration observation about `00019` hardcoding `identity_app` against `00016`'s
+derived role name is worth carrying forward; I did not verify it and am not
+claiming it.
+
+**2. `internal/httpapi/accounts_fake_test.go`**, described in §6 — a one-line edit
+that appeared in the working tree during my session, swept into `238d864` by
+`git add -A`. Same caution: not mine, worth a reviewer's eye.
