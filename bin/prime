@@ -48,4 +48,31 @@ go build ./...
 # `tests/validate.sh:3014` fails a Go CI step that omits it — and kit's reusable
 # workflow passes it. This file was the fleet's Go gate without it, so identity's
 # gate was the one place the rule did not hold.
-go test -count=1 ./...
+#
+# -p 4 bounds how many packages run at once, and the number is not a taste. The
+# per-role CONNECTION LIMIT is this service's share of the one shared cluster,
+# and that cap is the mechanism which stops one service's runaway pool from
+# starving the other eight (kit's templates/compose/postgres/initdb/10-cluster.sh:268);
+# docker-compose.yml:184 sets it to 50. pgxpool's MaxConns is 8
+# (internal/platform/db/db.go:19, defaultMaxConns). 50/8 = 6, so six concurrent
+# test binaries can each take a full pool; `-p 4` puts the ceiling at 32 and
+# leaves the cap meaning what it says.
+#
+# Without it the gate is FLAKY, not slow, and flaky is the expensive kind:
+# `go test ./...` defaults to one binary per CPU, so 24 packages each opening a
+# pool of 8 want 192 connections against a limit of 50. Measured on this tree,
+# an unbounded run failed with `FATAL: too many connections for role "identity"`
+# (SQLSTATE 53300) on some runs and passed on others with no code change in
+# between, which is how it cost a worker its whole budget chasing a defect that
+# was not in the code. -count=1 forces every package to run, which removes the
+# cache as a variable but not this one.
+#
+# The cost is bounded and measured on this tree, all 24 packages, against the
+# real database:
+#
+#     -p 1 (fully serial)  114s
+#     -p 4 (here)          57s
+#     unbounded             46s   <- and intermittently 53300
+#
+# So the determinism costs 11 seconds, and the fully-serial answer costs 68.
+go test -count=1 -p 4 ./...
