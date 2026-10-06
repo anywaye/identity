@@ -20,6 +20,7 @@ import (
 	"github.com/cafaye/identity/internal/platform/db"
 	"github.com/cafaye/identity/internal/platform/dbtest"
 	"github.com/cafaye/identity/internal/sessions"
+	"github.com/cafaye/identity/internal/useraudit"
 	"github.com/cafaye/identity/internal/users"
 )
 
@@ -56,6 +57,10 @@ func newIntegrationServiceWithMFA(t *testing.T) (*Service, *pgxpool.Pool, *clock
 		// refuses to disable anybody without it, so a nil here would make every
 		// disable in this file answer ErrNoAccessTokenRevoker.
 		oidc.NewStore(pool),
+		// The real audit writer, on the sibling's reasoning: the use case refuses to
+		// disable anybody without it, so a nil here would make every disable in this
+		// file answer ErrNoUserAuditRecorder instead of exercising anything.
+		useraudit.NewStore(pool),
 		users.NewHasherWithParams(&argon2id.Params{
 			Memory: 8 * 1024, Iterations: 1, Parallelism: 1, SaltLength: 16, KeyLength: 32,
 		}),
@@ -280,6 +285,10 @@ func TestIntegrationLockIsVisibleToAnotherServiceInstance(t *testing.T) {
 		// instance must see the same table the first one does, because that is
 		// what the disable's sweep revokes in.
 		oidc.NewStore(pool),
+		// The real writer, on the same reasoning: a disable's record has to land in
+		// the same table this instance can see, or the second service would be
+		// answering with a trail the first one cannot read.
+		useraudit.NewStore(pool),
 		users.NewHasherWithParams(&argon2id.Params{
 			Memory: 8 * 1024, Iterations: 1, Parallelism: 1, SaltLength: 16, KeyLength: 32,
 		}),
@@ -326,6 +335,10 @@ func TestIntegrationRegisterIsAtomicWhenTheEventIsRejected(t *testing.T) {
 		// The real sweep, as main wires it: this test is about a registration
 		// rolling back, and nothing about it turns on the disable's sweep.
 		oidc.NewStore(pool),
+		// And the real writer, on the same reasoning — a required dependency is
+		// required in the fixtures that are not about it too, so that a test in this
+		// file can never answer ErrNoUserAuditRecorder by accident.
+		useraudit.NewStore(pool),
 		users.NewHasherWithParams(&argon2id.Params{
 			Memory: 8 * 1024, Iterations: 1, Parallelism: 1, SaltLength: 16, KeyLength: 32,
 		}),

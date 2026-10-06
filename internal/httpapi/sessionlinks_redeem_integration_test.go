@@ -55,6 +55,7 @@ import (
 	"github.com/cafaye/identity/internal/platform/id"
 	"github.com/cafaye/identity/internal/recovery"
 	"github.com/cafaye/identity/internal/sessions"
+	"github.com/cafaye/identity/internal/useraudit"
 	"github.com/cafaye/identity/internal/users"
 )
 
@@ -99,6 +100,7 @@ func newRedeemFixture(t *testing.T) *redeemFixture {
 		// package must behave the way the deployed service does, and a nil here
 		// would make it refuse rather than revoke.
 		oidc.NewStore(pool),
+		useraudit.NewStore(pool),
 		cheap,
 		clk,
 		recovery.RedeemedSessionTTL,

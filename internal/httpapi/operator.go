@@ -57,11 +57,14 @@ package httpapi
 //	     session was ended and no column was written, and they have a trace id.
 
 import (
+	"context"
 	"errors"
 	"net/http"
 
 	"github.com/cafaye/identity/internal/apikeys"
+	"github.com/cafaye/identity/internal/auth"
 	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/cafaye/identity/internal/useraudit"
 	"github.com/cafaye/identity/internal/users"
 )
 
@@ -149,9 +152,60 @@ func (o options) requireOperatorToken(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		next(w, r)
+		// THE CALLER GOES ON THE CONTEXT, and this line is the reason the audit trail
+		// exists. The gate above knows exactly who is calling and was about to discard
+		// it — which was correct until disabled-04, because nothing downstream wanted
+		// it. `auth.Service.Disable` now has to write a row naming this operator and
+		// this api key, and a record that says "somebody" cannot answer the question
+		// the packet was written for.
+		//
+		// It is set AFTER the scope check rather than before, so the context a handler
+		// runs with never carries a credential that was refused. A route that
+		// answered an error while its context held an authenticated caller would be a
+		// context that lied.
+		next(w, r.WithContext(withOperatorCaller(r.Context(), operatorCaller{
+			UserID: caller.User.ID,
+			KeyID:  caller.Key.ID,
+		})))
 	}
 }
+
+// operatorCallerKey is the context key. A private struct type, like accountContextKey
+// and traceIDKey, so no other package can put or read this value by accident.
+type operatorCallerKey struct{}
+
+type operatorCaller struct {
+	UserID id.UUID
+	KeyID  id.UUID
+}
+
+func withOperatorCaller(ctx context.Context, c operatorCaller) context.Context {
+	return context.WithValue(ctx, operatorCallerKey{}, c)
+}
+
+// operatorActorFrom assembles the audit actor from what requireOperatorToken resolved.
+//
+// IT REQUIRES A KEY ID AND FAILS LOUDLY WITHOUT ONE, on `adminActorFrom`'s terms: a
+// zero key id means the row would name no credential, and this surface is reachable
+// only by a token (D14 — a session is refused before it reaches a handler), so a
+// caller reaching here without one is a wiring fault and not a request to be served.
+// It is a 500 for the same reason: nothing about the caller is wrong, and a 403 would
+// tell a client its credential was insufficient when the real fault is that the gate
+// did not run.
+//
+// THE TRACE ID COMES FROM THE SAME CONTEXT every other audited action reads it from,
+// so the row joins to the request's log line by exactly one mechanism.
+func operatorActorFrom(ctx context.Context) (useraudit.Actor, bool) {
+	c, ok := ctx.Value(operatorCallerKey{}).(operatorCaller)
+	if !ok || c.KeyID.IsZero() {
+		return useraudit.Actor{}, false
+	}
+	return useraudit.Actor{UserID: c.UserID, KeyID: c.KeyID, TraceID: traceIDFrom(ctx)}, true
+}
+
+// errNoOperatorActor means an operator handler reached its actor assembly with no
+// api key in context, which requireOperatorToken should have made impossible.
+var errNoOperatorActor = errors.New("an operator route reached its handler with no api key in context")
 
 // ---------------------------------------------------------------------------
 // handlers
@@ -173,8 +227,19 @@ func (o options) handleDisableUser(w http.ResponseWriter, r *http.Request) {
 		notFound(w, r)
 		return
 	}
+	actor, ok := operatorActorFrom(r.Context())
+	if !ok {
+		unexpected(w, r, o.logger, errNoOperatorActor)
+		return
+	}
 
-	if err := o.auth.Disable(r.Context(), userID, o.clk.Now()); err != nil {
+	if err := o.auth.Disable(r.Context(), auth.DisableInput{
+		UserID:      userID,
+		ActorUserID: actor.UserID,
+		ActorKeyID:  actor.KeyID,
+		TraceID:     actor.TraceID,
+		At:          o.clk.Now(),
+	}); err != nil {
 		o.writeOperatorError(w, r, err)
 		return
 	}
@@ -197,8 +262,22 @@ func (o options) handleEnableUser(w http.ResponseWriter, r *http.Request) {
 		notFound(w, r)
 		return
 	}
+	// Same assembly as the disable, and it is not optional here either: a re-enable
+	// that leaves no record leaves a trail saying the person is still disabled. See
+	// `auth.Service.Enable`.
+	actor, ok := operatorActorFrom(r.Context())
+	if !ok {
+		unexpected(w, r, o.logger, errNoOperatorActor)
+		return
+	}
 
-	if err := o.auth.Enable(r.Context(), userID); err != nil {
+	if err := o.auth.Enable(r.Context(), auth.EnableInput{
+		UserID:      userID,
+		ActorUserID: actor.UserID,
+		ActorKeyID:  actor.KeyID,
+		TraceID:     actor.TraceID,
+		At:          o.clk.Now(),
+	}); err != nil {
 		o.writeOperatorError(w, r, err)
 		return
 	}

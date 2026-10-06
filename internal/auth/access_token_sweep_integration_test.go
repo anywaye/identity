@@ -130,7 +130,7 @@ func TestDisablingRevokesThisUsersAccessTokensAndNoBodysElse(t *testing.T) {
 		t.Fatal("the second subject's access token was already revoked before the disable")
 	}
 
-	if err := f.svc.Disable(ctx, f.user.ID, f.now); err != nil {
+	if err := f.svc.Disable(ctx, disableFor(f.user.ID, f.now)); err != nil {
 		t.Fatalf("Disable: %v", err)
 	}
 
@@ -165,7 +165,7 @@ func TestASecondDisableDoesNotMoveTheRevocationOfTheFirst(t *testing.T) {
 
 	token := seedAccessToken(t, f, f.user.ID, "repeatable")
 
-	if err := f.svc.Disable(ctx, f.user.ID, f.now); err != nil {
+	if err := f.svc.Disable(ctx, disableFor(f.user.ID, f.now)); err != nil {
 		t.Fatalf("the first Disable: %v", err)
 	}
 	first := readRevokedAt(t, f, token)
@@ -174,7 +174,7 @@ func TestASecondDisableDoesNotMoveTheRevocationOfTheFirst(t *testing.T) {
 	}
 
 	later := f.now.Add(5 * time.Minute)
-	if err := f.svc.Disable(ctx, f.user.ID, later); err != nil {
+	if err := f.svc.Disable(ctx, disableFor(f.user.ID, later)); err != nil {
 		t.Fatalf("the second Disable = %v, want success: revoking zero tokens is a success", err)
 	}
 
@@ -199,7 +199,7 @@ func TestDisablingAUserWhoNeverSignedInThroughAProductSucceeds(t *testing.T) {
 		t.Fatalf("the fixture holds %d access tokens, want 0: this test is about the zero case", got)
 	}
 
-	if err := f.svc.Disable(ctx, f.user.ID, f.now); err != nil {
+	if err := f.svc.Disable(ctx, disableFor(f.user.ID, f.now)); err != nil {
 		t.Fatalf("Disable with no access tokens = %v, want success", err)
 	}
 
@@ -228,7 +228,7 @@ func TestAFailedAccessTokenSweepRollsBackTheSessionsAndTheColumnWithIt(t *testin
 
 	refuseTableWrites(t, f.owner, "oidc_access_tokens", "UPDATE")
 
-	err := f.svc.Disable(ctx, f.user.ID, f.now)
+	err := f.svc.Disable(ctx, disableFor(f.user.ID, f.now))
 	if err == nil {
 		t.Fatal("Disable succeeded while the oidc_access_tokens UPDATE was being refused, so " +
 			"the column write committed without the revocation it was supposed to be atomic with")

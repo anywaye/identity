@@ -254,7 +254,13 @@ func Reset(t *testing.T) {
 	}
 	defer pool.Close()
 
-	if _, err := pool.Exec(ctx, `TRUNCATE TABLE account_audit_log, api_keys, mfa_challenges, mfa_used_totp_steps, mfa_recovery_codes, mfa_credentials, oidc_access_tokens, oidc_auth_requests, oidc_clients, outbox_events, connected_accounts, sessions, account_invitations, account_users, accounts, users CASCADE`); err != nil {
+	// user_audit_log is first, beside account_audit_log, and the position is
+	// load-bearing in the ordinary way this list works: it has NO foreign keys and no
+	// dependency on `users` (00022 — a cascade is a delete), so it could sit anywhere.
+	// It is named anyway, because a table missing from this list is not an error: it
+	// is rows from one package's test run surviving into the next one's, which is the
+	// non-deterministic failure this function's own package comment warns about.
+	if _, err := pool.Exec(ctx, `TRUNCATE TABLE user_audit_log, account_audit_log, api_keys, mfa_challenges, mfa_used_totp_steps, mfa_recovery_codes, mfa_credentials, oidc_access_tokens, oidc_auth_requests, oidc_clients, outbox_events, connected_accounts, sessions, account_invitations, account_users, accounts, users CASCADE`); err != nil {
 		t.Fatalf("truncating: %v", err)
 	}
 }
@@ -457,6 +463,31 @@ func SchemaWithOwner(t *testing.T) (app, owner *pgxpool.Pool) {
 		`CREATE TABLE ` + schema + `.recovery_tokens (LIKE public.recovery_tokens INCLUDING ALL)`,
 		`ALTER TABLE ` + schema + `.recovery_tokens ADD CONSTRAINT recovery_tokens_user_id_fkey
 			FOREIGN KEY (user_id) REFERENCES ` + schema + `.users (id) ON DELETE CASCADE`,
+		// 00022's user_audit_log, and it needs BOTH halves of the treatment
+		// account_audit_log gets above: the table, and the trigger.
+		//
+		// The trigger is the half that is easy to miss and the half that matters. LIKE
+		// does not copy triggers, so a private schema without this statement has a
+		// `user_audit_log` that IS append-only in production and freely editable here —
+		// which means a test asserting the append-only property would PASS against a
+		// table production does not have. The check would be measuring the harness.
+		//
+		// No foreign keys are written out, and this time that is not an omission to be
+		// tidied away: 00022 declares none, deliberately, because a CASCADE from users
+		// is a DELETE and a DELETE is what the trigger refuses. Adding one here would
+		// make the private schema STRICTER than production, which is the direction that
+		// hides a bug rather than the direction that finds one — and it would make
+		// this table cascade the one thing its migration was written to prevent.
+		`CREATE TABLE ` + schema + `.user_audit_log (LIKE public.user_audit_log INCLUDING ALL)`,
+		`CREATE FUNCTION ` + schema + `.user_audit_log_is_append_only() RETURNS trigger AS $$
+			BEGIN
+				RAISE EXCEPTION 'user_audit_log is append-only; % is not permitted', TG_OP
+					USING ERRCODE = 'restrict_violation';
+			END;
+		$$ LANGUAGE plpgsql`,
+		`CREATE TRIGGER user_audit_log_append_only
+			BEFORE UPDATE OR DELETE ON ` + schema + `.user_audit_log
+			FOR EACH ROW EXECUTE FUNCTION ` + schema + `.user_audit_log_is_append_only()`,
 	}
 	for _, stmt := range stmts {
 		if _, err := admin.Exec(ctx, stmt); err != nil {

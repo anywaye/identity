@@ -78,7 +78,7 @@ func TestADisableSweepsTheAccessTokensInsideTheTransaction(t *testing.T) {
 	f := newFixture()
 	u := f.register(t, "kaka@example.com", "correct horse battery staple")
 
-	if err := f.svc.Disable(context.Background(), u.ID, f.clock.Now()); err != nil {
+	if err := f.svc.Disable(context.Background(), disableFor(u.ID, f.clock.Now())); err != nil {
 		t.Fatalf("Disable: %v", err)
 	}
 
@@ -130,7 +130,7 @@ func TestAFailedAccessTokenSweepLeavesNothingAfterIt(t *testing.T) {
 	u := f.register(t, "kaka@example.com", "correct horse battery staple")
 	f.access.err = errSweepInjected
 
-	err := f.svc.Disable(context.Background(), u.ID, f.clock.Now())
+	err := f.svc.Disable(context.Background(), disableFor(u.ID, f.clock.Now()))
 
 	// THE INJECTED ERROR, and not "some error". A rollback caused by something else
 	// — the session DELETE failing, say — would satisfy every assertion below and
@@ -181,7 +181,7 @@ func TestADisableWithNoAccessTokenRevokerWiredRefusesAndWritesNothing(t *testing
 	// about a state this account happened to be in already.
 	f.seedSession(u.ID)
 
-	err := f.svc.Disable(context.Background(), u.ID, f.clock.Now())
+	err := f.svc.Disable(context.Background(), disableFor(u.ID, f.clock.Now()))
 
 	if !errors.Is(err, ErrNoAccessTokenRevoker) {
 		t.Fatalf("Disable with no access token revoker = %v, want ErrNoAccessTokenRevoker. "+
@@ -222,7 +222,7 @@ func TestADisableAsksForTheSweepExactlyOncePerCall(t *testing.T) {
 	u := f.register(t, "kaka@example.com", "correct horse battery staple")
 
 	for range 3 {
-		if err := f.svc.Disable(context.Background(), u.ID, f.clock.Now()); err != nil {
+		if err := f.svc.Disable(context.Background(), disableFor(u.ID, f.clock.Now())); err != nil {
 			t.Fatalf("Disable: %v", err)
 		}
 	}
@@ -248,12 +248,12 @@ func TestASecondDisableSweepsAgainWithItsOwnInstantAndStillSucceeds(t *testing.T
 	u := f.register(t, "kaka@example.com", "correct horse battery staple")
 
 	firstAt := f.clock.Now()
-	if err := f.svc.Disable(context.Background(), u.ID, firstAt); err != nil {
+	if err := f.svc.Disable(context.Background(), disableFor(u.ID, firstAt)); err != nil {
 		t.Fatalf("the first Disable: %v", err)
 	}
 
 	later := firstAt.Add(5 * time.Minute)
-	if err := f.svc.Disable(context.Background(), u.ID, later); err != nil {
+	if err := f.svc.Disable(context.Background(), disableFor(u.ID, later)); err != nil {
 		t.Fatalf("the second Disable = %v, want success: revoking zero tokens is a success", err)
 	}
 

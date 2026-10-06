@@ -27,6 +27,7 @@ import (
 	"github.com/cafaye/identity/internal/platform/id"
 	"github.com/cafaye/identity/internal/sessions"
 	"github.com/cafaye/identity/internal/tenancy"
+	"github.com/cafaye/identity/internal/useraudit"
 	"github.com/cafaye/identity/internal/users"
 )
 
@@ -170,6 +171,44 @@ type AccessTokenRevoker interface {
 // widen for a wiring bug.
 var ErrNoAccessTokenRevoker = errors.New("disabling a user: no access token revoker is configured")
 
+// UserAuditRecorder writes the one row saying who turned a person off, and on.
+//
+// IT IS DECLARED HERE RATHER THAN IMPORTED AS A CONCRETE STORE, for the same reason
+// AccessTokenRevoker is: the RULE that a disable is recorded belongs to this package,
+// and the TABLE belongs to internal/useraudit. `*useraudit.Store` satisfies it by
+// signature, and so does a recording double, which is how "the record was asked for"
+// is separated from "the record reached the table" — the latter is proven against the
+// real store in disabled_integration_test.go.
+//
+// IT TAKES A db.Querier RATHER THAN OPENING ITS OWN TRANSACTION, and that signature
+// IS the same-transaction guarantee rather than a convenience: a writer that opened
+// its own would put the audit row in a second transaction, so a disable could commit
+// its revocations and its column write and then fail to leave a record, with nothing
+// anywhere reporting that anything went wrong. Both writes would have "succeeded".
+type UserAuditRecorder interface {
+	Append(ctx context.Context, q db.Querier, e useraudit.Entry) (useraudit.Record, error)
+}
+
+// ErrNoUserAuditRecorder means this auth service has no audit writer wired, so a
+// disable would revoke a person's credentials and change the column without recording
+// who asked.
+//
+// It is an error and not a degraded "revoked everything, wrote nothing", and the
+// direction is the whole point — the same argument ErrNoAccessTokenRevoker makes with
+// a different credential on the other side of it. That sentinel exists because a
+// disable proceeding without a token sweep leaves a JWT authenticating; this one
+// exists because a disable that records nothing cannot be reviewed at all, and the
+// first question of any incident review reaching this service is "who turned this
+// person off, and when". A caller told their disable succeeded while it left no trace
+// is a caller whose complaint ("nobody can tell me why I was locked out") cannot even
+// be investigated, and unlike the token sweep there is no second mechanism that would
+// catch it: the trail is the whole answer, so its absence is not degraded, it is
+// silent.
+//
+// main wires the real writer whenever it has a database, so reaching this is a wiring
+// bug at a call site rather than a supported configuration.
+var ErrNoUserAuditRecorder = errors.New("disabling or enabling a user: no audit recorder is configured")
+
 // EventAppender is the part of outbox.Store that registration needs.
 type EventAppender interface {
 	Append(ctx context.Context, q db.Querier, e outbox.Envelope) error
@@ -206,6 +245,7 @@ type Service struct {
 	tenancy    PersonalAccountProvisioner
 	mfa        SecondFactor
 	access     AccessTokenRevoker
+	auditor    UserAuditRecorder
 	hasher     *users.Hasher
 	clock      clock.Clock
 	sessionTTL time.Duration
@@ -231,10 +271,11 @@ var ErrNoSecondFactor = errors.New("logging in: no second-factor service is conf
 // challenge it answers and the two failure counters it clears. read is used for
 // everything else, so those lookups do not pay for a transaction.
 //
-// secondFactor and access are both required. See ErrNoSecondFactor and
-// ErrNoAccessTokenRevoker — neither has a supported "absent" configuration, and a
-// nil that reads as "there is nothing to sweep" is the failure neither of them can
-// detect from the inside.
+// secondFactor, access and auditor are all required. See ErrNoSecondFactor,
+// ErrNoAccessTokenRevoker and ErrNoUserAuditRecorder — none of them has a supported
+// "absent" configuration, and a nil that reads as "there is nothing to sweep" or
+// "there is nothing to record" is the failure none of them can detect from the
+// inside.
 func NewService(
 	uow UnitOfWork,
 	read db.QuerierSource,
@@ -244,6 +285,7 @@ func NewService(
 	tenancy PersonalAccountProvisioner,
 	secondFactor SecondFactor,
 	access AccessTokenRevoker,
+	auditor UserAuditRecorder,
 	hasher *users.Hasher,
 	clk clock.Clock,
 	sessionTTL time.Duration,
@@ -260,6 +302,7 @@ func NewService(
 		tenancy:    tenancy,
 		mfa:        secondFactor,
 		access:     access,
+		auditor:    auditor,
 		hasher:     hasher,
 		clock:      clk,
 		sessionTTL: sessionTTL,
@@ -869,11 +912,39 @@ func (s *Service) recordFailure(ctx context.Context, userID id.UUID, next sessio
 //
 // # THE ORDER, AND IT IS THE SAME ORDER `startSession` USES FOR THE SAME REASON
 //
-// Revocations first, state change last: sessions, then access tokens, then the
-// column. Every failure mode of that order rolls back, and the one that matters most
-// is the reverse — a column write before the sweeps would leave an account that
-// reads as turned off to an operator inspecting the table while its tokens are still
-// live, which is the half-applied state nothing else in this service models.
+// Revocations first, state change last, record very last: sessions, then access
+// tokens, then the column, then the audit row. Every failure mode of that order rolls
+// back, and the one that matters most is the reverse — a column write before the
+// sweeps would leave an account that reads as turned off to an operator inspecting the
+// table while its tokens are still live, which is the half-applied state nothing else
+// in this service models.
+//
+// The record goes last rather than first for a related reason: a trail that says a
+// disable happened while the revocations were still being attempted is a trail
+// asserting something untrue, and it is the one ordering here where the surviving
+// evidence would be the misleading one. Last also means it cannot fail after the work
+// is done and leave it done — there is nothing after it.
+//
+// # AND THE FOURTH STATEMENT IS THE AUDIT ROW, WHICH IS THE POINT OF disabled-04
+//
+// The three above revoke and stamp. None of them says WHO. Until this packet a
+// disable was unattributable: the first question of any incident review reaching this
+// service — "who turned this person off, and when" — had no answer in the database
+// at all.
+//
+// It is written to `user_audit_log` (migrations/00022) and NOT to
+// `account_audit_log`, and that is not a preference. The account-scoped table is
+// `account_id NOT NULL` because its actions are account actions, and a disable names
+// no account: `users:disable` is its own scope with no account in its path precisely
+// because its subject is a person rather than one of their memberships (DECISIONS.md
+// D14). A user belongs to as many accounts as they like, so hanging the record on
+// "the caller's own account" would grant one tenant that authority once per
+// membership, and would put a tenancy fiction into the one table whose whole value is
+// that it is true.
+//
+// So it is a second table, scoped to a user, carrying the twin's discipline: an
+// append-only trigger rather than a Go convention, two unconstrained actor ids so the
+// record outlives both, and a closed set validated here rather than by the schema.
 //
 // # AND `Authenticate` STILL DOES NOT READ disabled_at, ON PURPOSE
 //
@@ -885,7 +956,7 @@ func (s *Service) recordFailure(ctx context.Context, userID id.UUID, next sessio
 // would be a second mechanism for one fact, and the row is already the answer —
 // except for a token whose revocation failed, and that transaction rolled back
 // nothing at all rather than writing the column.
-func (s *Service) Disable(ctx context.Context, userID id.UUID, at time.Time) error {
+func (s *Service) Disable(ctx context.Context, in DisableInput) error {
 	// BEFORE the transaction, not inside it. A wiring bug should not open a
 	// transaction and abort it, and — the reason this ordering is load-bearing
 	// rather than tidiness — a nil check that ran after the session DELETE would
@@ -894,22 +965,81 @@ func (s *Service) Disable(ctx context.Context, userID id.UUID, at time.Time) err
 	if s.access == nil {
 		return ErrNoAccessTokenRevoker
 	}
+	// The same ordering, for the same reason, about a different dependency. A nil
+	// auditor checked after the sweeps would have revoked every credential the user
+	// holds and then reported failure — which is the more damaging of the two,
+	// because the person is signed out everywhere and cannot sign back in, and the
+	// operator is told the disable did not happen so they do not know to look for
+	// it.
+	if s.auditor == nil {
+		return ErrNoUserAuditRecorder
+	}
 
 	return s.uow.Do(ctx, func(ctx context.Context, q db.Querier) error {
 		// First, as above.
-		if err := s.sessions.RevokeAllForUser(ctx, q, userID); err != nil {
+		if err := s.sessions.RevokeAllForUser(ctx, q, in.UserID); err != nil {
 			return fmt.Errorf("ending a disabled user's sessions: %w", err)
 		}
 		// Second: the credential that deleting a row cannot recall.
-		if err := s.access.RevokeAccessTokensForUser(ctx, q, userID, at); err != nil {
+		if err := s.access.RevokeAccessTokensForUser(ctx, q, in.UserID, in.At); err != nil {
 			return fmt.Errorf("ending a disabled user's access tokens: %w", err)
 		}
-		// Last, and only if both of the above held.
-		if err := s.users.Disable(ctx, q, userID, at); err != nil {
+		// Third, and only if both of the above held.
+		if err := s.users.Disable(ctx, q, in.UserID, in.At); err != nil {
 			return fmt.Errorf("marking the user disabled: %w", err)
+		}
+		// Last: the record of it, in the SAME transaction as the three writes above.
+		//
+		// This is the fourth statement rather than a fourth transaction, and that is
+		// the whole of the property. A disable that revokes without recording is the
+		// gap this closes; a disable that RECORDS without revoking is the same gap
+		// wearing a different hat — an audit trail claiming an event that did not
+		// happen is worse than no trail, because an investigator who finds the row
+		// stops looking. So the record is written by the transaction that does the
+		// work: there is no interleaving in which the revocations are visible and the
+		// record is not, and none in which the record is visible and the revocations
+		// are not.
+		//
+		// The action is named HERE rather than passed in, so there is no caller that
+		// can write a disable's record under another action's name.
+		if _, err := s.auditor.Append(ctx, q, useraudit.Entry{
+			UserID: in.UserID,
+			Action: useraudit.ActionUserDisabled,
+			Actor: useraudit.Actor{
+				UserID:  in.ActorUserID,
+				KeyID:   in.ActorKeyID,
+				TraceID: in.TraceID,
+			},
+			OccurredAt: in.At,
+		}); err != nil {
+			return fmt.Errorf("recording the disable: %w", err)
 		}
 		return nil
 	})
+}
+
+// DisableInput is a request to turn a person off.
+//
+// It is a struct rather than a fourth and fifth positional argument because the actor
+// is not optional information: `Disable(ctx, userID, at)` had nowhere to put the two
+// ids and the trace id, and a method that cannot be told who is asking cannot record
+// who asked. Adding them positionally would have put a user id where the compiler
+// cannot tell it from the subject, and the two are exactly the kind of uuid that gets
+// them the wrong way round.
+type DisableInput struct {
+	// UserID is the SUBJECT: the person being turned off.
+	UserID id.UUID
+	// ActorUserID and ActorKeyID are the caller — the operator's own user and the
+	// api key row. Both required, on useraudit.Actor's argument: this surface is
+	// machine-credential-only (D14), so every recorded event names a token.
+	ActorUserID id.UUID
+	ActorKeyID  id.UUID
+	// TraceID joins the audit row to the request's log line.
+	TraceID string
+	// At is the service's clock, used for the revocation stamps, the column and the
+	// audit row alike — one instant for the whole event, so the three cannot disagree
+	// about when it happened.
+	At time.Time
 }
 
 // Enable lifts a disable.
@@ -920,10 +1050,64 @@ func (s *Service) Disable(ctx context.Context, userID id.UUID, at time.Time) err
 // that resurrected the sessions would hand back credentials minted before the
 // account was turned off, which is the thing the revocation exists to prevent.
 //
-// It is one statement and needs no transaction for that reason — there is no second
-// write to make atomic with it.
-func (s *Service) Enable(ctx context.Context, userID id.UUID) error {
-	return s.users.Enable(ctx, s.read.Queryer(), userID)
+// # AND IT RECORDS, IN A TRANSACTION, DESPITE HAVING BEEN ONE STATEMENT
+//
+// Until disabled-04 this was one statement and needed no transaction because there
+// was no second write to make atomic with it. There is now: the audit row. So it
+// opens one, and the reason it must is the mirror of Disable's — a re-enable that
+// lifts the column without recording it leaves the trail saying the person is still
+// disabled, which is the one conclusion an investigator must never draw from a trail
+// that is silent about the event that would have corrected it.
+//
+// A re-enable is a decision by an operator with authority over a person who has no
+// authority over themselves, and it is the second half of the pair "who turned this
+// off and when". A trail holding only the first half answers neither half of a
+// question that is always asked together: an operator who disabled a user in error
+// and re-enabled them an hour later has, in the trail's terms, disabled them with no
+// end.
+//
+// IT DOES NOT NEED THE ACCESS-TOKEN REVOKER, and its absence from Enable's preamble
+// is not an oversight. A re-enable mints nothing and revokes nothing — the column is
+// what the sessions already honour — so the only thing that can fail here is the two
+// writes, and ErrNoUserAuditRecorder is the same refusal Disable makes.
+func (s *Service) Enable(ctx context.Context, in EnableInput) error {
+	// Same ordering as Disable and the same reason: after the column write, a nil
+	// here would have lifted the disable and then reported failure, so the operator
+	// believes the person is still disabled while the service has let them straight
+	// back in.
+	if s.auditor == nil {
+		return ErrNoUserAuditRecorder
+	}
+
+	return s.uow.Do(ctx, func(ctx context.Context, q db.Querier) error {
+		if err := s.users.Enable(ctx, q, in.UserID); err != nil {
+			return fmt.Errorf("marking the user enabled: %w", err)
+		}
+		if _, err := s.auditor.Append(ctx, q, useraudit.Entry{
+			UserID: in.UserID,
+			Action: useraudit.ActionUserEnabled,
+			Actor: useraudit.Actor{
+				UserID:  in.ActorUserID,
+				KeyID:   in.ActorKeyID,
+				TraceID: in.TraceID,
+			},
+			OccurredAt: in.At,
+		}); err != nil {
+			return fmt.Errorf("recording the enable: %w", err)
+		}
+		return nil
+	})
+}
+
+// EnableInput is a request to lift a disable. Same shape as DisableInput and for the
+// same reason: the actor is not optional, and the two ids must not be
+// interchangeable with the subject's.
+type EnableInput struct {
+	UserID      id.UUID
+	ActorUserID id.UUID
+	ActorKeyID  id.UUID
+	TraceID     string
+	At          time.Time
 }
 
 // Authenticate resolves a presented token to its user.

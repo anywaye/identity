@@ -20,6 +20,7 @@ import (
 	"github.com/cafaye/identity/internal/platform/db"
 	"github.com/cafaye/identity/internal/platform/dbtest"
 	"github.com/cafaye/identity/internal/sessions"
+	"github.com/cafaye/identity/internal/useraudit"
 	"github.com/cafaye/identity/internal/users"
 )
 
@@ -66,6 +67,7 @@ func authServiceWithSessionTTL(pool *pgxpool.Pool, clk clock.Clock, sessionTTL t
 		// the operator routes in this package must be exercised against the table
 		// they revoke in. See TestADisableRevokesTheAccessTokensAtThisLayer.
 		oidc.NewStore(pool),
+		useraudit.NewStore(pool),
 		users.NewHasherWithParams(&argon2id.Params{
 			Memory: 8 * 1024, Iterations: 1, Parallelism: 1, SaltLength: 16, KeyLength: 32,
 		}),
@@ -554,6 +556,7 @@ func TestEndToEndWriteFailureIs500AndLeaksNothing(t *testing.T) {
 		// The real sweep, as main wires it: `Disable` refuses to run without one,
 		// so this service has the same set of capabilities the production one does.
 		oidc.NewStore(pool),
+		useraudit.NewStore(pool),
 		users.NewHasherWithParams(&argon2id.Params{
 			Memory: 8 * 1024, Iterations: 1, Parallelism: 1, SaltLength: 16, KeyLength: 32,
 		}),

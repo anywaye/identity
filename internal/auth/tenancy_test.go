@@ -18,6 +18,7 @@ import (
 	"github.com/cafaye/identity/internal/platform/dbtest"
 	"github.com/cafaye/identity/internal/platform/id"
 	"github.com/cafaye/identity/internal/sessions"
+	"github.com/cafaye/identity/internal/useraudit"
 	"github.com/cafaye/identity/internal/users"
 )
 
@@ -215,6 +216,10 @@ func newServiceWithTenancy(t *testing.T, pool *pgxpool.Pool, tenancy PersonalAcc
 		// to run without one, so a nil here would answer every disable in this
 		// file with ErrNoAccessTokenRevoker rather than with what is under test.
 		oidc.NewStore(pool),
+		// And the writer, for the sibling reason: `Disable` and `Enable` both refuse
+		// to run without one, so a nil here would answer every operator test in this
+		// file with ErrNoUserAuditRecorder rather than with what is under test.
+		useraudit.NewStore(pool),
 		users.NewHasherWithParams(&argon2id.Params{
 			Memory: 8 * 1024, Iterations: 1, Parallelism: 1, SaltLength: 16, KeyLength: 32,
 		}),
