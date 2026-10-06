@@ -62,6 +62,18 @@ type EventAppender interface {
 	Append(ctx context.Context, q db.Querier, e outbox.Envelope) error
 }
 
+// UserEmailReader reads the address a registered user holds.
+//
+// IT IS A NARROW INTERFACE AND NOT users.Store because the use case needs one
+// field from one row and the table belongs to the users package — the same seam
+// internal/recovery declares as its own UserStore, for the same reason. accounts
+// already imports users for the address rules, so there is no cycle to route
+// around; the narrowness is about the dependency saying what it is for, which a
+// whole-store parameter does not.
+type UserEmailReader interface {
+	ByID(ctx context.Context, q db.Querier, userID id.UUID) (users.User, error)
+}
+
 // CredentialRevoker withdraws the machine credentials a user holds in an account.
 //
 // IT IS A DEPENDENCY RATHER THAN AN IMPORT because internal/apikeys imports this
@@ -84,6 +96,7 @@ type CredentialRevoker interface {
 type Service struct {
 	uow     UnitOfWork
 	store   AccountStore
+	users   UserEmailReader
 	events  EventAppender
 	revokes CredentialRevoker
 	clock   clock.Clock
@@ -96,12 +109,13 @@ type Service struct {
 func NewService(
 	uow UnitOfWork,
 	store AccountStore,
+	users UserEmailReader,
 	events EventAppender,
 	revokes CredentialRevoker,
 	clk clock.Clock,
 	read db.QuerierSource,
 ) *Service {
-	return &Service{uow: uow, store: store, events: events, revokes: revokes, clock: clk, read: read}
+	return &Service{uow: uow, store: store, users: users, events: events, revokes: revokes, clock: clk, read: read}
 }
 
 // CreateInput is a request to create an account.
@@ -604,7 +618,7 @@ func (s *Service) Invite(ctx context.Context, in InviteInput) (Invited, error) {
 			return err
 		}
 
-		event, err := outbox.NewMemberInvited(now, in.AccountID, invitation.ID, email, string(in.Role), in.InvitedBy)
+		event, err := outbox.NewMemberInvited(now, in.AccountID, invitation.ID, email, token, string(in.Role), in.InvitedBy)
 		if err != nil {
 			return err
 		}
@@ -758,7 +772,17 @@ func (s *Service) Accept(ctx context.Context, in AcceptInput) (Membership, error
 			return err
 		}
 
-		event, err := outbox.NewMemberAccepted(now, invitation.AccountID, in.User, string(invitation.Role))
+		// The member's address, read here and inside the transaction because the
+		// event below carries it: the consumer that mails the welcome cannot read
+		// the user row, so the event has to bring the address with it. See
+		// outbox.NewMemberAccepted for why it is the member's address and not the
+		// invitation's.
+		member, err := s.users.ByID(ctx, q, in.User)
+		if err != nil {
+			return err
+		}
+
+		event, err := outbox.NewMemberAccepted(now, invitation.AccountID, in.User, member.Email, string(invitation.Role))
 		if err != nil {
 			return err
 		}

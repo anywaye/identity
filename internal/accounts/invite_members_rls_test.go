@@ -11,6 +11,7 @@ import (
 	"github.com/cafaye/identity/internal/platform/dbtest"
 	"github.com/cafaye/identity/internal/platform/id"
 	"github.com/cafaye/identity/internal/tenancy"
+	"github.com/cafaye/identity/internal/users"
 )
 
 // `Invite` and `Members` UNDER THE REAL POLICIES, and the second file in this
@@ -92,6 +93,7 @@ func newRealAccountHarness(t *testing.T) *harness {
 		svc: NewService(
 			tenancy.TxRunner{TxRunner: db.TxRunner{Pool: pool}},
 			store,
+			users.NewStore(pool),
 			events,
 			revokes,
 			clk,

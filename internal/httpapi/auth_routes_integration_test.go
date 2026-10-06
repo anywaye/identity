@@ -680,6 +680,7 @@ func realTenancy(pool *pgxpool.Pool, clk clock.Clock) *accounts.Service {
 	return accounts.NewService(
 		db.TxRunner{Pool: pool},
 		accounts.NewStore(pool),
+		users.NewStore(pool),
 		outbox.NewStore(pool),
 		apikeys.NewStore(pool),
 		clk,

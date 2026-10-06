@@ -61,6 +61,7 @@ func newHarness(t *testing.T) *harness {
 		svc: NewService(
 			db.TxRunner{Pool: pool},
 			store,
+			users.NewStore(pool),
 			events,
 			revokes,
 			clk,
@@ -934,6 +935,7 @@ func TestARemovalWithNoRevokerStillRemovesTheMembership(t *testing.T) {
 	withoutSweep := NewService(
 		db.TxRunner{Pool: h.q.(db.Pool)},
 		h.store,
+		users.NewStore(h.q.(db.Pool)),
 		h.events,
 		nil,
 		h.clock,
