@@ -1529,14 +1529,18 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              required: [display_name]
               properties:
                 display_name:
                   type: string
                   maxLength: 64
                   description: |
-                    The name to set. An empty string clears the name. Trimmed
-                    before storing.
+                    The name to set. An empty string — or an omitted field,
+                    which decodes the same way — clears the name. Trimmed
+                    before storing. The field is optional because this route
+                    has exactly one: there is no "leave it unchanged" to
+                    express, so a caller here is always saying "this is my
+                    name now", and the two things they can mean are "this"
+                    and "nothing".
             examples:
               default:
                 value:

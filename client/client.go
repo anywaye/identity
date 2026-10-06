@@ -573,8 +573,9 @@ func (c *Client) GetCurrentUser(ctx context.Context) (*generated.User, error) {
 // UpdateCurrentUser sets or clears the caller's display name. Corresponds to
 // `PATCH /v1/me`.
 //
-// An empty DisplayName clears the name, returning the column to NULL. The name
-// is trimmed before storing. There is no uniqueness constraint.
+// A nil DisplayName — or a pointer to the empty string, which the handler
+// decodes the same way — clears the name, returning the column to NULL. The
+// name is trimmed before storing. There is no uniqueness constraint.
 func (c *Client) UpdateCurrentUser(ctx context.Context, body generated.UpdateCurrentUserJSONRequestBody) (*generated.User, error) {
 	var out generated.User
 	err := call(c, "updateCurrentUser", func() (*http.Response, error) {

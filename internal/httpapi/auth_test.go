@@ -913,6 +913,42 @@ func TestUpdateMeClearsTheDisplayNameWithAnEmptyString(t *testing.T) {
 	}
 }
 
+// An omitted field decodes as the empty string, which clears — the same
+// clearing the empty string asks for, and the behaviour the OpenAPI document
+// describes. This route has exactly one field, so there is no "leave it
+// unchanged" to express: a caller here is always saying "this is my name now",
+// and the two things they can mean are "this" and "nothing".
+func TestUpdateMeClearsTheDisplayNameWhenTheFieldIsOmitted(t *testing.T) {
+	t.Parallel()
+
+	f := newFakeAuth()
+	req := httptest.NewRequest(http.MethodPatch, "/v1/me", strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: "a-session-token"})
+
+	rec := httptest.NewRecorder()
+	New(nil, WithAuth(f)).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body)
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("the body is not JSON: %v", err)
+	}
+	if _, present := body["display_name"]; present {
+		t.Errorf("display_name is present in the response (%v), want it omitted when cleared", body["display_name"])
+	}
+
+	if len(f.updatedDisplayNameFor) != 1 {
+		t.Fatalf("UpdateDisplayName was called %d times, want 1", len(f.updatedDisplayNameFor))
+	}
+	if f.updatedDisplayName != nil {
+		t.Errorf("UpdateDisplayName was given %v, want nil (the clearing case)", *f.updatedDisplayName)
+	}
+}
+
 func TestUpdateMeTrimsTheDisplayName(t *testing.T) {
 	t.Parallel()
 

@@ -1911,9 +1911,14 @@ type CompleteSocialLogin200JSONResponseBody struct {
 
 // UpdateCurrentUserJSONBody defines parameters for UpdateCurrentUser.
 type UpdateCurrentUserJSONBody struct {
-	// DisplayName The name to set. An empty string clears the name. Trimmed
-	// before storing.
-	DisplayName string `json:"display_name"`
+	// DisplayName The name to set. An empty string — or an omitted field,
+	// which decodes the same way — clears the name. Trimmed
+	// before storing. The field is optional because this route
+	// has exactly one: there is no "leave it unchanged" to
+	// express, so a caller here is always saying "this is my
+	// name now", and the two things they can mean are "this"
+	// and "nothing".
+	DisplayName *string `json:"display_name,omitempty"`
 }
 
 // CreateAccountJSONRequestBody defines body for CreateAccount for application/json ContentType.

@@ -484,6 +484,12 @@ func TestADisplayNameColumnExistsAndIsNullableWithNoDefault(t *testing.T) {
 // packet that adds "just an index, it is probably useful" would be refused here
 // rather than becoming a maintenance cost on every write to users that nothing
 // reads.
+//
+// THE COUNT IS OVER pg_index, which is where both kinds of index live — a
+// unique constraint is implemented as an index, so this one query covers the
+// unique case and the plain case. The leading column is what indkey[0] names:
+// a composite index that merely CONTAINS the column would still serve a lookup
+// leading with it, and there is none to serve.
 func TestDisplayNameCarriesNoIndexAndNoUniqueConstraint(t *testing.T) {
 	pool := dbtest.Pool(t)
 
@@ -491,13 +497,29 @@ func TestDisplayNameCarriesNoIndexAndNoUniqueConstraint(t *testing.T) {
 		SELECT count(*)
 		FROM pg_index i
 		JOIN pg_class t ON t.oid = i.indrelid
-		JOIN pg_class c ON c.oid = i.indexrelid
-		WHERE t.relname = 'users' AND c.relname = 'users' AND i.indkey[0] = (
-			SELECT attnum FROM pg_attribute
-			WHERE attrelid = 'users'::regclass AND attname = 'display_name')`
+		JOIN pg_namespace n ON n.oid = t.relnamespace
+		WHERE n.nspname = 'public' AND t.relname = $1
+		  AND i.indkey[0] = (
+		      SELECT attnum FROM pg_attribute
+		      WHERE attrelid = 'public.users'::regclass AND attname = $2)`
+
+	// THE CONTROL, and it is the half that makes the assertion below mean
+	// anything: the same query shape run against email — a column that DOES
+	// have a unique index leading with it — must find at least one. A query
+	// that finds nothing agrees with another query that finds nothing, and
+	// without this line the count below would pass against a database where
+	// the whole catalog had been dropped.
+	var control int
+	if err := pool.QueryRow(context.Background(), query, "users", "email").Scan(&control); err != nil {
+		t.Fatalf("the control count: %v", err)
+	}
+	if control == 0 {
+		t.Fatalf("the control found no index leading with users.email, so this query shape finds nothing at all — " +
+			"fix the query before trusting the assertion below")
+	}
 
 	var n int
-	if err := pool.QueryRow(context.Background(), query).Scan(&n); err != nil {
+	if err := pool.QueryRow(context.Background(), query, "users", "display_name").Scan(&n); err != nil {
 		t.Fatalf("counting indexes on users.display_name: %v", err)
 	}
 	if n != 0 {

@@ -167,9 +167,7 @@ type loginRequest struct {
 // string — which clears. This route has exactly one field, so there is no
 // "leave it unchanged" to express: a caller who reaches PATCH /v1/me is
 // saying "this is my name now", and the two things they can mean are "this"
-// and "nothing". A missing field meaning "nothing" is the safe reading,
-// because the alternative — a required-field refusal — would make the
-// clearing case need a sentinel the packet does not ask for.
+// and "nothing".
 type updateMeRequest struct {
 	DisplayName string `json:"display_name"`
 }

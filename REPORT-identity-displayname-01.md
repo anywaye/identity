@@ -2,7 +2,7 @@
 
 **Packet:** identity-w20-displayname — a user has a display name, readable and writable.
 **Branch:** `worker/identity-w20-displayname`
-**Commit:** `cb4dbf3` (on top of `74c4b9b`)
+**Commits:** `cb4dbf3` (implementation) + `36900c5` (first report) + this review's fix commit (below)
 **Date:** 2026-10-06
 
 ## What shipped
@@ -22,9 +22,9 @@
 
 The worktree held a complete, correct implementation from the previous
 attempt. I reviewed every file, kept all of it, and finished the packet
-from there. One defect found and fixed:
+from there. Three defects found and fixed in review:
 
-**The coverage-exclusions statement figure was wrong.** The entry
+**1. The coverage-exclusions statement figure was wrong.** The entry
 claimed the generated file held 6418 statements before and after this
 packet ("6418 to 6418 — 0 statements"). Measured the way the entry
 itself prescribes (`go test -coverprofile` over `./client/generated/`,
@@ -36,9 +36,35 @@ documented statuses, a new parse function, unlike identity-disabled-01's
 two responses that extended an existing one). The `lines=` figure
 (28016) was correct and is the one under test. The floor did not move.
 
+**2. The no-index test could never fail.** `TestDisplayNameCarriesNoIndexAndNoUniqueConstraint`
+counted indexes with `c.relname = 'users'` — the index's OWN name, which
+can never equal the table's name in the same schema. The count was
+always 0, so the test would have passed against a database where
+someone had added an index on the column: a comparison that never fires
+is indistinguishable from a correct one. Fixed with a schema-filtered
+query over `pg_index` (which covers unique constraints too, since a
+unique constraint is implemented as an index) plus a CONTROL: the same
+query shape run against `email` must find `users_email_key`, proving
+the query can find an index when one exists.
+
+**3. The document promised a refusal the handler does not make.** The
+OpenAPI marked `display_name` as `required` in the request body, but
+the handler deliberately decodes an omitted field as the empty string
+(which clears) — the route has exactly one field, so there is no "leave
+it unchanged" to express. Fixed by dropping `required` from the
+document, which is the direction the repo's drift rule cares about: a
+document must not promise what the router does not deliver. The
+regenerated client's request field moved from `string` to `*string`
+with `omitempty` — the same set-or-clear semantics the handler has, and
+a change that breaks no one because the method is new. The
+coverage-exclusions entry was restated a second time (28021 lines,
+6528 statements unchanged — five lines, all of them the property
+description the generator copies into the struct's comment).
+
 Also fixed: three comments that claimed `/v1/me`'s projection is exactly
 two fields (`recovery.go`, `recovery_test.go`, `handleMe`'s doc comment)
-— stale the day the optional third field landed.
+— stale the day the optional third field landed — and one redundant,
+imprecise sentence in `updateMeRequest`'s doc comment.
 
 ## Design decisions
 
@@ -93,37 +119,37 @@ packages pass.
 `bin/prime` (with `TEST_DATABASE_URL` set, migrations applied):
 
 ```
-ok  	github.com/cafaye/identity/client	3.982s
+ok  	github.com/cafaye/identity/client	2.258s
 ?   	github.com/cafaye/identity/client/generated	[no test files]
-ok  	github.com/cafaye/identity/cmd/identity	3.966s
-ok  	github.com/cafaye/identity/internal/accounts	32.424s
-ok  	github.com/cafaye/identity/internal/admin	6.828s
-ok  	github.com/cafaye/identity/internal/apikeys	27.086s
-ok  	github.com/cafaye/identity/internal/auth	21.093s
-ok  	github.com/cafaye/identity/internal/config	0.653s
-ok  	github.com/cafaye/identity/internal/courier	1.316s
-ok  	github.com/cafaye/identity/internal/httpapi	100.058s
-ok  	github.com/cafaye/identity/internal/mfa	35.831s
-ok  	github.com/cafaye/identity/internal/oauth	8.917s
-ok  	github.com/cafaye/identity/internal/oidc	3.130s
-ok  	github.com/cafaye/identity/internal/outbox	10.470s
-ok  	github.com/cafaye/identity/internal/platform/ci	4.813s
-ok  	github.com/cafaye/identity/internal/platform/clock	1.534s
-ok  	github.com/cafaye/identity/internal/platform/db	1.582s
+ok  	github.com/cafaye/identity/cmd/identity	2.747s
+ok  	github.com/cafaye/identity/internal/accounts	20.287s
+ok  	github.com/cafaye/identity/internal/admin	5.650s
+ok  	github.com/cafaye/identity/internal/apikeys	16.919s
+ok  	github.com/cafaye/identity/internal/auth	13.563s
+ok  	github.com/cafaye/identity/internal/config	0.638s
+ok  	github.com/cafaye/identity/internal/courier	1.258s
+ok  	github.com/cafaye/identity/internal/httpapi	53.770s
+ok  	github.com/cafaye/identity/internal/mfa	17.839s
+ok  	github.com/cafaye/identity/internal/oauth	4.689s
+ok  	github.com/cafaye/identity/internal/oidc	2.122s
+ok  	github.com/cafaye/identity/internal/outbox	4.891s
+ok  	github.com/cafaye/identity/internal/platform/ci	3.362s
+ok  	github.com/cafaye/identity/internal/platform/clock	0.564s
+ok  	github.com/cafaye/identity/internal/platform/db	0.945s
 ?   	github.com/cafaye/identity/internal/platform/dbtest	[no test files]
-ok  	github.com/cafaye/identity/internal/platform/id	2.047s
-ok  	github.com/cafaye/identity/internal/platform/oauthtest	2.315s
-ok  	github.com/cafaye/identity/internal/recovery	27.924s
-ok  	github.com/cafaye/identity/internal/sessions	2.441s
-ok  	github.com/cafaye/identity/internal/telemetry	1.387s
-ok  	github.com/cafaye/identity/internal/tenancy	1.062s
-ok  	github.com/cafaye/identity/internal/useraudit	6.317s
-ok  	github.com/cafaye/identity/internal/users	0.947s
+ok  	github.com/cafaye/identity/internal/platform/id	1.176s
+ok  	github.com/cafaye/identity/internal/platform/oauthtest	0.955s
+ok  	github.com/cafaye/identity/internal/recovery	15.210s
+ok  	github.com/cafaye/identity/internal/sessions	1.256s
+ok  	github.com/cafaye/identity/internal/telemetry	0.713s
+ok  	github.com/cafaye/identity/internal/tenancy	0.952s
+ok  	github.com/cafaye/identity/internal/useraudit	3.598s
+ok  	github.com/cafaye/identity/internal/users	1.271s
 ```
 
 Also green: `go vet ./...`, `go test -race ./...` (all 24 packages),
 and the coverage floor — `bin/coverage-floor` over the whole-suite
-profile: **74.8% at or above the 70% floor**.
+profile: **75.1% at or above the 70% floor**.
 
 ## Notes for the manager
 
@@ -132,10 +158,21 @@ profile: **74.8% at or above the 70% floor**.
   These are pre-existing at `74c4b9b` — verified by stashing this packet's
   changes and re-running. Left alone to keep the diff narrow; they are
   not this packet's defect.
-- **The local Postgres restarted mid-run** and the database came back
-  fresh, so migration 00023 had to be re-applied before the suite. The
-  migration is idempotent-safe to re-apply on a fresh database via
-  `goose -dir migrations postgres "$DATABASE_URL" up`.
+- **The tenancy test flaked once under the full suite** and it is worth
+  knowing about for the merge: `TestTenancyIdentityOwnsItsFiveTables`
+  queries `pg_class` by `relname` with NO schema filter, so any
+  `test_*` schema left on the shared cluster by a concurrent worker's
+  dbtest run matches — and while another worker's suite was running
+  against the same cluster, one such schema's `oidc_clients` row
+  (RLS off) was scanned first and the test failed. It passes when run
+  alone and passed on the final full run. Not this packet's defect, but
+  it will bite other packets too until the query gets a schema
+  predicate.
+- **The coverage-exclusions reader works.** My first restatement of the
+  entry put ASCII double quotes inside the quoted `reason="..."` string,
+  terminating it early; `bin/coverage-floor` rejected the entry
+  outright. The reader caught a malformed declaration on the spot,
+  which is the failure this file exists for.
 - **Merge watch:** other workers are landing changes on `users` and
   `httpapi`. The touchpoints are `userColumns` (store.go), the `User`
   struct, the `Auth`/`UserStore` interfaces, and `registerRoutes`. The
