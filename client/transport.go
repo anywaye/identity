@@ -79,6 +79,7 @@ type Transport interface {
 	RegenerateMFARecoveryCodes(ctx context.Context, body generated.RegenerateMFARecoveryCodesJSONRequestBody, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	GetCurrentUser(ctx context.Context, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	UpdateCurrentUser(ctx context.Context, body generated.UpdateCurrentUserJSONRequestBody, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
+	DeleteCurrentUser(ctx context.Context, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	RequestPasswordReset(ctx context.Context, body generated.RequestPasswordResetJSONRequestBody, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	ConfirmPasswordReset(ctx context.Context, body generated.ConfirmPasswordResetJSONRequestBody, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	RequestEmailVerification(ctx context.Context, body generated.RequestEmailVerificationJSONRequestBody, reqEditors ...generated.RequestEditorFn) (*http.Response, error)

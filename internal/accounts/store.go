@@ -16,6 +16,7 @@ import (
 
 	"github.com/cafaye/identity/internal/platform/db"
 	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/cafaye/identity/internal/tenancy"
 )
 
 // Postgres SQLSTATE 23505, unique_violation. Every mapping in this file is off
@@ -135,6 +136,16 @@ func NewStore(pool db.Pool) *Store { return &Store{pool: pool} }
 // constant, so a column added here cannot be forgotten in one query and present
 // in another.
 const accountColumns = `id, name, slug, personal, created_at, updated_at`
+
+// accountColumnsQualified is accountColumns with the `a.` prefix, for the two
+// queries above that join `accounts` against `account_users`.
+//
+// IT EXISTS BECAUSE THE BARE LIST IS AMBIGUOUS IN A JOIN, and the ambiguity is
+// not confined to the select list: `ORDER BY created_at` beside a join resolves
+// against whichever table the planner reaches for, so the ordering could silently
+// become "when the membership was created". Naming the alias is what makes both
+// the projection and the sort say which table they mean.
+const accountColumnsQualified = `a.id, a.name, a.slug, a.personal, a.created_at, a.updated_at`
 
 const membershipColumns = `account_id, user_id, role, created_at, updated_at`
 
@@ -399,6 +410,208 @@ func (s *Store) RemoveMember(ctx context.Context, q db.Querier, accountID, userI
 // Ordered personal first, then name — the order a sidebar wants, and the same
 // one jumpstart's `sorted` scope produces. The slice is never nil, so a JSON
 // encoder renders `[]` rather than `null` for a user with no accounts.
+// # THE TWO DELETION-ADJACENT READS
+//
+// PersonalAccounts and SolelyOwnedTeamAccounts exist for one caller — the
+// self-service deletion in `internal/deletion` — and they are on this Store
+// rather than in that package because both are queries about the MEMBERSHIP
+// TABLE, and membership is what this store is. A second package growing its own
+// SQL against `account_users` would be a second answer to "what accounts does
+// this person hold", and the two would disagree the moment a column changed.
+//
+// Both read `account_users`, which is policy-protected, and BOTH therefore
+// require `tenancy.BeginUser` on the caller's transaction — see
+// `Service.ListMine`, which is the reasoning in full. Under the real policies an
+// unadmitted read returns zero rows rather than an error, so a caller that
+// forgets the identity gets an empty list and a deletion that proceeds without
+// ever asking about team accounts. `internal/deletion`'s boundary tests are what
+// hold that line: they run against the real policies precisely so that a dropped
+// `begin_user` is a failure rather than a silent success.
+
+// PersonalAccounts returns the accounts the SYSTEM created for this user — the
+// ones a registration provisions — and never a team account.
+//
+// The distinction is the `personal` column and nothing else, and it is the
+// distinction a deletion turns on: a personal account holds nothing but its own
+// user's membership, so removing it destroys nobody else's data, whereas a team
+// account with other members in it is other people's workspace.
+//
+// # WHY THIS IS NOT "the first personal account"
+//
+// There is no unique index making `personal` mean "at most one per user", and
+// `migrations/00005_accounts.sql` says so: the column is what lets a later packet
+// SAY "you always have exactly one personal account" without inventing a second
+// table. Until a constraint makes that a database guarantee, a query that took
+// the first one would silently orphan any second. So this returns all of them
+// and the caller deletes all of them, which is correct whether the invariant holds
+// or not.
+
+// SolelyOwnedTeamAccounts returns the TEAM accounts where this user is the only
+// OWNER — the set that makes a self-service deletion impossible rather than
+// merely complicated.
+//
+// # WHY OWNERSHIP AND NOT MEMBERSHIP IS THE BAR
+//
+// An account with other members in it loses one membership when its owner leaves,
+// and the account carries on with the members it already had: that is what an
+// account is. An account whose only OWNER is leaving would be left with nobody
+// who can invite, remove, change a role, or delete it — every owner-only route
+// in `internal/httpapi` keys on the owner role — and the account would be
+// unreachable rather than emptied. So the bar is the owner role specifically, and
+// an account with a second owner is NOT in this set even if that second owner has
+// never logged in.
+//
+// The subquery counts owners OTHER THAN this user, which is what makes the
+// comparison work for a user who is the only owner: `NOT EXISTS` over the empty
+// set is true, and the account is reported. An equality count against the total
+// would need the user's own row excluded in a second place, and there is one way
+// to write it.
+//
+// # WHY IT IS A LOOP AND NOT ONE QUERY
+//
+// The obvious SQL is a single statement with a `NOT EXISTS` over the other
+// owners, and it is WRONG UNDER THE REAL POLICIES in a way no clone would catch.
+// `dbtest.Schema` copies the tables without their row-level security, so the
+// query passes there and fails in production.
+//
+// Here is the failure. `migrations/00018` admits a caller to `account_users` for
+// SELECT through `account_users_cafaye_members`, whose predicate is
+// `user_id = cafaye.current_user_id()`. So standing in as the user, the caller sees
+// its OWN membership rows and nothing else. The `NOT EXISTS (SELECT 1 FROM
+// account_users other WHERE other.account_id = a.id AND other.role = 'owner'
+// AND other.user_id <> $1)` subquery is filtered to the empty set by that policy
+// before PostgreSQL evaluates it — every other owner's row is invisible — so
+// `NOT EXISTS` is vacuously true for every account, and EVERY account the user
+// owns is reported as one they solely own.
+//
+// The observable consequence is not a subtle wrong answer: a user who is one of
+// two co-owners of a team account is told they cannot delete their account at
+// all, and no amount of transferring ownership fixes it because the second owner
+// is not counted. It is measured by
+// `internal/deletion/deletion_rls_test.go`'s
+// `TestAMembershipGoesAndTheOtherMembersAccountSurvives`, which is the test that
+// found it.
+//
+// So the count has to happen standing in the ACCOUNT, where
+// `account_users_cafaye_select` (`account_id = cafaye.current_account_id()`) does
+// admit the rows — one account per transaction-local identity, which is why this
+// is a loop rather than a join. `CountOwners` is the query, and it already takes
+// `FOR UPDATE` on the owner rows, so the answer is a lock rather than a
+// snapshot and the TOCTOU window this method's header describes is closed by the
+// same statement that reads it.
+//
+// # IT LEAVES THE TRANSACTION STANDING IN THE LAST ACCOUNT IT VISITED
+//
+// `cafaye.begin_account` and `cafaye.begin_user` set the SAME GUC, so the last
+// call wins and there is no way to hold both. A caller that needs to read as the
+// USER after this must call `tenancy.BeginUser` again. `internal/deletion` does
+// exactly that and says so at the call site; the alternative would be a getter
+// that silently restores an identity on its way out, which is a much worse thing
+// to have in a store.
+
+// SolelyOwnedTeamAccounts returns the non-personal accounts where userID holds
+// the only owner role.
+func (s *Store) SolelyOwnedTeamAccounts(ctx context.Context, q db.Querier, userID id.UUID) ([]Account, error) {
+	if userID.IsZero() {
+		return nil, nil
+	}
+
+	// Step 1, standing in as the user: the team accounts this user owns at all.
+	// Every row this matches is the caller's OWN membership row, so
+	// `account_users_cafaye_members` admits all of them and none of the filtering
+	// above applies to this statement.
+	const candidates = `
+		SELECT ` + accountColumnsQualified + `
+		FROM account_users mine
+		JOIN accounts a ON a.id = mine.account_id
+		WHERE mine.user_id = $1
+		  AND mine.role = 'owner'
+		  AND NOT a.personal
+		ORDER BY a.created_at ASC, a.id ASC`
+
+	owned, err := s.scanAccounts(ctx, q, candidates, "listing the team accounts this user owns", userID)
+	if err != nil {
+		return nil, err
+	}
+	if len(owned) == 0 {
+		return nil, nil
+	}
+
+	// Step 2, standing in each account in turn.
+	out := make([]Account, 0, len(owned))
+	for _, account := range owned {
+		if err := tenancy.BeginAccount(ctx, q, account.ID); err != nil {
+			return nil, fmt.Errorf("standing in %q to count its owners: %w", account.Slug, err)
+		}
+		owners, err := s.CountOwners(ctx, q, account.ID)
+		if err != nil {
+			return nil, fmt.Errorf("counting the owners of %q: %w", account.Slug, err)
+		}
+		// `<= 1` rather than `== 1`: the caller's own row is the one being
+		// counted, and a count of zero would mean the membership disappeared
+		// between step 1 and here, in which case reporting the account is the
+		// safe answer rather than silently proceeding.
+		if owners <= 1 {
+			out = append(out, account)
+		}
+	}
+	return out, nil
+}
+
+// Returns the personal accounts belonging to userID.
+//
+// IT READS ONLY THE CALLER'S OWN MEMBERSHIP ROWS, so it is admitted by
+// `account_users_cafaye_members` (00018) with `begin_user` set — the same seam
+// `Service.ListMine` uses, and for the same reason.
+func (s *Store) PersonalAccounts(ctx context.Context, q db.Querier, userID id.UUID) ([]Account, error) {
+	if userID.IsZero() {
+		return nil, nil
+	}
+
+	// QUALIFIED, and the reason is a mistake this query made first: `accountColumns`
+	// is bare, and joined against `account_users` every one of `id`, `name`,
+	// `personal`, `created_at` and `updated_at` is a column on BOTH tables. The
+	// database refuses it as ambiguous, which is the good outcome — a silent
+	// resolution would have meant `ORDER BY created_at` silently meaning
+	// `account_users.created_at`, ordering the answer by when somebody JOINED
+	// rather than when the account was made.
+	const query = `
+		SELECT ` + accountColumnsQualified + `
+		FROM account_users au
+		JOIN accounts a ON a.id = au.account_id
+		WHERE au.user_id = $1 AND a.personal
+		ORDER BY a.created_at ASC, a.id ASC`
+
+	return s.scanAccounts(ctx, q, query, "listing a user's personal accounts", userID)
+}
+
+// scanAccounts is the shared reader for the two queries above, and it exists so
+// "never nil" is a property of the helper rather than a sentence repeated in two
+// callers: a JSON encoder renders a nil slice as `null` and an empty one as `[]`,
+// and a caller deciding whether a deletion is refused must see `[]` for "no team
+// accounts" rather than have to ask whether the nil is an answer.
+func (s *Store) scanAccounts(ctx context.Context, q db.Querier, query, what string, userID id.UUID) ([]Account, error) {
+	rows, err := q.Query(ctx, query, userID)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", what, err)
+	}
+	defer rows.Close()
+
+	out := make([]Account, 0, 4)
+	for rows.Next() {
+		var a Account
+		if err := rows.Scan(&a.ID, &a.Name, &a.Slug, &a.Personal, &a.CreatedAt, &a.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("%s: %w", what, err)
+		}
+		out = append(out, a)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("%s: %w", what, err)
+	}
+	return out, nil
+}
+
+// ListForUser returns every account userID belongs to, personal ones first.
 func (s *Store) ListForUser(ctx context.Context, q db.Querier, userID id.UUID) ([]MemberSummary, error) {
 	out := make([]MemberSummary, 0, 4)
 	if userID.IsZero() {

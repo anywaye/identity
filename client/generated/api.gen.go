@@ -263,26 +263,29 @@ func (e OIDCClientScopes) Valid() bool {
 
 // Defines values for ProblemCode.
 const (
-	ProblemCodeAccountLocked        ProblemCode = "account_locked"
-	ProblemCodeConflict             ProblemCode = "conflict"
-	ProblemCodeForbidden            ProblemCode = "forbidden"
-	ProblemCodeIdempotencyKeyReused ProblemCode = "idempotency_key_reused"
-	ProblemCodeInternal             ProblemCode = "internal"
-	ProblemCodeInvalidJSON          ProblemCode = "invalid_json"
-	ProblemCodeMethodNotAllowed     ProblemCode = "method_not_allowed"
-	ProblemCodeNotFound             ProblemCode = "not_found"
-	ProblemCodePayloadTooLarge      ProblemCode = "payload_too_large"
-	ProblemCodeRateLimited          ProblemCode = "rate_limited"
-	ProblemCodeServiceUnavailable   ProblemCode = "service_unavailable"
-	ProblemCodeUnauthorized         ProblemCode = "unauthorized"
-	ProblemCodeUnavailable          ProblemCode = "unavailable"
-	ProblemCodeValidationFailed     ProblemCode = "validation_failed"
+	ProblemCodeAccountLocked            ProblemCode = "account_locked"
+	ProblemCodeAccountOwnershipConflict ProblemCode = "account_ownership_conflict"
+	ProblemCodeConflict                 ProblemCode = "conflict"
+	ProblemCodeForbidden                ProblemCode = "forbidden"
+	ProblemCodeIdempotencyKeyReused     ProblemCode = "idempotency_key_reused"
+	ProblemCodeInternal                 ProblemCode = "internal"
+	ProblemCodeInvalidJSON              ProblemCode = "invalid_json"
+	ProblemCodeMethodNotAllowed         ProblemCode = "method_not_allowed"
+	ProblemCodeNotFound                 ProblemCode = "not_found"
+	ProblemCodePayloadTooLarge          ProblemCode = "payload_too_large"
+	ProblemCodeRateLimited              ProblemCode = "rate_limited"
+	ProblemCodeServiceUnavailable       ProblemCode = "service_unavailable"
+	ProblemCodeUnauthorized             ProblemCode = "unauthorized"
+	ProblemCodeUnavailable              ProblemCode = "unavailable"
+	ProblemCodeValidationFailed         ProblemCode = "validation_failed"
 )
 
 // Valid indicates whether the value is a known member of the ProblemCode enum.
 func (e ProblemCode) Valid() bool {
 	switch e {
 	case ProblemCodeAccountLocked:
+		return true
+	case ProblemCodeAccountOwnershipConflict:
 		return true
 	case ProblemCodeConflict:
 		return true
@@ -3863,6 +3866,44 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/invitations/accept (the `AcceptInvitation` operationId).
 	AcceptInvitation(ctx context.Context, body AcceptInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// DeleteCurrentUser Delete the authenticated user's account
+	//
+	// Removes the caller's own account: the user row, the personal account a
+	// registration created for them, and their membership of every team account.
+	//
+	// **Every credential is ended in the same transaction**, by the same sweep a
+	// password reset uses — every session deleted, every OpenID Connect access
+	// token revoked. A token already issued stays cryptographically valid until
+	// its `exp`; what this changes is that `identity` will answer for it no more.
+	//
+	// **A team account survives, and its other members survive with it.** Only
+	// the departing user's membership row goes. That is the `users` foreign-key
+	// `ON DELETE CASCADE` on `account_users`, not an explicit sweep.
+	//
+	// **409, and the deletion does not happen**, when the caller is the only
+	// OWNER of a team account. An account left with no owner is one whose every
+	// owner-only operation is unreachable, so the request is refused and the
+	// `detail` names each account by name and slug. Transfer ownership through
+	// `POST /v1/accounts/{accountID}/ownership-transfers` and this request will
+	// then succeed. An account the caller merely BELONGS to never blocks them,
+	// and neither does one where somebody else is also an owner.
+	//
+	// The status is **204** and there is no body. There is nothing to describe:
+	// the resource is gone.
+	//
+	// **The second call with the same session is a 401**, not a 204 and not an
+	// "already deleted". The session row went with the user, so the credential no
+	// longer resolves — and "already deleted" being distinguishable from "never
+	// existed" would make this route an oracle for which user ids are real.
+	//
+	// This surface is **session-only**. There is no scope that could authorise it
+	// for an API key, because the subject of the operation is "the caller is this
+	// person", so a scoped token is refused with the one 401 like any other
+	// credential that resolves to no session.
+	//
+	// Corresponds with DELETE /v1/me (the `DeleteCurrentUser` operationId).
+	DeleteCurrentUser(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetCurrentUser The authenticated user
 	//
 	// Resolves the presented credential and returns the account it belongs to.
@@ -7105,6 +7146,54 @@ func (c *Client) AcceptInvitation(ctx context.Context, body AcceptInvitationJSON
 	return c.Client.Do(req)
 }
 
+// DeleteCurrentUser Delete the authenticated user's account
+//
+// Removes the caller's own account: the user row, the personal account a
+// registration created for them, and their membership of every team account.
+//
+// **Every credential is ended in the same transaction**, by the same sweep a
+// password reset uses — every session deleted, every OpenID Connect access
+// token revoked. A token already issued stays cryptographically valid until
+// its `exp`; what this changes is that `identity` will answer for it no more.
+//
+// **A team account survives, and its other members survive with it.** Only
+// the departing user's membership row goes. That is the `users` foreign-key
+// `ON DELETE CASCADE` on `account_users`, not an explicit sweep.
+//
+// **409, and the deletion does not happen**, when the caller is the only
+// OWNER of a team account. An account left with no owner is one whose every
+// owner-only operation is unreachable, so the request is refused and the
+// `detail` names each account by name and slug. Transfer ownership through
+// `POST /v1/accounts/{accountID}/ownership-transfers` and this request will
+// then succeed. An account the caller merely BELONGS to never blocks them,
+// and neither does one where somebody else is also an owner.
+//
+// The status is **204** and there is no body. There is nothing to describe:
+// the resource is gone.
+//
+// **The second call with the same session is a 401**, not a 204 and not an
+// "already deleted". The session row went with the user, so the credential no
+// longer resolves — and "already deleted" being distinguishable from "never
+// existed" would make this route an oracle for which user ids are real.
+//
+// This surface is **session-only**. There is no scope that could authorise it
+// for an API key, because the subject of the operation is "the caller is this
+// person", so a scoped token is refused with the one 401 like any other
+// credential that resolves to no session.
+//
+// Corresponds with DELETE /v1/me (the `DeleteCurrentUser` operationId).
+func (c *Client) DeleteCurrentUser(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteCurrentUserRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // GetCurrentUser The authenticated user
 //
 // Resolves the presented credential and returns the account it belongs to.
@@ -9857,6 +9946,33 @@ func NewAcceptInvitationRequestWithBody(server string, contentType string, body 
 	return req, nil
 }
 
+// NewDeleteCurrentUserRequest constructs an http.Request for the DeleteCurrentUser method
+func NewDeleteCurrentUserRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/me")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetCurrentUserRequest constructs an http.Request for the GetCurrentUser method
 func NewGetCurrentUserRequest(server string) (*http.Request, error) {
 	var err error
@@ -12288,6 +12404,46 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/invitations/accept (the `AcceptInvitation` operationId).
 	AcceptInvitationWithResponse(ctx context.Context, body AcceptInvitationJSONRequestBody, reqEditors ...RequestEditorFn) (*AcceptInvitationResponse, error)
+
+	// DeleteCurrentUserWithResponse Delete the authenticated user's account
+	//
+	// Removes the caller's own account: the user row, the personal account a
+	// registration created for them, and their membership of every team account.
+	//
+	// **Every credential is ended in the same transaction**, by the same sweep a
+	// password reset uses — every session deleted, every OpenID Connect access
+	// token revoked. A token already issued stays cryptographically valid until
+	// its `exp`; what this changes is that `identity` will answer for it no more.
+	//
+	// **A team account survives, and its other members survive with it.** Only
+	// the departing user's membership row goes. That is the `users` foreign-key
+	// `ON DELETE CASCADE` on `account_users`, not an explicit sweep.
+	//
+	// **409, and the deletion does not happen**, when the caller is the only
+	// OWNER of a team account. An account left with no owner is one whose every
+	// owner-only operation is unreachable, so the request is refused and the
+	// `detail` names each account by name and slug. Transfer ownership through
+	// `POST /v1/accounts/{accountID}/ownership-transfers` and this request will
+	// then succeed. An account the caller merely BELONGS to never blocks them,
+	// and neither does one where somebody else is also an owner.
+	//
+	// The status is **204** and there is no body. There is nothing to describe:
+	// the resource is gone.
+	//
+	// **The second call with the same session is a 401**, not a 204 and not an
+	// "already deleted". The session row went with the user, so the credential no
+	// longer resolves — and "already deleted" being distinguishable from "never
+	// existed" would make this route an oracle for which user ids are real.
+	//
+	// This surface is **session-only**. There is no scope that could authorise it
+	// for an API key, because the subject of the operation is "the caller is this
+	// person", so a scoped token is refused with the one 401 like any other
+	// credential that resolves to no session.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/me (the `DeleteCurrentUser` operationId).
+	DeleteCurrentUserWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*DeleteCurrentUserResponse, error)
 
 	// GetCurrentUserWithResponse The authenticated user
 	//
@@ -17123,6 +17279,75 @@ func (r AcceptInvitationResponse) ContentType() string {
 	return ""
 }
 
+// DeleteCurrentUserResponse401Headers the declared response headers of an HTTP 401 response for DeleteCurrentUser
+type DeleteCurrentUserResponse401Headers struct {
+	XTraceID string
+}
+
+// DeleteCurrentUserResponse500Headers the declared response headers of an HTTP 500 response for DeleteCurrentUser
+type DeleteCurrentUserResponse500Headers struct {
+	XTraceID string
+}
+
+type DeleteCurrentUserResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthenticated
+	// ApplicationProblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationProblemJSON409 *Problem
+	// ApplicationProblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationProblemJSON500 *InternalError
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *DeleteCurrentUserResponse401Headers
+	// Headers500 the parsed response headers for an HTTP 500 response
+	Headers500 *DeleteCurrentUserResponse500Headers
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r DeleteCurrentUserResponse) GetApplicationProblemJSON401() *Unauthenticated {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r DeleteCurrentUserResponse) GetApplicationProblemJSON409() *Problem {
+	return r.ApplicationProblemJSON409
+}
+
+// GetApplicationProblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r DeleteCurrentUserResponse) GetApplicationProblemJSON500() *InternalError {
+	return r.ApplicationProblemJSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteCurrentUserResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteCurrentUserResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteCurrentUserResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteCurrentUserResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // GetCurrentUserResponse200Headers the declared response headers of an HTTP 200 response for GetCurrentUser
 type GetCurrentUserResponse200Headers struct {
 	XTraceID string
@@ -21271,6 +21496,52 @@ func (c *ClientWithResponses) AcceptInvitationWithResponse(ctx context.Context, 
 		return nil, err
 	}
 	return ParseAcceptInvitationResponse(rsp)
+}
+
+// DeleteCurrentUserWithResponse Delete the authenticated user's account
+//
+// Removes the caller's own account: the user row, the personal account a
+// registration created for them, and their membership of every team account.
+//
+// **Every credential is ended in the same transaction**, by the same sweep a
+// password reset uses — every session deleted, every OpenID Connect access
+// token revoked. A token already issued stays cryptographically valid until
+// its `exp`; what this changes is that `identity` will answer for it no more.
+//
+// **A team account survives, and its other members survive with it.** Only
+// the departing user's membership row goes. That is the `users` foreign-key
+// `ON DELETE CASCADE` on `account_users`, not an explicit sweep.
+//
+// **409, and the deletion does not happen**, when the caller is the only
+// OWNER of a team account. An account left with no owner is one whose every
+// owner-only operation is unreachable, so the request is refused and the
+// `detail` names each account by name and slug. Transfer ownership through
+// `POST /v1/accounts/{accountID}/ownership-transfers` and this request will
+// then succeed. An account the caller merely BELONGS to never blocks them,
+// and neither does one where somebody else is also an owner.
+//
+// The status is **204** and there is no body. There is nothing to describe:
+// the resource is gone.
+//
+// **The second call with the same session is a 401**, not a 204 and not an
+// "already deleted". The session row went with the user, so the credential no
+// longer resolves — and "already deleted" being distinguishable from "never
+// existed" would make this route an oracle for which user ids are real.
+//
+// This surface is **session-only**. There is no scope that could authorise it
+// for an API key, because the subject of the operation is "the caller is this
+// person", so a scoped token is refused with the one 401 like any other
+// credential that resolves to no session.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/me (the `DeleteCurrentUser` operationId).
+func (c *ClientWithResponses) DeleteCurrentUserWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*DeleteCurrentUserResponse, error) {
+	rsp, err := c.DeleteCurrentUser(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteCurrentUserResponse(rsp)
 }
 
 // GetCurrentUserWithResponse The authenticated user
@@ -26510,6 +26781,72 @@ func ParseAcceptInvitationResponse(rsp *http.Response) (*AcceptInvitationRespons
 		response.Headers422 = &headers
 	case rsp.StatusCode == 500:
 		var headers AcceptInvitationResponse500Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers500 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseDeleteCurrentUserResponse parses an HTTP response from a DeleteCurrentUserWithResponse call
+func ParseDeleteCurrentUserResponse(rsp *http.Response) (*DeleteCurrentUserResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteCurrentUserResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthenticated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON500 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers DeleteCurrentUserResponse401Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers401 = &headers
+	case rsp.StatusCode == 500:
+		var headers DeleteCurrentUserResponse500Headers
 		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {

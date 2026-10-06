@@ -24,6 +24,9 @@ const errorTypeBase = "https://errors.cafaye.com/"
 //	invalid_request     400  a request this service understood and named a
 //	                       specific problem with, on a surface it owns
 //	not_a_member        404  covered by not_found; the sentence carries the reason
+//	ownership_conflict  409  a deletion refused because the caller solely owns a
+//	                       team account — see the constant for why this is not
+//	                       core's `conflict`
 //
 // They are listed together in openapi/v1.yaml and flagged there for the
 // manager: core owns the set, and a service that quietly invents codes is the
@@ -50,6 +53,30 @@ const (
 	CodeMethodNotAllowed = "method_not_allowed"
 	CodeInvalidJSON      = "invalid_json"
 	CodePayloadTooLarge  = "payload_too_large"
+
+	// CodeAccountOwnershipConflict is 409 for `DELETE /v1/me` when the caller is
+	// the only OWNER of a team account, so the deletion cannot proceed.
+	//
+	// # WHY THIS IS NOT core's `conflict`
+	//
+	// The reserved code means "the request conflicts with the current state of the
+	// resource" and its title is the fixed "Conflict". That is true here too, and
+	// the caller needs to act on WHICH conflict: this one has a remedy — transfer
+	// ownership, or delete the account — and the `detail` names which accounts.
+	//
+	// A machine consumer switching on `code` is the reason to keep it separate. A
+	// 409 carrying `conflict` says "retry or reconcile"; a 409 carrying this says
+	// "this person must stop owning something first", which is a different and
+	// non-retryable instruction. Reusing `conflict` would make the two
+	// indistinguishable to a generated client, and the whole of this packet's
+	// hardest decision would arrive as an untyped string in a sentence.
+	//
+	// It is declared here rather than written as a literal at the handler for the
+	// reason every other code in this file is: `titles` is a fixed map, and a code
+	// absent from it renders the fallback "Request failed" — which would have
+	// shipped a refusal whose human-readable summary says nothing about ownership
+	// at all.
+	CodeAccountOwnershipConflict = "account_ownership_conflict"
 
 	// CodeInvalidRequest is 400 for a request this service understood well enough
 	// to name a specific problem with, on a surface it owns. It is the OAuth 2.0
@@ -93,6 +120,8 @@ var titles = map[string]string{
 	CodeInvalidJSON:        "Malformed request body",
 	CodePayloadTooLarge:    "Request body too large",
 	CodeInvalidRequest:     "Invalid request",
+
+	CodeAccountOwnershipConflict: "Account ownership conflict",
 }
 
 func titleFor(code string) string {

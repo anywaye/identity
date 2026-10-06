@@ -32,6 +32,7 @@ import (
 	"github.com/cafaye/identity/internal/auth"
 	"github.com/cafaye/identity/internal/config"
 	"github.com/cafaye/identity/internal/courier"
+	"github.com/cafaye/identity/internal/deletion"
 	"github.com/cafaye/identity/internal/httpapi"
 	"github.com/cafaye/identity/internal/mfa"
 	"github.com/cafaye/identity/internal/oauth"
@@ -259,7 +260,7 @@ func newApp(ctx context.Context, cfg config.Config, logger *slog.Logger) (*app, 
 	// memory-hard work at boot for nothing.
 	hasher := users.NewHasher()
 
-	authSvc, tenancy, secondFactor, mfaUsable, err := buildAuth(cfg, pool, hasher, logger)
+	authSvc, tenancy, secondFactor, deletionSvc, mfaUsable, err := buildAuth(cfg, pool, hasher, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -272,6 +273,7 @@ func newApp(ctx context.Context, cfg config.Config, logger *slog.Logger) (*app, 
 		opts = append(opts,
 			httpapi.WithAuth(authSvc),
 			httpapi.WithTenancy(tenancy),
+			httpapi.WithDeletion(deletionSvc),
 			// The login's second step rides on WithAuth, because auth.Service is what
 			// mints the session behind it. Only the MANAGEMENT routes are conditional,
 			// and only on a usable key: such a process must not be able to enroll a
@@ -384,9 +386,9 @@ func newApp(ctx context.Context, cfg config.Config, logger *slog.Logger) (*app, 
 // TOTP secret, which is exactly whether the MANAGEMENT routes may be mounted.
 func buildAuth(
 	cfg config.Config, pool *pgxpool.Pool, hasher *users.Hasher, logger *slog.Logger,
-) (*auth.Service, *accounts.Service, *mfa.Service, bool, error) {
+) (*auth.Service, *accounts.Service, *mfa.Service, *deletion.Service, bool, error) {
 	if pool == nil {
-		return nil, nil, nil, false, nil
+		return nil, nil, nil, nil, false, nil
 	}
 
 	// One outbox store, shared. It is stateless apart from its pool, and two of
@@ -410,13 +412,44 @@ func buildAuth(
 	// personal account, and both writes are one transaction. The order of these
 	// two blocks is the dependency order, which is the reason they share a
 	// function rather than being two independent builders in newApp.
+	accountStore := accounts.NewStore(pool)
 	tenancy := accounts.NewService(
 		acctboundary.TxRunner{TxRunner: db.TxRunner{Pool: pool}},
-		accounts.NewStore(pool),
+		accountStore,
 		events,
 		apiKeyStore,
 		clock.System{},
 		db.Direct{Pool: pool},
+	)
+
+	// THE DELETION SERVICE, and it is built HERE rather than on its own because it
+	// needs the three things this function has already made: the pool, the account
+	// store (shared, not a second one over the same table) and the outbox.
+	//
+	// `acctboundary.TxRunner` and not `db.TxRunner`, for the reason it is the one
+	// tenancy uses: it installs the account identity from the request context
+	// before the callback runs. `internal/deletion` re-installs the USER identity
+	// itself, because its transaction has no account — but the runner is still the
+	// right seam, so a request that arrives carrying an account is not left with a
+	// transaction standing in nobody's account.
+	//
+	// The credential sweeper is built from the SAME two stores the rest of the
+	// process uses, and its constructor REFUSES a half-wired pair rather than
+	// returning a sweeper that ends sessions and leaves every access token
+	// standing. There is no fallback and no `Unavailable{}` here: a deployment
+	// that cannot sweep cannot delete, and `DELETE /v1/me` is then not mounted at
+	// all — a 404, which is a fact about the deployment rather than an error in a
+	// user's request.
+	credentialSweep, err := deletion.NewSweeper(sessions.NewStore(pool), oidc.NewStore(pool))
+	if err != nil {
+		return nil, nil, nil, nil, false, err
+	}
+	deletionSvc := deletion.NewService(
+		acctboundary.TxRunner{TxRunner: db.TxRunner{Pool: pool}},
+		users.NewStore(pool),
+		accountStore,
+		credentialSweep,
+		events,
 	)
 
 	// The second factor is built before auth for the reason the comment above says:
@@ -436,7 +469,7 @@ func buildAuth(
 	// every second factor on the platform, and they do not.
 	vault, err := buildMFASecret(cfg, logger)
 	if err != nil {
-		return nil, nil, nil, false, err
+		return nil, nil, nil, nil, false, err
 	}
 	_, mfaUsable := vault.(mfa.Unavailable)
 	mfaUsable = !mfaUsable
@@ -509,7 +542,7 @@ func buildAuth(
 		auth.DefaultSessionTTL,
 	)
 
-	return authSvc, tenancy, secondFactor, mfaUsable, nil
+	return authSvc, tenancy, secondFactor, deletionSvc, mfaUsable, nil
 }
 
 // buildRecovery assembles the account-recovery use cases: password reset, address

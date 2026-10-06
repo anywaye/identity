@@ -293,15 +293,15 @@ func TestTheRollbackScriptNamesTheRoleItProvisionsFromTheCaller(t *testing.T) {
 	body := string(raw)
 
 	if !strings.Contains(body, `APP_ROLE="${CALLER}_app"`) {
-		t.Errorf("bin/rollback does not name the login role it provisions from the caller.\n"+
-			"protect_table defaults to `current_user || '_app'`, so a harness that provisions a\n"+
-			"hardcoded role name is provisioning a role the migration will not ask for. Measured: the\n"+
-			"hardcoded first draft failed at 00016 on a bare cluster with \"postgres_app is not a LOGIN\n"+
+		t.Errorf("bin/rollback does not name the login role it provisions from the caller.\n" +
+			"protect_table defaults to `current_user || '_app'`, so a harness that provisions a\n" +
+			"hardcoded role name is provisioning a role the migration will not ask for. Measured: the\n" +
+			"hardcoded first draft failed at 00016 on a bare cluster with \"postgres_app is not a LOGIN\n" +
 			"role\", and then failed to start at all on a cluster where `identity` already existed.")
 	}
 	if !strings.Contains(body, "rolcanlogin") {
-		t.Errorf("bin/rollback creates its role without checking whether it can LOGIN.\n"+
-			"protect_table's own check is `rolname = ... and rolcanlogin`, and a role that exists but\n"+
+		t.Errorf("bin/rollback creates its role without checking whether it can LOGIN.\n" +
+			"protect_table's own check is `rolname = ... and rolcanlogin`, and a role that exists but\n" +
 			"cannot log in is exactly the state that check rejects.")
 	}
 }

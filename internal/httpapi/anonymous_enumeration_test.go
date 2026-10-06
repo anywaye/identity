@@ -63,6 +63,7 @@ package httpapi
 // reader will find it.
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -74,7 +75,9 @@ import (
 	"github.com/alexedwards/argon2id"
 	"github.com/go-chi/chi/v5"
 
+	"github.com/cafaye/identity/internal/accounts"
 	"github.com/cafaye/identity/internal/apikeys"
+	"github.com/cafaye/identity/internal/deletion"
 	"github.com/cafaye/identity/internal/outbox"
 	"github.com/cafaye/identity/internal/platform/clock"
 	"github.com/cafaye/identity/internal/platform/db"
@@ -168,6 +171,31 @@ func anonymousFamilyAudit() []auditRoute {
 			name: "update the session", method: http.MethodPatch, pattern: "/v1/me",
 			anonymous: http.StatusUnauthorized,
 			discloses: "nothing: 401 without a credential, so no identifier arrives from a stranger",
+		},
+		{
+			// THE SAME ANSWER AS THE READ ABOVE, and it is a row rather than nothing
+			// because `/v1/me` is one of the audit family's prefixes and a prefix
+			// match would catch this route whether or not anyone thought about it.
+			//
+			// The question is sharper here than on the read, and the answer is
+			// stronger for a reason worth writing down. Deleting an account is the
+			// one route where a plausible implementation leaks: `409 sole owner` says
+			// "there is a team account called Acme and you are its only owner", which
+			// is everything an attacker wants to know about a named victim — except
+			// that it requires a RESOLVED SESSION for that victim, so a stranger can
+			// never see it. There is no anonymous path to the 409, and the 401 that
+			// stands in front of it is the same 401 the read returns.
+			//
+			// A second DELETE with the same session is also a 401 rather than a
+			// "already deleted" — asserted in deletion_test.go, because an
+			// "already deleted" would be exactly the existence oracle this table
+			// exists to forbid.
+			name: "delete the session", method: http.MethodDelete, pattern: "/v1/me",
+			anonymous: http.StatusUnauthorized,
+			discloses: "nothing: 401 without a credential, and no identifier arrives from a stranger. " +
+				"The 409 that names a solely-owned team account is reachable only by a " +
+				"resolved session, so there is no anonymous path to the one answer on this " +
+				"route that describes an account",
 		},
 		{
 			name: "sign out", method: http.MethodDelete, pattern: "/v1/session",
@@ -885,6 +913,20 @@ func newAuditFixture(t *testing.T) *auditFixture {
 		)),
 		WithAPIKeys(keys),
 		WithAPIKeyCaller(keys),
+		// THE REAL DELETION SERVICE, not a fake, and the reason is that this probe
+		// sends an ANONYMOUS request: the assertion is that the route answers 401
+		// rather than reaching the use case at all. A fake would answer 401 too, and
+		// would keep answering 401 if the handler's authentication were deleted —
+		// which is the one regression this row could be protecting against and the
+		// one a double cannot see. The real service on a `dbtest.Schema` pool also
+		// proves the wiring compiles end to end.
+		WithDeletion(deletion.NewService(
+			db.TxRunner{Pool: pool},
+			users.NewStore(pool),
+			accounts.NewStore(pool),
+			&auditSweeper{},
+			outbox.NewStore(pool),
+		)),
 		// The introspection route is NOT account-scoped and hangs off this alone.
 		// Without it the route is not mounted at all, and the census above would read
 		// a smaller service than the one that runs.
@@ -996,6 +1038,7 @@ func mountedFamilyRoutes() []string {
 	r := chi.NewRouter()
 	options{
 		auth:         newFakeAuth(),
+		deletion:     newFakeDeletion(),
 		tenancy:      newFakeTenancy(),
 		apiKeys:      newFakeAPIKeys(),
 		apiKeyCaller: newFakeAPIKeyCaller(users.User{}, apikeys.Key{}),
@@ -1075,4 +1118,19 @@ func contains(haystack []string, needle string) bool {
 		}
 	}
 	return false
+}
+
+// auditSweeper is a deletion credential sweep that does nothing, and it is here
+// because the anonymous probe must never reach a credential statement at all.
+//
+// It is a no-op rather than the real sweep on purpose: the point of the audit row
+// is the 401, and a real sweep against a `dbtest.Schema` pool would issue writes
+// for a request that should have been refused before reaching any use case. If the
+// handler ever stopped authenticating, this no-op would let the transaction run to
+// completion on a user that does not exist and the probe would catch it by
+// answering something other than 401.
+type auditSweeper struct{}
+
+func (auditSweeper) RevokeEveryCredential(ctx context.Context, q db.Querier, u id.UUID, at time.Time) error {
+	return nil
 }

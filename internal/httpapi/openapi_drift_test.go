@@ -240,6 +240,7 @@ func servedRoutes(t *testing.T) map[operationKey]string {
 
 	o := options{
 		auth:         newFakeAuth(),
+		deletion:     newFakeDeletion(),
 		tenancy:      newFakeTenancy(),
 		oidcClients:  newFakeOIDCClients(),
 		oidc:         newFakeOIDC(),
@@ -594,7 +595,16 @@ func TestTheDocumentIsOpenAPI31AndCarriesAVersion(t *testing.T) {
 	// surface, and the finding the version pin exists to make visible is a consumer
 	// that kept calling `DELETE /v1/session` and never learned it could end one
 	// session rather than all of them.
-	const want = "1.11.0"
+	//
+	// 1.12.0 is the account self-deletion: `DELETE /v1/me`. It is written in a merge
+	// commit rather than a packet because TWO packets each bumped the document to
+	// 1.11.0 — the sessions packet on master and the deletion packet on its branch —
+	// and merging them folded both documents' additions under one number, which is
+	// exactly the invisibility this pin exists to prevent. The display name's
+	// `PATCH /v1/me` rode in under 1.11.0 the same way and is named here so the
+	// record is honest: the merged document describes sessions, the display name and
+	// the deletion, and a consumer pinned at 1.10.0 saw none of the three.
+	const want = "1.12.0"
 	if doc.InfoVersion != want {
 		t.Errorf("%s declares info.version %q, not %q. core's sync rule is that the /v1 "+
 			"prefix says which contract and this says which build of it, and a non-breaking "+

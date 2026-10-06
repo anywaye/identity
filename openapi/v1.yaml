@@ -126,7 +126,7 @@ info:
   # service means "locked, retry at" and clients render it as a countdown. A
   # disabled account is not coming back, so a client that treated the 403 as
   # retryable would poll a route whose answer cannot change.
-  version: 1.11.0
+  version: 1.12.0
   summary: Authentication, sessions, multi-factor authentication, account recovery, accounts, tenancy, scoped API tokens, the admin surface, the operator surface and OIDC registrations.
   description: |
     `identity` is the cafaye platform's security boundary: it is what every other
@@ -1672,6 +1672,75 @@ paths:
           $ref: '#/components/responses/InternalError'
 
   /v1/me:
+    delete:
+      tags: [sessions]
+      operationId: deleteCurrentUser
+      summary: Delete the authenticated user's account
+      description: |
+        Removes the caller's own account: the user row, the personal account a
+        registration created for them, and their membership of every team account.
+
+        **Every credential is ended in the same transaction**, by the same sweep a
+        password reset uses — every session deleted, every OpenID Connect access
+        token revoked. A token already issued stays cryptographically valid until
+        its `exp`; what this changes is that `identity` will answer for it no more.
+
+        **A team account survives, and its other members survive with it.** Only
+        the departing user's membership row goes. That is the `users` foreign-key
+        `ON DELETE CASCADE` on `account_users`, not an explicit sweep.
+
+        **409, and the deletion does not happen**, when the caller is the only
+        OWNER of a team account. An account left with no owner is one whose every
+        owner-only operation is unreachable, so the request is refused and the
+        `detail` names each account by name and slug. Transfer ownership through
+        `POST /v1/accounts/{accountID}/ownership-transfers` and this request will
+        then succeed. An account the caller merely BELONGS to never blocks them,
+        and neither does one where somebody else is also an owner.
+
+        The status is **204** and there is no body. There is nothing to describe:
+        the resource is gone.
+
+        **The second call with the same session is a 401**, not a 204 and not an
+        "already deleted". The session row went with the user, so the credential no
+        longer resolves — and "already deleted" being distinguishable from "never
+        existed" would make this route an oracle for which user ids are real.
+
+        This surface is **session-only**. There is no scope that could authorise it
+        for an API key, because the subject of the operation is "the caller is this
+        person", so a scoped token is refused with the one 401 like any other
+        credential that resolves to no session.
+      security:
+        - sessionCookie: []
+        - bearerToken: []
+      responses:
+        '204':
+          description: |
+            The account is gone. No body, and deliberately no `Content-Type`.
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '409':
+          description: |
+            The caller solely owns one or more team accounts, which is named in the
+            problem document's `detail`. Nothing was deleted.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                soleOwner:
+                  summary: The caller is the only owner of a team account
+                  value:
+                    type: https://errors.cafaye.com/account_ownership_conflict
+                    title: Account ownership conflict
+                    status: 409
+                    code: account_ownership_conflict
+                    detail: >
+                      sole owner of a team account: "Acme" (acme). Transfer ownership
+                      to somebody else, or delete the account, and then this request
+                      will succeed. A deletion cannot pick a new owner, because only
+                      the people still in the account know who should have it
+        '500':
+          $ref: '#/components/responses/InternalError'
     get:
       tags: [sessions]
       operationId: getCurrentUser
@@ -6760,6 +6829,7 @@ components:
             - invalid_json
             - payload_too_large
             - service_unavailable
+            - account_ownership_conflict
         trace_id:
           type: string
           description: Always present, always equal to the `X-Trace-Id` response header.
@@ -7035,6 +7105,20 @@ components:
 #    the reserved list. `invalid_json` may be better folded into
 #    `validation_failed` at 400, since core's list is keyed by slug and one slug
 #    cannot carry two statuses.
+#
+#    2b. `account_ownership_conflict` (409) appeared with `DELETE /v1/me`, and it is
+#    the first of these that is a refusal the CALLER MUST UNBLOCK rather than a
+#    shape the request happened to have. Core's reserved `conflict` is true of it —
+#    the request conflicts with the account's state — but a client switching on
+#    `conflict` has been told "retry or reconcile", and retrying this one cannot
+#    succeed until the caller transfers ownership of an account they are the sole
+#    owner of, which is a decision that takes a different route and usually a
+#    different person. The `detail` names each account by name and slug precisely
+#    so the caller can act; the code carries the fact that the action is required.
+#
+#    Same proposal shape as above: add it mapped to 409, or fold it into
+#    `conflict` at the cost of the two becoming indistinguishable to a generated
+#    client.
 #
 # 3. `info.version` is set, and it is at 1.9.0.
 #
