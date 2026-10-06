@@ -149,11 +149,12 @@ func emittedEventTypes(t *testing.T) map[string]string {
 // The values are the reason each one is still here, so a reader arriving at this
 // map in six months learns why rather than only that.
 var knownUndeclaredEvents = map[string]string{
-	"identity.account.created":     "core has the catalog row but no payload schema; declaring it fails event.payload-schema-missing",
-	"identity.member.invited":      "core has the catalog row but no payload schema",
-	"identity.member.accepted":     "core has NO catalog row — its row is identity.member.joined, and the divergence is a recorded manager decision (see internal/outbox/tenancy.go)",
-	"identity.member.role_changed": "core has the catalog row but no payload schema",
-	"identity.member.removed":      "core has the catalog row but no payload schema",
+	"identity.account.created":               "core has the catalog row but no payload schema; declaring it fails event.payload-schema-missing",
+	"identity.member.invited":                "core has the catalog row but no payload schema",
+	"identity.member.accepted":               "core has NO catalog row — its row is identity.member.joined, and the divergence is a recorded manager decision (see internal/outbox/tenancy.go)",
+	"identity.member.role_changed":           "core has the catalog row but no payload schema",
+	"identity.member.removed":                "core has the catalog row but no payload schema",
+	"identity.account.ownership_transferred": "core has NO catalog row — nothing in core 0.2 describes an account changing hands. The reason it is one event and not two role_changed events is on the constant itself",
 }
 
 // TestEveryEmittedEventTypeIsThreeSegmentAndOwnPrefixed pins core 0.2's grammar

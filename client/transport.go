@@ -85,6 +85,7 @@ type Transport interface {
 	InviteMember(ctx context.Context, accountId openapiTypes.UUID, body generated.InviteMemberJSONRequestBody, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	ChangeMemberRole(ctx context.Context, accountId openapiTypes.UUID, userId openapiTypes.UUID, body generated.ChangeMemberRoleJSONRequestBody, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	RemoveMember(ctx context.Context, accountId openapiTypes.UUID, userId openapiTypes.UUID, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
+	TransferAccountOwnership(ctx context.Context, accountId openapiTypes.UUID, body generated.TransferAccountOwnershipJSONRequestBody, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	AcceptInvitation(ctx context.Context, body generated.AcceptInvitationJSONRequestBody, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	RegisterOIDCClient(ctx context.Context, accountId openapiTypes.UUID, body generated.RegisterOIDCClientJSONRequestBody, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	ListOIDCClients(ctx context.Context, accountId openapiTypes.UUID, reqEditors ...generated.RequestEditorFn) (*http.Response, error)

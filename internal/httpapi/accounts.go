@@ -49,6 +49,7 @@ type Tenancy interface {
 	Accept(ctx context.Context, in accounts.AcceptInput) (accounts.Membership, error)
 	ChangeRole(ctx context.Context, in accounts.ChangeRoleInput) (accounts.Membership, error)
 	RemoveMember(ctx context.Context, in accounts.RemoveMemberInput) error
+	TransferOwnership(ctx context.Context, in accounts.TransferInput) (accounts.Transferred, error)
 }
 
 // WithTenancy mounts the account routes.
@@ -156,6 +157,16 @@ var accountRouteScopes = map[string]string{
 	"POST /v1/accounts/{accountID}/invitations":        apikeys.ScopeAccountsWrite,
 	"PATCH /v1/accounts/{accountID}/members/{userID}":  apikeys.ScopeAccountsWrite,
 	"DELETE /v1/accounts/{accountID}/members/{userID}": apikeys.ScopeAccountsWrite,
+
+	// OWNERSHIP TRANSFER. accounts:write, the same scope as every other mutation
+	// of the account's own shape, and the scope table does not care that this one
+	// is irreversible — the ROLE gate is what makes it narrow, and the scope gate
+	// is only here to stop a token that was never granted the right from reaching
+	// the handler at all. Making it a separate scope would be a claim that a
+	// caller can hold "accounts:write" and still not be allowed to change who runs
+	// the account, which is true for a token whose user's membership is not owner
+	// and is already answered by the role check above.
+	"POST /v1/accounts/{accountID}/ownership-transfers": apikeys.ScopeAccountsWrite,
 
 	// Deleting the account is its own scope: it is the only one of these that
 	// cannot be undone, and a token carrying accounts:write held by somebody who
@@ -591,6 +602,34 @@ type changeRoleRequest struct {
 	Role string `json:"role"`
 }
 
+// transferOwnershipRequest is the body of
+// POST /v1/accounts/:id/ownership-transfers.
+//
+// ONLY the heir. The caller's id comes from the credential, never from here —
+// the same line every write in this file draws, and on this route it is the whole
+// authorization story: "am I the owner" is asked of the session, not of a field
+// the caller chose.
+type transferOwnershipRequest struct {
+	NewOwnerUserID string `json:"new_owner_user_id"`
+}
+
+// ownershipTransferResponse is what a completed transfer looks like: the account,
+// and BOTH memberships at the roles they now hold.
+//
+// BOTH, and that is the design rather than a convenience. A response carrying only
+// the heir leaves the previous owner — who is also the person who made the
+// request — to work out what they are now by asking. This service is the only
+// thing that knows the answer, and the person who just gave the account away is
+// exactly who wants it.
+//
+// The account itself changed in no field, and it is here so a client does not
+// render the transfer against a blank header.
+type ownershipTransferResponse struct {
+	Account       accountResponse    `json:"account"`
+	NewOwner      membershipResponse `json:"new_owner"`
+	PreviousOwner membershipResponse `json:"previous_owner"`
+}
+
 // ---------------------------------------------------------------------------
 // handlers
 // ---------------------------------------------------------------------------
@@ -612,12 +651,17 @@ type changeRoleRequest struct {
 //	POST   /v1/accounts/:id/invitations            admin   (and owner for role=admin)
 //	DELETE /v1/accounts/:id/members/:userId        admin   (and never an owner)
 //	PATCH  /v1/accounts/:id/members/:userId        owner
+//	POST   /v1/accounts/:id/ownership-transfers    owner   (and never a personal account)
 //	DELETE /v1/accounts/:id                        owner
 //
 // The two rules that depend on the *target* rather than the caller — an admin
 // may not invite an admin, an admin may not remove an owner, the last owner is
 // never removed — are in the use case, not here. A route's minimum answers "may
 // this caller do this at all"; the rest answers "may they do it to this".
+//
+// The transfer row is a fourth case of that sentence rather than a new shape: its
+// minimum is owner and its own rule ("not a personal account, not a one-member
+// account") is about the ACCOUNT, which is the use case's.
 func (o options) registerTenancyRoutes(r chiRouter) {
 	// The three collection routes are SESSION-ONLY, and it is the token that makes
 	// that a decision rather than a default: each of them answers a question about
@@ -636,6 +680,18 @@ func (o options) registerTenancyRoutes(r chiRouter) {
 	r.Post("/v1/accounts/{accountID}/invitations", o.requireAccountRole(accounts.RoleAdmin, o.handleInvite))
 	r.Patch("/v1/accounts/{accountID}/members/{userID}", o.requireAccountRole(accounts.RoleOwner, o.handleChangeRole))
 	r.Delete("/v1/accounts/{accountID}/members/{userID}", o.requireAccountRole(accounts.RoleAdmin, o.handleRemoveMember))
+
+	// Handing the account to somebody else is owner-only, and that is the only
+	// reason it is not admin: after this request the admin's authority over the
+	// account is whatever the new owner gives it back, which is to say none.
+	//
+	// It is a COLLECTION under /ownership-transfers rather than a PUT of the
+	// account's own shape, because a transfer is an EVENT and not a state: there
+	// is no account resource whose current representation of "owner" this could
+	// be, because the owner is a role on a membership rather than a field. The
+	// plural resource is what makes the response — both memberships, at the roles
+	// they now hold — something a client can render without a second request.
+	r.Post("/v1/accounts/{accountID}/ownership-transfers", o.requireAccountRole(accounts.RoleOwner, o.handleTransferOwnership))
 
 	// The OIDC registrations hang off the account because a registration is
 	// scoped to one: an account's owner decides which products may sign users in
@@ -979,6 +1035,78 @@ func (o options) handleRemoveMember(w http.ResponseWriter, r *http.Request) {
 	noContent(w)
 }
 
+// handleTransferOwnership hands an account to another member.
+//
+//	POST /v1/accounts/:id/ownership-transfers  {new_owner_user_id}  →  200 {…}
+//
+// THE ROUTE'S MINIMUM IS OWNER and that is the whole of what the middleware
+// decides. Everything else — a personal account, an account with one member, a
+// target who is not a member — is the use case's, because each of those is a
+// fact about the ACCOUNT rather than about the caller, and the order those two
+// run in is a security property: a non-owner is refused before anything is said
+// about whether this account could be transferred at all. See
+// accounts.Service.TransferOwnership.
+func (o options) handleTransferOwnership(w http.ResponseWriter, r *http.Request) {
+	account, _ := accountFrom(r.Context())
+	actor, ok := o.currentUser(w, r)
+	if !ok {
+		return
+	}
+
+	var body *transferOwnershipRequest
+	if !decodeBody(w, r, &body) {
+		return
+	}
+
+	heir, err := id.Parse(body.NewOwnerUserID)
+	if err != nil || heir.IsZero() {
+		// The same answer a path id gets, for the same reason: this string is
+		// meant to be an id this service issued, and "it is not" must be
+		// indistinguishable from "it is one and you may not have it". A 422 here
+		// would be honest and would also make the body a probing surface.
+		notFound(w, r)
+		return
+	}
+
+	done, err := o.tenancy.TransferOwnership(r.Context(), accounts.TransferInput{
+		AccountID: account.ID,
+		ToUserID:  heir,
+		Actor:     actor.ID,
+	})
+	if err != nil {
+		o.writeTenancyError(w, r, err)
+		return
+	}
+
+	// Role is the CALLER's role on the account, read after the transfer: the
+	// caller is the previous owner, so this is `admin` — the demotion, rendered
+	// in the response, and not something the client has to infer from the fact
+	// that it is not the owner any more.
+	writeJSON(w, http.StatusOK, ownershipTransferResponse{
+		Account: accountResponse{
+			ID:        done.Account.ID.String(),
+			Name:      done.Account.Name,
+			Slug:      done.Account.Slug,
+			Personal:  done.Account.Personal,
+			Role:      roleFrom(r.Context()),
+			CreatedAt: done.Account.CreatedAt,
+			UpdatedAt: done.Account.UpdatedAt,
+		},
+		NewOwner: membershipResponse{
+			AccountID: done.NewOwner.AccountID.String(),
+			UserID:    done.NewOwner.UserID.String(),
+			Role:      done.NewOwner.Role,
+			CreatedAt: done.NewOwner.CreatedAt,
+		},
+		PreviousOwner: membershipResponse{
+			AccountID: done.PreviousOwner.AccountID.String(),
+			UserID:    done.PreviousOwner.UserID.String(),
+			Role:      done.PreviousOwner.Role,
+			CreatedAt: done.PreviousOwner.CreatedAt,
+		},
+	})
+}
+
 // membershipResponses projects a member list onto the wire.
 //
 // EVERY FIELD IS FILLED, and that is the whole point of the function. It set only
@@ -1014,6 +1142,9 @@ func membershipResponses(members []accounts.MemberSummary) []membershipResponse 
 //
 //	ErrNotAMember          404  a non-member must not learn the account exists
 //	ErrOwnerProtected      403  the caller may act here, just not on an owner
+//	ErrNotOwner            403  the CALLER is not the owner; a different sentence
+//	ErrNotTransferable     422  the ACCOUNT cannot change hands at all
+//	ErrTransferToSelf      422  the account can; this request is what is wrong
 //	ErrLastOwner           422  understood, and describes an impossible state
 //	ErrSelfRoleChange      422  the same, aimed at the caller who hit it
 //	ErrRoleNotInvitable    422  a well-formed request for something that is not
@@ -1044,6 +1175,34 @@ func (o options) writeTenancyError(w http.ResponseWriter, r *http.Request, err e
 	case errors.Is(err, accounts.ErrOwnerProtected):
 		problemFor(w, r, http.StatusForbidden, CodeForbidden,
 			"only an owner may act on an owner's membership")
+
+	case errors.Is(err, accounts.ErrNotOwner):
+		// 403 and not 404: the caller is a member of this account — the middleware
+		// got past the membership read to reach this handler — so they already know
+		// it exists and 403 leaks nothing. It is a separate case from
+		// ErrOwnerProtected rather than a shared sentence because this one is
+		// about the CALLER and that one is about a target's membership.
+		problemFor(w, r, http.StatusForbidden, CodeForbidden,
+			"only an account's owner may do this")
+
+	case errors.Is(err, accounts.ErrNotTransferable):
+		// ONE sentence for both reasons there are — personal, or one member — and
+		// not two problems for one client's benefit. The account is what cannot be
+		// transferred, the answer is the same either way, and a client that wanted
+		// to distinguish them would be asking a question the response shape
+		// deliberately refuses to answer: nothing here is an account a personal
+		// account can become.
+		writeProblem(w, r, newProblem(http.StatusUnprocessableEntity, CodeValidationFailed).
+			withDetail("this account cannot be transferred to another member").
+			withFieldErrors([]FieldError{{Field: "new_owner_user_id", Code: "not_transferable"}}))
+
+	case errors.Is(err, accounts.ErrTransferToSelf):
+		// 422 and its own sentence, for the reason in the sentinel: this account
+		// IS transferable and this request is wrong, and answering "not
+		// transferable" would tell the owner their own account is untransferable.
+		writeProblem(w, r, newProblem(http.StatusUnprocessableEntity, CodeValidationFailed).
+			withDetail("an owner cannot transfer an account to themselves").
+			withFieldErrors([]FieldError{{Field: "new_owner_user_id", Code: "transfer_to_self"}}))
 
 	case errors.Is(err, accounts.ErrLastOwner):
 		writeProblem(w, r, newProblem(http.StatusUnprocessableEntity, CodeValidationFailed).

@@ -45,6 +45,7 @@ GET    /v1/accounts/{accountID}/members           list members
 POST   /v1/accounts/{accountID}/members           add a member
 PATCH  /v1/accounts/{accountID}/members/{userID}  change a role
 DELETE /v1/accounts/{accountID}/members/{userID}  remove a member
+POST   /v1/accounts/{accountID}/ownership-transfers   hand it to another member
 POST   /v1/accounts/{accountID}/invitations       invite
 POST   /v1/invitations/accept                     accept one
 GET    /v1/accounts/{accountID}/admin/invitations/{invitationID}
@@ -272,6 +273,7 @@ service quietly listening on the wrong port.
 | `POST /v1/accounts/:id/invitations` | `201 {…, token}` | Invite somebody. `token` is returned here and never again, and **nothing is mailed**. `owner` is a 422; only an owner may invite an `admin`. Admin. |
 | `PATCH /v1/accounts/:id/members/:userId` | `200 {…}` | Change a role. `422 last_owner` rather than leaving an account unadministerable. **Owner.** |
 | `DELETE /v1/accounts/:id/members/:userId` | `204` | Remove somebody, and stop their scoped tokens on their next request. An admin may not remove an owner. Admin. |
+| `POST /v1/accounts/:id/ownership-transfers` | `200 {account, new_owner, previous_owner}` | Hand the account to a member who is **already in it**. The new owner gets `owner`; **the previous owner becomes `admin`**, which is what keeps a transfer reversible. `422 not_transferable` for a personal account or one with a single member, `422 transfer_to_self` for naming yourself, `404` for somebody who is not a member — a transfer does not invite. The caller's authority is asked of the credential, never of the body. **Owner.** |
 | `POST /v1/invitations/accept` | `200 {…}` | Accept an invitation, signed in as the invited user. `404` for anything that is not a live token, `410` for one that expired or was spent. **Session only.** |
 | `GET /healthz` | `200 {"status":"ok"}` | Liveness. Always 200 while the process serves — it never touches a dependency, so a database outage cannot get the process restarted out from under in-flight work. |
 | `GET /readyz` | `200 {"status":"ok","deps":"postgres"}` | Readiness. 200 when every dependency answers, `503 {"status":"unavailable",...}` otherwise, with each probe bounded at 2s. |
@@ -983,7 +985,7 @@ removes access to something that exists. The shape is core's
 | Scope | Routes it is enforced on |
 |---|---|
 | `accounts:read` | `GET /v1/accounts/:id`, `GET /v1/accounts/:id/members` |
-| `accounts:write` | `PATCH /v1/accounts/:id`, `POST /v1/accounts/:id/invitations`, `PATCH` and `DELETE /v1/accounts/:id/members/:userId` |
+| `accounts:write` | `PATCH /v1/accounts/:id`, `POST /v1/accounts/:id/invitations`, `PATCH` and `DELETE /v1/accounts/:id/members/:userId`, `POST /v1/accounts/:id/ownership-transfers` |
 | `accounts:delete` | `DELETE /v1/accounts/:id`, and nothing else |
 | `oidc_clients:write` | all four `/v1/accounts/:id/oidc-clients` routes |
 | `audit_log:read` | `GET /v1/accounts/:id/admin/audit-log` |

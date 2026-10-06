@@ -864,6 +864,32 @@ func (c *Client) RemoveMember(ctx context.Context, accountId, userId openapiType
 	})
 }
 
+// TransferAccountOwnership hands an account to a member who is already in it.
+// Corresponds to `POST /v1/accounts/{account_id}/ownership-transfers`.
+//
+// **Owner only**, and that is not a formality: after this call the caller's
+// authority over the account is whatever the new owner gives back. So read
+// `out.Account.Role` rather than assuming it still says `owner` — after a
+// transfer it is `admin`, and `out.PreviousOwner` is the same answer with the
+// membership's own id on it.
+//
+// The new owner must already be a member. A 404 means they are not, and this
+// call does NOT invite them: invite them with `InviteMember` first, where they
+// can accept or decline. A transfer has no token and no way for the person it
+// names to refuse, which is what makes it the wrong instrument for admission.
+//
+// The 422s are not the same refusal. `not_transferable` is about the account —
+// personal, or one member — and `transfer_to_self` is about this request. Retrying
+// answers neither; the first wants a different account and the second a different
+// heir.
+func (c *Client) TransferAccountOwnership(ctx context.Context, accountId openapiTypes.UUID, body generated.TransferAccountOwnershipJSONRequestBody) (*generated.OwnershipTransfer, error) {
+	var out generated.OwnershipTransfer
+	err := call(c, "transferAccountOwnership", func() (*http.Response, error) {
+		return c.transport.TransferAccountOwnership(ctx, accountId, body)
+	}, &out)
+	return &out, err
+}
+
 // AcceptInvitation redeems an invitation token. Corresponds to
 // `POST /v1/invitations/accept`.
 //

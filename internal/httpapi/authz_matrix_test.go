@@ -213,6 +213,30 @@ func matrixEndpoints() []matrixEndpoint {
 			pattern: "/v1/accounts/{accountID}", min: accounts.RoleOwner, success: http.StatusNoContent,
 		},
 
+		// OWNERSHIP TRANSFER. Owner-only for the reason the api key rows below
+		// give: after this request the caller's authority over the account is
+		// whatever the new owner gives back, so an admin asking is not a near
+		// miss, it is the thing that must not happen.
+		//
+		// IT CARRIES NO `expect` OVERRIDE, and that is the interesting part. Every
+		// other rule in the tenancy use case is a reason a column needs one — a
+		// caller in a state the middleware cannot see. This one is a pure
+		// owner-minimum route, so the matrix's own derivation applies unchanged:
+		// 401 anonymous, **404 non-member**, 403 for the member and the admin, 200
+		// for the owner. An override here would have been a place for the answer
+		// to differ from every other owner route without anybody noticing, and the
+		// 404 in particular is the column to keep honest — "you are not in this
+		// account" must not be distinguishable from "this account is not
+		// transferable by you".
+		{
+			name: "transfer ownership", method: http.MethodPost,
+			pattern: "/v1/accounts/{accountID}/ownership-transfers",
+			min:     accounts.RoleOwner, success: http.StatusOK,
+			body: func(f *matrixFixture) string {
+				return `{"new_owner_user_id":"` + f.memberID.String() + `"}`
+			},
+		},
+
 		// The OIDC registrations. All four are owner-only, and the reason is a
 		// security property rather than a convention: adding a client is adding a
 		// new way for code to arrive in this product and get a token back out, and

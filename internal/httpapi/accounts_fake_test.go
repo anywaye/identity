@@ -40,6 +40,7 @@ type fakeTenancy struct {
 	acceptErr     error
 	changeRoleErr error
 	removeErr     error
+	transferErr   error
 
 	// Recorded inputs, so a test can prove the handler passed the caller's own id
 	// rather than one from the request body.
@@ -50,6 +51,18 @@ type fakeTenancy struct {
 	acceptedBy id.UUID
 	changedFor ChangeRoleCall
 	removedFor RemoveMemberCall
+	// transferredFor is TransferOwnershipCall, and the pair of ids in it is the
+	// whole of what this route has to get right.
+	transferredFor TransferOwnershipCall
+}
+
+// TransferOwnershipCall is what the handler asked for. Heir is from the body and
+// Actor is from the credential, and keeping them in one struct is what lets a test
+// assert they are not the same field.
+type TransferOwnershipCall struct {
+	AccountID id.UUID
+	Heir      id.UUID
+	Actor     id.UUID
 }
 
 // ChangeRoleCall is what the handler asked for.
@@ -169,6 +182,22 @@ func (f *fakeTenancy) ChangeRole(_ context.Context, in accounts.ChangeRoleInput)
 func (f *fakeTenancy) RemoveMember(_ context.Context, in accounts.RemoveMemberInput) error {
 	f.removedFor = RemoveMemberCall{AccountID: in.AccountID, UserID: in.UserID, Actor: in.Actor}
 	return f.removeErr
+}
+
+// TransferOwnership records the heir and the actor, so a test can prove the
+// caller came from the credential and the heir from the body — the two ids that
+// must never be confused, since swapping them would let a caller name anybody as
+// the owner of an account they do not run.
+func (f *fakeTenancy) TransferOwnership(_ context.Context, in accounts.TransferInput) (accounts.Transferred, error) {
+	f.transferredFor = TransferOwnershipCall{AccountID: in.AccountID, Heir: in.ToUserID, Actor: in.Actor}
+	if f.transferErr != nil {
+		return accounts.Transferred{}, f.transferErr
+	}
+	return accounts.Transferred{
+		Account:       accounts.Account{ID: in.AccountID, Name: "Acme", Slug: "acme"},
+		NewOwner:      accounts.Membership{AccountID: in.AccountID, UserID: in.ToUserID, Role: accounts.RoleOwner, CreatedAt: testInstant},
+		PreviousOwner: accounts.Membership{AccountID: in.AccountID, UserID: in.Actor, Role: accounts.RoleAdmin, CreatedAt: testInstant},
+	}, nil
 }
 
 // testInstant is the fixed instant the doubles stamp, so a response body's

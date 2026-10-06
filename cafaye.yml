@@ -161,13 +161,14 @@ exposes:
     #   identity.member.accepted       internal/accounts/service.go
     #   identity.member.role_changed   internal/accounts/service.go
     #   identity.member.removed        internal/accounts/service.go
+    #   identity.account.ownership_transferred  internal/accounts/service.go
     #
-    # The code emits all five; this list does not name them, and that is why
+    # The code emits all six; this list does not name them, and that is why
     # core's contract checker stays quiet about them. Declaring them is blocked
     # on core, not on this file: `event.payload-schema-missing` reads
     # `schemas/events/…` out of the CORE checkout, and core ships one identity
     # payload schema (user/created) for twelve published types. Declaring these
-    # five today would trade a silent gap for five loud reds. So they stay
+    # six today would trade a silent gap for six loud reds. So they stay
     # undeclared, the gap is written down here, and
     # `TestTheManifestDeclaresEveryEmittedEvent` in internal/platform/ci pins the
     # exact set so it cannot grow unnoticed.

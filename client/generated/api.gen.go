@@ -1340,6 +1340,48 @@ type OIDCClientGrantTypes string
 // OIDCClientScopes defines model for OIDCClient.Scopes.
 type OIDCClientScopes string
 
+// OwnershipTransfer A completed transfer: the account, and **both** memberships at the roles
+// they now hold.
+//
+// Both, and not only the new one, because the person who made this request
+// is the previous owner — they need to know what they are now, and this
+// service is the only thing that knows. `account.role` is that same answer
+// at the account level: it is the caller's role, and after a transfer it is
+// `admin`.
+type OwnershipTransfer struct {
+	// Account The account, unchanged in every field. Ownership is a role on a
+	// membership, so nothing on the account itself moved.
+	Account Account `json:"account"`
+
+	// NewOwner One user's membership in one account: who, where, at what authority, and
+	// since when.
+	//
+	// **`created_at` is when the MEMBERSHIP was created, not when the account
+	// was.** Both rows have a `created_at` and they are different facts; on an
+	// account created in June with a member added yesterday, this field says
+	// yesterday.
+	//
+	// It is what `changeMemberRole` returns and what `removeMember` acts on, and
+	// it is why every entry of `listMembers` carries a `user_id`: the two
+	// operations that act on a member both need that id in their path, so an
+	// entry without one is not a membership anything can be done to.
+	NewOwner Membership `json:"new_owner"`
+
+	// PreviousOwner One user's membership in one account: who, where, at what authority, and
+	// since when.
+	//
+	// **`created_at` is when the MEMBERSHIP was created, not when the account
+	// was.** Both rows have a `created_at` and they are different facts; on an
+	// account created in June with a member added yesterday, this field says
+	// yesterday.
+	//
+	// It is what `changeMemberRole` returns and what `removeMember` acts on, and
+	// it is why every entry of `listMembers` carries a `user_id`: the two
+	// operations that act on a member both need that id in their path, so an
+	// entry without one is not a membership anything can be done to.
+	PreviousOwner Membership `json:"previous_owner"`
+}
+
 // Problem The cafaye error envelope: RFC 9457 plus core's `code` and `trace_id`.
 // Every non-2xx response from this service is this shape. No service invents
 // its own error body.
@@ -1732,6 +1774,17 @@ type StartedEnrollmentAlgorithm string
 // StartedEnrollmentMethod defines model for StartedEnrollment.Method.
 type StartedEnrollmentMethod string
 
+// TransferOwnershipRequest defines model for TransferOwnershipRequest.
+type TransferOwnershipRequest struct {
+	// NewOwnerUserID The member who becomes the owner. A **user** id, and it must already
+	// belong to this account — naming somebody who does not is a `404` and
+	// does not invite them.
+	//
+	// It is the only field. The caller's own id is not here and cannot be:
+	// "am I the owner" is asked of the credential, never of the body.
+	NewOwnerUserID openapi_types.UUID `json:"new_owner_user_id"`
+}
+
 // User The public projection of an account. Exactly two fields, always: there is
 // no password digest, no lockout state and no timestamp here, and adding one
 // is a contract change.
@@ -1871,6 +1924,9 @@ type ChangeMemberRoleJSONRequestBody = ChangeMemberRoleRequest
 
 // RegisterOIDCClientJSONRequestBody defines body for RegisterOIDCClient for application/json ContentType.
 type RegisterOIDCClientJSONRequestBody = RegisterOIDCClientRequest
+
+// TransferAccountOwnershipJSONRequestBody defines body for TransferAccountOwnership for application/json ContentType.
+type TransferAccountOwnershipJSONRequestBody = TransferOwnershipRequest
 
 // RequestEmailChangeJSONRequestBody defines body for RequestEmailChange for application/json ContentType.
 type RequestEmailChangeJSONRequestBody = RecoveryEmailRequest
@@ -2982,6 +3038,140 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /v1/accounts/{account_id}/oidc-clients/{client_id} (the `GetOIDCClient` operationId).
 	GetOIDCClient(ctx context.Context, accountID AccountID, clientID openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// TransferAccountOwnershipWithBody Hand an account to another member
+	//
+	// Transfers an account to a member who is **already in it**. **Minimum role:
+	// owner** — an admin and a member never reach this operation, because after
+	// this request the caller's authority over the account is whatever the new
+	// owner gives back. A scoped API token needs `accounts:write`.
+	//
+	// The owner is not a field on the account: it is a role on a membership, and
+	// so there is no `PATCH` of an account's "owner" here either. This is an
+	// **event** — a collection of transfers — not a state being written, and the
+	// response is the account plus **both** memberships at the roles they now
+	// hold.
+	//
+	// ### Four rules, and the order they are answered in is a security property
+	//
+	// | # | refused when | status |
+	// |---|---|---|
+	// | 1 | the caller is not this account's owner | `403` |
+	// | 2 | the account is **personal** | `422 not_transferable` |
+	// | 3 | the account has **fewer than two members** | `422 not_transferable` |
+	// | 4 | the new owner is the caller themselves | `422 transfer_to_self` |
+	//
+	// Rule 1 is checked **before** any of the others, and that is the point: a
+	// caller who is not the owner learns that and nothing about the account
+	// itself — not whether it is personal, not how many members it has. Answering
+	// the other questions first would let any admin of any account interrogate
+	// its shape.
+	//
+	// Rules 2 and 3 are one error and one sentence, because they are the same
+	// fact from two directions — a personal account has exactly one member by
+	// construction — and because "this account is not one that changes hands" is
+	// the same advice either way.
+	//
+	// Rule 4 is a `422` and its own code, because this account **is**
+	// transferable and it is this request that is wrong. Answering
+	// `not_transferable` would tell an owner their own account cannot be handed
+	// over.
+	//
+	// ### What happens to each membership
+	//
+	// * The **new owner** gets the `owner` role.
+	// * The **previous owner becomes `admin`** — every authority they had except
+	//   ownership itself. That is deliberate: it is what keeps a transfer
+	//   reversible, because an heir who turns out to be unavailable is a problem
+	//   a previous owner who can no longer rename the account, invite a member or
+	//   remove one cannot fix.
+	// * The promotion is written **before** the demotion, in one transaction, so
+	//   the account never passes through a state with no owner.
+	//
+	// ### This does not invite anybody
+	//
+	// The new owner must already be a member, and naming somebody who is not is
+	// a `404` — the same answer a stranger gets. A transfer has no token, no
+	// expiry, and no way for the person it names to refuse, which is exactly what
+	// makes it the wrong instrument for admitting somebody: invite them with
+	// `inviteMember` first, where they can accept or decline.
+	//
+	// A `new_owner_user_id` that is not a UUID this service issued is also a
+	// `404`, not a `422` — the same rule that applies to the ids in every path
+	// here. "This is not an id we issued" and "this is one and you may not have
+	// it" are not distinguishable from outside.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/accounts/{account_id}/ownership-transfers (the `TransferAccountOwnership` operationId).
+	TransferAccountOwnershipWithBody(ctx context.Context, accountID AccountID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// TransferAccountOwnership Hand an account to another member
+	//
+	// Transfers an account to a member who is **already in it**. **Minimum role:
+	// owner** — an admin and a member never reach this operation, because after
+	// this request the caller's authority over the account is whatever the new
+	// owner gives back. A scoped API token needs `accounts:write`.
+	//
+	// The owner is not a field on the account: it is a role on a membership, and
+	// so there is no `PATCH` of an account's "owner" here either. This is an
+	// **event** — a collection of transfers — not a state being written, and the
+	// response is the account plus **both** memberships at the roles they now
+	// hold.
+	//
+	// ### Four rules, and the order they are answered in is a security property
+	//
+	// | # | refused when | status |
+	// |---|---|---|
+	// | 1 | the caller is not this account's owner | `403` |
+	// | 2 | the account is **personal** | `422 not_transferable` |
+	// | 3 | the account has **fewer than two members** | `422 not_transferable` |
+	// | 4 | the new owner is the caller themselves | `422 transfer_to_self` |
+	//
+	// Rule 1 is checked **before** any of the others, and that is the point: a
+	// caller who is not the owner learns that and nothing about the account
+	// itself — not whether it is personal, not how many members it has. Answering
+	// the other questions first would let any admin of any account interrogate
+	// its shape.
+	//
+	// Rules 2 and 3 are one error and one sentence, because they are the same
+	// fact from two directions — a personal account has exactly one member by
+	// construction — and because "this account is not one that changes hands" is
+	// the same advice either way.
+	//
+	// Rule 4 is a `422` and its own code, because this account **is**
+	// transferable and it is this request that is wrong. Answering
+	// `not_transferable` would tell an owner their own account cannot be handed
+	// over.
+	//
+	// ### What happens to each membership
+	//
+	// * The **new owner** gets the `owner` role.
+	// * The **previous owner becomes `admin`** — every authority they had except
+	//   ownership itself. That is deliberate: it is what keeps a transfer
+	//   reversible, because an heir who turns out to be unavailable is a problem
+	//   a previous owner who can no longer rename the account, invite a member or
+	//   remove one cannot fix.
+	// * The promotion is written **before** the demotion, in one transaction, so
+	//   the account never passes through a state with no owner.
+	//
+	// ### This does not invite anybody
+	//
+	// The new owner must already be a member, and naming somebody who is not is
+	// a `404` — the same answer a stranger gets. A transfer has no token, no
+	// expiry, and no way for the person it names to refuse, which is exactly what
+	// makes it the wrong instrument for admitting somebody: invite them with
+	// `inviteMember` first, where they can accept or decline.
+	//
+	// A `new_owner_user_id` that is not a UUID this service issued is also a
+	// `404`, not a `422` — the same rule that applies to the ids in every path
+	// here. "This is not an id we issued" and "this is one and you may not have
+	// it" are not distinguishable from outside.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/accounts/{account_id}/ownership-transfers (the `TransferAccountOwnership` operationId).
+	TransferAccountOwnership(ctx context.Context, accountID AccountID, body TransferAccountOwnershipJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// StartSocialLogin Begin a social sign-in
 	//
@@ -5773,6 +5963,160 @@ func (c *Client) RevokeOIDCClient(ctx context.Context, accountID AccountID, clie
 // Corresponds with GET /v1/accounts/{account_id}/oidc-clients/{client_id} (the `GetOIDCClient` operationId).
 func (c *Client) GetOIDCClient(ctx context.Context, accountID AccountID, clientID openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetOIDCClientRequest(c.Server, accountID, clientID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// TransferAccountOwnershipWithBody Hand an account to another member
+//
+// Transfers an account to a member who is **already in it**. **Minimum role:
+// owner** — an admin and a member never reach this operation, because after
+// this request the caller's authority over the account is whatever the new
+// owner gives back. A scoped API token needs `accounts:write`.
+//
+// The owner is not a field on the account: it is a role on a membership, and
+// so there is no `PATCH` of an account's "owner" here either. This is an
+// **event** — a collection of transfers — not a state being written, and the
+// response is the account plus **both** memberships at the roles they now
+// hold.
+//
+// ### Four rules, and the order they are answered in is a security property
+//
+// | # | refused when | status |
+// |---|---|---|
+// | 1 | the caller is not this account's owner | `403` |
+// | 2 | the account is **personal** | `422 not_transferable` |
+// | 3 | the account has **fewer than two members** | `422 not_transferable` |
+// | 4 | the new owner is the caller themselves | `422 transfer_to_self` |
+//
+// Rule 1 is checked **before** any of the others, and that is the point: a
+// caller who is not the owner learns that and nothing about the account
+// itself — not whether it is personal, not how many members it has. Answering
+// the other questions first would let any admin of any account interrogate
+// its shape.
+//
+// Rules 2 and 3 are one error and one sentence, because they are the same
+// fact from two directions — a personal account has exactly one member by
+// construction — and because "this account is not one that changes hands" is
+// the same advice either way.
+//
+// Rule 4 is a `422` and its own code, because this account **is**
+// transferable and it is this request that is wrong. Answering
+// `not_transferable` would tell an owner their own account cannot be handed
+// over.
+//
+// ### What happens to each membership
+//
+//   - The **new owner** gets the `owner` role.
+//   - The **previous owner becomes `admin`** — every authority they had except
+//     ownership itself. That is deliberate: it is what keeps a transfer
+//     reversible, because an heir who turns out to be unavailable is a problem
+//     a previous owner who can no longer rename the account, invite a member or
+//     remove one cannot fix.
+//   - The promotion is written **before** the demotion, in one transaction, so
+//     the account never passes through a state with no owner.
+//
+// ### This does not invite anybody
+//
+// The new owner must already be a member, and naming somebody who is not is
+// a `404` — the same answer a stranger gets. A transfer has no token, no
+// expiry, and no way for the person it names to refuse, which is exactly what
+// makes it the wrong instrument for admitting somebody: invite them with
+// `inviteMember` first, where they can accept or decline.
+//
+// A `new_owner_user_id` that is not a UUID this service issued is also a
+// `404`, not a `422` — the same rule that applies to the ids in every path
+// here. "This is not an id we issued" and "this is one and you may not have
+// it" are not distinguishable from outside.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/accounts/{account_id}/ownership-transfers (the `TransferAccountOwnership` operationId).
+func (c *Client) TransferAccountOwnershipWithBody(ctx context.Context, accountID AccountID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewTransferAccountOwnershipRequestWithBody(c.Server, accountID, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// TransferAccountOwnership Hand an account to another member
+//
+// Transfers an account to a member who is **already in it**. **Minimum role:
+// owner** — an admin and a member never reach this operation, because after
+// this request the caller's authority over the account is whatever the new
+// owner gives back. A scoped API token needs `accounts:write`.
+//
+// The owner is not a field on the account: it is a role on a membership, and
+// so there is no `PATCH` of an account's "owner" here either. This is an
+// **event** — a collection of transfers — not a state being written, and the
+// response is the account plus **both** memberships at the roles they now
+// hold.
+//
+// ### Four rules, and the order they are answered in is a security property
+//
+// | # | refused when | status |
+// |---|---|---|
+// | 1 | the caller is not this account's owner | `403` |
+// | 2 | the account is **personal** | `422 not_transferable` |
+// | 3 | the account has **fewer than two members** | `422 not_transferable` |
+// | 4 | the new owner is the caller themselves | `422 transfer_to_self` |
+//
+// Rule 1 is checked **before** any of the others, and that is the point: a
+// caller who is not the owner learns that and nothing about the account
+// itself — not whether it is personal, not how many members it has. Answering
+// the other questions first would let any admin of any account interrogate
+// its shape.
+//
+// Rules 2 and 3 are one error and one sentence, because they are the same
+// fact from two directions — a personal account has exactly one member by
+// construction — and because "this account is not one that changes hands" is
+// the same advice either way.
+//
+// Rule 4 is a `422` and its own code, because this account **is**
+// transferable and it is this request that is wrong. Answering
+// `not_transferable` would tell an owner their own account cannot be handed
+// over.
+//
+// ### What happens to each membership
+//
+//   - The **new owner** gets the `owner` role.
+//   - The **previous owner becomes `admin`** — every authority they had except
+//     ownership itself. That is deliberate: it is what keeps a transfer
+//     reversible, because an heir who turns out to be unavailable is a problem
+//     a previous owner who can no longer rename the account, invite a member or
+//     remove one cannot fix.
+//   - The promotion is written **before** the demotion, in one transaction, so
+//     the account never passes through a state with no owner.
+//
+// ### This does not invite anybody
+//
+// The new owner must already be a member, and naming somebody who is not is
+// a `404` — the same answer a stranger gets. A transfer has no token, no
+// expiry, and no way for the person it names to refuse, which is exactly what
+// makes it the wrong instrument for admitting somebody: invite them with
+// `inviteMember` first, where they can accept or decline.
+//
+// A `new_owner_user_id` that is not a UUID this service issued is also a
+// `404`, not a `422` — the same rule that applies to the ids in every path
+// here. "This is not an id we issued" and "this is one and you may not have
+// it" are not distinguishable from outside.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/accounts/{account_id}/ownership-transfers (the `TransferAccountOwnership` operationId).
+func (c *Client) TransferAccountOwnership(ctx context.Context, accountID AccountID, body TransferAccountOwnershipJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewTransferAccountOwnershipRequest(c.Server, accountID, body)
 	if err != nil {
 		return nil, err
 	}
@@ -8682,6 +9026,53 @@ func NewGetOIDCClientRequest(server string, accountID AccountID, clientID openap
 	return req, nil
 }
 
+// NewTransferAccountOwnershipRequest calls the generic TransferAccountOwnership builder with application/json body
+func NewTransferAccountOwnershipRequest(server string, accountID AccountID, body TransferAccountOwnershipJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewTransferAccountOwnershipRequestWithBody(server, accountID, "application/json", bodyReader)
+}
+
+// NewTransferAccountOwnershipRequestWithBody constructs an http.Request for the TransferAccountOwnership method, with any body, and a specified content type
+func NewTransferAccountOwnershipRequestWithBody(server string, accountID AccountID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "account_id", accountID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/accounts/%s/ownership-transfers", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewStartSocialLoginRequest constructs an http.Request for the StartSocialLogin method
 func NewStartSocialLoginRequest(server string, provider StartSocialLoginParamsProvider) (*http.Request, error) {
 	var err error
@@ -10690,6 +11081,140 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /v1/accounts/{account_id}/oidc-clients/{client_id} (the `GetOIDCClient` operationId).
 	GetOIDCClientWithResponse(ctx context.Context, accountID AccountID, clientID openapi_types.UUID, reqEditors ...RequestEditorFn) (*GetOIDCClientResponse, error)
+
+	// TransferAccountOwnershipWithBodyWithResponse Hand an account to another member
+	//
+	// Transfers an account to a member who is **already in it**. **Minimum role:
+	// owner** — an admin and a member never reach this operation, because after
+	// this request the caller's authority over the account is whatever the new
+	// owner gives back. A scoped API token needs `accounts:write`.
+	//
+	// The owner is not a field on the account: it is a role on a membership, and
+	// so there is no `PATCH` of an account's "owner" here either. This is an
+	// **event** — a collection of transfers — not a state being written, and the
+	// response is the account plus **both** memberships at the roles they now
+	// hold.
+	//
+	// ### Four rules, and the order they are answered in is a security property
+	//
+	// | # | refused when | status |
+	// |---|---|---|
+	// | 1 | the caller is not this account's owner | `403` |
+	// | 2 | the account is **personal** | `422 not_transferable` |
+	// | 3 | the account has **fewer than two members** | `422 not_transferable` |
+	// | 4 | the new owner is the caller themselves | `422 transfer_to_self` |
+	//
+	// Rule 1 is checked **before** any of the others, and that is the point: a
+	// caller who is not the owner learns that and nothing about the account
+	// itself — not whether it is personal, not how many members it has. Answering
+	// the other questions first would let any admin of any account interrogate
+	// its shape.
+	//
+	// Rules 2 and 3 are one error and one sentence, because they are the same
+	// fact from two directions — a personal account has exactly one member by
+	// construction — and because "this account is not one that changes hands" is
+	// the same advice either way.
+	//
+	// Rule 4 is a `422` and its own code, because this account **is**
+	// transferable and it is this request that is wrong. Answering
+	// `not_transferable` would tell an owner their own account cannot be handed
+	// over.
+	//
+	// ### What happens to each membership
+	//
+	// * The **new owner** gets the `owner` role.
+	// * The **previous owner becomes `admin`** — every authority they had except
+	//   ownership itself. That is deliberate: it is what keeps a transfer
+	//   reversible, because an heir who turns out to be unavailable is a problem
+	//   a previous owner who can no longer rename the account, invite a member or
+	//   remove one cannot fix.
+	// * The promotion is written **before** the demotion, in one transaction, so
+	//   the account never passes through a state with no owner.
+	//
+	// ### This does not invite anybody
+	//
+	// The new owner must already be a member, and naming somebody who is not is
+	// a `404` — the same answer a stranger gets. A transfer has no token, no
+	// expiry, and no way for the person it names to refuse, which is exactly what
+	// makes it the wrong instrument for admitting somebody: invite them with
+	// `inviteMember` first, where they can accept or decline.
+	//
+	// A `new_owner_user_id` that is not a UUID this service issued is also a
+	// `404`, not a `422` — the same rule that applies to the ids in every path
+	// here. "This is not an id we issued" and "this is one and you may not have
+	// it" are not distinguishable from outside.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/accounts/{account_id}/ownership-transfers (the `TransferAccountOwnership` operationId).
+	TransferAccountOwnershipWithBodyWithResponse(ctx context.Context, accountID AccountID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*TransferAccountOwnershipResponse, error)
+
+	// TransferAccountOwnershipWithResponse Hand an account to another member
+	//
+	// Transfers an account to a member who is **already in it**. **Minimum role:
+	// owner** — an admin and a member never reach this operation, because after
+	// this request the caller's authority over the account is whatever the new
+	// owner gives back. A scoped API token needs `accounts:write`.
+	//
+	// The owner is not a field on the account: it is a role on a membership, and
+	// so there is no `PATCH` of an account's "owner" here either. This is an
+	// **event** — a collection of transfers — not a state being written, and the
+	// response is the account plus **both** memberships at the roles they now
+	// hold.
+	//
+	// ### Four rules, and the order they are answered in is a security property
+	//
+	// | # | refused when | status |
+	// |---|---|---|
+	// | 1 | the caller is not this account's owner | `403` |
+	// | 2 | the account is **personal** | `422 not_transferable` |
+	// | 3 | the account has **fewer than two members** | `422 not_transferable` |
+	// | 4 | the new owner is the caller themselves | `422 transfer_to_self` |
+	//
+	// Rule 1 is checked **before** any of the others, and that is the point: a
+	// caller who is not the owner learns that and nothing about the account
+	// itself — not whether it is personal, not how many members it has. Answering
+	// the other questions first would let any admin of any account interrogate
+	// its shape.
+	//
+	// Rules 2 and 3 are one error and one sentence, because they are the same
+	// fact from two directions — a personal account has exactly one member by
+	// construction — and because "this account is not one that changes hands" is
+	// the same advice either way.
+	//
+	// Rule 4 is a `422` and its own code, because this account **is**
+	// transferable and it is this request that is wrong. Answering
+	// `not_transferable` would tell an owner their own account cannot be handed
+	// over.
+	//
+	// ### What happens to each membership
+	//
+	// * The **new owner** gets the `owner` role.
+	// * The **previous owner becomes `admin`** — every authority they had except
+	//   ownership itself. That is deliberate: it is what keeps a transfer
+	//   reversible, because an heir who turns out to be unavailable is a problem
+	//   a previous owner who can no longer rename the account, invite a member or
+	//   remove one cannot fix.
+	// * The promotion is written **before** the demotion, in one transaction, so
+	//   the account never passes through a state with no owner.
+	//
+	// ### This does not invite anybody
+	//
+	// The new owner must already be a member, and naming somebody who is not is
+	// a `404` — the same answer a stranger gets. A transfer has no token, no
+	// expiry, and no way for the person it names to refuse, which is exactly what
+	// makes it the wrong instrument for admitting somebody: invite them with
+	// `inviteMember` first, where they can accept or decline.
+	//
+	// A `new_owner_user_id` that is not a UUID this service issued is also a
+	// `404`, not a `422` — the same rule that applies to the ids in every path
+	// here. "This is not an id we issued" and "this is one and you may not have
+	// it" are not distinguishable from outside.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/accounts/{account_id}/ownership-transfers (the `TransferAccountOwnership` operationId).
+	TransferAccountOwnershipWithResponse(ctx context.Context, accountID AccountID, body TransferAccountOwnershipJSONRequestBody, reqEditors ...RequestEditorFn) (*TransferAccountOwnershipResponse, error)
 
 	// StartSocialLoginWithResponse Begin a social sign-in
 	//
@@ -14635,6 +15160,152 @@ func (r GetOIDCClientResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetOIDCClientResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// TransferAccountOwnershipResponse200Headers the declared response headers of an HTTP 200 response for TransferAccountOwnership
+type TransferAccountOwnershipResponse200Headers struct {
+	XTraceID string
+}
+
+// TransferAccountOwnershipResponse400Headers the declared response headers of an HTTP 400 response for TransferAccountOwnership
+type TransferAccountOwnershipResponse400Headers struct {
+	XTraceID string
+}
+
+// TransferAccountOwnershipResponse401Headers the declared response headers of an HTTP 401 response for TransferAccountOwnership
+type TransferAccountOwnershipResponse401Headers struct {
+	XTraceID string
+}
+
+// TransferAccountOwnershipResponse403Headers the declared response headers of an HTTP 403 response for TransferAccountOwnership
+type TransferAccountOwnershipResponse403Headers struct {
+	XTraceID string
+}
+
+// TransferAccountOwnershipResponse404Headers the declared response headers of an HTTP 404 response for TransferAccountOwnership
+type TransferAccountOwnershipResponse404Headers struct {
+	XTraceID string
+}
+
+// TransferAccountOwnershipResponse413Headers the declared response headers of an HTTP 413 response for TransferAccountOwnership
+type TransferAccountOwnershipResponse413Headers struct {
+	XTraceID string
+}
+
+// TransferAccountOwnershipResponse422Headers the declared response headers of an HTTP 422 response for TransferAccountOwnership
+type TransferAccountOwnershipResponse422Headers struct {
+	XTraceID string
+}
+
+// TransferAccountOwnershipResponse500Headers the declared response headers of an HTTP 500 response for TransferAccountOwnership
+type TransferAccountOwnershipResponse500Headers struct {
+	XTraceID string
+}
+
+type TransferAccountOwnershipResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *OwnershipTransfer
+	// ApplicationProblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationProblemJSON400 *MalformedBody
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthenticated
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Problem
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *Problem
+	// ApplicationProblemJSON413 the response for an HTTP 413 `application/problem+json` response
+	ApplicationProblemJSON413 *BodyTooLarge
+	// ApplicationProblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationProblemJSON422 *Problem
+	// ApplicationProblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationProblemJSON500 *InternalError
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *TransferAccountOwnershipResponse200Headers
+	// Headers400 the parsed response headers for an HTTP 400 response
+	Headers400 *TransferAccountOwnershipResponse400Headers
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *TransferAccountOwnershipResponse401Headers
+	// Headers403 the parsed response headers for an HTTP 403 response
+	Headers403 *TransferAccountOwnershipResponse403Headers
+	// Headers404 the parsed response headers for an HTTP 404 response
+	Headers404 *TransferAccountOwnershipResponse404Headers
+	// Headers413 the parsed response headers for an HTTP 413 response
+	Headers413 *TransferAccountOwnershipResponse413Headers
+	// Headers422 the parsed response headers for an HTTP 422 response
+	Headers422 *TransferAccountOwnershipResponse422Headers
+	// Headers500 the parsed response headers for an HTTP 500 response
+	Headers500 *TransferAccountOwnershipResponse500Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r TransferAccountOwnershipResponse) GetJSON200() *OwnershipTransfer {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r TransferAccountOwnershipResponse) GetApplicationProblemJSON400() *MalformedBody {
+	return r.ApplicationProblemJSON400
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r TransferAccountOwnershipResponse) GetApplicationProblemJSON401() *Unauthenticated {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r TransferAccountOwnershipResponse) GetApplicationProblemJSON403() *Problem {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r TransferAccountOwnershipResponse) GetApplicationProblemJSON404() *Problem {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSON413 returns the response for an HTTP 413 `application/problem+json` response
+func (r TransferAccountOwnershipResponse) GetApplicationProblemJSON413() *BodyTooLarge {
+	return r.ApplicationProblemJSON413
+}
+
+// GetApplicationProblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r TransferAccountOwnershipResponse) GetApplicationProblemJSON422() *Problem {
+	return r.ApplicationProblemJSON422
+}
+
+// GetApplicationProblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r TransferAccountOwnershipResponse) GetApplicationProblemJSON500() *InternalError {
+	return r.ApplicationProblemJSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r TransferAccountOwnershipResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r TransferAccountOwnershipResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r TransferAccountOwnershipResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r TransferAccountOwnershipResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -18880,6 +19551,152 @@ func (c *ClientWithResponses) GetOIDCClientWithResponse(ctx context.Context, acc
 		return nil, err
 	}
 	return ParseGetOIDCClientResponse(rsp)
+}
+
+// TransferAccountOwnershipWithBodyWithResponse Hand an account to another member
+//
+// Transfers an account to a member who is **already in it**. **Minimum role:
+// owner** — an admin and a member never reach this operation, because after
+// this request the caller's authority over the account is whatever the new
+// owner gives back. A scoped API token needs `accounts:write`.
+//
+// The owner is not a field on the account: it is a role on a membership, and
+// so there is no `PATCH` of an account's "owner" here either. This is an
+// **event** — a collection of transfers — not a state being written, and the
+// response is the account plus **both** memberships at the roles they now
+// hold.
+//
+// ### Four rules, and the order they are answered in is a security property
+//
+// | # | refused when | status |
+// |---|---|---|
+// | 1 | the caller is not this account's owner | `403` |
+// | 2 | the account is **personal** | `422 not_transferable` |
+// | 3 | the account has **fewer than two members** | `422 not_transferable` |
+// | 4 | the new owner is the caller themselves | `422 transfer_to_self` |
+//
+// Rule 1 is checked **before** any of the others, and that is the point: a
+// caller who is not the owner learns that and nothing about the account
+// itself — not whether it is personal, not how many members it has. Answering
+// the other questions first would let any admin of any account interrogate
+// its shape.
+//
+// Rules 2 and 3 are one error and one sentence, because they are the same
+// fact from two directions — a personal account has exactly one member by
+// construction — and because "this account is not one that changes hands" is
+// the same advice either way.
+//
+// Rule 4 is a `422` and its own code, because this account **is**
+// transferable and it is this request that is wrong. Answering
+// `not_transferable` would tell an owner their own account cannot be handed
+// over.
+//
+// ### What happens to each membership
+//
+//   - The **new owner** gets the `owner` role.
+//   - The **previous owner becomes `admin`** — every authority they had except
+//     ownership itself. That is deliberate: it is what keeps a transfer
+//     reversible, because an heir who turns out to be unavailable is a problem
+//     a previous owner who can no longer rename the account, invite a member or
+//     remove one cannot fix.
+//   - The promotion is written **before** the demotion, in one transaction, so
+//     the account never passes through a state with no owner.
+//
+// ### This does not invite anybody
+//
+// The new owner must already be a member, and naming somebody who is not is
+// a `404` — the same answer a stranger gets. A transfer has no token, no
+// expiry, and no way for the person it names to refuse, which is exactly what
+// makes it the wrong instrument for admitting somebody: invite them with
+// `inviteMember` first, where they can accept or decline.
+//
+// A `new_owner_user_id` that is not a UUID this service issued is also a
+// `404`, not a `422` — the same rule that applies to the ids in every path
+// here. "This is not an id we issued" and "this is one and you may not have
+// it" are not distinguishable from outside.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/accounts/{account_id}/ownership-transfers (the `TransferAccountOwnership` operationId).
+func (c *ClientWithResponses) TransferAccountOwnershipWithBodyWithResponse(ctx context.Context, accountID AccountID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*TransferAccountOwnershipResponse, error) {
+	rsp, err := c.TransferAccountOwnershipWithBody(ctx, accountID, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseTransferAccountOwnershipResponse(rsp)
+}
+
+// TransferAccountOwnershipWithResponse Hand an account to another member
+//
+// Transfers an account to a member who is **already in it**. **Minimum role:
+// owner** — an admin and a member never reach this operation, because after
+// this request the caller's authority over the account is whatever the new
+// owner gives back. A scoped API token needs `accounts:write`.
+//
+// The owner is not a field on the account: it is a role on a membership, and
+// so there is no `PATCH` of an account's "owner" here either. This is an
+// **event** — a collection of transfers — not a state being written, and the
+// response is the account plus **both** memberships at the roles they now
+// hold.
+//
+// ### Four rules, and the order they are answered in is a security property
+//
+// | # | refused when | status |
+// |---|---|---|
+// | 1 | the caller is not this account's owner | `403` |
+// | 2 | the account is **personal** | `422 not_transferable` |
+// | 3 | the account has **fewer than two members** | `422 not_transferable` |
+// | 4 | the new owner is the caller themselves | `422 transfer_to_self` |
+//
+// Rule 1 is checked **before** any of the others, and that is the point: a
+// caller who is not the owner learns that and nothing about the account
+// itself — not whether it is personal, not how many members it has. Answering
+// the other questions first would let any admin of any account interrogate
+// its shape.
+//
+// Rules 2 and 3 are one error and one sentence, because they are the same
+// fact from two directions — a personal account has exactly one member by
+// construction — and because "this account is not one that changes hands" is
+// the same advice either way.
+//
+// Rule 4 is a `422` and its own code, because this account **is**
+// transferable and it is this request that is wrong. Answering
+// `not_transferable` would tell an owner their own account cannot be handed
+// over.
+//
+// ### What happens to each membership
+//
+//   - The **new owner** gets the `owner` role.
+//   - The **previous owner becomes `admin`** — every authority they had except
+//     ownership itself. That is deliberate: it is what keeps a transfer
+//     reversible, because an heir who turns out to be unavailable is a problem
+//     a previous owner who can no longer rename the account, invite a member or
+//     remove one cannot fix.
+//   - The promotion is written **before** the demotion, in one transaction, so
+//     the account never passes through a state with no owner.
+//
+// ### This does not invite anybody
+//
+// The new owner must already be a member, and naming somebody who is not is
+// a `404` — the same answer a stranger gets. A transfer has no token, no
+// expiry, and no way for the person it names to refuse, which is exactly what
+// makes it the wrong instrument for admitting somebody: invite them with
+// `inviteMember` first, where they can accept or decline.
+//
+// A `new_owner_user_id` that is not a UUID this service issued is also a
+// `404`, not a `422` — the same rule that applies to the ids in every path
+// here. "This is not an id we issued" and "this is one and you may not have
+// it" are not distinguishable from outside.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/accounts/{account_id}/ownership-transfers (the `TransferAccountOwnership` operationId).
+func (c *ClientWithResponses) TransferAccountOwnershipWithResponse(ctx context.Context, accountID AccountID, body TransferAccountOwnershipJSONRequestBody, reqEditors ...RequestEditorFn) (*TransferAccountOwnershipResponse, error) {
+	rsp, err := c.TransferAccountOwnership(ctx, accountID, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseTransferAccountOwnershipResponse(rsp)
 }
 
 // StartSocialLoginWithResponse Begin a social sign-in
@@ -23199,6 +24016,164 @@ func ParseGetOIDCClientResponse(rsp *http.Response) (*GetOIDCClientResponse, err
 		response.Headers404 = &headers
 	case rsp.StatusCode == 500:
 		var headers GetOIDCClientResponse500Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers500 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseTransferAccountOwnershipResponse parses an HTTP response from a TransferAccountOwnershipWithResponse call
+func ParseTransferAccountOwnershipResponse(rsp *http.Response) (*TransferAccountOwnershipResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &TransferAccountOwnershipResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest OwnershipTransfer
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest MalformedBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthenticated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest BodyTooLarge
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON500 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers TransferAccountOwnershipResponse200Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 400:
+		var headers TransferAccountOwnershipResponse400Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers400 = &headers
+	case rsp.StatusCode == 401:
+		var headers TransferAccountOwnershipResponse401Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers401 = &headers
+	case rsp.StatusCode == 403:
+		var headers TransferAccountOwnershipResponse403Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers403 = &headers
+	case rsp.StatusCode == 404:
+		var headers TransferAccountOwnershipResponse404Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers404 = &headers
+	case rsp.StatusCode == 413:
+		var headers TransferAccountOwnershipResponse413Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers413 = &headers
+	case rsp.StatusCode == 422:
+		var headers TransferAccountOwnershipResponse422Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers422 = &headers
+	case rsp.StatusCode == 500:
+		var headers TransferAccountOwnershipResponse500Headers
 		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {

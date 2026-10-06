@@ -2729,6 +2729,158 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  /v1/accounts/{account_id}/ownership-transfers:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+    post:
+      tags: [tenancy]
+      operationId: transferAccountOwnership
+      summary: Hand an account to another member
+      description: |
+        Transfers an account to a member who is **already in it**. **Minimum role:
+        owner** — an admin and a member never reach this operation, because after
+        this request the caller's authority over the account is whatever the new
+        owner gives back. A scoped API token needs `accounts:write`.
+
+        The owner is not a field on the account: it is a role on a membership, and
+        so there is no `PATCH` of an account's "owner" here either. This is an
+        **event** — a collection of transfers — not a state being written, and the
+        response is the account plus **both** memberships at the roles they now
+        hold.
+
+        ### Four rules, and the order they are answered in is a security property
+
+        | # | refused when | status |
+        |---|---|---|
+        | 1 | the caller is not this account's owner | `403` |
+        | 2 | the account is **personal** | `422 not_transferable` |
+        | 3 | the account has **fewer than two members** | `422 not_transferable` |
+        | 4 | the new owner is the caller themselves | `422 transfer_to_self` |
+
+        Rule 1 is checked **before** any of the others, and that is the point: a
+        caller who is not the owner learns that and nothing about the account
+        itself — not whether it is personal, not how many members it has. Answering
+        the other questions first would let any admin of any account interrogate
+        its shape.
+
+        Rules 2 and 3 are one error and one sentence, because they are the same
+        fact from two directions — a personal account has exactly one member by
+        construction — and because "this account is not one that changes hands" is
+        the same advice either way.
+
+        Rule 4 is a `422` and its own code, because this account **is**
+        transferable and it is this request that is wrong. Answering
+        `not_transferable` would tell an owner their own account cannot be handed
+        over.
+
+        ### What happens to each membership
+
+        * The **new owner** gets the `owner` role.
+        * The **previous owner becomes `admin`** — every authority they had except
+          ownership itself. That is deliberate: it is what keeps a transfer
+          reversible, because an heir who turns out to be unavailable is a problem
+          a previous owner who can no longer rename the account, invite a member or
+          remove one cannot fix.
+        * The promotion is written **before** the demotion, in one transaction, so
+          the account never passes through a state with no owner.
+
+        ### This does not invite anybody
+
+        The new owner must already be a member, and naming somebody who is not is
+        a `404` — the same answer a stranger gets. A transfer has no token, no
+        expiry, and no way for the person it names to refuse, which is exactly what
+        makes it the wrong instrument for admitting somebody: invite them with
+        `inviteMember` first, where they can accept or decline.
+
+        A `new_owner_user_id` that is not a UUID this service issued is also a
+        `404`, not a `422` — the same rule that applies to the ids in every path
+        here. "This is not an id we issued" and "this is one and you may not have
+        it" are not distinguishable from outside.
+      security:
+        - sessionCookie: []
+        - bearerToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransferOwnershipRequest'
+            examples:
+              hand_over:
+                summary: make an existing member the owner
+                value:
+                  new_owner_user_id: ab000000-0000-0000-0000-0000000000b2
+      responses:
+        '200':
+          description: |
+            The account, and both memberships at the roles they now hold.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OwnershipTransfer'
+              example:
+                account:
+                  id: ab000000-0000-0000-0000-0000000000c1
+                  name: Acme Corp
+                  slug: acme-corp
+                  personal: false
+                  role: admin
+                  created_at: '2026-06-01T10:00:00Z'
+                  updated_at: '2026-10-01T09:30:00Z'
+                new_owner:
+                  account_id: ab000000-0000-0000-0000-0000000000c1
+                  user_id: ab000000-0000-0000-0000-0000000000b2
+                  role: owner
+                  created_at: '2026-06-04T11:20:00Z'
+                previous_owner:
+                  account_id: ab000000-0000-0000-0000-0000000000c1
+                  user_id: ab000000-0000-0000-0000-0000000000b3
+                  role: admin
+                  created_at: '2026-06-01T10:00:00Z'
+        '400':
+          $ref: '#/components/responses/MalformedBody'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          description: |
+            The caller is a member of this account but not its owner.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: |
+            No such account is visible to you, or the new owner is not a member of
+            it. The two are one answer: this operation cannot admit anybody.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '413':
+          $ref: '#/components/responses/BodyTooLarge'
+        '422':
+          description: |
+            `not_transferable` — the account is personal or has fewer than two
+            members. `transfer_to_self` — the caller named themselves.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
   /v1/invitations/accept:
     post:
       tags: [tenancy]
@@ -4847,6 +4999,44 @@ components:
             refused on `inviteMember`; an unknown value is a `422` naming `role`
             with `unknown_role`, and an empty `role` is the same case — there is no
             "unchanged" in a PATCH body.
+    TransferOwnershipRequest:
+      type: object
+      required: [new_owner_user_id]
+      additionalProperties: false
+      properties:
+        new_owner_user_id:
+          type: string
+          format: uuid
+          description: |
+            The member who becomes the owner. A **user** id, and it must already
+            belong to this account — naming somebody who does not is a `404` and
+            does not invite them.
+
+            It is the only field. The caller's own id is not here and cannot be:
+            "am I the owner" is asked of the credential, never of the body.
+    OwnershipTransfer:
+      type: object
+      description: |
+        A completed transfer: the account, and **both** memberships at the roles
+        they now hold.
+
+        Both, and not only the new one, because the person who made this request
+        is the previous owner — they need to know what they are now, and this
+        service is the only thing that knows. `account.role` is that same answer
+        at the account level: it is the caller's role, and after a transfer it is
+        `admin`.
+      required: [account, new_owner, previous_owner]
+      properties:
+        account:
+          allOf:
+            - $ref: '#/components/schemas/Account'
+          description: |
+            The account, unchanged in every field. Ownership is a role on a
+            membership, so nothing on the account itself moved.
+        new_owner:
+          $ref: '#/components/schemas/Membership'
+        previous_owner:
+          $ref: '#/components/schemas/Membership'
     AcceptInvitationRequest:
       type: object
       required: [token]
