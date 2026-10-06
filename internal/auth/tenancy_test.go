@@ -192,6 +192,7 @@ func realTenancy(pool db.Pool, clk clock.Clock) PersonalAccountProvisioner {
 	return accounts.NewService(
 		db.TxRunner{Pool: pool},
 		accounts.NewStore(pool),
+		users.NewStore(pool),
 		outbox.NewStore(pool),
 		apikeys.NewStore(pool),
 		clk,
@@ -318,6 +319,7 @@ func TestIntegrationRegisterRollsBackTenancy(t *testing.T) {
 	failing := &failingTenancy{inner: accounts.NewService(
 		db.TxRunner{Pool: pool},
 		accounts.NewStore(pool),
+		users.NewStore(pool),
 		outbox.NewStore(pool),
 		apikeys.NewStore(pool),
 		clockForTest(),

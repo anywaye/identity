@@ -390,7 +390,15 @@ func (s *Service) RedeemPasswordReset(ctx context.Context, in RedeemPasswordRese
 			return err
 		}
 
-		event, err := outbox.NewSessionsRevoked(now, live.UserID, "password reset")
+		// The user's address, read before the event because the event carries it:
+		// the "your password was changed" notice is mailed, and the consumer that
+		// mails it cannot read the user row. See outbox.NewSessionsRevoked.
+		user, err := s.users.ByID(ctx, q, live.UserID)
+		if err != nil {
+			return err
+		}
+
+		event, err := outbox.NewSessionsRevoked(now, live.UserID, user.Email, "password reset")
 		if err != nil {
 			return err
 		}
@@ -398,10 +406,6 @@ func (s *Service) RedeemPasswordReset(ctx context.Context, in RedeemPasswordRese
 			return err
 		}
 
-		user, err := s.users.ByID(ctx, q, live.UserID)
-		if err != nil {
-			return err
-		}
 		out = RedeemPasswordResult{Email: user.Email}
 		return nil
 	})
@@ -785,7 +789,18 @@ func (s *Service) ConfirmEmailChangeNew(ctx context.Context, in ConfirmEmailChan
 			return err
 		}
 
-		event, err := outbox.NewSessionsRevoked(now, live.UserID, "email address changed")
+		// The user's address as it stands NOW — after the move above, because the
+		// move and this event are one transaction. The "your email address was
+		// changed" notice is mailed, and the consumer that mails it cannot read the
+		// user row, so the event carries the address itself. Which address that
+		// is — the new one, at this point in the transaction — is recorded in
+		// REPORT-identity-event-payloads-01.md rather than hidden here.
+		user, err := s.users.ByID(ctx, q, live.UserID)
+		if err != nil {
+			return err
+		}
+
+		event, err := outbox.NewSessionsRevoked(now, live.UserID, user.Email, "email address changed")
 		if err != nil {
 			return err
 		}
@@ -793,11 +808,7 @@ func (s *Service) ConfirmEmailChangeNew(ctx context.Context, in ConfirmEmailChan
 			return err
 		}
 
-		updated, err := s.users.ByID(ctx, q, live.UserID)
-		if err != nil {
-			return err
-		}
-		out = updated
+		out = user
 		return nil
 	})
 	if err != nil {

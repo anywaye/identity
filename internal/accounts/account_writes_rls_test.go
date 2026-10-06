@@ -10,6 +10,7 @@ import (
 	"github.com/cafaye/identity/internal/platform/db"
 	"github.com/cafaye/identity/internal/platform/dbtest"
 	"github.com/cafaye/identity/internal/tenancy"
+	"github.com/cafaye/identity/internal/users"
 )
 
 // The account-scoped WRITES under the real policies, and the fourth kind of test
@@ -275,6 +276,7 @@ func TestARemovalWithNoRevokerStillRemovesTheMembershipUnderTheRealPolicies(t *t
 	withoutSweep := NewService(
 		tenancy.TxRunner{TxRunner: db.TxRunner{Pool: h.pool}},
 		h.store,
+		users.NewStore(h.pool),
 		h.events,
 		nil,
 		h.clock,

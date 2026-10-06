@@ -416,6 +416,7 @@ func buildAuth(
 	tenancy := accounts.NewService(
 		acctboundary.TxRunner{TxRunner: db.TxRunner{Pool: pool}},
 		accountStore,
+		users.NewStore(pool),
 		events,
 		apiKeyStore,
 		clock.System{},

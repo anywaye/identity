@@ -120,24 +120,42 @@ func NewAccountCreated(now time.Time, accountID id.UUID, name, slug string, pers
 
 // NewMemberInvited builds the event emitted when an invitation is created.
 //
-// The email is in the payload because a consumer that mails the invitation needs
-// it and there is no other way to get it: this service does not send mail. It
-// carries no token, and that is the important omission — the raw invitation
-// token exists once, in the 201 response, and no event on the platform carries a
-// usable credential.
-func NewMemberInvited(now time.Time, accountID, invitationID id.UUID, email, role string, inviterID id.UUID) (Envelope, error) {
+// The email and the acceptance token are in the payload because a consumer that
+// mails the invitation needs both and there is no other way to get them: this
+// service does not send mail, and the fleet's consumer is cross-service —
+// courier has no identity client, no identity credentials and no identity
+// tables, so neither field is a fact it can read from the user row or re-read
+// from a store (REPORT-courier-consumer-invite-01.md §2.6, where the two
+// lookups and the token re-read were each refused, and the refusals recorded as
+// decisions rather than worked around).
+//
+// WHAT TRAVELS IS THE TOKEN AND NOT A URL, and that is the manager decision
+// recorded in REPORT-courier-consumer-invite-01.md §2.4: the token-in-a-mail is
+// the same credential class as the reset links identity already mails, courier
+// re-reading the token was refused three times and stays refused, and a
+// redeem-by-id route is a bigger design than the packet that asked for this.
+// Composing the accept URL is the consumer's job: no base configuration for the
+// acceptance screen exists in this service (identity renders no HTML, and the
+// recovery flow's per-purpose link templates have no invitation purpose), so
+// the platform's accept route is not courier's to know.
+func NewMemberInvited(now time.Time, accountID, invitationID id.UUID, email, token, role string, inviterID id.UUID) (Envelope, error) {
+	if token == "" {
+		return Envelope{}, fmt.Errorf("outbox: refusing to build an %s payload with no acceptance token", EventMemberInvited)
+	}
 	return newTenancyEvent(now, EventMemberInvited, accountID, struct {
-		AccountID    string `json:"account_id"`
-		InvitationID string `json:"invitation_id"`
-		Email        string `json:"email"`
-		Role         string `json:"role"`
-		InvitedByID  string `json:"invited_by_id"`
+		AccountID       string `json:"account_id"`
+		InvitationID    string `json:"invitation_id"`
+		Email           string `json:"email"`
+		AcceptanceToken string `json:"acceptance_token"`
+		Role            string `json:"role"`
+		InvitedByID     string `json:"invited_by_id"`
 	}{
-		AccountID:    accountID.String(),
-		InvitationID: invitationID.String(),
-		Email:        email,
-		Role:         role,
-		InvitedByID:  inviterID.String(),
+		AccountID:       accountID.String(),
+		InvitationID:    invitationID.String(),
+		Email:           email,
+		AcceptanceToken: token,
+		Role:            role,
+		InvitedByID:     inviterID.String(),
 	})
 }
 
@@ -147,14 +165,27 @@ func NewMemberInvited(now time.Time, accountID, invitationID id.UUID, email, rol
 // event without a membership announces somebody joined who did not, and a
 // membership without the event leaves a consumer's member list permanently one
 // short with no way to notice.
-func NewMemberAccepted(now time.Time, accountID, userID id.UUID, role string) (Envelope, error) {
+//
+// THE MEMBER'S ADDRESS TRAVELS because the "welcome to the account" mail goes to
+// them and the consumer is cross-service: courier has no identity client and no
+// identity tables, so the address is not a fact it can read from the user row
+// (REPORT-courier-consumer-invite-01.md §2.6). It is the MEMBER's address — the
+// registered user who redeemed the token — and not the address the invitation
+// was sent to: the token is not bound to an address, so the two are different
+// facts and only one of them is the person who joined.
+func NewMemberAccepted(now time.Time, accountID, userID id.UUID, email, role string) (Envelope, error) {
+	if email == "" {
+		return Envelope{}, fmt.Errorf("outbox: refusing to build an %s payload with no member address", EventMemberAccepted)
+	}
 	return newTenancyEvent(now, EventMemberAccepted, accountID, struct {
 		AccountID string `json:"account_id"`
 		UserID    string `json:"user_id"`
+		Email     string `json:"email"`
 		Role      string `json:"role"`
 	}{
 		AccountID: accountID.String(),
 		UserID:    userID.String(),
+		Email:     email,
 		Role:      role,
 	})
 }

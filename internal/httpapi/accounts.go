@@ -551,12 +551,14 @@ type membershipResponse struct {
 // invitationResponse is a pending invitation and, on creation, its one-time
 // token.
 //
-// THE TOKEN IS HERE AND ONLY HERE. It is returned in the 201 and never again:
-// there is no endpoint that re-reads it and no column that stores it, only its
-// digest. In a later packet the invitation email is handed to courier and this
-// field goes away — until courier exists, returning the token is the only way an
-// invitation can be delivered at all, and a service that mints an invitation
-// nobody can redeem is worse than one that returns a credential once.
+// THE TOKEN IS RETURNED HERE AND TRAVELS IN THE identity.member.invited EVENT.
+// There is no endpoint that re-reads it and no column that stores it, only its
+// digest. The event half is the packet that handed the invitation mail to
+// courier: courier has no identity client and cannot re-read the token, so the
+// payload carries it (REPORT-courier-consumer-invite-01.md §2.4). This field
+// stays as well — the 201 is the inviting client's copy and the event is the
+// subscribers', and a service that mints an invitation nobody can redeem is
+// worse than one that returns a credential twice.
 //
 // TokenDigest is deliberately absent. It is what the row holds, and a response
 // that echoed it would tell a client something it has no use for.

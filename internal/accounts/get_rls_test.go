@@ -12,6 +12,7 @@ import (
 	"github.com/cafaye/identity/internal/platform/dbtest"
 	"github.com/cafaye/identity/internal/platform/id"
 	"github.com/cafaye/identity/internal/tenancy"
+	"github.com/cafaye/identity/internal/users"
 )
 
 // `Get` UNDER THE REAL POLICIES, and the reason this file exists separately from
@@ -90,6 +91,7 @@ func newRealPolicyHarness(t *testing.T) *harness {
 		svc: NewService(
 			db.TxRunner{Pool: pool},
 			store,
+			users.NewStore(pool),
 			events,
 			revokes,
 			clk,

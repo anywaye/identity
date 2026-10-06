@@ -73,8 +73,9 @@ func TestMemberInvitedEnvelope(t *testing.T) {
 	now := time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
 	accountID, inviterID, _ := tenancyTestIDs()
 	invitationID := id.MustNew()
+	token := "7c1a4e29-8b3d-4f6a-9e05-2d8c1b7a4f63"
 
-	e, err := NewMemberInvited(now, accountID, invitationID, "invitee@example.com", "member", inviterID)
+	e, err := NewMemberInvited(now, accountID, invitationID, "invitee@example.com", token, "member", inviterID)
 	if err != nil {
 		t.Fatalf("NewMemberInvited: %v", err)
 	}
@@ -93,11 +94,12 @@ func TestMemberInvitedEnvelope(t *testing.T) {
 	}
 
 	var data struct {
-		AccountID    string `json:"account_id"`
-		InvitationID string `json:"invitation_id"`
-		Email        string `json:"email"`
-		Role         string `json:"role"`
-		InvitedByID  string `json:"invited_by_id"`
+		AccountID       string `json:"account_id"`
+		InvitationID    string `json:"invitation_id"`
+		Email           string `json:"email"`
+		AcceptanceToken string `json:"acceptance_token"`
+		Role            string `json:"role"`
+		InvitedByID     string `json:"invited_by_id"`
 	}
 	decodeData(t, e, &data)
 
@@ -107,13 +109,33 @@ func TestMemberInvitedEnvelope(t *testing.T) {
 	if data.Email != "invitee@example.com" || data.Role != "member" || data.InvitedByID != inviterID.String() {
 		t.Errorf("payload = %+v", data)
 	}
+	// The acceptance token travels because the consumer that mails the invitation
+	// cannot read it: identity returns it once, in the 201, and stores only its
+	// digest. See NewMemberInvited for the whole argument.
+	if data.AcceptanceToken != token {
+		t.Errorf("acceptance_token = %q, want %q — the invitation mail is undeliverable without it", data.AcceptanceToken, token)
+	}
+}
+
+// TestMemberInvitedRefusesAnEmptyToken is the fail-closed half of the payload
+// above: an event announcing an invitation nobody can redeem is the defect the
+// token field exists to prevent, and a builder that emitted one would publish a
+// permanent dead end to every subscriber.
+func TestMemberInvitedRefusesAnEmptyToken(t *testing.T) {
+	now := time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
+	accountID, inviterID, _ := tenancyTestIDs()
+
+	_, err := NewMemberInvited(now, accountID, id.MustNew(), "invitee@example.com", "", "member", inviterID)
+	if err == nil {
+		t.Fatal("NewMemberInvited accepted an empty acceptance token — the event would announce an invitation nobody can redeem")
+	}
 }
 
 func TestMemberAcceptedEnvelope(t *testing.T) {
 	now := time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
 	accountID, userID, _ := tenancyTestIDs()
 
-	e, err := NewMemberAccepted(now, accountID, userID, "admin")
+	e, err := NewMemberAccepted(now, accountID, userID, "member@example.com", "admin")
 	if err != nil {
 		t.Fatalf("NewMemberAccepted: %v", err)
 	}
@@ -131,12 +153,31 @@ func TestMemberAcceptedEnvelope(t *testing.T) {
 	var data struct {
 		AccountID string `json:"account_id"`
 		UserID    string `json:"user_id"`
+		Email     string `json:"email"`
 		Role      string `json:"role"`
 	}
 	decodeData(t, e, &data)
 
 	if data.AccountID != accountID.String() || data.UserID != userID.String() || data.Role != "admin" {
 		t.Errorf("payload = %+v, want the membership that was created", data)
+	}
+	// The member's address travels because the "welcome to the account" mail goes
+	// to them and the consumer is cross-service. See NewMemberAccepted.
+	if data.Email != "member@example.com" {
+		t.Errorf("email = %q, want the member's address", data.Email)
+	}
+}
+
+// TestMemberAcceptedRefusesAnEmptyEmail is the fail-closed half of the payload
+// above: a welcome mail with no recipient is not a mail, and an event that
+// omitted the address would leave the consumer with nothing to act on.
+func TestMemberAcceptedRefusesAnEmptyEmail(t *testing.T) {
+	now := time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
+	accountID, userID, _ := tenancyTestIDs()
+
+	_, err := NewMemberAccepted(now, accountID, userID, "", "admin")
+	if err == nil {
+		t.Fatal("NewMemberAccepted accepted an empty member address — the welcome mail would have no recipient")
 	}
 }
 
