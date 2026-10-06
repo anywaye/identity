@@ -32,7 +32,7 @@ import (
 // So this file uses `dbtest.Pool`, which opens the APP ROLE against the real
 // tables with migrations/00016's policies and migrations/00007/00009/00011's
 // foreign keys live. Four of those keys are `ON DELETE RESTRICT` and every one
-// of them is a record somebody else wants kept; migrations/00023 is what turns
+// of them is a record somebody else wants kept; migrations/00024 is what turns
 // them into `SET NULL`, and the three tests named after them are the reason that
 // migration exists rather than a description of it.
 //
@@ -389,7 +389,7 @@ func TestTheCredentialsStopAuthenticating(t *testing.T) {
 }
 
 // TestAPendingInvitationDoesNotBlockTheDeletion is the first of the three
-// migrations/00023 tests, and it is here rather than in a schema test because
+// migrations/00024 tests, and it is here rather than in a schema test because
 // what it proves is that a USER CAN LEAVE, not that a constraint has a shape.
 //
 // `account_invitations_invited_by_fkey` is ON DELETE RESTRICT (00007), and 00007
@@ -401,7 +401,7 @@ func TestTheCredentialsStopAuthenticating(t *testing.T) {
 //
 // This IS that packet, and the resolution is NOT to revoke: revoking is the
 // account owner's decision and this is the departing user's own request. The
-// invitation survives with `invited_by` NULL, which is 00023's change and the
+// invitation survives with `invited_by` NULL, which is 00024's change and the
 // only way to keep both facts true at once.
 func TestAPendingInvitationDoesNotBlockTheDeletion(t *testing.T) {
 	pool := realPool(t)
@@ -443,7 +443,7 @@ func TestAPendingInvitationDoesNotBlockTheDeletion(t *testing.T) {
 	}
 }
 
-// TestARevokedKeyTheUserHeldGoesWithThem is what migration 00023 turned out NOT
+// TestARevokedKeyTheUserHeldGoesWithThem is what migration 00024 turned out NOT
 // to need, and it is here because a test written on a wrong premise is worse than
 // no test.
 //
@@ -456,7 +456,7 @@ func TestAPendingInvitationDoesNotBlockTheDeletion(t *testing.T) {
 // cascade, and the RESTRICT check then finds no referencing row. The restriction
 // is unreachable.
 //
-// So `api_keys.revoked_by` is left alone by 00023, and the property asserted here
+// So `api_keys.revoked_by` is left alone by 00024, and the property asserted here
 // is the one that is actually true and actually matters: a revoked key the
 // departed user HELD is removed with them, and it is removed as a deletion rather
 // than as a revocation — the row is gone, not revived.

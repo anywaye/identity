@@ -253,14 +253,14 @@ func (s *Store) Disable(ctx context.Context, q db.Querier, userID id.UUID, at ti
 // longer exists is a credential that can only ever be refused, so leaving the
 // rows would grow the table for accounts that are already gone.
 //
-// # AND THE FOUR THAT DID NOT CASCADE ARE WHY MIGRATION 00023 EXISTS
+// # AND THE FOUR THAT DID NOT CASCADE ARE WHY MIGRATION 00024 EXISTS
 //
 // `oidc_clients.created_by`, `oidc_clients.revoked_by`, `api_keys.revoked_by`
 // and `account_invitations.invited_by` are all `ON DELETE RESTRICT`, because
 // each of them records a fact about a record SOMEBODY ELSE OWNS — a
 // registration an account keeps for its audit, a key the account still holds, an
 // invitation the account still wants. A RESTRICT is the right constraint and it
-// is also, without 00023, a refusal to let a person ever leave. 00023 keeps the
+// is also, without 00024, a refusal to let a person ever leave. 00024 keeps the
 // constraint and the fact and gives up only the pointer: the row survives with
 // `NULL` where the departing person's id was.
 //
@@ -274,7 +274,7 @@ func (s *Store) DeleteForAccount(ctx context.Context, q db.Querier, accountID, u
 	tag, err := q.Exec(ctx, `DELETE FROM users WHERE id = $1`, userID)
 	if err != nil {
 		// A foreign-key violation here is a THIRD-PARTY RECORD still naming this
-		// user, and it is reported rather than swallowed: after migrations/00023
+		// user, and it is reported rather than swallowed: after migrations/00024
 		// the four known cases cannot produce it, so a 23503 from here means a
 		// later migration added a fifth `RESTRICT` column and this method needs to
 		// know about it.
