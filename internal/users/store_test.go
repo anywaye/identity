@@ -314,3 +314,215 @@ func TestStoreCreateInsideATransactionRollsBackWithIt(t *testing.T) {
 		t.Errorf("after Rollback the user is still readable: %v", err)
 	}
 }
+
+// A new user has no display name: the column is NULL and the field is nil.
+// This is the state every existing user is in after the migration.
+func TestStoreCreateLeavesDisplayNameNull(t *testing.T) {
+	pool := dbtest.Pool(t)
+	store := NewStore(pool)
+
+	ctx := context.Background()
+	created, err := store.Create(ctx, pool, CreateParams{
+		Email:          dbtest.UniqueEmail(t),
+		PasswordDigest: "$argon2id$fake",
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if created.DisplayName != nil {
+		t.Errorf("DisplayName = %v, want nil for a new user", *created.DisplayName)
+	}
+
+	byID, err := store.ByID(ctx, pool, created.ID)
+	if err != nil {
+		t.Fatalf("ByID: %v", err)
+	}
+	if byID.DisplayName != nil {
+		t.Errorf("ByID DisplayName = %v, want nil for a new user", *byID.DisplayName)
+	}
+}
+
+// UpdateName sets the display name and reads it back.
+func TestStoreUpdateNameSetsAndReadsBack(t *testing.T) {
+	pool := dbtest.Pool(t)
+	store := NewStore(pool)
+
+	ctx := context.Background()
+	created, err := store.Create(ctx, pool, CreateParams{
+		Email:          dbtest.UniqueEmail(t),
+		PasswordDigest: "$argon2id$fake",
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	name := "Kaka"
+	if err := store.UpdateName(ctx, pool, created.ID, &name); err != nil {
+		t.Fatalf("UpdateName: %v", err)
+	}
+
+	byID, err := store.ByID(ctx, pool, created.ID)
+	if err != nil {
+		t.Fatalf("ByID: %v", err)
+	}
+	if byID.DisplayName == nil || *byID.DisplayName != "Kaka" {
+		t.Errorf("DisplayName = %v, want Kaka", byID.DisplayName)
+	}
+}
+
+// UpdateName with nil clears the name, returning the column to NULL.
+func TestStoreUpdateNameClearsWithNil(t *testing.T) {
+	pool := dbtest.Pool(t)
+	store := NewStore(pool)
+
+	ctx := context.Background()
+	created, err := store.Create(ctx, pool, CreateParams{
+		Email:          dbtest.UniqueEmail(t),
+		PasswordDigest: "$argon2id$fake",
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	name := "Kaka"
+	if err := store.UpdateName(ctx, pool, created.ID, &name); err != nil {
+		t.Fatalf("UpdateName set: %v", err)
+	}
+	if err := store.UpdateName(ctx, pool, created.ID, nil); err != nil {
+		t.Fatalf("UpdateName clear: %v", err)
+	}
+
+	byID, err := store.ByID(ctx, pool, created.ID)
+	if err != nil {
+		t.Fatalf("ByID: %v", err)
+	}
+	if byID.DisplayName != nil {
+		t.Errorf("DisplayName = %v, want nil after clearing", *byID.DisplayName)
+	}
+}
+
+// UpdateName on a missing user returns ErrNotFound.
+func TestStoreUpdateNameMissesCleanly(t *testing.T) {
+	pool := dbtest.Pool(t)
+	store := NewStore(pool)
+
+	ctx := context.Background()
+	name := "Kaka"
+	if err := store.UpdateName(ctx, pool, id.MustNew(), &name); !errors.Is(err, ErrNotFound) {
+		t.Errorf("UpdateName on a missing user = %v, want errors.Is(_, ErrNotFound)", err)
+	}
+}
+
+// A row that has always had no display name reads fine, and that is the state
+// every user who existed before this migration is in.
+//
+// The column is read directly with a cast rather than through the store, because
+// the store's select list carries the value as a *string and a scan failure there
+// is indistinguishable from a column that is not there — this asks the catalog
+// what the column actually is, so the assertion is about the migration and not
+// about this package's ability to read NULL.
+func TestADisplayNameColumnExistsAndIsNullableWithNoDefault(t *testing.T) {
+	pool := dbtest.Pool(t)
+
+	// The row this creates predates nothing — it is inserted the way every other
+	// user is, through a statement that never mentions display_name, which is the
+	// property that matters: an INSERT written before the column existed still
+	// works, because the column has no default it would have to satisfy.
+	store := NewStore(pool)
+	ctx := context.Background()
+	created, err := store.Create(ctx, pool, CreateParams{
+		Email:          dbtest.UniqueEmail(t),
+		PasswordDigest: "$argon2id$fake",
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// column_default is a nullable catalog text, so it is a POINTER here for the
+	// same reason the column itself is: "no default" is not an empty string.
+	var isNullable string
+	var hasDefault *string
+	const query = `
+		SELECT is_nullable, column_default
+		FROM information_schema.columns
+		WHERE table_schema = 'public' AND table_name = 'users' AND column_name = 'display_name'`
+
+	row := pool.QueryRow(ctx, query)
+	if err := row.Scan(&isNullable, &hasDefault); err != nil {
+		t.Fatalf("reading users.display_name from the catalog: %v", err)
+	}
+
+	// NULLABLE, because every existing user has no name and there is no honest
+	// default to give them. A NOT NULL column would need a backfill inventing a
+	// name for every account in the fleet.
+	if isNullable != "YES" {
+		t.Errorf("users.display_name is_nullable = %q, want YES (existing users have no name)", isNullable)
+	}
+
+	// NO DEFAULT, for the reason 00023 argues: a default of '' would be a second
+	// representation of "no name", and the first person to clear a name they had
+	// set would be the one who found the two disagreeing.
+	if hasDefault != nil {
+		t.Errorf("users.display_name has default %v, want none (NULL is the one way to say no name)", *hasDefault)
+	}
+
+	var stored *string
+	if err := pool.QueryRow(ctx, `SELECT display_name FROM users WHERE id = $1`, created.ID).Scan(&stored); err != nil {
+		t.Fatalf("reading the column back: %v", err)
+	}
+	if stored != nil {
+		t.Errorf("a user created without mentioning display_name reads %q, want NULL", *stored)
+	}
+}
+
+// The column carries no unique constraint and no index, because a display name
+// is not an identifier. Two people named "Kaka" are two people, and a unique
+// constraint would be a promise about a lookup that never happens.
+//
+// Asserted against the catalog rather than left to the migration's comment,
+// because the migration's comment is prose and this is the property: a future
+// packet that adds "just an index, it is probably useful" would be refused here
+// rather than becoming a maintenance cost on every write to users that nothing
+// reads.
+//
+// THE COUNT IS OVER pg_index, which is where both kinds of index live — a
+// unique constraint is implemented as an index, so this one query covers the
+// unique case and the plain case. The leading column is what indkey[0] names:
+// a composite index that merely CONTAINS the column would still serve a lookup
+// leading with it, and there is none to serve.
+func TestDisplayNameCarriesNoIndexAndNoUniqueConstraint(t *testing.T) {
+	pool := dbtest.Pool(t)
+
+	const query = `
+		SELECT count(*)
+		FROM pg_index i
+		JOIN pg_class t ON t.oid = i.indrelid
+		JOIN pg_namespace n ON n.oid = t.relnamespace
+		WHERE n.nspname = 'public' AND t.relname = $1
+		  AND i.indkey[0] = (
+		      SELECT attnum FROM pg_attribute
+		      WHERE attrelid = 'public.users'::regclass AND attname = $2)`
+
+	// THE CONTROL, and it is the half that makes the assertion below mean
+	// anything: the same query shape run against email — a column that DOES
+	// have a unique index leading with it — must find at least one. A query
+	// that finds nothing agrees with another query that finds nothing, and
+	// without this line the count below would pass against a database where
+	// the whole catalog had been dropped.
+	var control int
+	if err := pool.QueryRow(context.Background(), query, "users", "email").Scan(&control); err != nil {
+		t.Fatalf("the control count: %v", err)
+	}
+	if control == 0 {
+		t.Fatalf("the control found no index leading with users.email, so this query shape finds nothing at all — " +
+			"fix the query before trusting the assertion below")
+	}
+
+	var n int
+	if err := pool.QueryRow(context.Background(), query, "users", "display_name").Scan(&n); err != nil {
+		t.Fatalf("counting indexes on users.display_name: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("%d indexes lead with users.display_name, want 0 (the email is the identifier)", n)
+	}
+}

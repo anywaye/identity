@@ -167,11 +167,12 @@ type passwordResetRequest struct {
 // verificationStatusResponse is GET /v1/email-verification.
 //
 // IT IS A SEPARATE ROUTE RATHER THAN A FIELD ON /v1/me, and the reason is that
-// /v1/me's projection is asserted field-by-field to be exactly id and email — a
-// test that fails if a domain struct ever grows a field that could reach a
-// response body. Adding email_verified there would either break that invariant or
-// weaken it, and the status a settings page wants ("is this address proved") is
-// not the same question as "who am I".
+// /v1/me's projection is asserted field-by-field to be exactly the fields it
+// documents — id, email, and display_name when set — so a test fails if a domain
+// struct ever grows a field that could reach a response body. Adding
+// email_verified there would either break that invariant or weaken it, and the
+// status a settings page wants ("is this address proved") is not the same
+// question as "who am I".
 type verificationStatusResponse struct {
 	Email string `json:"email"`
 	// EmailVerified and EmailVerifiedAt say the same thing in two shapes, and both

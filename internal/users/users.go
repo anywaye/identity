@@ -41,6 +41,13 @@ const (
 // bound on the bytes that reach the UNIQUE index on users.email.
 const MaxEmailLength = 320
 
+// MaxDisplayNameLength bounds a display name. It is a person's name, not an
+// identifier and not a password: nothing is looked up by it, so the bound is
+// about what a profile screen can render and what a log line can carry, not
+// about an index. 64 is generous for any name a human will actually answer to
+// and short enough that a name is never a vector for stuffing a response.
+const MaxDisplayNameLength = 64
+
 // MinPasswordLength is the floor the brief sets. There is deliberately no
 // composition rule: requiring a mix of character classes reliably produces
 // "Password1!" and reliably rejects passphrases. Length is the property that
@@ -75,6 +82,12 @@ type User struct {
 	ID id.UUID
 	// Email is stored normalized: lower case and trimmed. See NormalizeEmail.
 	Email string
+	// DisplayName is what the person is called, and nil means nobody has set
+	// one. A POINTER WITH NO `false`, for the reason EmailVerifiedAt and
+	// DisabledAt have one: "no name" and "a name that is the empty string" are
+	// the same state, and the column is NULL for both — a second way to say it
+	// is a second thing to disagree with this one.
+	DisplayName *string
 	// PasswordDigest is an argon2id encoded digest, never a plaintext password.
 	PasswordDigest      string
 	FailedLoginAttempts int
@@ -222,6 +235,23 @@ func ValidatePassword(password string) error {
 		return fieldErr("password", CodeTooShort)
 	case len(password) > MaxPasswordLength:
 		return fieldErr("password", CodeTooLong)
+	}
+	return nil
+}
+
+// ValidateDisplayName checks an already-trimmed name. Passing an untrimmed one
+// is a bug: "  Kaka  " and "Kaka" are the same name, and a caller that let the
+// first through would store a value the owner did not type.
+//
+// EMPTY IS LEGAL, and that is the rule rather than an oversight: an empty name
+// is how a caller clears the one they have, and the column it writes is NULL —
+// the same "no name" every user who never set one has. There is deliberately no
+// minimum length and no format rule. A display name is not an identifier, so
+// there is nothing to validate it against: it can be a handle, a nickname, a
+// full name, or an emoji, and the only property that matters is that it fits.
+func ValidateDisplayName(name string) error {
+	if len(name) > MaxDisplayNameLength {
+		return fieldErr("display_name", CodeTooLong)
 	}
 	return nil
 }

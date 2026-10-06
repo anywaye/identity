@@ -1708,6 +1708,69 @@ paths:
           $ref: '#/components/responses/Unauthenticated'
         '500':
           $ref: '#/components/responses/InternalError'
+    patch:
+      tags: [sessions]
+      operationId: updateCurrentUser
+      summary: Set the caller's display name
+      description: |
+        Sets or clears the authenticated user's display name.
+
+        The name is trimmed before storing. An empty string clears the name,
+        returning the column to NULL — the same "no name" every user who never
+        set one has. There is no uniqueness constraint: a display name is not
+        an identifier.
+
+        The response carries the name that was just written, so a client that
+        renders from the response cannot be shown a stale value on the request
+        that changed it.
+      security:
+        - sessionCookie: []
+        - bearerToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                display_name:
+                  type: string
+                  maxLength: 64
+                  description: |
+                    The name to set. An empty string — or an omitted field,
+                    which decodes the same way — clears the name. Trimmed
+                    before storing. The field is optional because this route
+                    has exactly one: there is no "leave it unchanged" to
+                    express, so a caller here is always saying "this is my
+                    name now", and the two things they can mean are "this"
+                    and "nothing".
+            examples:
+              default:
+                value:
+                  display_name: Kaka
+      responses:
+        '200':
+          description: The updated user.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+              examples:
+                default:
+                  value:
+                    id: ab000000-0000-0000-0000-000000000000
+                    email: kaka@example.com
+                    display_name: Kaka
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '500':
+          $ref: '#/components/responses/InternalError'
 
   /v1/password-resets:
     post:
@@ -5770,9 +5833,10 @@ components:
     User:
       type: object
       description: |
-        The public projection of an account. Exactly two fields, always: there is
-        no password digest, no lockout state and no timestamp here, and adding one
-        is a contract change.
+        The public projection of an account. `display_name` is present only when
+        the user has set one; an absent field means "no name", which is the same
+        state as a null. There is no password digest, no lockout state and no
+        timestamp here, and adding one is a contract change.
       additionalProperties: false
       required: [id, email]
       properties:
@@ -5785,6 +5849,15 @@ components:
           format: email
           maxLength: 320
           description: Always lower case. Registration normalizes before storing.
+        display_name:
+          type: string
+          maxLength: 64
+          description: |
+            What the person is called. Absent when they have not set one —
+            the column is NULL, and the field is omitted rather than null so a
+            client written against the two-field response cannot tell a user
+            with no name from a user whose name this service has never heard
+            of. Set or cleared via `PATCH /v1/me`.
 
     RegisterRequest:
       type: object

@@ -70,11 +70,22 @@ type fakeAuth struct {
 	// refusals has no reason to set the other's.
 	disableErr error
 	enableErr  error
+	// updateNameErr is what UpdateDisplayName returns, and updatedDisplayName /
+	// updatedDisplayNameFor record what it was asked for — the pair of which is
+	// the whole of what this route has to get right: the caller's own id from
+	// the credential, and the name from the body.
+	updateNameErr error
 
 	// recorded inputs
 	registered []auth.RegisterInput
 	loggedIn   []auth.LoginInput
 	loggedOut  []string
+	// updatedDisplayNameFor and updatedDisplayName are the WHOLE input the
+	// profile route passed down, in order — the caller's id beside the name
+	// from the body, so a test asserting one call's subject and name wants them
+	// as one fact rather than as two parallel slices.
+	updatedDisplayNameFor []id.UUID
+	updatedDisplayName    *string
 	// disableInputs and enableInputs are the WHOLE input the operator surface passed
 	// down, in order.
 	//
@@ -227,6 +238,19 @@ func (f *fakeAuth) Enable(_ context.Context, in auth.EnableInput) error {
 	f.enableInputs = append(f.enableInputs, in)
 	f.enabled = append(f.enabled, in.UserID)
 	return f.enableErr
+}
+
+// UpdateDisplayName records what it was asked for and returns a programmable
+// error, on the same terms as every other method on this double: what is under
+// test at the router is the credential gate, the validation mapping and the
+// response shape, and the write itself is internal/auth's to hold against a
+// real database.
+func (f *fakeAuth) UpdateDisplayName(_ context.Context, userID id.UUID, name *string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.updatedDisplayNameFor = append(f.updatedDisplayNameFor, userID)
+	f.updatedDisplayName = name
+	return f.updateNameErr
 }
 
 // post sends a JSON body and returns the recorder.
@@ -928,6 +952,231 @@ func TestMePrefersTheAuthorizationHeaderOverTheCookie(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// PATCH /v1/me
+// ---------------------------------------------------------------------------
+
+func TestUpdateMeSetsTheDisplayName(t *testing.T) {
+	t.Parallel()
+
+	f := newFakeAuth()
+	req := httptest.NewRequest(http.MethodPatch, "/v1/me", strings.NewReader(`{"display_name":"Kaka"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: "a-session-token"})
+
+	rec := httptest.NewRecorder()
+	New(nil, WithAuth(f)).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body)
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("the body is not JSON: %v", err)
+	}
+	if body["display_name"] != "Kaka" {
+		t.Errorf("display_name = %v, want Kaka", body["display_name"])
+	}
+	if body["email"] != "kaka@example.com" {
+		t.Errorf("email = %v, want kaka@example.com", body["email"])
+	}
+
+	// The write went to the caller's own id with the name from the body.
+	if len(f.updatedDisplayNameFor) != 1 || f.updatedDisplayNameFor[0] != f.user.ID {
+		t.Errorf("UpdateDisplayName was called for %v, want the caller's id %s", f.updatedDisplayNameFor, f.user.ID)
+	}
+	if f.updatedDisplayName == nil || *f.updatedDisplayName != "Kaka" {
+		t.Errorf("UpdateDisplayName was given %v, want Kaka", f.updatedDisplayName)
+	}
+}
+
+func TestUpdateMeClearsTheDisplayNameWithAnEmptyString(t *testing.T) {
+	t.Parallel()
+
+	f := newFakeAuth()
+	req := httptest.NewRequest(http.MethodPatch, "/v1/me", strings.NewReader(`{"display_name":""}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: "a-session-token"})
+
+	rec := httptest.NewRecorder()
+	New(nil, WithAuth(f)).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body)
+	}
+
+	// The response omits display_name when the name is cleared.
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("the body is not JSON: %v", err)
+	}
+	if _, present := body["display_name"]; present {
+		t.Errorf("display_name is present in the response (%v), want it omitted when cleared", body["display_name"])
+	}
+
+	// The write was a nil pointer — the clearing case.
+	if len(f.updatedDisplayNameFor) != 1 {
+		t.Fatalf("UpdateDisplayName was called %d times, want 1", len(f.updatedDisplayNameFor))
+	}
+	if f.updatedDisplayName != nil {
+		t.Errorf("UpdateDisplayName was given %v, want nil (the clearing case)", *f.updatedDisplayName)
+	}
+}
+
+// An omitted field decodes as the empty string, which clears — the same
+// clearing the empty string asks for, and the behaviour the OpenAPI document
+// describes. This route has exactly one field, so there is no "leave it
+// unchanged" to express: a caller here is always saying "this is my name now",
+// and the two things they can mean are "this" and "nothing".
+func TestUpdateMeClearsTheDisplayNameWhenTheFieldIsOmitted(t *testing.T) {
+	t.Parallel()
+
+	f := newFakeAuth()
+	req := httptest.NewRequest(http.MethodPatch, "/v1/me", strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: "a-session-token"})
+
+	rec := httptest.NewRecorder()
+	New(nil, WithAuth(f)).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body)
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("the body is not JSON: %v", err)
+	}
+	if _, present := body["display_name"]; present {
+		t.Errorf("display_name is present in the response (%v), want it omitted when cleared", body["display_name"])
+	}
+
+	if len(f.updatedDisplayNameFor) != 1 {
+		t.Fatalf("UpdateDisplayName was called %d times, want 1", len(f.updatedDisplayNameFor))
+	}
+	if f.updatedDisplayName != nil {
+		t.Errorf("UpdateDisplayName was given %v, want nil (the clearing case)", *f.updatedDisplayName)
+	}
+}
+
+func TestUpdateMeTrimsTheDisplayName(t *testing.T) {
+	t.Parallel()
+
+	f := newFakeAuth()
+	req := httptest.NewRequest(http.MethodPatch, "/v1/me", strings.NewReader(`{"display_name":"  Kaka  "}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: "a-session-token"})
+
+	rec := httptest.NewRecorder()
+	New(nil, WithAuth(f)).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body)
+	}
+
+	if f.updatedDisplayName == nil || *f.updatedDisplayName != "Kaka" {
+		t.Errorf("UpdateDisplayName was given %v, want the trimmed Kaka", f.updatedDisplayName)
+	}
+}
+
+func TestUpdateMeRejectsAnonymous(t *testing.T) {
+	t.Parallel()
+
+	f := newFakeAuth()
+	req := httptest.NewRequest(http.MethodPatch, "/v1/me", strings.NewReader(`{"display_name":"Kaka"}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	rec := httptest.NewRecorder()
+	New(nil, WithAuth(f)).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401; body: %s", rec.Code, rec.Body)
+	}
+	p := decodeProblem(t, rec)
+	if p.Code != CodeUnauthorized {
+		t.Errorf("code = %q, want %q", p.Code, CodeUnauthorized)
+	}
+}
+
+func TestUpdateMeRejectsOverLength(t *testing.T) {
+	t.Parallel()
+
+	f := newFakeAuth()
+	long := strings.Repeat("a", 65)
+	req := httptest.NewRequest(http.MethodPatch, "/v1/me", strings.NewReader(`{"display_name":"`+long+`"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: "a-session-token"})
+
+	rec := httptest.NewRecorder()
+	New(nil, WithAuth(f)).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422; body: %s", rec.Code, rec.Body)
+	}
+	p := decodeProblem(t, rec)
+	if p.Code != CodeValidationFailed {
+		t.Errorf("code = %q, want %q", p.Code, CodeValidationFailed)
+	}
+	if len(p.Errors) != 1 || p.Errors[0].Field != "display_name" {
+		t.Errorf("errors = %v, want one entry naming display_name", p.Errors)
+	}
+}
+
+func TestMeReturnsTheDisplayNameWhenSet(t *testing.T) {
+	t.Parallel()
+
+	f := newFakeAuth()
+	name := "Kaka"
+	f.user.DisplayName = &name
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/me", nil)
+	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: "a-session-token"})
+
+	rec := httptest.NewRecorder()
+	New(nil, WithAuth(f)).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body)
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("the body is not JSON: %v", err)
+	}
+	if body["display_name"] != "Kaka" {
+		t.Errorf("display_name = %v, want Kaka", body["display_name"])
+	}
+}
+
+func TestMeOmitsTheDisplayNameWhenUnset(t *testing.T) {
+	t.Parallel()
+
+	f := newFakeAuth()
+	// f.user.DisplayName is nil — the default.
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/me", nil)
+	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: "a-session-token"})
+
+	rec := httptest.NewRecorder()
+	New(nil, WithAuth(f)).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body)
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("the body is not JSON: %v", err)
+	}
+	if _, present := body["display_name"]; present {
+		t.Errorf("display_name is present in the response, want it omitted when unset")
+	}
+	if len(body) != 2 {
+		t.Errorf("the response has %d fields (%v), want exactly id and email", len(body), body)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // DELETE /v1/session
 // ---------------------------------------------------------------------------
 
@@ -1282,5 +1531,8 @@ func (panickingAuth) Disable(context.Context, auth.DisableInput) error {
 	panic("handler exploded")
 }
 func (panickingAuth) Enable(context.Context, auth.EnableInput) error {
+	panic("handler exploded")
+}
+func (panickingAuth) UpdateDisplayName(context.Context, id.UUID, *string) error {
 	panic("handler exploded")
 }

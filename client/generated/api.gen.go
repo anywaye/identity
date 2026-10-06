@@ -1848,10 +1848,18 @@ type TransferOwnershipRequest struct {
 	NewOwnerUserID openapi_types.UUID `json:"new_owner_user_id"`
 }
 
-// User The public projection of an account. Exactly two fields, always: there is
-// no password digest, no lockout state and no timestamp here, and adding one
-// is a contract change.
+// User The public projection of an account. `display_name` is present only when
+// the user has set one; an absent field means "no name", which is the same
+// state as a null. There is no password digest, no lockout state and no
+// timestamp here, and adding one is a contract change.
 type User struct {
+	// DisplayName What the person is called. Absent when they have not set one —
+	// the column is NULL, and the field is omitted rather than null so a
+	// client written against the two-field response cannot tell a user
+	// with no name from a user whose name this service has never heard
+	// of. Set or cleared via `PATCH /v1/me`.
+	DisplayName *string `json:"display_name,omitempty"`
+
 	// Email Always lower case. Registration normalizes before storing.
 	Email openapi_types.Email `json:"email"`
 
@@ -1964,6 +1972,18 @@ type CompleteSocialLogin200JSONResponseBody struct {
 	union json.RawMessage
 }
 
+// UpdateCurrentUserJSONBody defines parameters for UpdateCurrentUser.
+type UpdateCurrentUserJSONBody struct {
+	// DisplayName The name to set. An empty string — or an omitted field,
+	// which decodes the same way — clears the name. Trimmed
+	// before storing. The field is optional because this route
+	// has exactly one: there is no "leave it unchanged" to
+	// express, so a caller here is always saying "this is my
+	// name now", and the two things they can mean are "this"
+	// and "nothing".
+	DisplayName *string `json:"display_name,omitempty"`
+}
+
 // CreateAccountJSONRequestBody defines body for CreateAccount for application/json ContentType.
 type CreateAccountJSONRequestBody = CreateAccountRequest
 
@@ -2011,6 +2031,9 @@ type IntrospectAPIKeyJSONRequestBody = IntrospectRequest
 
 // AcceptInvitationJSONRequestBody defines body for AcceptInvitation for application/json ContentType.
 type AcceptInvitationJSONRequestBody = AcceptInvitationRequest
+
+// UpdateCurrentUserJSONRequestBody defines body for UpdateCurrentUser for application/json ContentType.
+type UpdateCurrentUserJSONRequestBody UpdateCurrentUserJSONBody
 
 // DisableMFAJSONRequestBody defines body for DisableMFA for application/json ContentType.
 type DisableMFAJSONRequestBody = FactorRequest
@@ -3854,6 +3877,42 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /v1/me (the `GetCurrentUser` operationId).
 	GetCurrentUser(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateCurrentUserWithBody Set the caller's display name
+	//
+	// Sets or clears the authenticated user's display name.
+	//
+	// The name is trimmed before storing. An empty string clears the name,
+	// returning the column to NULL — the same "no name" every user who never
+	// set one has. There is no uniqueness constraint: a display name is not
+	// an identifier.
+	//
+	// The response carries the name that was just written, so a client that
+	// renders from the response cannot be shown a stale value on the request
+	// that changed it.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PATCH /v1/me (the `UpdateCurrentUser` operationId).
+	UpdateCurrentUserWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateCurrentUser Set the caller's display name
+	//
+	// Sets or clears the authenticated user's display name.
+	//
+	// The name is trimmed before storing. An empty string clears the name,
+	// returning the column to NULL — the same "no name" every user who never
+	// set one has. There is no uniqueness constraint: a display name is not
+	// an identifier.
+	//
+	// The response carries the name that was just written, so a client that
+	// renders from the response cannot be shown a stale value on the request
+	// that changed it.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PATCH /v1/me (the `UpdateCurrentUser` operationId).
+	UpdateCurrentUser(ctx context.Context, body UpdateCurrentUserJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// DisableMFAWithBody Turn the second factor off
 	//
@@ -7071,6 +7130,62 @@ func (c *Client) GetCurrentUser(ctx context.Context, reqEditors ...RequestEditor
 	return c.Client.Do(req)
 }
 
+// UpdateCurrentUserWithBody Set the caller's display name
+//
+// Sets or clears the authenticated user's display name.
+//
+// The name is trimmed before storing. An empty string clears the name,
+// returning the column to NULL — the same "no name" every user who never
+// set one has. There is no uniqueness constraint: a display name is not
+// an identifier.
+//
+// The response carries the name that was just written, so a client that
+// renders from the response cannot be shown a stale value on the request
+// that changed it.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PATCH /v1/me (the `UpdateCurrentUser` operationId).
+func (c *Client) UpdateCurrentUserWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateCurrentUserRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateCurrentUser Set the caller's display name
+//
+// Sets or clears the authenticated user's display name.
+//
+// The name is trimmed before storing. An empty string clears the name,
+// returning the column to NULL — the same "no name" every user who never
+// set one has. There is no uniqueness constraint: a display name is not
+// an identifier.
+//
+// The response carries the name that was just written, so a client that
+// renders from the response cannot be shown a stale value on the request
+// that changed it.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PATCH /v1/me (the `UpdateCurrentUser` operationId).
+func (c *Client) UpdateCurrentUser(ctx context.Context, body UpdateCurrentUserJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateCurrentUserRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // DisableMFAWithBody Turn the second factor off
 //
 // Requires a second factor, and a password is **not** accepted: there is no
@@ -9769,6 +9884,46 @@ func NewGetCurrentUserRequest(server string) (*http.Request, error) {
 	return req, nil
 }
 
+// NewUpdateCurrentUserRequest calls the generic UpdateCurrentUser builder with application/json body
+func NewUpdateCurrentUserRequest(server string, body UpdateCurrentUserJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdateCurrentUserRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewUpdateCurrentUserRequestWithBody constructs an http.Request for the UpdateCurrentUser method, with any body, and a specified content type
+func NewUpdateCurrentUserRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/me")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPatch, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewDisableMFARequest calls the generic DisableMFA builder with application/json body
 func NewDisableMFARequest(server string, body DisableMFAJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -12150,6 +12305,42 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /v1/me (the `GetCurrentUser` operationId).
 	GetCurrentUserWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetCurrentUserResponse, error)
+
+	// UpdateCurrentUserWithBodyWithResponse Set the caller's display name
+	//
+	// Sets or clears the authenticated user's display name.
+	//
+	// The name is trimmed before storing. An empty string clears the name,
+	// returning the column to NULL — the same "no name" every user who never
+	// set one has. There is no uniqueness constraint: a display name is not
+	// an identifier.
+	//
+	// The response carries the name that was just written, so a client that
+	// renders from the response cannot be shown a stale value on the request
+	// that changed it.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /v1/me (the `UpdateCurrentUser` operationId).
+	UpdateCurrentUserWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateCurrentUserResponse, error)
+
+	// UpdateCurrentUserWithResponse Set the caller's display name
+	//
+	// Sets or clears the authenticated user's display name.
+	//
+	// The name is trimmed before storing. An empty string clears the name,
+	// returning the column to NULL — the same "no name" every user who never
+	// set one has. There is no uniqueness constraint: a display name is not
+	// an identifier.
+	//
+	// The response carries the name that was just written, so a client that
+	// renders from the response cannot be shown a stale value on the request
+	// that changed it.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /v1/me (the `UpdateCurrentUser` operationId).
+	UpdateCurrentUserWithResponse(ctx context.Context, body UpdateCurrentUserJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateCurrentUserResponse, error)
 
 	// DisableMFAWithBodyWithResponse Turn the second factor off
 	//
@@ -17008,6 +17199,96 @@ func (r GetCurrentUserResponse) ContentType() string {
 	return ""
 }
 
+// UpdateCurrentUserResponse200Headers the declared response headers of an HTTP 200 response for UpdateCurrentUser
+type UpdateCurrentUserResponse200Headers struct {
+	XTraceID string
+}
+
+// UpdateCurrentUserResponse401Headers the declared response headers of an HTTP 401 response for UpdateCurrentUser
+type UpdateCurrentUserResponse401Headers struct {
+	XTraceID string
+}
+
+// UpdateCurrentUserResponse422Headers the declared response headers of an HTTP 422 response for UpdateCurrentUser
+type UpdateCurrentUserResponse422Headers struct {
+	XTraceID string
+}
+
+// UpdateCurrentUserResponse500Headers the declared response headers of an HTTP 500 response for UpdateCurrentUser
+type UpdateCurrentUserResponse500Headers struct {
+	XTraceID string
+}
+
+type UpdateCurrentUserResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *User
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthenticated
+	// ApplicationProblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationProblemJSON422 *ValidationFailed
+	// ApplicationProblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationProblemJSON500 *InternalError
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *UpdateCurrentUserResponse200Headers
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *UpdateCurrentUserResponse401Headers
+	// Headers422 the parsed response headers for an HTTP 422 response
+	Headers422 *UpdateCurrentUserResponse422Headers
+	// Headers500 the parsed response headers for an HTTP 500 response
+	Headers500 *UpdateCurrentUserResponse500Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r UpdateCurrentUserResponse) GetJSON200() *User {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r UpdateCurrentUserResponse) GetApplicationProblemJSON401() *Unauthenticated {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r UpdateCurrentUserResponse) GetApplicationProblemJSON422() *ValidationFailed {
+	return r.ApplicationProblemJSON422
+}
+
+// GetApplicationProblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r UpdateCurrentUserResponse) GetApplicationProblemJSON500() *InternalError {
+	return r.ApplicationProblemJSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r UpdateCurrentUserResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdateCurrentUserResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdateCurrentUserResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r UpdateCurrentUserResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // DisableMFAResponse204Headers the declared response headers of an HTTP 204 response for DisableMFA
 type DisableMFAResponse204Headers struct {
 	SetCookie *string
@@ -21013,6 +21294,54 @@ func (c *ClientWithResponses) GetCurrentUserWithResponse(ctx context.Context, re
 		return nil, err
 	}
 	return ParseGetCurrentUserResponse(rsp)
+}
+
+// UpdateCurrentUserWithBodyWithResponse Set the caller's display name
+//
+// Sets or clears the authenticated user's display name.
+//
+// The name is trimmed before storing. An empty string clears the name,
+// returning the column to NULL — the same "no name" every user who never
+// set one has. There is no uniqueness constraint: a display name is not
+// an identifier.
+//
+// The response carries the name that was just written, so a client that
+// renders from the response cannot be shown a stale value on the request
+// that changed it.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /v1/me (the `UpdateCurrentUser` operationId).
+func (c *ClientWithResponses) UpdateCurrentUserWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateCurrentUserResponse, error) {
+	rsp, err := c.UpdateCurrentUserWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateCurrentUserResponse(rsp)
+}
+
+// UpdateCurrentUserWithResponse Set the caller's display name
+//
+// Sets or clears the authenticated user's display name.
+//
+// The name is trimmed before storing. An empty string clears the name,
+// returning the column to NULL — the same "no name" every user who never
+// set one has. There is no uniqueness constraint: a display name is not
+// an identifier.
+//
+// The response carries the name that was just written, so a client that
+// renders from the response cannot be shown a stale value on the request
+// that changed it.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /v1/me (the `UpdateCurrentUser` operationId).
+func (c *ClientWithResponses) UpdateCurrentUserWithResponse(ctx context.Context, body UpdateCurrentUserJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateCurrentUserResponse, error) {
+	rsp, err := c.UpdateCurrentUser(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateCurrentUserResponse(rsp)
 }
 
 // DisableMFAWithBodyWithResponse Turn the second factor off
@@ -26254,6 +26583,96 @@ func ParseGetCurrentUserResponse(rsp *http.Response) (*GetCurrentUserResponse, e
 		response.Headers401 = &headers
 	case rsp.StatusCode == 500:
 		var headers GetCurrentUserResponse500Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers500 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseUpdateCurrentUserResponse parses an HTTP response from a UpdateCurrentUserWithResponse call
+func ParseUpdateCurrentUserResponse(rsp *http.Response) (*UpdateCurrentUserResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdateCurrentUserResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest User
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthenticated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ValidationFailed
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON500 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers UpdateCurrentUserResponse200Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 401:
+		var headers UpdateCurrentUserResponse401Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers401 = &headers
+	case rsp.StatusCode == 422:
+		var headers UpdateCurrentUserResponse422Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers422 = &headers
+	case rsp.StatusCode == 500:
+		var headers UpdateCurrentUserResponse500Headers
 		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {

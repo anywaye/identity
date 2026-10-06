@@ -615,6 +615,20 @@ func (c *Client) GetCurrentUser(ctx context.Context) (*generated.User, error) {
 	return &out, err
 }
 
+// UpdateCurrentUser sets or clears the caller's display name. Corresponds to
+// `PATCH /v1/me`.
+//
+// A nil DisplayName — or a pointer to the empty string, which the handler
+// decodes the same way — clears the name, returning the column to NULL. The
+// name is trimmed before storing. There is no uniqueness constraint.
+func (c *Client) UpdateCurrentUser(ctx context.Context, body generated.UpdateCurrentUserJSONRequestBody) (*generated.User, error) {
+	var out generated.User
+	err := call(c, "updateCurrentUser", func() (*http.Response, error) {
+		return c.transport.UpdateCurrentUser(ctx, body)
+	}, &out)
+	return &out, err
+}
+
 // RequestPasswordReset asks for a reset link. Corresponds to `POST /v1/password-resets`.
 //
 // **The response carries nothing about the address.** A registered address, an
