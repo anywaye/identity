@@ -37,7 +37,7 @@ func NewStore(pool db.Pool) *Store { return &Store{pool: pool} }
 
 // userColumns is the select list, in the order scan expects. One constant, so a
 // column added here cannot be forgotten in one query and present in another.
-const userColumns = `id, email, password_digest, failed_login_attempts, locked_until, ` +
+const userColumns = `id, email, display_name, password_digest, failed_login_attempts, locked_until, ` +
 	`email_verified_at, disabled_at, created_at, updated_at`
 
 // Create inserts a user and returns the stored row.
@@ -53,7 +53,7 @@ func (s *Store) Create(ctx context.Context, q db.Querier, p CreateParams) (User,
 
 	var u User
 	err := q.QueryRow(ctx, query, p.Email, p.PasswordDigest).Scan(
-		&u.ID, &u.Email, &u.PasswordDigest, &u.FailedLoginAttempts, &u.LockedUntil,
+		&u.ID, &u.Email, &u.DisplayName, &u.PasswordDigest, &u.FailedLoginAttempts, &u.LockedUntil,
 		&u.EmailVerifiedAt, &u.DisabledAt, &u.CreatedAt, &u.UpdatedAt,
 	)
 	if err != nil {
@@ -187,6 +187,40 @@ func (s *Store) SetEmail(ctx context.Context, q db.Querier, userID id.UUID, emai
 	return nil
 }
 
+// UpdateName sets the display name, or clears it.
+//
+// name is A POINTER, and nil is the clearing case rather than a zero value: an
+// empty display name and no display name are the same state — the column is
+// NULL — and the two ways of asking for it (sending an empty string and
+// sending nothing at all) both arrive here as nil. A "" parameter would make
+// "clear" and "set to the empty string" different spellings of one answer, and
+// the second spelling is a lie about what is stored.
+//
+// The value is expected to be already trimmed and already length-checked; this
+// method is the table's surface and the rules live in ValidateDisplayName, for
+// the reason every other method here gives: the store does not decide what a
+// valid name is, it decides what a valid UPDATE is.
+//
+// NO UNIQUENESS, and that is the point rather than an omission: a display name
+// is not an identifier. Nothing in this service looks a user up by name — the
+// email is the identifier and it is the one with the unique index — so two
+// people named "Kaka" are two people and the database has no opinion about it.
+func (s *Store) UpdateName(ctx context.Context, q db.Querier, userID id.UUID, name *string) error {
+	const query = `
+		UPDATE users
+		SET display_name = $2, updated_at = now()
+		WHERE id = $1`
+
+	tag, err := q.Exec(ctx, query, userID, name)
+	if err != nil {
+		return fmt.Errorf("setting a display name: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // Disable stamps `disabled_at` and does nothing else to the row.
 //
 // # IT IS NOT A LOCKOUT, AND IT IS NOT A PASSWORD RESET
@@ -289,7 +323,7 @@ func (s *Store) MarkEmailVerified(ctx context.Context, q db.Querier, userID id.U
 func scanOne(row interface{ Scan(...any) error }) (User, error) {
 	var u User
 
-	err := row.Scan(&u.ID, &u.Email, &u.PasswordDigest, &u.FailedLoginAttempts, &u.LockedUntil,
+	err := row.Scan(&u.ID, &u.Email, &u.DisplayName, &u.PasswordDigest, &u.FailedLoginAttempts, &u.LockedUntil,
 		&u.EmailVerifiedAt, &u.DisabledAt, &u.CreatedAt, &u.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return User{}, ErrNotFound

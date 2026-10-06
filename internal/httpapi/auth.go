@@ -15,6 +15,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/cafaye/identity/internal/auth"
+	"github.com/cafaye/identity/internal/platform/id"
 	"github.com/cafaye/identity/internal/telemetry"
 	"github.com/cafaye/identity/internal/users"
 )
@@ -79,6 +80,16 @@ type Auth interface {
 	// blaming the subject for their own disable is worse than no row at all.
 	Disable(ctx context.Context, in auth.DisableInput) error
 	Enable(ctx context.Context, in auth.EnableInput) error
+
+	// UpdateDisplayName is the write half of /v1/me, and it is on this interface
+	// for the reason Disable and Enable are: the handler resolves the caller
+	// through Authenticate and then writes the one column the profile screen
+	// owns, and the use case that owns that write is auth.Service's.
+	//
+	// name is a POINTER, and nil is the clearing case: an empty display name and
+	// no display name are the same state, and the two ways of asking for it —
+	// an empty string and an omitted one — both arrive here as nil.
+	UpdateDisplayName(ctx context.Context, userID id.UUID, name *string) error
 }
 
 // WithAuth mounts the v1 routes.
@@ -97,12 +108,21 @@ func WithAuth(a Auth) Option {
 
 // userResponse is the public projection of a user.
 //
-// It is a dedicated type with two fields rather than the domain struct, so a
-// digest cannot reach a response body by being added to one. TestRegisterHappyPath
-// asserts the rendered shape, which is the check that actually matters.
+// It is a dedicated type rather than the domain struct, so a digest cannot reach
+// a response body by being added to one. TestRegisterHappyPath asserts the
+// rendered shape, which is the check that actually matters.
+//
+// display_name is omitempty on purpose, and the omission is the backwards-
+// compatibility promise: a client written against the two-field response cannot
+// tell a user with no name from a user whose name this service has never heard
+// of, because the field is simply not there. A null would be a third answer to
+// "what is this person called", and the two answers the service has are "this"
+// and "nothing".
 type userResponse struct {
 	ID    string `json:"id"`
 	Email string `json:"email"`
+	// DisplayName is present only when the user has one. See above.
+	DisplayName *string `json:"display_name,omitempty"`
 }
 
 // sessionResponse is the API surface of a login.
@@ -141,6 +161,19 @@ type loginRequest struct {
 	Password string `json:"password"`
 }
 
+// updateMeRequest is the body of PATCH /v1/me.
+//
+// display_name is a plain string, and an omitted one decodes as the empty
+// string — which clears. This route has exactly one field, so there is no
+// "leave it unchanged" to express: a caller who reaches PATCH /v1/me is
+// saying "this is my name now", and the two things they can mean are "this"
+// and "nothing". A missing field meaning "nothing" is the safe reading,
+// because the alternative — a required-field refusal — would make the
+// clearing case need a sentinel the packet does not ask for.
+type updateMeRequest struct {
+	DisplayName string `json:"display_name"`
+}
+
 // registerRoutes mounts the v1 surface on r.
 func (o options) registerRoutes(r chiRouter) {
 	if o.auth == nil {
@@ -159,6 +192,13 @@ func (o options) registerRoutes(r chiRouter) {
 	// session.
 	r.Delete("/v1/session", o.sessionCredentialOnly(o.handleLogout))
 	r.Get("/v1/me", o.handleMe)
+	// THE WRITE HALF, mounted beside the read and deliberately NOT wrapped in
+	// sessionCredentialOnly: the gate is the credential itself, exactly as it is
+	// on GET. A scoped api key is not a session, so Authenticate refuses it with
+	// the same 401 a never-issued token gets — and that is the honest answer,
+	// because a machine credential has no business naming a human and there is
+	// no scope that would let one try.
+	r.Patch("/v1/me", o.handleUpdateMe)
 
 	// THE SECOND STEP OF A LOGIN, mounted beside the first and deliberately NOT
 	// gated on the MFA management routes' condition.
@@ -449,7 +489,7 @@ func (o options) handleLogout(w http.ResponseWriter, r *http.Request) {
 
 // handleMe returns the authenticated user.
 //
-//	GET /v1/me  →  200 {id, email}
+//	GET /v1/me  →  200 {id, email, display_name?}
 func (o options) handleMe(w http.ResponseWriter, r *http.Request) {
 	token := o.presentedToken(r)
 	if token == "" {
@@ -467,7 +507,82 @@ func (o options) handleMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, userResponse{ID: user.ID.String(), Email: user.Email})
+	writeJSON(w, http.StatusOK, userResponse{ID: user.ID.String(), Email: user.Email, DisplayName: user.DisplayName})
+}
+
+// handleUpdateMe sets the caller's display name.
+//
+//	PATCH /v1/me  {display_name}  →  200 {id, email, display_name?}
+//
+// THE ORDER IS THE SECURITY PROPERTY, and it is the same one handleMe has: the
+// credential is resolved BEFORE the body is read, so a stranger never reaches
+// the code that writes. A body parsed first and a refusal after it would still
+// be a refusal — but the refusal would be reachable by anybody, and the parse
+// would be work done for nothing on every anonymous request.
+//
+// EMPTY CLEARS, and the clearing is the point rather than an edge case: the
+// column goes to NULL, which is the same "no name" every user who never set one
+// has. There is no second representation of that state to keep in step with.
+//
+// THE LENGTH IS ENFORCED HERE, in the handler, because this is where a refusal
+// is a 422 naming the field rather than a 500 from a database constraint — the
+// rule itself is users.ValidateDisplayName's, and the handler is where it is
+// applied to a request. The store does not re-check it, for the reason every
+// other store method gives: the table's surface does not define the rules.
+func (o options) handleUpdateMe(w http.ResponseWriter, r *http.Request) {
+	token := o.presentedToken(r)
+	if token == "" {
+		unauthorized(w, r)
+		return
+	}
+
+	user, err := o.auth.Authenticate(r.Context(), token)
+	if err != nil {
+		if errors.Is(err, auth.ErrUnauthenticated) {
+			unauthorized(w, r)
+			return
+		}
+		unexpected(w, r, o.logger, err)
+		return
+	}
+
+	var body *updateMeRequest
+	if !decodeBody(w, r, &body) {
+		return
+	}
+
+	name := strings.TrimSpace(body.DisplayName)
+	if err := users.ValidateDisplayName(name); err != nil {
+		var fe *users.FieldError
+		if !errors.As(err, &fe) {
+			unexpected(w, r, o.logger, err)
+			return
+		}
+		// A 422 with errors[] is core's shape for "the request was understood and
+		// is not acceptable" — the same document writeAuthError writes for a
+		// refused registration, so the two surfaces cannot drift apart.
+		writeProblem(w, r, newProblem(http.StatusUnprocessableEntity, CodeValidationFailed).
+			withDetail("the request has an invalid field").
+			withFieldErrors([]FieldError{{Field: fe.Field, Code: fe.Code}}))
+		return
+	}
+
+	// nil clears and non-nil sets, which is the whole of the pointer's job —
+	// see users.UpdateName for why the two are one state.
+	var set *string
+	if name != "" {
+		set = &name
+	}
+
+	if err := o.auth.UpdateDisplayName(r.Context(), user.ID, set); err != nil {
+		unexpected(w, r, o.logger, err)
+		return
+	}
+
+	// The response carries the name that was just written rather than the one
+	// the pre-update read had, so a client that rendered from the response
+	// cannot be shown a stale value on the request that changed it.
+	writeJSON(w, http.StatusOK, userResponse{ID: user.ID.String(), Email: user.Email, DisplayName: set})
 }
 
 // presentedToken returns the credential the request is making, preferring an

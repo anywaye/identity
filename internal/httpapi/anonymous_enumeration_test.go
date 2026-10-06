@@ -165,6 +165,11 @@ func anonymousFamilyAudit() []auditRoute {
 			discloses: "nothing: 401 without a credential, so no identifier arrives from a stranger",
 		},
 		{
+			name: "update the session", method: http.MethodPatch, pattern: "/v1/me",
+			anonymous: http.StatusUnauthorized,
+			discloses: "nothing: 401 without a credential, so no identifier arrives from a stranger",
+		},
+		{
 			name: "sign out", method: http.MethodDelete, pattern: "/v1/session",
 			anonymous: http.StatusUnauthorized,
 			discloses: "nothing: 401 without a credential. The session token IS the identifier, and " +

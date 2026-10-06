@@ -88,6 +88,12 @@ type UserStore interface {
 	// only thing in this repository that should call them.
 	Disable(ctx context.Context, q db.Querier, userID id.UUID, at time.Time) error
 	Enable(ctx context.Context, q db.Querier, userID id.UUID) error
+	// UpdateName is here because PATCH /v1/me is a session surface and this is the
+	// package that owns the session's user — the handler resolves the caller
+	// through Authenticate and then writes the one column the profile screen
+	// owns, and a second path to the table would be a second thing to keep in
+	// step with the first.
+	UpdateName(ctx context.Context, q db.Querier, userID id.UUID, name *string) error
 }
 
 // SessionStore is the part of sessions.Store that login, logout and resolution
@@ -1137,6 +1143,31 @@ func (s *Service) Authenticate(ctx context.Context, token string) (users.User, e
 	}
 
 	return user, nil
+}
+
+// UpdateDisplayName sets the caller's display name, or clears it.
+//
+// IT IS THE WRITE HALF OF /v1/me, and it lives here rather than in the handler
+// because the handler has no querier and no business having one: the read half
+// (Authenticate) is here, the column is the users table's, and a handler that
+// reached for a pool to write one field would be a second composition root for
+// the same row.
+//
+// name is a pointer for the reason users.UpdateName's is: nil clears, and an
+// empty display name is the same state as no display name. The value is
+// expected to be trimmed and length-checked by then — the rules are
+// users.ValidateDisplayName's, and this method is the use case that applies
+// them, not the place they are defined.
+//
+// NO TRANSACTION, and that is a decision rather than an oversight: this is one
+// UPDATE against one row the caller has already been resolved to, and the
+// transaction runner exists for writes that must be atomic WITH each other.
+// recordFailure is the same shape for the same reason.
+func (s *Service) UpdateDisplayName(ctx context.Context, userID id.UUID, name *string) error {
+	if err := s.users.UpdateName(ctx, s.read.Queryer(), userID, name); err != nil {
+		return fmt.Errorf("setting a display name: %w", err)
+	}
+	return nil
 }
 
 // Logout revokes the session a token belongs to.

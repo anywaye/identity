@@ -625,8 +625,9 @@ func TestTheVerificationStatusIsA200WithABoolean(t *testing.T) {
 	}
 }
 
-// TestTheStatusRouteNeverRendersADigest: /v1/me's projection is two fields and this
-// one is three, and both of them have to stay free of the users row's other columns.
+// TestTheStatusRouteNeverRendersADigest: /v1/me's projection is two fields when
+// the name is unset and three when it is, and this one is three, and both of them
+// have to stay free of the users row's other columns.
 func TestTheStatusRouteNeverRendersADigest(t *testing.T) {
 	t.Parallel()
 

@@ -28,6 +28,7 @@ POST   /v1/users                                  registration
 POST   /v1/session                                sign-in
 DELETE /v1/session                                sign-out
 GET    /v1/me                                     who am I
+PATCH  /v1/me                                     set display name
 POST   /v1/mfa/enrollments                        MFA enrolment + confirm
 POST   /v1/mfa/recovery-codes                     recovery codes
 POST   /v1/password-resets                        password reset + confirm
@@ -283,7 +284,8 @@ service quietly listening on the wrong port.
 | `DELETE /v1/session` | `204` | Revoke the current session and clear the cookie. `401` if no credential was presented. |
 | `GET /v1/auth/oauth/:provider` | `302` | **Start a social sign-in.** Redirects the browser to the provider with a fresh `state` and sets `__Host-oauth-state`. **No credential, and none can be presented** — a browser holds nothing here but the cookie this route just set. `404` for a provider this deployment has no credentials for *and* for a name that does not exist, because telling them apart enumerates the configuration. A session cookie is read only to record an **intention**: if one resolves, the callback will *link* rather than sign in. Absent entirely when no provider is configured. |
 | `GET /v1/auth/oauth/:provider/callback` | `200 {token, expires_at}` | **Finish it.** **No credential here either** — the state cookie is the whole of what authenticates the round trip, and it is compared *before* the code is spent. Three shapes: `200 {token,…}` a sign-in; `202 {mfa_required,…}` an account with a second factor, so no session is minted and you finish at `POST /v1/session/mfa`; `200 {linked_provider}` the link path, which mints **nothing**. `400` for a state mismatch, a declined consent or a refused code; `409` when the provider's address already belongs to an account here — **it refuses the sign-in rather than signing into that account**; `502` when the provider is unreachable. |
-| `GET /v1/me` | `200 {"id","email"}` | The authenticated user. `401` with no usable credential. |
+| `GET /v1/me` | `200 {"id","email"}` | The authenticated user. `display_name` is present only when set. `401` with no usable credential. |
+| `PATCH /v1/me` | `200 {"id","email","display_name"?}` | Set or clear the caller's display name. `{display_name}` — trimmed, max 64 chars, empty string clears. `422 validation_failed` on over-length. `401` with no usable credential. |
 | `POST /v1/accounts/:id/oidc-clients` | `201 {id, client_id, client_secret, …}` | Register a relying party. **Owner only.** `client_secret` is returned here and never again. |
 | `GET /v1/accounts/:id/oidc-clients` | `200 [{id, client_id, name, …}]` | The account's registrations, newest first. `[]` and not `null`. **Owner only.** |
 | `GET /v1/accounts/:id/oidc-clients/:clientId` | `200 {id, client_id, …}` | One registration. `clientId` is the row id, not the `client_id` the product presents. **Owner only.** |

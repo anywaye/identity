@@ -132,6 +132,17 @@ func (f *fakeUsers) Enable(_ context.Context, _ db.Querier, userID id.UUID) erro
 	return nil
 }
 
+func (f *fakeUsers) UpdateName(_ context.Context, _ db.Querier, userID id.UUID, name *string) error {
+	u, ok := f.byID[userID]
+	if !ok {
+		return users.ErrNotFound
+	}
+	u.DisplayName = name
+	f.byID[userID] = u
+	f.byEmail[u.Email] = u
+	return nil
+}
+
 func (f *fakeUsers) ClearFailures(_ context.Context, _ db.Querier, userID id.UUID) error {
 	f.cleared++
 	u, ok := f.byID[userID]
@@ -464,6 +475,12 @@ func mustAddr(s string) netip.Addr { return netip.MustParseAddr(s) }
 // The lockout tests need a LockedUntil in the future and there are four of them,
 // so a helper earns its place; a general-purpose pointer helper would not.
 func ptr(t time.Time) *time.Time { return &t }
+
+// ptrStr is the display name's spelling of the same idea. It exists for the same
+// reason ptr does: a display name is a *string* because nil is the clearing case,
+// so every test that sets one needs a non-nil pointer to a value and re-writing
+// `name := "Kaka"; &name` at each call site would say less than the name does.
+func ptrStr(s string) *string { return &s }
 
 // disable and enable are the concept's two directions, driven through the use
 // case rather than by poking the double.
@@ -1171,6 +1188,69 @@ func TestAuthenticateUsesTheInjectedClock(t *testing.T) {
 	}
 	if got := f.sessions.nowSeen[len(f.sessions.nowSeen)-1]; !got.Equal(f.clock.Now()) {
 		t.Errorf("the lookup was given %s, want the injected clock's %s", got, f.clock.Now())
+	}
+}
+
+// A name that was written is a name that a later read returns, and a cleared
+// one is a read that says "no name" rather than a read that says "".
+//
+// THE ROUND TRIP IS THROUGH Authenticate, and that is the whole point of driving
+// it this way: a test asserting that UpdateDisplayName was *called* with a value
+// proves the call was made, not that anything is now true about the row. The
+// read half of /v1/me is Authenticate, so asserting against the read half is
+// what makes the two halves one fact rather than two.
+func TestUpdateDisplayNameIsVisibleToTheNextAuthenticate(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture()
+	f.register(t, "kaka@example.com", "correct horse battery staple")
+	login, err := f.svc.Login(context.Background(), LoginInput{Email: "kaka@example.com", Password: "correct horse battery staple"})
+	if err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+
+	readName := func() *string {
+		t.Helper()
+		got, err := f.svc.Authenticate(context.Background(), login.Token)
+		if err != nil {
+			t.Fatalf("Authenticate: %v", err)
+		}
+		return got.DisplayName
+	}
+
+	// A user who has never set a name reads as no name, which is the state the
+	// migration leaves every existing row in.
+	if got := readName(); got != nil {
+		t.Errorf("DisplayName before any write = %q, want nil", *got)
+	}
+
+	if err := f.svc.UpdateDisplayName(context.Background(), login.User.ID, ptrStr("Kaka")); err != nil {
+		t.Fatalf("UpdateDisplayName: %v", err)
+	}
+	if got := readName(); got == nil || *got != "Kaka" {
+		t.Errorf("DisplayName after the write = %v, want Kaka", got)
+	}
+
+	// Clearing is nil, and nil reads back as nil rather than as an empty string
+	// — the two are one state and this is where that stops being a comment.
+	if err := f.svc.UpdateDisplayName(context.Background(), login.User.ID, nil); err != nil {
+		t.Fatalf("UpdateDisplayName clear: %v", err)
+	}
+	if got := readName(); got != nil {
+		t.Errorf("DisplayName after clearing = %q, want nil", *got)
+	}
+}
+
+// A write against a row that is not there is an error rather than a silent
+// success. The caller is always resolved from a credential first, so this cannot
+// happen through the route — which is exactly why it is asserted here instead
+// of being left to the next reader to assume.
+func TestUpdateDisplayNameOnAMissingUserIsRefused(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture()
+	if err := f.svc.UpdateDisplayName(context.Background(), id.MustNew(), ptrStr("Kaka")); !errors.Is(err, users.ErrNotFound) {
+		t.Errorf("UpdateDisplayName on a missing user = %v, want errors.Is(_, users.ErrNotFound)", err)
 	}
 }
 
