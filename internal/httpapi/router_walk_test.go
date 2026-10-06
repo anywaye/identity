@@ -71,6 +71,17 @@ var conditionalSurfaces = []string{
 	// it, including why nobody noticed for a whole packet.
 	"auth", "tenancy", "apiKeyCaller", "introspector", "apiKeys", "oidc",
 	"oidcClients", "mfa", "admin", "recovery", "social",
+
+	// `deletion` is here because a NEW surface did exactly what `social` did and
+	// the list is the only thing standing between that and a silent pass.
+	//
+	// The account-deletion routes were mounted and the whole httpapi package was
+	// GREEN before this line existed: `servedRoutes` builds an `options` literal,
+	// a field it does not set is a surface it cannot see, and a route no walk sees
+	// needs no document, no README row and no enumeration-audit row. Adding the
+	// field to `options` without adding it HERE is the same defect a fourth time,
+	// and it is why the list is a named thing a test reads rather than a habit.
+	"deletion",
 }
 
 // TestEveryConditionalSurfaceIsVisibleToTheWalk is the check.

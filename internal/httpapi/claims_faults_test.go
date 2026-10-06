@@ -57,6 +57,7 @@ import (
 func walkOptions() options {
 	return options{
 		auth:         newFakeAuth(),
+		deletion:     newFakeDeletion(),
 		tenancy:      newFakeTenancy(),
 		oidcClients:  newFakeOIDCClients(),
 		oidc:         newFakeOIDC(),

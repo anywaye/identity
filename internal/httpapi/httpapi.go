@@ -44,6 +44,17 @@ type options struct {
 	clk     clock.Clock
 	auth    Auth
 	tenancy Tenancy
+	// deletion ends a person's own account. Absent means the route is not mounted,
+	// which is the same rule every other conditional surface here follows: a
+	// deployment that cannot delete an account should answer 404 rather than 500,
+	// because "this service cannot do that" and "this service is broken" are
+	// different facts and only one of them is true.
+	//
+	// IT IS SEPARATE FROM `auth` BECAUSE IT IS A SEPARATE SERVICE with its own
+	// dependencies — the tenancy stores and the credential sweep — and hanging it
+	// off the auth routes would mount `DELETE /v1/me` whenever a login is
+	// possible, which is every deployment, whether or not those were built.
+	deletion Deletion
 	// apiKeyCaller resolves a scoped token to its caller. Absent means the account
 	// routes are session-only and a token presented to one is refused.
 	apiKeyCaller APIKeyCaller

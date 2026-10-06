@@ -570,6 +570,44 @@ func (c *Client) GetCurrentUser(ctx context.Context) (*generated.User, error) {
 	return &out, err
 }
 
+// DeleteCurrentUser removes the authenticated user's own account. Corresponds to
+// `DELETE /v1/me`.
+//
+// Returns no value, because the contract is a 204: there is nothing to describe
+// once the resource is gone, and a method returning a deleted user would invite a
+// caller to read fields off an account that no longer exists. The same shape as
+// `DeleteSession`, and for the same reason.
+//
+// # THE 409 IS NOT SPECIAL-CASED HERE, AND THAT IS THE POINT
+//
+// A caller who solely owns a team account gets a 409 whose code is
+// `account_ownership_conflict`, and this method returns it as the `*ProblemError`
+// it is rather than translating it into a sentinel. That is `errors.go`'s design
+// stated at the call site: `ProblemError` is an INTERFACE so that
+// `errors.As(err, &problem)` works for every code including ones this build has
+// never seen, and a per-operation sentinel would be the exact failure that design
+// exists to prevent — a hierarchy that only catches the codes this build knows.
+//
+// So the caller does this, which works whether or not this build has heard of the
+// code:
+//
+//	var problem client.ProblemError
+//	if errors.As(err, &problem) && problem.Code() == "account_ownership_conflict" {
+//	    // somebody has to take ownership first; retrying unchanged fails forever
+//	}
+//
+// # AND NOTHING IS DELETED WHEN IT IS RETURNED
+//
+// The transaction refuses before its first write, so a 409 leaves the user, their
+// accounts and their credentials exactly as they were. The conflict is decided by
+// reads that stand in as the user and then in each account they own, all inside one
+// transaction, so there is no window in which part of the deletion happened.
+func (c *Client) DeleteCurrentUser(ctx context.Context) error {
+	return callVoid(ctx, c, "deleteCurrentUser", func() (*http.Response, error) {
+		return c.transport.DeleteCurrentUser(ctx)
+	})
+}
+
 // RequestPasswordReset asks for a reset link. Corresponds to `POST /v1/password-resets`.
 //
 // **The response carries nothing about the address.** A registered address, an

@@ -199,7 +199,27 @@ func TestTenancyIdentityOwnsItsFiveTables(t *testing.T) {
 				                               where a.attrelid = c.oid and a.attname = 'account_id')) as acct_index,
 				       (select count(*) > 0 from pg_policy p where p.polrelid = c.oid) as policies
 				  from pg_class c
-				 where c.relname = $1`, table)
+				 where c.relname = $1
+				   -- AND ONLY IN THE public SCHEMA. This query raced with every
+				   -- other package in the fleet and would intermittently read a
+				   -- dbtest.Schema clone instead of the real table.
+				   --
+				   -- dbtest builds its per-test schemas with
+				   -- CREATE TABLE test_x (LIKE public.account_users INCLUDING ALL),
+				   -- and LIKE does not copy row-level security -- dbtest.go says so
+				   -- in its own comments, and it is deliberate, so a clone answers
+				   -- this query with rls=false, force=false and no policies at all.
+				   -- The cursor does not care which schema a row came from, so with
+				   -- any other package creating a schema concurrently this reported a
+				   -- perfectly enforced boundary as an unenforced one.
+				   --
+				   -- It is a latent race rather than a new defect: the filter's
+				   -- absence predates this change and the baseline suite passed only
+				   -- because the timing happened to fall its way. One more package
+				   -- in the tree was enough to lose it. Comparing on relnamespace is
+				   -- a STRICTING -- it removes rows the assertion was never about --
+				   -- and the flake it removes is the whole point of the assertion.
+				   and c.relnamespace = 'public'::regnamespace`, table)
 			if err != nil {
 				t.Fatalf("reading the catalog for %s: %v", table, err)
 			}

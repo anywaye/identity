@@ -325,7 +325,7 @@ func TestTheMembershipAuditResolvesTheCallerAndNotASpelling(t *testing.T) {
 		"proname = 'current_user_id'",
 		"_cafaye!_members",
 		"ud.refobjid = pol.polrelid", // the policy's OWN table, so another table's column stays out
-		"'(unresolved)'",              // a row we cannot narrow is reported, not dropped
+		"'(unresolved)'",             // a row we cannot narrow is reported, not dropped
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("cafaye.membership_tables() does not contain %q.\n"+

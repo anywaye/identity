@@ -155,6 +155,16 @@ var knownUndeclaredEvents = map[string]string{
 	"identity.member.role_changed":           "core has the catalog row but no payload schema",
 	"identity.member.removed":                "core has the catalog row but no payload schema",
 	"identity.account.ownership_transferred": "core has NO catalog row — nothing in core 0.2 describes an account changing hands. The reason it is one event and not two role_changed events is on the constant itself",
+
+	// core 0.2 ships payload schemas for `identity/user/created` and
+	// `identity/user/email_verified` and NO catalog row at all for a deletion, so
+	// declaring this fails `event.payload-schema-missing` rather than validating.
+	// It is emitted anyway because the publish side is the half that works: the
+	// event is written in the same transaction as the deletion, so a consumer added
+	// the day core ships the schema sees a complete history rather than starting
+	// from whenever it was deployed. The gap is pinned here rather than papered over
+	// by not emitting it — an undelivered cleanup is worse than a late one.
+	"identity.user.deleted": "core has NO catalog row and no payload schema for a user deletion — declaring it fails event.payload-schema-missing. Emitted so the outbox has the whole history when core ships one",
 }
 
 // TestEveryEmittedEventTypeIsThreeSegmentAndOwnPrefixed pins core 0.2's grammar

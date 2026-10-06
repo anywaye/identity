@@ -240,6 +240,7 @@ func servedRoutes(t *testing.T) map[operationKey]string {
 
 	o := options{
 		auth:         newFakeAuth(),
+		deletion:     newFakeDeletion(),
 		tenancy:      newFakeTenancy(),
 		oidcClients:  newFakeOIDCClients(),
 		oidc:         newFakeOIDC(),
@@ -583,7 +584,7 @@ func TestTheDocumentIsOpenAPI31AndCarriesAVersion(t *testing.T) {
 	// adds a generated constant without removing one, so the failure mode is a Go
 	// consumer that compiles against a naming shift rather than a wire change. Both
 	// are what this pin is for.
-	const want = "1.10.0"
+	const want = "1.11.0"
 	if doc.InfoVersion != want {
 		t.Errorf("%s declares info.version %q, not %q. core's sync rule is that the /v1 "+
 			"prefix says which contract and this says which build of it, and a non-breaking "+

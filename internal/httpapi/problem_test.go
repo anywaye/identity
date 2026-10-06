@@ -121,6 +121,11 @@ func TestProblemTitlesAreStablePerCode(t *testing.T) {
 		CodeMethodNotAllowed: "Method not allowed",
 		CodeInvalidJSON:      "Malformed request body",
 		CodePayloadTooLarge:  "Request body too large",
+		// Declared here rather than only at the call site, because a code absent
+		// from this map renders "Request failed" — and a deletion refusal whose
+		// title says nothing about ownership is a refusal that has to be read
+		// rather than acted on.
+		CodeAccountOwnershipConflict: "Account ownership conflict",
 	}
 
 	for code, want := range cases {
@@ -152,6 +157,7 @@ func TestProblemStatusAndCodeAgree(t *testing.T) {
 		{CodeMethodNotAllowed, http.StatusMethodNotAllowed},
 		{CodeInvalidJSON, http.StatusBadRequest},
 		{CodePayloadTooLarge, http.StatusRequestEntityTooLarge},
+		{CodeAccountOwnershipConflict, http.StatusConflict},
 	}
 
 	for _, tt := range tests {

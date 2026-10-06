@@ -160,6 +160,19 @@ func (o options) registerRoutes(r chiRouter) {
 	r.Delete("/v1/session", o.sessionCredentialOnly(o.handleLogout))
 	r.Get("/v1/me", o.handleMe)
 
+	// The other half of `/v1/me`, and it is a separate registrar because it is
+	// conditional on something the rest of this function is not: the deletion use
+	// case. `GET /v1/me` is mounted wherever there is an auth service, which is
+	// every deployment forever. This one is mounted where the stores and the
+	// credential sweep were built, so a misconfigured deployment answers 404 rather
+	// than 500 — the same rule as every other surface on this router.
+	//
+	// MOUNTED HERE AND NOT IN registerTenancyRoutes because its subject is a person
+	// rather than one of their memberships (DECISIONS.md D14), and
+	// `TestEveryMountedRouteIsAnAccountRoute` refuses a non-account path in the
+	// tenancy registrar for the same reason.
+	o.registerDeletionRoute(r)
+
 	// THE SECOND STEP OF A LOGIN, mounted beside the first and deliberately NOT
 	// gated on the MFA management routes' condition.
 	//

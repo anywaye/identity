@@ -228,6 +228,64 @@ func (s *Store) Disable(ctx context.Context, q db.Querier, userID id.UUID, at ti
 	return nil
 }
 
+// DeleteForAccount removes the user row itself, and it is the only method on this
+// Store that DELETES.
+//
+// # WHY IT TAKES AN ACCOUNT ID IT DOES NOT USE
+//
+// `accounts` and `users` have no foreign key between them in either direction,
+// and that is a decision rather than an oversight (00005, and the header of the
+// account-scoped query above): a personal account is not derived from its user.
+// So "remove the user and their personal account" is two unrelated writes that
+// belong in one transaction, and this signature is what makes the pairing
+// explicit — the account being taken on behalf of the caller is named at the
+// call site rather than inferred at the reader's convenience. It is used by
+// `internal/deletion`, whose transaction removes the account first.
+//
+// # WHAT ONE STATEMENT DISPATCHES
+//
+// `DELETE FROM users WHERE id = $1` fires the ON DELETE CASCADE on six tables:
+// `sessions`, `connected_accounts`, `account_users`, `api_keys`,
+// `recovery_tokens`, `mfa_credentials`, `mfa_challenges`, `oidc_auth_requests`
+// and `oidc_access_tokens` (00003, 00008, 00006, 00011, 00015, 00010, 00009).
+// None of them is reversible, which is the property this package's own
+// `Delete` doc comment on the service repeats: a credential for a user who no
+// longer exists is a credential that can only ever be refused, so leaving the
+// rows would grow the table for accounts that are already gone.
+//
+// # AND THE FOUR THAT DID NOT CASCADE ARE WHY MIGRATION 00023 EXISTS
+//
+// `oidc_clients.created_by`, `oidc_clients.revoked_by`, `api_keys.revoked_by`
+// and `account_invitations.invited_by` are all `ON DELETE RESTRICT`, because
+// each of them records a fact about a record SOMEBODY ELSE OWNS — a
+// registration an account keeps for its audit, a key the account still holds, an
+// invitation the account still wants. A RESTRICT is the right constraint and it
+// is also, without 00023, a refusal to let a person ever leave. 00023 keeps the
+// constraint and the fact and gives up only the pointer: the row survives with
+// `NULL` where the departing person's id was.
+//
+// `user_audit_log` is in neither list. It has no foreign key at all, deliberately
+// (00022): a cascade is a delete, and this table does not delete.
+func (s *Store) DeleteForAccount(ctx context.Context, q db.Querier, accountID, userID id.UUID) error {
+	if userID.IsZero() {
+		return ErrNotFound
+	}
+
+	tag, err := q.Exec(ctx, `DELETE FROM users WHERE id = $1`, userID)
+	if err != nil {
+		// A foreign-key violation here is a THIRD-PARTY RECORD still naming this
+		// user, and it is reported rather than swallowed: after migrations/00023
+		// the four known cases cannot produce it, so a 23503 from here means a
+		// later migration added a fifth `RESTRICT` column and this method needs to
+		// know about it.
+		return fmt.Errorf("deleting a user: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // Enable clears `disabled_at`.
 //
 // IT IS THE REVERSE AND NOTHING ELSE: no session comes back, no invitation is

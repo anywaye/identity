@@ -370,7 +370,7 @@ func SchemaWithOwner(t *testing.T) (app, owner *pgxpool.Pool) {
 		`ALTER TABLE ` + schema + `.account_invitations ADD CONSTRAINT account_invitations_account_id_fkey
 			FOREIGN KEY (account_id) REFERENCES ` + schema + `.accounts (id) ON DELETE CASCADE`,
 		`ALTER TABLE ` + schema + `.account_invitations ADD CONSTRAINT account_invitations_invited_by_fkey
-			FOREIGN KEY (invited_by) REFERENCES ` + schema + `.users (id) ON DELETE RESTRICT`,
+			FOREIGN KEY (invited_by) REFERENCES ` + schema + `.users (id) ON DELETE SET NULL`,
 		// The enums are schema-local, so the clones below would otherwise resolve
 		// their role columns against public.account_role and account_invitation_role.
 		// Two casts, and the private schema is genuinely private.
@@ -388,9 +388,9 @@ func SchemaWithOwner(t *testing.T) (app, owner *pgxpool.Pool) {
 		`ALTER TABLE ` + schema + `.oidc_clients ADD CONSTRAINT oidc_clients_account_id_fkey
 			FOREIGN KEY (account_id) REFERENCES ` + schema + `.accounts (id) ON DELETE CASCADE`,
 		`ALTER TABLE ` + schema + `.oidc_clients ADD CONSTRAINT oidc_clients_created_by_fkey
-			FOREIGN KEY (created_by) REFERENCES ` + schema + `.users (id) ON DELETE RESTRICT`,
+			FOREIGN KEY (created_by) REFERENCES ` + schema + `.users (id) ON DELETE SET NULL`,
 		`ALTER TABLE ` + schema + `.oidc_clients ADD CONSTRAINT oidc_clients_revoked_by_fkey
-			FOREIGN KEY (revoked_by) REFERENCES ` + schema + `.users (id) ON DELETE RESTRICT`,
+			FOREIGN KEY (revoked_by) REFERENCES ` + schema + `.users (id) ON DELETE SET NULL`,
 		`ALTER TABLE ` + schema + `.oidc_auth_requests ADD CONSTRAINT oidc_auth_requests_client_row_id_fkey
 			FOREIGN KEY (client_row_id) REFERENCES ` + schema + `.oidc_clients (id) ON DELETE CASCADE`,
 		`ALTER TABLE ` + schema + `.oidc_auth_requests ADD CONSTRAINT oidc_auth_requests_subject_fkey
