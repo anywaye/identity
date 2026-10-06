@@ -318,52 +318,23 @@ func TestCreateRejectsATakenSlugThroughTheService(t *testing.T) {
 	}
 }
 
-func TestGetIsInvisibleToANonMember(t *testing.T) {
-	h := newHarness(t)
-	owner := addUser(t, h.q)
-	stranger := addUser(t, h.q)
-	account := h.owned(t, "Private", owner)
-
-	if _, _, err := h.svc.Get(t.Context(), account.ID, owner); err != nil {
-		t.Fatalf("the owner cannot read their own account: %v", err)
-	}
-
-	// ErrNotAMember, not ErrNotFound: this package tells the two apart so the
-	// HTTP layer can decide, and what the HTTP layer must then do is render them
-	// identically.
-	if _, _, err := h.svc.Get(t.Context(), account.ID, stranger); !errors.Is(err, ErrNotAMember) {
-		t.Errorf("a stranger reading the account = %v, want ErrNotAMember", err)
-	}
-	if _, _, err := h.svc.Get(t.Context(), id.MustNew(), owner); !errors.Is(err, ErrNotAMember) {
-		t.Errorf("reading a missing account = %v, want ErrNotAMember — it must be indistinguishable from not being a member", err)
-	}
-}
-
-func TestListMineIsScopedToTheCaller(t *testing.T) {
-	h := newHarness(t)
-	mine := addUser(t, h.q)
-	theirs := addUser(t, h.q)
-
-	h.owned(t, "Mine One", mine)
-	h.owned(t, "Mine Two", mine)
-	h.owned(t, "Theirs", theirs)
-
-	got, err := h.svc.ListMine(t.Context(), mine)
-	if err != nil {
-		t.Fatalf("ListMine: %v", err)
-	}
-	if len(got) != 2 {
-		t.Errorf("ListMine returned %d accounts, want 2: %+v", len(got), got)
-	}
-	for _, m := range got {
-		if m.Account.Name == "Theirs" {
-			t.Error("ListMine returned somebody else's account")
-		}
-		if m.Role != RoleOwner {
-			t.Errorf("%q has role %q, want %q", m.Account.Name, m.Role, RoleOwner)
-		}
-	}
-}
+// TestGetIsInvisibleToANonMember and TestListMineIsScopedToTheCaller are GONE
+// from this file, and the reason is the whole subject of get_rls_test.go.
+//
+// Both asserted a property of the account boundary — "a non-member cannot read
+// this account", "this list is scoped to the caller" — and both passed on
+// `dbtest.Schema`, whose tables are cloned with `LIKE … INCLUDING ALL` and
+// therefore carry NO row-level security. A test that asserts a boundary
+// property and passes against a table where every row is visible to every
+// caller is not testing the boundary; it is testing the query.
+//
+// They now run against `dbtest.Pool` — the public tables, the app role, the
+// policies live — as TestGetFindsTheCallersOwnAccountUnderTheRealPolicies and
+// TestListMineIsScopedToTheCallerUnderTheRealPolicies in get_rls_test.go. That
+// is the only arrangement in which the assertions can fail for the right
+// reason: with the policies installed, a missing `tenancy.BeginUser` makes
+// `Get` refuse the owner their own account and `ListMine` answer `[]` to a user
+// who owns one, which is exactly the defects those two use cases had.
 
 func TestInviteLifecycle(t *testing.T) {
 	h := newHarness(t)
@@ -673,42 +644,21 @@ func TestInviteNormalizesTheEmail(t *testing.T) {
 	}
 }
 
-// An admin may invite a member; only an owner may invite an admin. It is the one
-// asymmetry in the invite path, and it is why Invite resolves the inviter's own
-// membership rather than trusting the middleware to have checked it.
-func TestOnlyAnOwnerMayInviteAnAdmin(t *testing.T) {
-	h := newHarness(t)
-	owner := addUser(t, h.q)
-	account := h.owned(t, "Hierarchy", owner)
-	admin := h.member(t, account.ID, RoleAdmin)
-	member := h.member(t, account.ID, RoleMember)
-
-	if _, err := h.svc.Invite(t.Context(), InviteInput{
-		AccountID: account.ID, Email: dbtest.UniqueEmail(t), Role: RoleMember, InvitedBy: admin,
-	}); err != nil {
-		t.Errorf("an admin inviting a member = %v, want success", err)
-	}
-	if _, err := h.svc.Invite(t.Context(), InviteInput{
-		AccountID: account.ID, Email: dbtest.UniqueEmail(t), Role: RoleMember, InvitedBy: member,
-	}); !errors.Is(err, ErrOwnerProtected) {
-		t.Errorf("a member inviting anybody = %v, want ErrOwnerProtected", err)
-	}
-
-	// An admin inviting an admin: refused. The privilege has to be granted by
-	// somebody who already holds it, or an admin can clone themselves.
-	_, err := h.svc.Invite(t.Context(), InviteInput{
-		AccountID: account.ID, Email: dbtest.UniqueEmail(t), Role: RoleAdmin, InvitedBy: admin,
-	})
-	if !errors.Is(err, ErrRoleNotInvitable) {
-		t.Errorf("an admin inviting an admin = %v, want ErrRoleNotInvitable", err)
-	}
-
-	if _, err := h.svc.Invite(t.Context(), InviteInput{
-		AccountID: account.ID, Email: dbtest.UniqueEmail(t), Role: RoleAdmin, InvitedBy: owner,
-	}); err != nil {
-		t.Errorf("an owner inviting an admin = %v, want success", err)
-	}
-}
+// TestOnlyAnOwnerMayInviteAnAdmin is GONE from this file, and the reason is the
+// subject of get_rls_test.go and invite_members_rls_test.go.
+//
+// It asserted the invite privilege rules — an admin may invite a member, only an
+// owner may invite an admin, a member may not invite anybody — and it passed on
+// `dbtest.Schema`, where the inviter's membership read always succeeds because
+// there is no policy to filter it. Two of its four cases (an admin inviting an
+// admin, a member inviting anybody) are already
+// TestInviteFindsTheInviterUnderTheRealPolicies on `dbtest.Pool`. The other two —
+// an ADMIN inviting a member and an OWNER inviting an admin, both successes —
+// are unique, and a success is the assertion that most needs the boundary: it
+// is the inviter's row being visible and the invitation's `with check` being
+// satisfied, neither of which a policy-free schema can refuse. It now runs as
+// TestOnlyAnOwnerMayInviteAnAdminUnderTheRealPolicies in
+// invite_members_rls_test.go, against the production wiring.
 
 // Even the owner cannot invite an owner. Ownership is granted, not carried by a
 // link: an account whose owner arrives by accepting a forwarded email has an

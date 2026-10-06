@@ -40,6 +40,17 @@ import (
 // to confirm it, and this file's control asserts the policies it depends on so
 // the claim cannot rot silently.
 //
+// # AND THE INVITE PRIVILEGE RULES, WHICH WERE GREEN FOR THE SAME REASON
+//
+// `TestOnlyAnOwnerMayInviteAnAdmin` asserted the invite privilege rules — an
+// admin may invite a member, only an owner may invite an admin, a member may not
+// invite anybody — and it passed on `dbtest.Schema`, where the inviter's
+// membership read always succeeds because there is no policy to filter it. Two
+// of its cases are the regression test above; the two SUCCESSES (an admin
+// inviting a member, an owner inviting an admin) are unique, and a success is
+// the assertion that most needs the boundary. It is here as
+// `TestOnlyAnOwnerMayInviteAnAdminUnderTheRealPolicies`.
+//
 // # WHY THE HARNESS IS DUPLICATED A THIRD TIME, AND WHY IT IS NOT A COPY
 //
 // newHarness runs against `dbtest.Schema`, whose tables are cloned with `LIKE
@@ -177,6 +188,65 @@ func TestInviteFindsTheInviterUnderTheRealPolicies(t *testing.T) {
 	}
 }
 
+// TestOnlyAnOwnerMayInviteAnAdminUnderTheRealPolicies is the invite privilege
+// rules under the real policies, and the reason this file is not only the two
+// regression tests above.
+//
+// The copy in service_test.go asserted these rules and passed on `dbtest.Schema`,
+// where the inviter's membership read always succeeds because there is no policy
+// to filter it — so it was green while the owner could not invite anybody, which
+// is the defect the test above is the regression test for. Two of its cases (an
+// admin inviting an admin, a member inviting anybody) are that test; the two
+// SUCCESSES are unique, and a success is the assertion that most needs the
+// boundary: it is the inviter's own row being visible to the caller policy and
+// the invitation's `with check` being satisfied by the account identity, neither
+// of which a policy-free schema can refuse.
+//
+// It runs against the production wiring (`newRealAccountHarness`), and the
+// context carries the account because that is what `requireAccountRole` does for
+// a real request: the invitation INSERT below meets `account_invitations`'s
+// `with check` on that identity.
+func TestOnlyAnOwnerMayInviteAnAdminUnderTheRealPolicies(t *testing.T) {
+	h := newRealAccountHarness(t)
+	owner := addUser(t, h.q)
+	account := h.owned(t, uniqueAccountName(t, "invite-admin-hierarchy"), owner)
+	admin := addRealMember(t, h, account.ID, RoleAdmin)
+	member := addRealMember(t, h, account.ID, RoleMember)
+
+	ctx := tenancy.WithAccount(t.Context(), account.ID)
+
+	// An admin inviting a member: allowed. The one asymmetry's permissive half.
+	if _, err := h.svc.Invite(ctx, InviteInput{
+		AccountID: account.ID, Email: dbtest.UniqueEmail(t), Role: RoleMember, InvitedBy: admin,
+	}); err != nil {
+		t.Errorf("an admin inviting a member = %v, want success", err)
+	}
+
+	// A member inviting anybody: refused, one hop earlier, about the inviter's
+	// role rather than the role offered.
+	if _, err := h.svc.Invite(ctx, InviteInput{
+		AccountID: account.ID, Email: dbtest.UniqueEmail(t), Role: RoleMember, InvitedBy: member,
+	}); !errors.Is(err, ErrOwnerProtected) {
+		t.Errorf("a member inviting anybody = %v, want ErrOwnerProtected", err)
+	}
+
+	// An admin inviting an admin: refused. The privilege has to be granted by
+	// somebody who already holds it, or an admin can clone themselves.
+	_, err := h.svc.Invite(ctx, InviteInput{
+		AccountID: account.ID, Email: dbtest.UniqueEmail(t), Role: RoleAdmin, InvitedBy: admin,
+	})
+	if !errors.Is(err, ErrRoleNotInvitable) {
+		t.Errorf("an admin inviting an admin = %v, want ErrRoleNotInvitable", err)
+	}
+
+	// An owner inviting an admin: allowed. The one asymmetry's restrictive half.
+	if _, err := h.svc.Invite(ctx, InviteInput{
+		AccountID: account.ID, Email: dbtest.UniqueEmail(t), Role: RoleAdmin, InvitedBy: owner,
+	}); err != nil {
+		t.Errorf("an owner inviting an admin = %v, want success", err)
+	}
+}
+
 // TestMembersListsEveryRowOfTheAccountUnderTheRealPolicies is the regression
 // test for the empty member list.
 //
@@ -302,5 +372,46 @@ func TestTheAccountSelectPolicyIsInstalledUnderRealPolicies(t *testing.T) {
 			"cafaye.current_account_id(). A policy that does not scope by the ACCOUNT is a "+
 			"different boundary, and the empty member list this file exists for would be a "+
 			"different bug.", qual)
+	}
+}
+
+// TestTheCallerSelectPolicyIsInstalledUnderRealPolicies is the control for the
+// two Invite tests, and it is here rather than only in get_rls_test.go because
+// this file's Invite tests are the ones that would pass without it.
+//
+// `Invite` reads the inviter's membership through `Member`, which names the
+// caller — so the read is admitted by `account_users_cafaye_members` (00018,
+// `user_id = cafaye.current_user_id()`). Drop that policy and the read still
+// succeeds, because a table with no policy on it shows every row to every
+// caller: the inviter is found, the invitation is created, and both Invite tests
+// above stay green while the boundary they depend on is gone. get_rls_test.go
+// has a control for the same policy; this one is the same assertion repeated
+// where it is load-bearing, so this file is self-contained — a reader does not
+// have to know that another file's control is what stands between these tests and
+// a database with no caller scope.
+//
+// The invitation WRITE's `with check` (`account_invitations_cafaye_insert`) is
+// not controlled here. It is one of the five tables'
+// `TestTenancyIdentityOwnsItsFiveTables` in internal/tenancy asserts, at the
+// suite level, on every run — which is the right home for a property all five
+// tables share.
+func TestTheCallerSelectPolicyIsInstalledUnderRealPolicies(t *testing.T) {
+	pool := dbtest.Pool(t)
+
+	var qual string
+	err := pool.QueryRow(t.Context(),
+		`SELECT pg_get_expr(polqual, polrelid) FROM pg_policy
+		  WHERE polrelid = 'account_users'::regclass
+		    AND polname = 'account_users_cafaye_members'`,
+	).Scan(&qual)
+	if err != nil {
+		t.Fatalf("reading the membership caller policy: %v. Without it, both Invite tests "+
+			"in this file pass for the wrong reason — the policy is their subject.", err)
+	}
+	if !strings.Contains(strings.ToLower(qual), "current_user_id") {
+		t.Errorf("account_users_cafaye_members filters on %q, want a predicate naming "+
+			"cafaye.current_user_id(). A policy that does not scope by the CALLER lets the "+
+			"inviter's row through for anybody, and the invite privilege rules this file "+
+			"exists for would be enforced by a boundary that is not there.", qual)
 	}
 }

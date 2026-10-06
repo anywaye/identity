@@ -51,6 +51,18 @@ import (
 // assertion anywhere, and the handler rendered that as `404 Account not found`
 // for the owner of their own account.
 //
+// # LISTMINE IS THE THIRD USE CASE WITH THE SAME SHAPE, AND IT IS HERE FOR THE SAME REASON
+//
+// `ListMine` answers "which accounts is THIS PERSON in", so it is scoped by the
+// CALLER — `account_users_cafaye_members` (00018) — and it opens a transaction
+// and calls `tenancy.BeginUser` first, exactly as `Get` does. The copy in
+// service_test.go ran on `dbtest.Schema`, so it passed against a table with no
+// policy at all: the query's own `where au.user_id = $1` did the scoping, and
+// the test could not tell a correct query from a missing `BeginUser`. On
+// `dbtest.Pool` the two are distinguishable — drop the `BeginUser` and the
+// policy filters every row, so a user who owns an account is told they belong
+// to none, which is the defect 90c6bea fixed and the reason this test exists.
+//
 // # WHY THE HARNESS IS DUPLICATED RATHER THAN PARAMETERISED
 //
 // It differs from `newHarness` in exactly one thing — `dbtest.Pool` for
@@ -142,6 +154,63 @@ func TestGetFindsTheCallersOwnAccountUnderTheRealPolicies(t *testing.T) {
 	stranger := addUser(t, h.q)
 	if _, _, err := h.svc.Get(t.Context(), account.ID, stranger); !errors.Is(err, ErrNotAMember) {
 		t.Errorf("a non-member reading a real account = %v, want ErrNotAMember", err)
+	}
+
+	// A missing account is indistinguishable from one the caller is not in, and
+	// that is a security property rather than a convenience: a 403 for "not a
+	// member" and a 404 for "no such account" is an existence oracle for anybody
+	// who can guess an id. This is the third assertion
+	// TestGetIsInvisibleToANonMember carried, and it moves here because it is the
+	// same property — the database filters the row and the service maps the miss
+	// to the one error — and it is only MEANINGFUL under the real policies,
+	// where "the row was filtered" and "the row is not there" are the same event.
+	if _, _, err := h.svc.Get(t.Context(), id.MustNew(), member); !errors.Is(err, ErrNotAMember) {
+		t.Errorf("reading a missing account = %v, want ErrNotAMember — it must be "+
+			"indistinguishable from not being a member", err)
+	}
+}
+
+// TestListMineIsScopedToTheCallerUnderTheRealPolicies is the regression test
+// for the empty account list, and the reason this file is not only about `Get`
+// and `Member`.
+//
+// `ListMine` is scoped by the CALLER — `account_users_cafaye_members` (00018,
+// `user_id = cafaye.current_user_id()`) — so a read that has not called
+// `tenancy.BeginUser` ON ITS OWN TRANSACTION returns nothing: the database
+// filters every row out and the product renders "you are not a member of any
+// account". It is the same defect `Get` had, on the one use case that answers
+// "which accounts am I in" rather than "what is this account", and it was fixed
+// in the same commit (90c6bea) — but the copy in service_test.go ran on
+// `dbtest.Schema`, where there is no policy to be refused by, so it passed
+// against a table where the query's own `where au.user_id = $1` did all the
+// scoping and nothing was tested but the query.
+//
+// It asserts the list is the CALLER's and nobody else's, which is the property
+// the scoping exists for: a query scoped by an account id from a request body
+// is how one tenant's data reaches another's.
+func TestListMineIsScopedToTheCallerUnderTheRealPolicies(t *testing.T) {
+	h := newRealPolicyHarness(t)
+	mine := addUser(t, h.q)
+	theirs := addUser(t, h.q)
+
+	h.owned(t, uniqueAccountName(t, "list-mine-one"), mine)
+	h.owned(t, uniqueAccountName(t, "list-mine-two"), mine)
+	theirsAccount := h.owned(t, uniqueAccountName(t, "list-mine-theirs"), theirs)
+
+	got, err := h.svc.ListMine(t.Context(), mine)
+	if err != nil {
+		t.Fatalf("ListMine: %v", err)
+	}
+	if len(got) != 2 {
+		t.Errorf("ListMine returned %d accounts, want 2: %+v", len(got), got)
+	}
+	for _, m := range got {
+		if m.Account.ID == theirsAccount.ID {
+			t.Error("ListMine returned somebody else's account")
+		}
+		if m.Role != RoleOwner {
+			t.Errorf("%q has role %q, want %q", m.Account.Name, m.Role, RoleOwner)
+		}
 	}
 }
 
