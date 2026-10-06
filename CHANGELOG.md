@@ -6,6 +6,54 @@ All notable changes to identity are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added (packet identity-sessions-01: where am I signed in, and signing out of one of them)
+
+`GET /v1/sessions` and `DELETE /v1/sessions/{sessionId}`. Jumpstart Pro's Devise has
+"sign out elsewhere" as a standard feature; cafaye stored every session since
+`00003` and could revoke all of them (`revokeEveryCredential`) but could not show a
+person the list or end one of them. `DELETE /v1/session` remains the route for the
+session you are using.
+
+- **A listing entry carries no credential.** No `token` and no digest: `id`,
+  `created_at`, `expires_at`, `user_agent`, `ip`, and `current`. The row holds a
+  SHA-256, so the token cannot leak — and the digest is one hash away from a live
+  session, so it is not rendered either. `user_agent` and `ip` are shown raw and
+  unparsed because they are evidence rather than identity, and a device label this
+  service invents is a label that can be wrong. `current` marks the session the
+  request arrived on, which is the one field a client cannot compute for itself.
+- **The ownership check is in the DELETE, not above it.** The caller is resolved
+  from the presented credential and the statement is
+  `DELETE … WHERE id = $1 AND user_id = $2` (`sessions.Store.RevokeOneForUser`), so
+  there is no interval in which "is this mine" and "delete it" are separate
+  questions. A session id in a path is a candidate and nothing else.
+- **One `404` for all four ways of not owning a session** — never existed, somebody
+  else's, already revoked, and the nil uuid — with one fixed sentence. A `403`
+  against a `404` would let any signed-in caller probe whether a session id is live
+  in this deployment. A **malformed** id is a `404` and not a `422` for the same
+  reason.
+- **Revoking the session you are using is ALLOWED** and signs you out. The packet
+  offered a refusal as the alternative and it was rejected: `DELETE /v1/session`
+  already revokes the current session with no complaint, so a route that refused to
+  do the same thing when the id was spelled out would be a puzzle rather than a
+  policy. The `204` sets **no cookie** — the route is not told which session the
+  request arrived on, and clearing it on a guess signs you out of the device you
+  are using to end a session on another one.
+- **Both routes are session-only** (`sessionCredentialOnly`): a scoped api key gets
+  `403`. They are on the auth registrar and **not** under `registerTenancyRoutes`,
+  because a session belongs to a USER and one person is in as many accounts as they
+  like — so there is no account whose tenancy would mean "the sessions this caller
+  may act on". They are deliberately absent from `accountRouteScopes`; a row there
+  would be a scope gating nothing.
+- **No migration.** `sessions` already had `user_id`, `expires_at`, `created_at`,
+  `user_agent` and `ip`, and the index the listing wants (`sessions_user_id_idx`)
+  came with `00003`. A `last_used_at` would have been the one new column, and it is
+  a write on the authentication path for a field no user asked for by name — so it
+  is not here, and `00003`'s header already says the index for a reaper is there for
+  when one is written.
+- `openapi/v1.yaml` is at **1.11.0**, `client/generated/api.gen.go` is regenerated
+  with the pinned v2.8.0 generator, and `Client.ListSessions` /
+  `Client.DeleteSessionByID` wrap the two new operations.
+
 ### Fixed (packet W7: an owner could not invite anybody, and a member list rendered empty)
 
 Two reads reached for a bare pooled connection instead of a transaction, so

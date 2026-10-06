@@ -112,6 +112,109 @@ func (s *Store) Revoke(ctx context.Context, q db.Querier, sessionID id.UUID) err
 	return nil
 }
 
+// ListLiveForUser returns a user's live sessions, newest first.
+//
+// LIVE MEANS NOT EXPIRED, and the comparison is in the WHERE clause for the same
+// reason ByToken puts it there: a row that cannot authenticate is not a session a
+// person should be shown, and "sign out of that other laptop" must not offer them
+// a button for a credential that stopped working hours ago.
+//
+// The order is `created_at DESC, id DESC` rather than `created_at DESC` alone.
+// created_at is the DATABASE's now() and two logins in the same millisecond are
+// ordinary, so a bare created_at leaves the order of two rows undefined and the
+// list renders differently on two runs with the same data — which is the shape of
+// "the list jitters" that gets reported as a bug and fixed by sorting in the
+// client. The id tiebreaker is free: it is the primary key, so it is already in
+// every index on this table.
+func (s *Store) ListLiveForUser(ctx context.Context, q db.Querier, userID id.UUID, now time.Time) ([]Session, error) {
+	const query = `
+		SELECT ` + sessionColumns + `
+		FROM sessions
+		WHERE user_id = $1 AND expires_at > $2
+		ORDER BY created_at DESC, id DESC`
+
+	rows, err := q.Query(ctx, query, userID, now)
+	if err != nil {
+		return nil, fmt.Errorf("listing a user's sessions: %w", err)
+	}
+	defer rows.Close()
+
+	// NON-NIL AND EMPTY, so a caller that renders the result renders `[]` rather
+	// than `null`. The same rule the account list follows for the same reason: a
+	// JSON null here is a client having to carry a null check for a case that is
+	// ordinary — everybody who has signed in exactly once.
+	out := make([]Session, 0, 4)
+	for rows.Next() {
+		var one Session
+		if err := scanSession(rows, &one); err != nil {
+			return nil, fmt.Errorf("reading one of a user's sessions: %w", err)
+		}
+		out = append(out, one)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("reading a user's sessions: %w", err)
+	}
+
+	return out, nil
+}
+
+// RevokeOneForUser deletes one session that belongs to userID, and reports whether
+// there was one to delete.
+//
+// # RED PROOF, AND IT IS THE CLAUSE NOT THE TEST
+//
+// `AND user_id = $2` was removed from the statement below and
+// `TestRevokeOneForUserRefusesAnotherUsersSession` in store_listing_test.go went
+// red on its own line:
+//
+//	RevokeOneForUser reported that it deleted a session belonging to another
+//	user. The owner has to be in the DELETE's WHERE clause; a check above it is
+//	a window.
+//
+// An earlier version of that fault — leaving the `$2` argument in place while the
+// clause came out — failed for the wrong reason and is worth recording too. pgx
+// rejected it with `mismatched param and argument count`, which is a build-time
+// kind of error wearing a runtime's clothes: a green-looking "the database
+// complained" is not the same evidence as "the row survived", and a test that
+// settled for the first would have been satisfied by any statement with a typo in
+// it.
+//
+// # THE USER_ID IS IN THE WHERE CLAUSE AND NOT IN A CHECK ABOVE IT
+//
+// This is the single-row version of RevokeAllForUser, and the whole difference
+// between the two is this clause. `DELETE FROM sessions WHERE id = $1` would delete
+// a stranger's session for any caller who can guess a uuid, so the caller is part
+// of the predicate: a session id in the path is only ever a candidate, and the row
+// that answers is one this user already owns.
+//
+// It is in the statement rather than in a preceding SELECT for three reasons, and
+// only the first is about the bug:
+//
+//  1. A check-then-delete is a check and a delete separated by time, and the row
+//     can change underneath it. One statement is atomic, so there is no window in
+//     which the answer to "is this mine" and the answer to "delete it" disagree.
+//  2. It is one round trip on the path of a request a browser makes while somebody
+//     is looking at a list, rather than two.
+//  3. A handler that receives only a bool cannot forget to check the owner,
+//     because there is nothing to forget — the alternative signature hands the
+//     caller a session and asks it to decide.
+//
+// THE FALSE IS NOT AN ERROR, and it is the shape of the four refusals ErrNotFound
+// already covers. "No such session", "a session that has expired", "a session that
+// belongs to somebody else" and "a session this caller already revoked" are one
+// answer, because they are one situation as far as the caller is concerned: there
+// is no session of yours with that id. Differentiating them would turn a uuid in a
+// URL into an oracle for whether that uuid is a live session at all.
+func (s *Store) RevokeOneForUser(ctx context.Context, q db.Querier, userID, sessionID id.UUID) (bool, error) {
+	const query = `DELETE FROM sessions WHERE id = $1 AND user_id = $2`
+
+	tag, err := q.Exec(ctx, query, sessionID, userID)
+	if err != nil {
+		return false, fmt.Errorf("deleting one of a user's sessions: %w", err)
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
 // RevokeAllForUser deletes every session belonging to a user, in one statement.
 //
 // It exists for the two events in this service that mean "a session that was

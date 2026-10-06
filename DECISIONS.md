@@ -1592,3 +1592,72 @@ is an array.
 - **No platform-admin role.** The role question was answered as a *scope on a machine
   credential*, which is a smaller invention; there is still no `platform_admin` role
   on this service and this entry does not create one.
+
+## D15: revoking YOUR OWN current session is allowed, and the 404 is one document
+
+**Raised** 2026-10-06 by packet `identity-sessions-01`, which added `GET /v1/sessions`
+and `DELETE /v1/sessions/{sessionId}`.
+
+The packet offered two answers for the current session and asked for one to be picked
+and written down. Three decisions came out of it that a later packet will otherwise
+re-open by accident.
+
+### Revoking the session you are using is ALLOWED
+
+`DELETE /v1/sessions/{id}` where `id` is the session the request arrived on is a
+`204`, and the caller is signed out.
+
+The alternative — a `409` with "that is your current session, use
+`DELETE /v1/session`" — was rejected for a reason about the API's shape rather than
+about security. `DELETE /v1/session` already revokes the caller's current session
+with no complaint and no body. A second route that refuses to do the same thing when
+the id is spelled out is a route whose refusal is a puzzle: the client has to know a
+rule that exists to serve the client rather than to protect anything. Nothing is
+gained by the refusal, because the caller already holds the credential they are
+revoking — there is no privilege to escalate into.
+
+**And the `204` sets no cookie.** That is the part with a real failure mode in it.
+The handler is not told which session the request arrived on — `Authenticate`
+resolves a token to a *user* and does not say which row it came from — so clearing
+the cookie would be a guess, and the guess is wrong exactly when it hurts: the user
+is on the device they are using, clicking "sign out" on a *different* one. Guessing
+wrong in that direction signs them out of the device in front of them to end a
+session somewhere else. `DELETE /v1/session` is the route that clears the cookie, and
+a client that wants both calls both.
+
+### The 404 is ONE document for all four ways of not owning a session
+
+Never existed, somebody else's, already revoked, and the nil uuid. A `403` against a
+`404` would let **any signed-in caller** probe whether a given session id belongs to a
+live session anywhere in this deployment — a question about another person's
+credential, answered to a stranger, over a table full of credentials.
+
+The caller here is already authenticated, so nothing about *their own* account is at
+stake in the answer. That is exactly why this is safe where D12's 202-in-front-of-a-
+stranger is not: the difference is not the status, it is whether the caller has proved
+they hold a credential at all. A malformed id is a `404` and not a `422` for the same
+reason — the path is part of a resource's identity, so "not an id this service issued"
+must be the same answer as "one it issued and it is not yours".
+
+### These two routes are NOT account-scoped, and there is no scope for them
+
+`/v1/sessions` is under `/v1`, not under `/v1/accounts/{accountId}`, and both routes
+are **absent from `accountRouteScopes`**. A session belongs to a USER, and one person
+is in as many accounts as they like — the same argument D14 makes for the operator
+surface, and the reason there is no "my accounts" tenancy that "my sessions" could be
+scoped by. A row in the scope table would be a scope gating nothing, which
+`TestEveryScopeIsEnforcedOnItsRoutes` exists to catch; a scoped api key is refused
+with `403` by `sessionCredentialOnly` instead, which is a middleware and therefore a
+property of the surface rather than of the handlers.
+
+### What is NOT decided here
+
+- **`last_used_at` does not exist.** `00003` has `created_at` and `expires_at` and
+  nothing maintained since. Writing a last-used timestamp is an UPDATE on the
+  authentication path for every authenticated request, and the listing does not need
+  it: `created_at`, `expires_at`, the user agent and the address are enough to
+  recognise a session, and `current` tells a client which one it is on. A future
+  packet that wants it should decide about the write before deciding about the column.
+- **No "sign out of all my other sessions".** That is what a password reset, an MFA
+  change and an operator disable already do through `revokeEveryCredential`, and a
+  separate route for it would be a second implementation of one rule.

@@ -171,6 +171,31 @@ func anonymousFamilyAudit() []auditRoute {
 				"it is a credential rather than a name",
 		},
 		{
+			// A ROW BECAUSE `/v1/session` IS A PREFIX OF `/v1/sessions`, not because
+			// anybody chose to audit these two. `isAuditFamilyRoute` matches with
+			// HasPrefix, so `GET /v1/sessions` and `DELETE /v1/sessions/{id}` fall
+			// inside this family automatically — which is the right outcome and worth
+			// stating, because it means a route added under this prefix cannot escape
+			// the census by being spelled differently.
+			name: "list my sessions", method: http.MethodGet, pattern: "/v1/sessions",
+			anonymous: http.StatusUnauthorized,
+			discloses: "nothing: 401 without a credential, so no session id and no user id ever " +
+				"arrives from a stranger. Had it answered 200 with an empty list, the list " +
+				"would still disclose nothing — but it would tell a client its session is " +
+				"fine, which is why the dead-credential answer is 401. " +
+				"Held by TestTheListingRefusesAnUnusableCredentialWith401",
+		},
+		{
+			name: "sign out of one session", method: http.MethodDelete, pattern: "/v1/sessions/{sessionID}",
+			identifier: "the session id in the path",
+			anonymous:  http.StatusUnauthorized,
+			discloses: "nothing, and the ORDER matters: 401 comes before the id is even parsed, so " +
+				"no caller-supplied string reaches a query. The id is a 128-bit uuid with no " +
+				"structure to guess, AND the three answers a caller can reach — yours, " +
+				"somebody else's, and never-existed — are one 404 with one fixed sentence. " +
+				"Held by TestTheFourRefusalsAreOneDocument",
+		},
+		{
 			name: "answer the second factor", method: http.MethodPost, pattern: "/v1/session/mfa",
 			identifier: "challenge, code",
 			probe:      `{"challenge":"a-challenge-that-is-not-one","code":"000000"}`,

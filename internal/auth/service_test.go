@@ -155,12 +155,37 @@ type fakeSessions struct {
 	nextID int
 	// revoked records revoked session ids.
 	revoked []id.UUID
-	// createErr and byTokenErr simulate infrastructure failures.
+	// createErr and byTokenErr simulate infrastructure failures, and listErr is the
+	// third kind: a failure of the LISTING, which is what distinguishes "the store
+	// could not be asked" from "there are no sessions". A fake that returned an
+	// empty list on error would let a use case report a signed-in user as having no
+	// sessions during a database blip, which is the worst answer available.
 	createErr  error
 	byTokenErr error
+	listErr    error
 	// nowSeen records the clock the lookup was called with, so a test can prove
 	// expiry is judged against the injected clock rather than the database's.
 	nowSeen []time.Time
+
+	// listedFor records the user id each ListLiveForUser was asked about, and
+	// revokedOne records the (user, session) pair each RevokeOneForUser carried.
+	//
+	// THE USER ID IS RECORDED RATHER THAN INFERRED FROM THE RESULT, because the
+	// assertion these exist for is "the use case asked about the CALLER and nobody
+	// else" — and a fake that filtered correctly would return the right list while
+	// having been handed the wrong id. A test that only checked the returned rows
+	// would pass against a service that asked about user B and got B's rows back.
+	listedFor  []id.UUID
+	revokedOne []revokeOneCall
+}
+
+// revokeOneCall is one recorded RevokeOneForUser.
+type revokeOneCall struct {
+	userID    id.UUID
+	sessionID id.UUID
+	// found is what the store answered, so a test can drive the "no such session
+	// of yours" branch without a second fake.
+	found bool
 }
 
 func newFakeSessions() *fakeSessions {
@@ -216,6 +241,67 @@ func (f *fakeSessions) Revoke(_ context.Context, _ db.Querier, sessionID id.UUID
 		}
 	}
 	return nil
+}
+
+// ListLiveForUser mirrors the real query's two properties that matter here: the
+// OWNER is part of the predicate, and an expired row is not returned.
+//
+// The expiry half is modelled with `expired` rather than by comparing against a
+// clock argument, because the real store takes `now` from the caller and a fake
+// that ignored it could not distinguish "the use case passed the wrong instant"
+// from "the use case passed the right one" — `nowSeen` is what makes that
+// distinguishable.
+func (f *fakeSessions) ListLiveForUser(_ context.Context, _ db.Querier, userID id.UUID, now time.Time) ([]sessions.Session, error) {
+	f.listedFor = append(f.listedFor, userID)
+	f.nowSeen = append(f.nowSeen, now)
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+
+	out := make([]sessions.Session, 0, len(f.live))
+	for digest, sid := range f.live {
+		if f.owners[sid] != userID {
+			continue
+		}
+		row := sessions.Session{ID: sid, UserID: userID}
+		for _, m := range f.minted {
+			if m.TokenDigest == digest {
+				row.ExpiresAt = m.ExpiresAt
+				row.UserAgent = m.UserAgent
+				row.IP = m.IP
+			}
+		}
+		out = append(out, row)
+	}
+	return out, nil
+}
+
+// RevokeOneForUser answers from the OWNER map rather than from `revoked`, so a
+// revoke aimed at somebody else's session reports false exactly as the real
+// statement's WHERE clause does — and removes nothing.
+//
+// AN ALREADY-REVOKED SESSION IS NOT IN `live` AND SO ANSWERS FALSE, which is the
+// whole of the idempotence claim: a client that retries a revoke gets the same
+// answer it got the first time rather than a different one.
+func (f *fakeSessions) RevokeOneForUser(_ context.Context, _ db.Querier, userID, sessionID id.UUID) (bool, error) {
+	owner := f.owners[sessionID]
+	live := false
+	for _, sid := range f.live {
+		if sid == sessionID {
+			live = true
+		}
+	}
+	found := live && owner == userID
+	f.revokedOne = append(f.revokedOne, revokeOneCall{userID: userID, sessionID: sessionID, found: found})
+	if !found {
+		return false, nil
+	}
+	for digest, sid := range f.live {
+		if sid == sessionID {
+			delete(f.live, digest)
+		}
+	}
+	return true, nil
 }
 
 // fakeEvents captures the envelopes written inside the caller's transaction.
@@ -1234,6 +1320,269 @@ func TestLogoutLeavesOtherSessionsAlone(t *testing.T) {
 	}
 	if _, err := f.svc.Authenticate(context.Background(), second.Token); err != nil {
 		t.Errorf("an unrelated session was revoked too: %v", err)
+	}
+}
+
+// The listing asks about the CALLER and nobody else, and says so by recording the
+// user id it was handed.
+//
+// The assertion is on `listedFor` rather than on the returned rows, and that is the
+// point of the whole design: a use case that asked about the wrong user and got
+// that user's rows back would return a perfectly plausible list. Only the id it
+// passed distinguishes the two.
+func TestListSessionsAsksAboutTheCallerAndNobodyElse(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture()
+	user := f.register(t, "kaka@example.com", "correct horse battery staple")
+
+	login, err := f.svc.Login(context.Background(), LoginInput{Email: "kaka@example.com", Password: "correct horse battery staple"})
+	if err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+
+	if _, err := f.svc.ListSessions(context.Background(), login.Token); err != nil {
+		t.Fatalf("ListSessions: %v", err)
+	}
+
+	if len(f.sessions.listedFor) != 1 {
+		t.Fatalf("the store was asked %d times, want once", len(f.sessions.listedFor))
+	}
+	if f.sessions.listedFor[0] != user.ID {
+		t.Errorf("the listing asked about user %s, want the credential's own user %s. "+
+			"The user id comes from the session the token resolved to, never from the caller.",
+			f.sessions.listedFor[0], user.ID)
+	}
+}
+
+// Exactly one entry carries Current, and it is the session the request arrived on.
+// A client that cannot tell which of these is the one it is using has to ask the
+// user, which is the whole gap this route closes.
+func TestListSessionsMarksExactlyTheCurrentSession(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture()
+	f.register(t, "kaka@example.com", "correct horse battery staple")
+
+	_, err := f.svc.Login(context.Background(), LoginInput{Email: "kaka@example.com", Password: "correct horse battery staple"})
+	if err != nil {
+		t.Fatalf("first Login: %v", err)
+	}
+	second, err := f.svc.Login(context.Background(), LoginInput{Email: "kaka@example.com", Password: "correct horse battery staple"})
+	if err != nil {
+		t.Fatalf("second Login: %v", err)
+	}
+
+	list, err := f.svc.ListSessions(context.Background(), second.Token)
+	if err != nil {
+		t.Fatalf("ListSessions: %v", err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("ListSessions returned %d entries, want 2", len(list))
+	}
+
+	// The session the request arrived on is the SECOND login's row, so the id to
+	// look for is read back out of the fake rather than computed: a session id is
+	// minted by the store and this test is about which one gets marked.
+	var secondID id.UUID
+	for digest, sid := range f.sessions.live {
+		if digest == sessions.Digest(second.Token) {
+			secondID = sid
+		}
+	}
+
+	current := 0
+	for _, s := range list {
+		if !s.Current {
+			continue
+		}
+		current++
+		if s.ID != secondID {
+			t.Errorf("session %s is marked Current but the request arrived on %s", s.ID, secondID)
+		}
+	}
+	if current != 1 {
+		t.Errorf("%d entries are marked Current, want exactly 1", current)
+	}
+}
+
+// A dead token is ErrUnauthenticated rather than an empty list. An empty list is a
+// client concluding its session is fine.
+func TestListSessionsRefusesAnUnusableToken(t *testing.T) {
+	t.Parallel()
+
+	for _, token := range []string{"", "never-issued"} {
+		f := newFixture()
+		if _, err := f.svc.ListSessions(context.Background(), token); !errors.Is(err, ErrUnauthenticated) {
+			t.Errorf("ListSessions(%q) = %v, want ErrUnauthenticated", token, err)
+		}
+	}
+}
+
+// A failure of the store is propagated and not turned into an empty list.
+func TestListSessionsReportsAStoreFailure(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture()
+	f.register(t, "kaka@example.com", "correct horse battery staple")
+	login, err := f.svc.Login(context.Background(), LoginInput{Email: "kaka@example.com", Password: "correct horse battery staple"})
+	if err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+
+	boom := errors.New("the database is down")
+	f.sessions.listErr = boom
+	if _, err := f.svc.ListSessions(context.Background(), login.Token); !errors.Is(err, boom) {
+		t.Errorf("ListSessions = %v, want the store's error. A blip reported as 'no sessions' "+
+			"signs a user out of every device in their UI at once.", err)
+	}
+}
+
+// The revocation carries the CALLER'S user id together with the id from the path,
+// and that pair is the boundary. A service that resolved the caller and then
+// handed the store a bare session id would still answer 404 for a stranger's id —
+// by accident of the store's signature — and this is the assertion that says the
+// owner is on the way.
+func TestRevokeSessionCarriesTheCallersUserId(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture()
+	user := f.register(t, "kaka@example.com", "correct horse battery staple")
+
+	first, err := f.svc.Login(context.Background(), LoginInput{Email: "kaka@example.com", Password: "correct horse battery staple"})
+	if err != nil {
+		t.Fatalf("first Login: %v", err)
+	}
+	second, err := f.svc.Login(context.Background(), LoginInput{Email: "kaka@example.com", Password: "correct horse battery staple"})
+	if err != nil {
+		t.Fatalf("second Login: %v", err)
+	}
+
+	var secondID id.UUID
+	for digest, sid := range f.sessions.live {
+		if digest == sessions.Digest(second.Token) {
+			secondID = sid
+		}
+	}
+
+	if err := f.svc.RevokeSession(context.Background(), first.Token, secondID); err != nil {
+		t.Fatalf("RevokeSession: %v", err)
+	}
+
+	if len(f.sessions.revokedOne) != 1 {
+		t.Fatalf("the store was asked %d times, want once", len(f.sessions.revokedOne))
+	}
+	call := f.sessions.revokedOne[0]
+	if call.userID != user.ID {
+		t.Errorf("RevokeOneForUser was given user %s, want the caller's %s", call.userID, user.ID)
+	}
+	if call.sessionID != secondID {
+		t.Errorf("RevokeOneForUser was given session %s, want the id from the request %s", call.sessionID, secondID)
+	}
+
+	// And the effect, through the observable path rather than through the record.
+	if _, err := f.svc.Authenticate(context.Background(), second.Token); !errors.Is(err, ErrUnauthenticated) {
+		t.Error("the revoked session still authenticates")
+	}
+	if _, err := f.svc.Authenticate(context.Background(), first.Token); err != nil {
+		t.Errorf("the caller's own session was revoked by a request that named another: %v", err)
+	}
+}
+
+// Revoking the session the request itself arrived on is ALLOWED, and the
+// consequence is that the caller is signed out. The alternative the packet offered
+// — a 409 — is rejected in `Service.RevokeSession`'s own comment; this test is the
+// behaviour half of that decision, and the reason it is here rather than in the
+// handler tests is that the decision belongs to the use case.
+func TestRevokingTheCurrentSessionIsAllowedAndSignsYouOut(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture()
+	f.register(t, "kaka@example.com", "correct horse battery staple")
+
+	login, err := f.svc.Login(context.Background(), LoginInput{Email: "kaka@example.com", Password: "correct horse battery staple"})
+	if err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+	other, err := f.svc.Login(context.Background(), LoginInput{Email: "kaka@example.com", Password: "correct horse battery staple"})
+	if err != nil {
+		t.Fatalf("second Login: %v", err)
+	}
+
+	var ownID id.UUID
+	for digest, sid := range f.sessions.live {
+		if digest == sessions.Digest(login.Token) {
+			ownID = sid
+		}
+	}
+
+	if err := f.svc.RevokeSession(context.Background(), login.Token, ownID); err != nil {
+		t.Fatalf("revoking the caller's own current session = %v, want nil", err)
+	}
+
+	if _, err := f.svc.Authenticate(context.Background(), login.Token); !errors.Is(err, ErrUnauthenticated) {
+		t.Error("the revoked current session still authenticates")
+	}
+	if _, err := f.svc.Authenticate(context.Background(), other.Token); err != nil {
+		t.Errorf("the other session was revoked too: %v", err)
+	}
+}
+
+// One error for four situations, so the route cannot become a probe for whether a
+// given session id is live in this deployment at all.
+func TestRevokeSessionReportsOneErrorForEveryWayOfBeingWrong(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture()
+	f.register(t, "kaka@example.com", "correct horse battery staple")
+
+	login, err := f.svc.Login(context.Background(), LoginInput{Email: "kaka@example.com", Password: "correct horse battery staple"})
+	if err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+	keep, err := f.svc.Login(context.Background(), LoginInput{Email: "kaka@example.com", Password: "correct horse battery staple"})
+	if err != nil {
+		t.Fatalf("second Login: %v", err)
+	}
+	keepToken := keep.Token
+
+	var ownID, liveID id.UUID
+	for digest, sid := range f.sessions.live {
+		switch digest {
+		case sessions.Digest(login.Token):
+			ownID = sid
+		case sessions.Digest(keepToken):
+			liveID = sid
+		}
+	}
+
+	// Revoke the first session, then name it again with the SECOND session's
+	// credential. The caller has to stay authenticated for the second half of the
+	// table to be about the session id rather than about the token — which is why
+	// `keepToken` exists rather than reusing the credential that was just revoked.
+	if err := f.svc.RevokeSession(context.Background(), login.Token, ownID); err != nil {
+		t.Fatalf("the first revoke: %v", err)
+	}
+
+	tests := []struct {
+		name      string
+		token     string
+		sessionID id.UUID
+		want      error
+	}{
+		{name: "no credential at all", token: "", sessionID: liveID, want: ErrUnauthenticated},
+		{name: "a token that resolves to nothing", token: "never-issued", sessionID: liveID, want: ErrUnauthenticated},
+		{name: "a session that does not exist", token: keepToken, sessionID: id.MustNew(), want: ErrSessionNotFound},
+		{name: "one already revoked", token: keepToken, sessionID: ownID, want: ErrSessionNotFound},
+		{name: "the nil uuid", token: keepToken, sessionID: id.UUID{}, want: ErrSessionNotFound},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := f.svc.RevokeSession(context.Background(), tt.token, tt.sessionID); !errors.Is(err, tt.want) {
+				t.Errorf("RevokeSession = %v, want %v", err, tt.want)
+			}
+		})
 	}
 }
 

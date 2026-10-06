@@ -126,7 +126,7 @@ info:
   # service means "locked, retry at" and clients render it as a countdown. A
   # disabled account is not coming back, so a client that treated the 403 as
   # retryable would poll a route whose answer cannot change.
-  version: 1.10.0
+  version: 1.11.0
   summary: Authentication, sessions, multi-factor authentication, account recovery, accounts, tenancy, scoped API tokens, the admin surface, the operator surface and OIDC registrations.
   description: |
     `identity` is the cafaye platform's security boundary: it is what every other
@@ -995,6 +995,210 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /v1/sessions:
+    get:
+      tags: [sessions]
+      operationId: listSessions
+      summary: List the caller's own sessions
+      description: |
+        Every live session this account holds, newest first, so a person can see
+        **where they are signed in** and end the ones they do not recognise.
+
+        **Nothing on an entry is a credential.** There is no `token` field and no
+        field derived from one — not the token, and not its SHA-256 digest either.
+        A digest is one hash away from a live session, so it is a credential for
+        anybody holding a log of this response, and the entry carries the row's id
+        and the four things a person recognises instead: when the session started,
+        when it expires, the user agent and the address as recorded at sign-in.
+
+        `user_agent` and `ip` are **evidence, not identity**. Neither is trusted
+        anywhere in this service, both are caller-supplied or best-effort, and
+        behind a proxy `ip` is frequently the proxy's address. They are shown so a
+        user can recognise a row, and `user_agent` is shown **raw rather than
+        parsed**: a device label this service invents is a label that can be wrong,
+        and a UI that trusts one shows somebody the wrong laptop. Parse it in the
+        client, and treat it as untrusted text there.
+
+        `current` marks the session **this request arrived on**, which is the one
+        field a client cannot compute for itself: the browser holds a cookie and
+        this is a list of row ids, so without `current` the only way to render
+        "this device" is to ask the user.
+
+        Expired rows are omitted, so every entry is a credential that still works
+        and a button that does something. The response is `{ "sessions": [...] }` —
+        an object with a named field rather than a bare array, so a `total` or a
+        cursor can be added later without a second breaking change — and it is `[]`
+        and never `null`.
+
+        **A session belongs to a USER, not to an account.** One person is in as
+        many accounts as they like, so there is no account whose tenancy would mean
+        "the sessions this caller may act on", and these two routes are not under
+        `/v1/accounts/{account_id}` for that reason rather than by accident.
+
+        **Session only.** A scoped api key is refused with `403`, on the same terms
+        as `DELETE /v1/session`: an api key acts on the account it was issued for,
+        and enumerating browser sessions is not something it does.
+      security:
+        - sessionCookie: []
+        - bearerToken: []
+      responses:
+        '200':
+          description: |
+            The caller's live sessions, newest first. Empty is `{"sessions": []}`.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionList'
+              examples:
+                default:
+                  value:
+                    sessions:
+                      - id: 3f2504e0-4f89-11d3-9a0c-0305e82c3301
+                        created_at: '2026-09-30T09:14:02Z'
+                        expires_at: '2026-10-30T09:14:02Z'
+                        user_agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)
+                        ip: 203.0.113.7
+                        current: true
+                      - id: 7c9e6679-7425-40de-944b-e07fc1f90ae7
+                        created_at: '2026-09-28T18:02:55Z'
+                        expires_at: '2026-10-28T18:02:55Z'
+                        user_agent: Mozilla/5.0 (iPhone; CPU iPhone OS 18_1)
+                        ip: 198.51.100.22
+                        current: false
+        '401':
+          description: |
+            No usable credential, or one that no longer resolves — an expired or a
+            revoked session is a `401` and not an empty list, because an empty
+            list is a client concluding its session is fine.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: |
+            A scoped api key was presented. This is a session surface, so a machine
+            credential cannot enumerate a person's browser sessions.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /v1/sessions/{session_id}:
+    delete:
+      tags: [sessions]
+      operationId: deleteSessionById
+      summary: Revoke one of the caller's own sessions
+      description: |
+        Ends one session — the "sign out of that device" action — leaving every
+        other session of this account untouched. This is **not** "sign out
+        everywhere": a password reset, an MFA change and an operator disable all
+        revoke every session, and none of them is this route.
+
+        **THE OWNERSHIP CHECK IS THE POINT, and it is not in the path.** A session
+        id here is a candidate and nothing else. This service resolves the caller
+        from the presented credential and deletes `WHERE id = :id AND user_id = :caller`
+        in one statement, so there is no interval in which "is this mine" and
+        "delete it" are separate questions, and no handler anywhere holds both a
+        caller-supplied id and the authority to use it.
+
+        **ONE 404 FOR ALL FOUR WAYS OF NOT OWNING IT** — never existed, somebody
+        else's, already revoked, and the nil uuid — with one fixed sentence. A
+        `403` against a `404` would let any signed-in caller probe whether a given
+        session id belongs to a live session anywhere in this deployment, which is
+        a question about another person's credential. A **malformed** id is a `404`
+        and not a `422`, for the same reason: the path is part of a resource's
+        identity, so "this is not an id this service issued" has to be the same
+        answer as "this id is one this service issued and it is not yours".
+
+        **REVOKING THE SESSION YOU ARE USING IS ALLOWED**, and the consequence is
+        that you are signed out: the response is a `204` and your next request with
+        that credential is a `401`. It is not refused with a `409` because
+        `DELETE /v1/session` already revokes your current session without
+        complaint, and a route that refused to do the same thing when the id was
+        spelled out would be a puzzle rather than a policy.
+
+        **NO COOKIE IS CLEARED, EVEN WHEN YOU REVOKED YOURSELF.** The `204` sets no
+        `Set-Cookie`, and it cannot: this route is not told which session the
+        request arrived on, so clearing the cookie would be a guess — and a wrong
+        guess signs you out of the device you are using in order to end a session
+        on another one. Call `DELETE /v1/session` when you want the cookie gone.
+      security:
+        - sessionCookie: []
+        - bearerToken: []
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          description: |
+            The `id` of a `GET /v1/sessions` entry. A uuid this service issued, and
+            only for a session of the caller's own — anything else is a `404`.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: |
+            The session was revoked. No `Set-Cookie` is sent, so the browser keeps
+            whatever cookie it has — which is correct: see the note above.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+        '401':
+          description: |
+            No usable credential, or one that no longer resolves. The credential is
+            checked **before** the id in the path is even parsed.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: A scoped api key was presented. This is a session surface.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: |
+            No session of yours has that id. One answer for a session that never
+            existed, one belonging to somebody else, one already revoked, and an id
+            this service did not issue.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                default:
+                  value:
+                    type: https://errors.cafaye.com/not_found
+                    title: Not found
+                    status: 404
+                    detail: no route matches this request
+                    instance: /v1/sessions/3f2504e0-4f89-11d3-9a0c-0305e82c3301
+                    code: not_found
+                    trace_id: 0af7651916cd43dd8448eb211c80319c
         '500':
           $ref: '#/components/responses/InternalError'
 
@@ -5641,6 +5845,91 @@ components:
           type: string
           format: date-time
           description: RFC3339 UTC. Judged against the service's clock, not the database's.
+
+    SessionList:
+      type: object
+      description: |
+        One entry of `GET /v1/sessions`: a session the caller can recognise and
+        name, with **nothing on it that is a credential**.
+
+        There is no `token` property and no `digest` property, and `additionalProperties`
+        is `false` so neither can be added by a later edit without this schema
+        refusing it. A digest is one SHA-256 away from a live session, which makes
+        it a credential for anybody holding a copy of this response.
+      additionalProperties: false
+      required: [sessions]
+      properties:
+        sessions:
+          type: array
+          description: |
+            The caller's **live** sessions, newest first. Empty is `[]` and never
+            `null`, and expired rows are omitted — an expired session cannot
+            authenticate, so offering to revoke it is a button that does nothing.
+
+            The order is `created_at DESC, id DESC`. The id tiebreaker is not
+            decoration: `created_at` is the database's clock and two logins in the
+            same millisecond are ordinary, so without it the relative order of two
+            rows is undefined and the list renders differently on two runs over the
+            same data.
+          items:
+            $ref: '#/components/schemas/SessionSummary'
+
+    SessionSummary:
+      type: object
+      description: |
+        One row of `SessionList`. The four facts a person needs to recognise a
+        session — when it started, when it dies, what it presented and from where —
+        and the row's id, which is the whole of what identifies it.
+      additionalProperties: false
+      required: [id, created_at, expires_at, user_agent, ip, current]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: |
+            The session row's id, and the value to name in
+            `DELETE /v1/sessions/{session_id}`. **Not** the token and not derived
+            from it: this is an opaque identifier for a row, not a credential.
+        created_at:
+          type: string
+          format: date-time
+          description: |
+            When the session was minted — the database's clock, so it is evidence
+            about when the row was written rather than a value the service
+            asserted.
+        expires_at:
+          type: string
+          format: date-time
+          description: |
+            When it stops working. Judged against the service's injected clock on
+            every request, and the same instant is used to decide whether this row
+            appears in the listing at all.
+        user_agent:
+          type: string
+          description: |
+            The `User-Agent` header **as recorded at sign-in**, raw. Empty string
+            when the client sent none, which is not the same fact as "we never
+            learned one" and is rendered the same way on purpose.
+
+            **Untrusted text.** Anything can be in a header, so escape it before
+            rendering it. It is shown unparsed because a device label this service
+            invents is a label that can be wrong.
+        ip:
+          type: string
+          description: |
+            The address recorded at sign-in, empty string when there was none —
+            behind a proxy this is usually the proxy's. **Evidence, not location**,
+            and not trusted for any decision anywhere in this service.
+        current:
+          type: boolean
+          description: |
+            True for the session **this request arrived on**, and false for every
+            other entry. Exactly one entry is `true` whenever the list is not
+            empty.
+
+            It exists because a client cannot compute it: the browser holds a
+            cookie and this is a list of row ids, so without it the only way to
+            render "this device" is to ask the user which device they are on.
 
     SocialLinked:
       type: object

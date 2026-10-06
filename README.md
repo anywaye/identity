@@ -27,6 +27,8 @@ What it serves:
 POST   /v1/users                                  registration
 POST   /v1/session                                sign-in
 DELETE /v1/session                                sign-out
+GET    /v1/sessions                               where am I signed in
+DELETE /v1/sessions/{sessionID}                   sign out of one of them
 GET    /v1/me                                     who am I
 POST   /v1/mfa/enrollments                        MFA enrolment + confirm
 POST   /v1/mfa/recovery-codes                     recovery codes
@@ -281,6 +283,8 @@ service quietly listening on the wrong port.
 | `POST /v1/session` | `200 {"token","expires_at"}` | Log in. Sets the `__Host-session` cookie to the same token. `401 unauthorized` for any unusable credential, `423 account_locked` with `Retry-After` while locked. |
 | `POST /v1/session/mfa` | `200 {"token","expires_at"}` | Answer a second factor and **only then** get the session. `{challenge?, code}` — the challenge from a `202`, and a TOTP code or a recovery code. | |
 | `DELETE /v1/session` | `204` | Revoke the current session and clear the cookie. `401` if no credential was presented. |
+| `GET /v1/sessions` | `200 {sessions: [{id, created_at, expires_at, user_agent, ip, current}]}` | **Every session this account holds**, newest first, `[]` and never `null`. **No token and no digest is rendered** — the row's id is the whole of what a client gets, plus what a person recognises: when it started, when it dies, the user agent and address as recorded. `current` marks the session this request arrived on, so a UI need not ask the user which device this is. Expired rows are omitted, so every entry is a button that does something. `401` for an unusable credential rather than an empty list — an empty list would tell a client its session is fine. **Session only:** a scoped api key is `403`. |
+| `DELETE /v1/sessions/:sessionId` | `204` | Revoke **one** of the caller's own sessions. `404` for all four ways of not owning it — never existed, somebody else's, already revoked, and the nil uuid — with **one fixed sentence**, because a 403 against a 404 would let any signed-in caller probe whether a session id is live in this deployment at all. A malformed id is a `404` and not a `422` for the same reason. **Revoking the session you are using is allowed** and signs you out; the `204` sets no cookie, so use `DELETE /v1/session` to also clear the browser's. **Session only:** a scoped api key is `403`. |
 | `GET /v1/auth/oauth/:provider` | `302` | **Start a social sign-in.** Redirects the browser to the provider with a fresh `state` and sets `__Host-oauth-state`. **No credential, and none can be presented** — a browser holds nothing here but the cookie this route just set. `404` for a provider this deployment has no credentials for *and* for a name that does not exist, because telling them apart enumerates the configuration. A session cookie is read only to record an **intention**: if one resolves, the callback will *link* rather than sign in. Absent entirely when no provider is configured. |
 | `GET /v1/auth/oauth/:provider/callback` | `200 {token, expires_at}` | **Finish it.** **No credential here either** — the state cookie is the whole of what authenticates the round trip, and it is compared *before* the code is spent. Three shapes: `200 {token,…}` a sign-in; `202 {mfa_required,…}` an account with a second factor, so no session is minted and you finish at `POST /v1/session/mfa`; `200 {linked_provider}` the link path, which mints **nothing**. `400` for a state mismatch, a declined consent or a refused code; `409` when the provider's address already belongs to an account here — **it refuses the sign-in rather than signing into that account**; `502` when the provider is unreachable. |
 | `GET /v1/me` | `200 {"id","email"}` | The authenticated user. `401` with no usable credential. |
@@ -2036,6 +2040,23 @@ PR build would run untrusted code against a registry write.
 
 Everything below is a later packet, and none of it is stubbed to look finished: the
 admin API, and key rotation.
+
+**"Sign out of one session" stops at one.** `GET /v1/sessions` and
+`DELETE /v1/sessions/:sessionId` are here, and "sign out **everywhere**" is not a
+different route — it is what a password reset, an MFA change and an operator
+disable already do, through `revokeEveryCredential`. There is no endpoint that
+means "end all my other sessions and keep this one", and that is worth saying
+rather than leaving to be discovered: the listing has no `POST`-shaped sibling and
+the OpenAPI document describes none.
+
+**There is no `last_used_at`.** `sessions` records `created_at` and nothing since —
+so a listing entry can tell you when a session started and when it dies, and not
+when it was last used. Writing one means an UPDATE on the authentication path for
+every authenticated request, which is a real cost on the hottest statement in the
+service and a decision rather than a field. `updated_at` exists on the table from
+`00003` and is not maintained either, which is the same fact stated twice: a
+timestamp this service does not write must not appear in a response as though it
+did.
 
 ## Social login: what it was, and what it is
 

@@ -61,6 +61,16 @@ type Transport interface {
 	CreateSession(ctx context.Context, body generated.CreateSessionJSONRequestBody, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	RegisterUser(ctx context.Context, body generated.RegisterUserJSONRequestBody, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	DeleteSession(ctx context.Context, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
+	// The session listing and the single-session revoke, which sit beside
+	// `DeleteSession` in the document and are a DIFFERENT operation from it:
+	// `deleteSession` needs no id because the session you are using is the one you
+	// already have, and these two are for "the other devices".
+	//
+	// `ListSessions` is session-only in the document, so a caller of this method
+	// with an api key attached gets a 403 — which is the wrapper's problem to
+	// explain and is said on `Client.ListSessions`.
+	ListSessions(ctx context.Context, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
+	DeleteSessionByID(ctx context.Context, sessionId openapiTypes.UUID, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	CompleteSecondFactor(ctx context.Context, body generated.CompleteSecondFactorJSONRequestBody, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	GetMFAStatus(ctx context.Context, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	DisableMFA(ctx context.Context, body generated.DisableMFAJSONRequestBody, reqEditors ...generated.RequestEditorFn) (*http.Response, error)

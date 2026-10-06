@@ -583,7 +583,18 @@ func TestTheDocumentIsOpenAPI31AndCarriesAVersion(t *testing.T) {
 	// adds a generated constant without removing one, so the failure mode is a Go
 	// consumer that compiles against a naming shift rather than a wire change. Both
 	// are what this pin is for.
-	const want = "1.10.0"
+	// 1.11.0 is the session listing and the single-session revocation:
+	// `GET /v1/sessions` and `DELETE /v1/sessions/{session_id}`. It is a NON-BREAKING
+	// addition and a GENERATED-SOURCE change at once — two operations and two new
+	// schemas (`SessionList`, `SessionSummary`) — so a Go consumer that names the new
+	// methods gets them and every other consumer cannot tell the difference. Neither
+	// operation changes a shape that 1.10.0 described.
+	//
+	// WHICH IS WHY IT IS A PIN AND NOT A COMMENT: the two routes are a security
+	// surface, and the finding the version pin exists to make visible is a consumer
+	// that kept calling `DELETE /v1/session` and never learned it could end one
+	// session rather than all of them.
+	const want = "1.11.0"
 	if doc.InfoVersion != want {
 		t.Errorf("%s declares info.version %q, not %q. core's sync rule is that the /v1 "+
 			"prefix says which contract and this says which build of it, and a non-breaking "+

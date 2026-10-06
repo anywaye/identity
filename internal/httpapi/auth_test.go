@@ -99,6 +99,14 @@ type fakeAuth struct {
 	// lastAuthToken is the credential Authenticate was handed, so a test can
 	// prove which surface the handler read it from.
 	lastAuthToken string
+
+	// sessions is what ListSessions returns, listErr and revokeSessionErr are the
+	// two refusals, and the two slices record what each was asked with.
+	sessions         []auth.Session
+	listErr          error
+	revokeSessionErr error
+	listedAs         []string
+	revokedSessions  []revokeSessionCall
 }
 
 func newFakeAuth() *fakeAuth {
@@ -165,6 +173,37 @@ func (f *fakeAuth) Logout(_ context.Context, token string) error {
 	defer f.mu.Unlock()
 	f.loggedOut = append(f.loggedOut, token)
 	return f.logoutErr
+}
+
+// ListSessions and RevokeSession are "sign out of one of these".
+//
+// The recorded inputs keep the WHOLE pair a call carried, in order, and that is the
+// assertion this double exists to support: a handler that resolved the user
+// correctly and then handed the wrong user id to the use case passes every
+// status-code assertion and fails only here. The credential is recorded too, so a
+// test can prove the handler read the cookie rather than the Authorization header.
+func (f *fakeAuth) ListSessions(_ context.Context, token string) ([]auth.Session, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.listedAs = append(f.listedAs, token)
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	return f.sessions, nil
+}
+
+func (f *fakeAuth) RevokeSession(_ context.Context, token string, sessionID id.UUID) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.revokedSessions = append(f.revokedSessions, revokeSessionCall{token: token, sessionID: sessionID})
+	return f.revokeSessionErr
+}
+
+// revokeSessionCall is one recorded RevokeSession: the credential the handler
+// resolved and the id it took from the path.
+type revokeSessionCall struct {
+	token     string
+	sessionID id.UUID
 }
 
 // Disable and Enable are the operator surface's two use cases.
@@ -1155,6 +1194,12 @@ func (panickingAuth) Authenticate(context.Context, string) (users.User, error) {
 	panic("handler exploded")
 }
 func (panickingAuth) Logout(context.Context, string) error {
+	panic("handler exploded")
+}
+func (panickingAuth) ListSessions(context.Context, string) ([]auth.Session, error) {
+	panic("handler exploded")
+}
+func (panickingAuth) RevokeSession(context.Context, string, id.UUID) error {
 	panic("handler exploded")
 }
 
