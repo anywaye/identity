@@ -234,6 +234,10 @@ const (
 	// OAuthGitHubClientIDVar and OAuthGitHubClientSecretVar are the GitHub pair.
 	OAuthGitHubClientIDVar     = "OAUTH_GITHUB_CLIENT_ID"
 	OAuthGitHubClientSecretVar = "OAUTH_GITHUB_CLIENT_SECRET"
+	// OAuthMicrosoftClientIDVar and OAuthMicrosoftClientSecretVar are the
+	// Microsoft pair.
+	OAuthMicrosoftClientIDVar     = "OAUTH_MICROSOFT_CLIENT_ID"
+	OAuthMicrosoftClientSecretVar = "OAUTH_MICROSOFT_CLIENT_SECRET"
 
 	// The endpoint overrides. Every one is OPTIONAL and every one defaults to the
 	// provider's real endpoint, which is defined once in internal/oauth/endpoints.go
@@ -250,13 +254,16 @@ const (
 	// Which values are refused is oauth.Settings.Validate's rule and not this
 	// package's: absent is the default, and present-but-undialable fails startup
 	// naming the variable below.
-	OAuthGoogleAuthorizeURLVar = "OAUTH_GOOGLE_AUTHORIZE_URL"
-	OAuthGoogleTokenURLVar     = "OAUTH_GOOGLE_TOKEN_URL"
-	OAuthGoogleUserInfoURLVar  = "OAUTH_GOOGLE_USERINFO_URL"
-	OAuthGitHubAuthorizeURLVar = "OAUTH_GITHUB_AUTHORIZE_URL"
-	OAuthGitHubTokenURLVar     = "OAUTH_GITHUB_TOKEN_URL"
-	OAuthGitHubUserInfoURLVar  = "OAUTH_GITHUB_USERINFO_URL"
-	OAuthGitHubEmailsURLVar    = "OAUTH_GITHUB_EMAILS_URL"
+	OAuthGoogleAuthorizeURLVar    = "OAUTH_GOOGLE_AUTHORIZE_URL"
+	OAuthGoogleTokenURLVar        = "OAUTH_GOOGLE_TOKEN_URL"
+	OAuthGoogleUserInfoURLVar     = "OAUTH_GOOGLE_USERINFO_URL"
+	OAuthGitHubAuthorizeURLVar    = "OAUTH_GITHUB_AUTHORIZE_URL"
+	OAuthGitHubTokenURLVar        = "OAUTH_GITHUB_TOKEN_URL"
+	OAuthGitHubUserInfoURLVar     = "OAUTH_GITHUB_USERINFO_URL"
+	OAuthGitHubEmailsURLVar       = "OAUTH_GITHUB_EMAILS_URL"
+	OAuthMicrosoftAuthorizeURLVar = "OAUTH_MICROSOFT_AUTHORIZE_URL"
+	OAuthMicrosoftTokenURLVar     = "OAUTH_MICROSOFT_TOKEN_URL"
+	OAuthMicrosoftUserInfoURLVar  = "OAUTH_MICROSOFT_USERINFO_URL"
 )
 
 // oauthEndpointVars is the per-endpoint table: which variable sets which provider's
@@ -320,6 +327,24 @@ var oauthEndpointVars = []struct {
 		field:    "EmailsURL",
 		variable: OAuthGitHubEmailsURLVar,
 		assign:   func(s *oauth.Settings, v string) { s.GitHub.Endpoints.EmailsURL = v },
+	},
+	{
+		provider: oauth.ProviderMicrosoft,
+		field:    "AuthorizeURL",
+		variable: OAuthMicrosoftAuthorizeURLVar,
+		assign:   func(s *oauth.Settings, v string) { s.Microsoft.Endpoints.AuthorizeURL = v },
+	},
+	{
+		provider: oauth.ProviderMicrosoft,
+		field:    "TokenURL",
+		variable: OAuthMicrosoftTokenURLVar,
+		assign:   func(s *oauth.Settings, v string) { s.Microsoft.Endpoints.TokenURL = v },
+	},
+	{
+		provider: oauth.ProviderMicrosoft,
+		field:    "UserInfoURL",
+		variable: OAuthMicrosoftUserInfoURLVar,
+		assign:   func(s *oauth.Settings, v string) { s.Microsoft.Endpoints.UserInfoURL = v },
 	},
 }
 
@@ -539,7 +564,7 @@ func (c Config) OAuthEnabled() bool { return c.OAuth.Enabled() }
 
 // loadOAuth reads the social-login block.
 //
-// FIVE CREDENTIAL VARIABLES, SEVEN ENDPOINT OVERRIDES AND TWO PROVIDERS, and the
+// SEVEN CREDENTIAL VARIABLES, TEN ENDPOINT OVERRIDES AND THREE PROVIDERS, and the
 // rules are oauth.Settings.Validate's rather than this function's:
 //
 //   - a provider with one half of its credentials is a STARTUP FAILURE, not a
@@ -567,6 +592,10 @@ func (c *Config) loadOAuth(lookup Lookup) error {
 		GitHub: oauth.ProviderSettings{
 			ClientID:     lookupValue(lookup, OAuthGitHubClientIDVar),
 			ClientSecret: lookupValue(lookup, OAuthGitHubClientSecretVar),
+		},
+		Microsoft: oauth.ProviderSettings{
+			ClientID:     lookupValue(lookup, OAuthMicrosoftClientIDVar),
+			ClientSecret: lookupValue(lookup, OAuthMicrosoftClientSecretVar),
 		},
 	}
 	for _, v := range oauthEndpointVars {

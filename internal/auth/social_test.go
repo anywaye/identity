@@ -92,8 +92,9 @@ type fakeSocialRegistry struct {
 func newFakeSocialRegistry(names ...string) *fakeSocialRegistry {
 	r := &fakeSocialRegistry{providers: map[string]oauth.Provider{}, base: "https://identity.test"}
 	definitions := map[string]oauth.Provider{
-		oauth.ProviderGoogle: oauth.Google(),
-		oauth.ProviderGitHub: oauth.GitHub(),
+		oauth.ProviderGoogle:    oauth.Google(),
+		oauth.ProviderGitHub:    oauth.GitHub(),
+		oauth.ProviderMicrosoft: oauth.Microsoft(),
 	}
 	for _, name := range names {
 		p := definitions[name]
@@ -550,6 +551,56 @@ func TestAFreshProviderIdentityCreatesTheAccount(t *testing.T) {
 				"transaction's. A connected account with no user is the other half of the same "+
 				"unrepairable state", q)
 		}
+	}
+}
+
+// TestAFreshMicrosoftIdentityCreatesTheAccount is the same happy path as the
+// github one above, run through the third provider.
+//
+// # WHY THE SECOND COPY OF THE SAME SHAPE
+//
+// The four outcomes are provider-agnostic in the code: Callback dispatches on
+// the registry lookup and the store key, neither of which branches on which
+// provider this is. So a second copy cannot find a bug in the dispatch — the
+// github tests own that. What it can find is the one thing that is NOT
+// provider-agnostic: the provider NAME that reaches the store. A provider
+// added to the registry and the settings table and the enum but not to the
+// use case's idea of the world would sign a person in and write a connected
+// account keyed on a name nothing else agrees on, and the github tests would
+// never notice because they never ask microsoft to do anything.
+//
+// The assertion that matters is therefore the key: (microsoft, uid). The rest
+// — a session, a user, a personal account, an event — is the same shape the
+// github test asserts, repeated here so the microsoft path is evidenced
+// end to end rather than by a key alone.
+func TestAFreshMicrosoftIdentityCreatesTheAccount(t *testing.T) {
+	t.Parallel()
+
+	f := newSocialFixture(t, oauth.ProviderMicrosoft)
+
+	got, err := f.callback(oauth.ProviderMicrosoft, "code-ms", "ms-uid-1", "kaka@example.com")
+	if err != nil {
+		t.Fatalf("Callback: %v", err)
+	}
+
+	if got.User.Email != "kaka@example.com" {
+		t.Errorf("signed in as %q, want the address the provider reported", got.User.Email)
+	}
+	if got.Token == "" {
+		t.Error("no session token was minted for a newly created account")
+	}
+	if len(f.store.creates) != 1 {
+		t.Fatalf("%d connected accounts created, want 1", len(f.store.creates))
+	}
+
+	created := f.store.creates[0]
+	if created.Provider != oauth.ProviderMicrosoft || created.ProviderUID != "ms-uid-1" {
+		t.Errorf("the connected account is keyed on (%q, %q), want (%q, %q)",
+			created.Provider, created.ProviderUID, oauth.ProviderMicrosoft, "ms-uid-1")
+	}
+	if created.UserID != got.User.ID {
+		t.Errorf("the connected account names user %s but the session was minted for %s",
+			created.UserID, got.User.ID)
 	}
 }
 

@@ -21,12 +21,21 @@ import (
 const (
 	ProviderGoogle = "google"
 	ProviderGitHub = "github"
+	// ProviderMicrosoft is the third value of the `oauth_provider` enum, added
+	// by migrations/00025_oauth_provider_microsoft.sql. The comment on
+	// knownProviders says what the closed set is for; what is worth adding here
+	// is that the enum value, the constant and the settings table row are one
+	// fact stated three times, and the two checks that hold them together are
+	// TestKnownProvidersMatchesTheNamesTheEnumAccepts (Go against the migration)
+	// and TestEveryProviderThisServiceOffersIsInTheTable (the closed set against
+	// Settings.providers()).
+	ProviderMicrosoft = "microsoft"
 )
 
 // knownProviders is the closed set, in the order they are logged. An unlisted name
 // is a 404 rather than a lookup, so a typo in a URL cannot become a query against
 // a provider this service has no client credentials for.
-var knownProviders = []string{ProviderGoogle, ProviderGitHub}
+var knownProviders = []string{ProviderGoogle, ProviderGitHub, ProviderMicrosoft}
 
 // Errors from the registry and from Settings.Validate.
 var (
@@ -112,6 +121,27 @@ func GitHub() Provider {
 	}
 }
 
+// Microsoft returns the provider definition with this service's endpoint choices.
+//
+// The scopes are the Microsoft identity platform's v2.0 ones, and `offline_access`
+// is here for the reason Google's access_type=offline is: without it the token
+// endpoint issues no refresh token, and the stored credential dies an hour later
+// with nothing to renew it.
+//
+// There is no EmailsURL because Microsoft's userinfo endpoint returns the
+// address on the identity call, the way Google's does — the second call is
+// GitHub's workaround for a provider whose identity endpoint will not always
+// carry one.
+func Microsoft() Provider {
+	return Provider{
+		Name:         ProviderMicrosoft,
+		Scopes:       []string{"openid", "email", "profile", "offline_access"},
+		AuthorizeURL: MicrosoftAuthorizeURL,
+		TokenURL:     MicrosoftTokenURL,
+		UserInfoURL:  MicrosoftUserInfoURL,
+	}
+}
+
 // providerByName returns this service's definition for a known provider name.
 //
 // It exists because the definitions and the settings have to be walked TOGETHER —
@@ -126,6 +156,8 @@ func providerByName(name string) (Provider, bool) {
 		return Google(), true
 	case ProviderGitHub:
 		return GitHub(), true
+	case ProviderMicrosoft:
+		return Microsoft(), true
 	default:
 		return Provider{}, false
 	}

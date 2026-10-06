@@ -234,6 +234,48 @@ func TestClientIdentityReadsGitHub(t *testing.T) {
 	}
 }
 
+// Microsoft's userinfo endpoint returns the same `sub`/`email`/`name` shape
+// Google's does, and the fake serves all three, so this is the same happy path
+// the google and github tests run against the same server.
+//
+// # THIS IS ALSO THE EVIDENCE THAT THE FLOW FAILS WITHOUT ITS ADAPTER
+//
+// `Client.Identity` switches on the provider name, and the default branch
+// answers ErrUnknownProvider for a provider with no case. So if the
+// `case ProviderMicrosoft` were removed — or routed to the wrong decoder — this
+// test is the one that goes red: the default branch's refusal is not a
+// successful identity, and a decoder that read the wrong fields would return
+// an empty ProviderUID and fail the assertion below. A test that only checked
+// the status code would not be that evidence.
+func TestClientIdentityReadsMicrosoft(t *testing.T) {
+	t.Parallel()
+
+	server := oauthtest.NewServer(t).Person("a1b2c3d4-e5f6-7890-abcd-ef1234567890", "kaka@example.com", "Kaka")
+
+	identity, err := newTestClient(t).Identity(context.Background(), server.Provider(t, oauth.Microsoft()), oauth.Tokens{
+		AccessToken: server.AccessToken,
+	})
+	if err != nil {
+		t.Fatalf("Identity: %v", err)
+	}
+
+	// Microsoft's `sub` is a GUID. The column is text, so the GUID is stored as
+	// text — the same reason GitHub's numeric id is.
+	if identity.ProviderUID != "a1b2c3d4-e5f6-7890-abcd-ef1234567890" {
+		t.Errorf("ProviderUID = %q, want the microsoft sub", identity.ProviderUID)
+	}
+	if identity.Email != "kaka@example.com" {
+		t.Errorf("Email = %q, want kaka@example.com", identity.Email)
+	}
+	if identity.Name != "Kaka" {
+		t.Errorf("Name = %q, want Kaka", identity.Name)
+	}
+	// The access token, not a remembered value, is what authorized the call.
+	if got := server.LastAuthorization(); !strings.Contains(got, server.AccessToken) {
+		t.Errorf("the identity call carried %q, want it to present the access token", got)
+	}
+}
+
 // GitHub returns a null email for an account whose address is private, and
 // /user/emails is the documented way to get it. Without this the service cannot
 // identify a large fraction of real GitHub accounts at all.

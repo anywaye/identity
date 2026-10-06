@@ -52,6 +52,17 @@ func TestSettingsValidateRejectsAHalfConfiguredProvider(t *testing.T) {
 				GitHub:          ProviderSettings{ClientSecret: "secret"},
 			},
 		},
+		{
+			// The third provider, held to the same rule: one half of a
+			// provider's credentials is a mistake and never an intention,
+			// and the refusal is the same whichever provider made it.
+			name: "microsoft without a secret",
+			s: Settings{
+				RedirectBaseURL: "https://identity.cafaye.com",
+				EncryptionKey:   testKeyBase64(3),
+				Microsoft:       ProviderSettings{ClientID: "id"},
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -160,18 +171,19 @@ func TestSettingsValidateAcceptsAWorkingConfiguration(t *testing.T) {
 		EncryptionKey:   testKeyBase64(1),
 		Google:          ProviderSettings{ClientID: "id", ClientSecret: "secret"},
 		GitHub:          ProviderSettings{ClientID: "id2", ClientSecret: "secret2"},
+		Microsoft:       ProviderSettings{ClientID: "id3", ClientSecret: "secret3"},
 	}
 
 	if err := s.Validate(); err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
 	if !s.Enabled() {
-		t.Error("Enabled = false with two configured providers")
+		t.Error("Enabled = false with three configured providers")
 	}
 
 	providers := s.Providers()
-	if len(providers) != 2 {
-		t.Fatalf("Providers() returned %d, want 2", len(providers))
+	if len(providers) != 3 {
+		t.Fatalf("Providers() returned %d, want 3", len(providers))
 	}
 	// Every configured provider carries its credentials and this service's
 	// endpoints, and nothing else is included.
@@ -183,8 +195,8 @@ func TestSettingsValidateAcceptsAWorkingConfiguration(t *testing.T) {
 			t.Errorf("provider %q has an incomplete endpoint set: %+v", p.Name, p)
 		}
 	}
-	if providers[0].Name != ProviderGoogle || providers[1].Name != ProviderGitHub {
-		t.Errorf("Providers() = %q, %q; want a stable order", providers[0].Name, providers[1].Name)
+	if providers[0].Name != ProviderGoogle || providers[1].Name != ProviderGitHub || providers[2].Name != ProviderMicrosoft {
+		t.Errorf("Providers() = %q, %q, %q; want a stable order", providers[0].Name, providers[1].Name, providers[2].Name)
 	}
 }
 
@@ -260,7 +272,7 @@ func TestRegistryLookupDoesNotDistinguishUnconfiguredFromUnknown(t *testing.T) {
 		t.Fatalf("Lookup(%q) = %v, want the configured provider", ProviderGoogle, googleErr)
 	}
 
-	for _, name := range []string{ProviderGitHub, "apple", "", "GOOGLE", "../google"} {
+	for _, name := range []string{ProviderGitHub, ProviderMicrosoft, "apple", "", "GOOGLE", "../google"} {
 		_, err := registry.Lookup(name)
 		if !errors.Is(err, ErrUnknownProvider) {
 			t.Errorf("Lookup(%q) = %v, want ErrUnknownProvider", name, err)

@@ -26,18 +26,20 @@ func oauthTestKey() string {
 	return base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32))
 }
 
-// oauthTestEnv is a deployment with both providers configured and nothing else
+// oauthTestEnv is a deployment with every provider configured and nothing else
 // overridden. Every endpoint test starts from it, because an endpoint override in a
 // deployment with no credentials is a deployment that does not mount the routes at
 // all.
 func oauthTestEnv() map[string]string {
 	return map[string]string{
-		OAuthRedirectBaseURLVar:    "https://identity.cafaye.com",
-		OAuthEncryptionKeyVar:      oauthTestKey(),
-		OAuthGoogleClientIDVar:     "google-id",
-		OAuthGoogleClientSecretVar: "google-secret",
-		OAuthGitHubClientIDVar:     "github-id",
-		OAuthGitHubClientSecretVar: "github-secret",
+		OAuthRedirectBaseURLVar:       "https://identity.cafaye.com",
+		OAuthEncryptionKeyVar:         oauthTestKey(),
+		OAuthGoogleClientIDVar:        "google-id",
+		OAuthGoogleClientSecretVar:    "google-secret",
+		OAuthGitHubClientIDVar:        "github-id",
+		OAuthGitHubClientSecretVar:    "github-secret",
+		OAuthMicrosoftClientIDVar:     "microsoft-id",
+		OAuthMicrosoftClientSecretVar: "microsoft-secret",
 	}
 }
 
@@ -68,6 +70,8 @@ func providerEndpoints(name string) map[string]string {
 		definition = oauth.Google()
 	case oauth.ProviderGitHub:
 		definition = oauth.GitHub()
+	case oauth.ProviderMicrosoft:
+		definition = oauth.Microsoft()
 	default:
 		return nil
 	}
@@ -94,7 +98,7 @@ func TestEveryOAuthEndpointHasAVariableAndEveryVariableHasAnEndpoint(t *testing.
 	t.Parallel()
 
 	fromDefinitions := map[string]bool{}
-	for _, provider := range []string{oauth.ProviderGoogle, oauth.ProviderGitHub} {
+	for _, provider := range []string{oauth.ProviderGoogle, oauth.ProviderGitHub, oauth.ProviderMicrosoft} {
 		for field, endpoint := range providerEndpoints(provider) {
 			if endpoint == "" {
 				continue
@@ -167,6 +171,9 @@ func TestTheEndpointOverridesReachTheBuiltAuthorizeURLAndTheTokenURL(t *testing.
 	env[OAuthGitHubTokenURLVar] = "https://idp.test/fake/github/token"
 	env[OAuthGitHubUserInfoURLVar] = "https://idp.test/fake/github/user"
 	env[OAuthGitHubEmailsURLVar] = "https://idp.test/fake/github/emails?per_page=100"
+	env[OAuthMicrosoftAuthorizeURLVar] = "https://idp.test/fake/microsoft/authorize"
+	env[OAuthMicrosoftTokenURLVar] = "https://idp.test/fake/microsoft/token"
+	env[OAuthMicrosoftUserInfoURLVar] = "https://idp.test/fake/microsoft/userinfo"
 
 	cfg, err := Load(lookupFrom(env))
 	if err != nil {
@@ -185,11 +192,16 @@ func TestTheEndpointOverridesReachTheBuiltAuthorizeURLAndTheTokenURL(t *testing.
 			userInfo:  "https://idp.test/fake/github/user",
 			emails:    "https://idp.test/fake/github/emails?per_page=100",
 		},
+		oauth.ProviderMicrosoft: {
+			authorize: "https://idp.test/fake/microsoft/authorize",
+			token:     "https://idp.test/fake/microsoft/token",
+			userInfo:  "https://idp.test/fake/microsoft/userinfo",
+		},
 	}
 
 	providers := cfg.OAuth.Providers()
-	if len(providers) != 2 {
-		t.Fatalf("Providers() returned %d, want 2", len(providers))
+	if len(providers) != 3 {
+		t.Fatalf("Providers() returned %d, want 3", len(providers))
 	}
 
 	for _, p := range providers {
@@ -231,8 +243,8 @@ func TestWithNothingSetTheEndpointsAreTheDefinitions(t *testing.T) {
 	}
 
 	providers := cfg.OAuth.Providers()
-	if len(providers) != 2 {
-		t.Fatalf("Providers() returned %d, want 2", len(providers))
+	if len(providers) != 3 {
+		t.Fatalf("Providers() returned %d, want 3", len(providers))
 	}
 
 	byName := map[string]oauth.Provider{}
@@ -240,8 +252,9 @@ func TestWithNothingSetTheEndpointsAreTheDefinitions(t *testing.T) {
 		byName[p.Name] = p
 	}
 	for name, definition := range map[string]oauth.Provider{
-		oauth.ProviderGoogle: oauth.Google(),
-		oauth.ProviderGitHub: oauth.GitHub(),
+		oauth.ProviderGoogle:    oauth.Google(),
+		oauth.ProviderGitHub:    oauth.GitHub(),
+		oauth.ProviderMicrosoft: oauth.Microsoft(),
 	} {
 		got, ok := byName[name]
 		if !ok {
@@ -273,6 +286,9 @@ func TestAMalformedEndpointOverrideFailsStartupNamingTheVariable(t *testing.T) {
 		OAuthGitHubTokenURLVar,
 		OAuthGitHubUserInfoURLVar,
 		OAuthGitHubEmailsURLVar,
+		OAuthMicrosoftAuthorizeURLVar,
+		OAuthMicrosoftTokenURLVar,
+		OAuthMicrosoftUserInfoURLVar,
 	}
 
 	for _, variable := range variables {

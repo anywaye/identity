@@ -50,6 +50,7 @@ func (s Settings) providers() []namedProvider {
 	return []namedProvider{
 		{name: ProviderGoogle, settings: s.Google},
 		{name: ProviderGitHub, settings: s.GitHub},
+		{name: ProviderMicrosoft, settings: s.Microsoft},
 	}
 }
 
@@ -86,9 +87,11 @@ type Settings struct {
 	// EncryptionKey is standard base64 of 32 bytes, which is what
 	// `head -c 32 /dev/urandom | base64` prints.
 	EncryptionKey string
-	// Google and GitHub are per provider: credentials and endpoint overrides.
-	Google ProviderSettings
-	GitHub ProviderSettings
+	// Google, GitHub and Microsoft are per provider: credentials and endpoint
+	// overrides.
+	Google    ProviderSettings
+	GitHub    ProviderSettings
+	Microsoft ProviderSettings
 }
 
 // Validate reports whether these settings can be used to serve sign-in.
@@ -174,8 +177,8 @@ func (s Settings) Enabled() bool {
 // Providers returns the fully-configured providers, each carrying this service's
 // endpoints, this deployment's overrides and the operator's credentials.
 //
-// The order is fixed — google, then github — so a startup log line naming them is
-// stable between restarts of the same configuration.
+// The order is fixed — google, github, then microsoft — so a startup log line
+// naming them is stable between restarts of the same configuration.
 func (s Settings) Providers() []Provider {
 	out := make([]Provider, 0, len(s.providers()))
 	for _, np := range s.providers() {

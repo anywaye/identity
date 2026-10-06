@@ -37,6 +37,23 @@ const (
 	// GitHubEmailsURL is the documented way to get an address whose visibility on
 	// /user is private.
 	GitHubEmailsURL = "https://api.github.com/user/emails?per_page=100"
+
+	// MicrosoftAuthorizeURL is where the browser is sent to obtain a code.
+	//
+	// The `common` tenant rather than a specific one: this service signs in
+	// personal Microsoft accounts and work/school accounts alike, and a tenant
+	// pinned at build time would be a deployment choice this service has no
+	// business making. The same reasoning as Google's and GitHub's pinned
+	// endpoints — identity is an OIDC provider, and a service that discovers
+	// its own RPs at boot is a service whose behaviour depends on what a third
+	// party served it that morning.
+	MicrosoftAuthorizeURL = "https://login.microsoftonline.com/common/oauth2/v2.0/authorize"
+	// MicrosoftTokenURL exchanges that code for a token.
+	MicrosoftTokenURL = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
+	// MicrosoftUserInfoURL is called with the access token to learn who the user
+	// is. It is Microsoft Graph's OIDC userinfo endpoint, which returns the
+	// same `sub`/`email`/`email_verified` shape Google's does.
+	MicrosoftUserInfoURL = "https://graph.microsoft.com/oidc/userinfo"
 )
 
 // ErrInvalidEndpoint means an endpoint override is a value this service cannot
