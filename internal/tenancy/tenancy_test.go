@@ -36,6 +36,8 @@ package tenancy
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -191,32 +193,16 @@ func TestTenancyIdentityOwnsItsFiveTables(t *testing.T) {
 
 	t.Run("every declared table is enabled and FORCED", func(t *testing.T) {
 		for _, table := range identityTables {
-			rows, err := conn.Query(ctx, `
-				select c.relrowsecurity, c.relforcerowsecurity,
-				       (select count(*) > 0 from pg_index i
-				         where i.indrelid = c.oid
-				           and i.indkey[0] = (select attnum from pg_attribute a
-				                               where a.attrelid = c.oid and a.attname = 'account_id')) as acct_index,
-				       (select count(*) > 0 from pg_policy p where p.polrelid = c.oid) as policies
-				  from pg_class c
-				 where c.relname = $1`, table)
-			if err != nil {
-				t.Fatalf("reading the catalog for %s: %v", table, err)
-			}
-			var enabled, forced, acctIndex, policies bool
-			if !rows.Next() {
-				rows.Close()
-				t.Fatalf("%s is not in this database at all, so 00016 protected nothing. "+
-					"Have the migrations been applied?", table)
-			}
-			if err := rows.Scan(&enabled, &forced, &acctIndex, &policies); err != nil {
-				rows.Close()
-				t.Fatalf("scan the catalog row for %s: %v", table, err)
-			}
-			rows.Close()
+			enabled, forced, acctIndex, policies := protectedCatalogRow(t, ctx, conn, table)
+			// One sentence for every finding below, decided once. Four failure
+			// messages that each restate "the catalog disagrees" is how a
+			// two-line catalog diff ends up costing a worker an hour: the
+			// messages name the disagreement and not the two things that can
+			// cause it, and both of those are things the reader can go and check.
+			why := rlsDiagnosis(enabled, policies)
 
 			if !enabled {
-				t.Errorf("%s: row level security is NOT enabled, so no policy on it is ever evaluated", table)
+				t.Errorf("%s: row level security is NOT enabled, so no policy on it is ever evaluated.%s", table, why)
 			}
 			if !forced {
 				// The one finding no lint in this fleet checks for, and the one this
@@ -224,15 +210,15 @@ func TestTenancyIdentityOwnsItsFiveTables(t *testing.T) {
 				t.Errorf("%s: NOT set FORCE ROW LEVEL SECURITY. Postgres exempts a table's owner "+
 					"from its own policies, and this service runs its migrations as the role that "+
 					"owns every table here - so the role that matters reads every account's rows "+
-					"while every policy on it sits in the catalog looking like a boundary", table)
+					"while every policy on it sits in the catalog looking like a boundary%s", table, why)
 			}
 			if !acctIndex {
 				t.Errorf("%s: no index leads with account_id. A policy is a filter on every row, so "+
-					"an unindexed one is a sequential scan behind a primary-key lookup", table)
+					"an unindexed one is a sequential scan behind a primary-key lookup%s", table, why)
 			}
 			if !policies {
 				t.Errorf("%s: row level security is enabled with no policy, which hides every row "+
-					"from every role including this service", table)
+					"from every role including this service%s", table, why)
 			}
 		}
 	})
@@ -375,6 +361,232 @@ func TestTenancyIdentityOwnsItsFiveTables(t *testing.T) {
 					role, tag.RowsAffected())
 			}
 		})
+	}
+}
+
+// catalogProof is the proof's one question about one of identity's tables,
+// answered from the catalog: is the table in `public` protected — row-level
+// security enabled, FORCED, the account_id index in place, at least one
+// policy.
+//
+// SCOPED TO public, AND THE SCOPE IS THE FIX FOR THE FLAKE OF 2026-10-06.
+// dbtest.Schema clones these same table names into test_<hex> schemas with
+// LIKE ... INCLUDING ALL — which copies the indexes and NOT the row-level
+// security — so an unscoped `where c.relname = $1` returns one row per clone
+// as well, in whatever order the heap happens to walk. A proof that reads the
+// first row of that can read a CLONE's answer — relrowsecurity false, no
+// policies — and report the public table broken, which is exactly the
+// signature the damaged days produced. The public tables were never damaged;
+// rebuilding the database "fixed" it only because a fresh database has no
+// clones to be confused with. The scope narrows nothing the proof claims:
+// identity's tables live in public, and a table that migrates elsewhere is a
+// fact the proof should report, not a row to quietly skip.
+const catalogProof = `
+	select c.relrowsecurity, c.relforcerowsecurity,
+	       (select count(*) > 0 from pg_index i
+	         where i.indrelid = c.oid
+	           and i.indkey[0] = (select attnum from pg_attribute a
+	                               where a.attrelid = c.oid and a.attname = 'account_id')) as acct_index,
+	       (select count(*) > 0 from pg_policy p where p.polrelid = c.oid) as policies
+	  from pg_class c
+	 where c.relnamespace = 'public'::regnamespace
+	   and c.relkind = 'r'
+	   and c.relname = $1`
+
+// protectedCatalogRow asks catalogProof about one table and returns the
+// answer.
+//
+// IT FAILS THE TEST UNLESS THE ANSWER IS EXACTLY ONE ROW. "Exactly one" is
+// the property the schema scope exists to guarantee — a relation name is
+// unique within a schema — and a proof that accepted two rows and read
+// either one would be the flake again with extra steps.
+func protectedCatalogRow(t *testing.T, ctx context.Context, conn *pgx.Conn, table string) (enabled, forced, acctIndex, policies bool) {
+	t.Helper()
+
+	rows, err := conn.Query(ctx, catalogProof, table)
+	if err != nil {
+		t.Fatalf("reading the catalog for %s: %v", table, err)
+	}
+	defer rows.Close()
+
+	if !rows.Next() {
+		t.Fatalf("%s is not in the public schema at all, so 00016 protected nothing. "+
+			"Have the migrations been applied?", table)
+	}
+	if err := rows.Scan(&enabled, &forced, &acctIndex, &policies); err != nil {
+		t.Fatalf("scan the catalog row for %s: %v", table, err)
+	}
+	if rows.Next() {
+		t.Fatalf("%s answered the proof's query with more than one row, which cannot happen "+
+			"within a single schema — the scope is broken and the proof is reading an arbitrary "+
+			"row again", table)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterating the catalog rows for %s: %v", table, err)
+	}
+	return enabled, forced, acctIndex, policies
+}
+
+// rlsDiagnosis is the sentence every finding in
+// "every declared table is enabled and FORCED" carries, and it is one function
+// because the two causes have to be told apart by SOMETHING and the only
+// something available is the rest of the row.
+//
+// THE TWO CAUSES, AND WHICH IS WHICH.
+//
+//   - POLICIES PRESENT, RLS OFF. This is migrations/00016's Down section, cut in
+//     half. That section disables row-level security on the five tables in five
+//     separate statements and only THEN drops their policies
+//     (migrations/00016_account_isolation.sql:1025-1056), so a replay that stops
+//     between the two groups leaves a table with all of its policies still
+//     installed and no RLS evaluating them — a boundary that looks complete and
+//     enforces nothing. psql runs a Down section one statement per transaction,
+//     so a replay is only ever atomic per statement, and a replay running
+//     against a database another suite is using is interrupted more easily than
+//     it looks: `ALTER TABLE` needs ACCESS EXCLUSIVE, and the third table is as
+//     likely to be the one a concurrent test holds a lock on as the first.
+//
+//   - POLICIES ABSENT. Not a half-finished undo: a table with no policies on it
+//     is what the migrations never produced, so this is the database not being
+//     the one these tests were written against.
+//
+// WHY THE MESSAGE SAYS SO INSTEAD OF NAMING THE SYMPTOM. The two produce the
+// same two lines of diff in a log — "NOT enabled", "NOT FORCE" — and they have
+// opposite remedies: one is somebody's interrupted migration replay and the other
+// is a database to rebuild. A reader who is handed only the first has to go and
+// work out which one they are looking at.
+func rlsDiagnosis(enabled, policies bool) string {
+	if enabled && policies {
+		return ""
+	}
+	if policies {
+		return "\n\n  Its policies are all still installed, which is the signature of 00016's Down " +
+			"section stopping between its `alter table … disable row level security` statements and the " +
+			"`drop policy` statements after them (migrations/00016_account_isolation.sql:1025-1056): " +
+			"a boundary that looks complete and enforces nothing.\n" +
+			"  A migration replay ran against this database and was interrupted part-way. psql commits " +
+			"each statement of a Down section separately, so there is no transaction to roll back, and a " +
+			"concurrent suite makes the interruption likely: `ALTER TABLE` needs ACCESS EXCLUSIVE and a " +
+			"test holding a lock on the next table blocks the replay there.\n" +
+			"  Check who is replaying migrations against TEST_DATABASE_URL — `goose down`, `goose redo`, " +
+			"`bin/migrate`, or `bin/migration-down-section | psql` — and whether one ran while this suite " +
+			"was running. Then re-apply the migrations for the branch you are testing."
+	}
+	return "\n\n  Its policies are gone as well as its row-level security, so this is not an interrupted " +
+		"undo: it is a database that does not have identity's migrations applied to it (or has had them " +
+		"rolled all the way back). Rebuild it:\n" +
+		"    goose -dir migrations postgres \"$TEST_DATABASE_URL\" up"
+}
+
+// TestTheCatalogProofReadsThePublicRowNotAClone is the regression test for
+// the flake of 2026-10-06, and it is a test of the PROOF rather than of the
+// database: it builds the thing that fooled the proof — a same-named clone
+// in a test_ schema, with the indexes and without the row-level security,
+// which is what dbtest.Schema's LIKE ... INCLUDING ALL produces — and asserts
+// the proof's query still answers with the public table's row and nothing
+// else.
+//
+// WHAT IT WOULD HAVE CAUGHT. The proof's catalog query was
+// `where c.relname = $1` with no schema filter and no ORDER BY, and it read one
+// row of what could be many. Which row came first was not the query's business:
+// with enough same-named relations in the catalog, Postgres answers that shape
+// with a Bitmap Heap Scan, which returns rows in physical heap order — and the
+// public table's physical position is NOT stable. `ANALYZE`, `TRUNCATE` and
+// `ALTER TABLE` all write a new pg_class tuple under MVCC, and a new tuple
+// version lands AFTER every clone created since the last move. `dbtest.Schema`
+// clones every one of the five tables in identityTables and drops the clone at
+// test cleanup, so a clone outlives its test whenever the suite is killed
+// mid-run — and a clone that predates the public table's current tuple is a
+// row the proof reads first: RLS off, no FORCE, no policies, and the
+// account_id index present because LIKE copies indexes. Reproduced
+// deterministically on a scratch database for this packet: with the public
+// tuple moved and 1200 clones present, the old query returns the clone's
+// (enabled=false, forced=false) for a public table that reads (true, true).
+//
+// THE COUNT IS THE DETERMINISTIC HALF, and it is the half asserted first.
+// Against the old query a clone makes it match two rows — every time, no
+// ordering luck involved — so removing the scope fails this test even on a heap
+// where the public row would have won. The unscoped query is run here on
+// purpose rather than described in a comment: a comment saying "the old query
+// was ambiguous" is a claim, and the query matching two rows is the proof of
+// it. The enabled/forced assertions are the other half: the one row read must be
+// the public table's answer, not merely A row.
+func TestTenancyCatalogProofReadsThePublicRowNotAClone(t *testing.T) {
+	ctx, conn := connect(t)
+
+	// The clone, built the way dbtest.Schema builds them. The name is random
+	// for the reason dbtest.Schema's is: two proofs running at once, or a
+	// killed run's debris, must not collide with this one.
+	var noise [6]byte
+	if _, err := rand.Read(noise[:]); err != nil {
+		t.Fatalf("generating a schema name: %v", err)
+	}
+	schema := "test_" + hex.EncodeToString(noise[:])
+
+	if _, err := conn.Exec(ctx, `create schema `+schema); err != nil {
+		t.Fatalf("creating the %s schema: %v", schema, err)
+	}
+	t.Cleanup(func() {
+		if _, err := conn.Exec(context.Background(), `drop schema if exists `+schema+` cascade`); err != nil {
+			t.Logf("dropping the %s schema: %v", schema, err)
+		}
+	})
+	if _, err := conn.Exec(ctx,
+		`create table `+schema+`.account_users (like public.account_users including all)`); err != nil {
+		t.Fatalf("cloning account_users into the %s schema: %v", schema, err)
+	}
+
+	// THE FAILURE DIRECTION, asserted before the fix is asserted. This is the
+	// query that was there before, verbatim apart from the columns: it matched
+	// every relation of that name in the whole cluster and read whichever row
+	// the plan produced first. With one clone beside the public table it matches
+	// two rows — every time, no ordering luck involved — so the assertion is
+	// about a COUNT and not about an ordering. A check that only asked which row
+	// came first would pass on a heap where the public row happened to win, and
+	// that heap is the one the flake was hiding in.
+	var sameName int
+	if err := conn.QueryRow(ctx,
+		`select count(*) from pg_class where relname = $1`, "account_users").Scan(&sameName); err != nil {
+		t.Fatalf("counting the relations named account_users: %v", err)
+	}
+	if sameName < 2 {
+		t.Fatalf("this database holds %d relation(s) named account_users, so the clone above was not "+
+			"created and the unscoped query cannot be shown to be ambiguous here. A test in that state "+
+			"proves nothing.", sameName)
+	}
+
+	// The proof's query, with a clone of the same name sitting in the catalog.
+	rows, err := conn.Query(ctx, catalogProof, "account_users")
+	if err != nil {
+		t.Fatalf("reading the catalog for account_users: %v", err)
+	}
+	defer rows.Close()
+
+	if !rows.Next() {
+		t.Fatal("the proof's query returned no row for account_users, so it proved nothing " +
+			"about the public table")
+	}
+	var enabled, forced, acctIndex, policies bool
+	if err := rows.Scan(&enabled, &forced, &acctIndex, &policies); err != nil {
+		t.Fatalf("scan the catalog row for account_users: %v", err)
+	}
+	if rows.Next() {
+		t.Fatal("the proof's query returned more than one row for account_users even " +
+			"scoped to public, which should be impossible — a name is unique within a " +
+			"schema. The scope is broken and the proof is reading an arbitrary row again")
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterating the catalog rows for account_users: %v", err)
+	}
+
+	// And the one row it did read is the PUBLIC table's answer: protected.
+	// A clone's row reads enabled=false, forced=false — the flake's signature —
+	// so this is the assertion that the scope is pointed at the right schema
+	// and not merely at one row.
+	if !enabled || !forced {
+		t.Errorf("the proof read a catalog row for account_users with enabled=%v, forced=%v — "+
+			"that is a clone's answer (or a real regression in 00016), and the proof is "+
+			"supposed to read the public table's", enabled, forced)
 	}
 }
 
