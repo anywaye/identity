@@ -644,42 +644,21 @@ func TestInviteNormalizesTheEmail(t *testing.T) {
 	}
 }
 
-// An admin may invite a member; only an owner may invite an admin. It is the one
-// asymmetry in the invite path, and it is why Invite resolves the inviter's own
-// membership rather than trusting the middleware to have checked it.
-func TestOnlyAnOwnerMayInviteAnAdmin(t *testing.T) {
-	h := newHarness(t)
-	owner := addUser(t, h.q)
-	account := h.owned(t, "Hierarchy", owner)
-	admin := h.member(t, account.ID, RoleAdmin)
-	member := h.member(t, account.ID, RoleMember)
-
-	if _, err := h.svc.Invite(t.Context(), InviteInput{
-		AccountID: account.ID, Email: dbtest.UniqueEmail(t), Role: RoleMember, InvitedBy: admin,
-	}); err != nil {
-		t.Errorf("an admin inviting a member = %v, want success", err)
-	}
-	if _, err := h.svc.Invite(t.Context(), InviteInput{
-		AccountID: account.ID, Email: dbtest.UniqueEmail(t), Role: RoleMember, InvitedBy: member,
-	}); !errors.Is(err, ErrOwnerProtected) {
-		t.Errorf("a member inviting anybody = %v, want ErrOwnerProtected", err)
-	}
-
-	// An admin inviting an admin: refused. The privilege has to be granted by
-	// somebody who already holds it, or an admin can clone themselves.
-	_, err := h.svc.Invite(t.Context(), InviteInput{
-		AccountID: account.ID, Email: dbtest.UniqueEmail(t), Role: RoleAdmin, InvitedBy: admin,
-	})
-	if !errors.Is(err, ErrRoleNotInvitable) {
-		t.Errorf("an admin inviting an admin = %v, want ErrRoleNotInvitable", err)
-	}
-
-	if _, err := h.svc.Invite(t.Context(), InviteInput{
-		AccountID: account.ID, Email: dbtest.UniqueEmail(t), Role: RoleAdmin, InvitedBy: owner,
-	}); err != nil {
-		t.Errorf("an owner inviting an admin = %v, want success", err)
-	}
-}
+// TestOnlyAnOwnerMayInviteAnAdmin is GONE from this file, and the reason is the
+// subject of get_rls_test.go and invite_members_rls_test.go.
+//
+// It asserted the invite privilege rules — an admin may invite a member, only an
+// owner may invite an admin, a member may not invite anybody — and it passed on
+// `dbtest.Schema`, where the inviter's membership read always succeeds because
+// there is no policy to filter it. Two of its four cases (an admin inviting an
+// admin, a member inviting anybody) are already
+// TestInviteFindsTheInviterUnderTheRealPolicies on `dbtest.Pool`. The other two —
+// an ADMIN inviting a member and an OWNER inviting an admin, both successes —
+// are unique, and a success is the assertion that most needs the boundary: it
+// is the inviter's row being visible and the invitation's `with check` being
+// satisfied, neither of which a policy-free schema can refuse. It now runs as
+// TestOnlyAnOwnerMayInviteAnAdminUnderTheRealPolicies in
+// invite_members_rls_test.go, against the production wiring.
 
 // Even the owner cannot invite an owner. Ownership is granted, not carried by a
 // link: an account whose owner arrives by accepting a forwarded email has an
