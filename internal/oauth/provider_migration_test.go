@@ -34,7 +34,7 @@ import (
 	"regexp"
 )
 
-// connectedAccountProviderEnum is the migration holding the `oauth_provider`
+// connectedAccountProviderFile is the migration that CREATED the `oauth_provider`
 // enum.
 //
 // A CONSTANT AND NOT A SEARCH, because a search would make the test's subject
@@ -49,16 +49,43 @@ import (
 // than under `go test ./...` from a subpackage, and would read nothing at all.
 const connectedAccountProviderFile = "../../migrations/00008_connected_accounts.sql"
 
+// connectedAccountProviderAdditions is the list of migrations that ADD VALUE to
+// the enum after the fact.
+//
+// IT IS A LIST AND NOT A SECOND CONSTANT because the whole point of the shape is
+// that a provider added after 00008 lands in a NEW migration — the rule this tree
+// writes down — and the check has to see every one of them or it is checking
+// against an enum the database no longer has. The list is walked in order and
+// each file's values are appended, so the union is what a migrated database
+// ends up with.
+//
+// A provider added to knownProviders and not to this list is the failure this
+// check exists to catch, in the direction that is silent: the Go side offers a
+// provider whose name the database refuses, and nothing reports the mismatch
+// until the first real sign-in fails at the constraint.
+var connectedAccountProviderAdditions = []string{
+	"../../migrations/00025_oauth_provider_microsoft.sql",
+}
+
 // enumPattern captures the quoted values of a `CREATE TYPE <name> AS ENUM (...)`
 // statement. It is anchored on the type name so a different enum in the same file
 // cannot be mistaken for this one.
 var enumPattern = regexp.MustCompile(`(?i)CREATE\s+TYPE\s+oauth_provider\s+AS\s+ENUM\s*\(([^)]*)\)`)
 
+// addValuePattern captures the quoted value of an `ALTER TYPE <name> ADD VALUE`
+// statement. Anchored on the type name for the same reason as enumPattern.
+var addValuePattern = regexp.MustCompile(`(?i)ALTER\s+TYPE\s+oauth_provider\s+ADD\s+VALUE\s+'([^']*)'`)
+
 // quotedPattern captures one single-quoted SQL string literal.
 var quotedPattern = regexp.MustCompile(`'([^']*)'`)
 
 // connectedAccountProviderEnum reads the `oauth_provider` enum out of the
-// migration, or reports ok=false when it cannot.
+// migrations, or reports ok=false when it cannot.
+//
+// THE SUBJECT IS THE UNION: the values 00008 created plus every value a later
+// migration added. A check that read only the CREATE TYPE would report agreement
+// on the day a provider is added — the one day it is worth anything — because the
+// new name would be missing from both sides of its comparison.
 func connectedAccountProviderEnum() (names []string, ok bool) {
 	raw, err := os.ReadFile(connectedAccountProviderFile)
 	if err != nil {
@@ -77,6 +104,16 @@ func connectedAccountProviderEnum() (names []string, ok bool) {
 	// distinction would be lost, so an empty read is treated as a failed read.
 	if len(names) == 0 {
 		return nil, false
+	}
+
+	for _, file := range connectedAccountProviderAdditions {
+		raw, err := os.ReadFile(file)
+		if err != nil {
+			return nil, false
+		}
+		for _, m := range addValuePattern.FindAllSubmatch(raw, -1) {
+			names = append(names, string(m[1]))
+		}
 	}
 	return names, true
 }

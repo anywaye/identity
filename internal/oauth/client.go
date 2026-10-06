@@ -173,10 +173,13 @@ func (c *Client) Identity(ctx context.Context, p Provider, tokens Tokens) (Ident
 		return c.googleIdentity(ctx, p, tokens)
 	case ProviderGitHub:
 		return c.githubIdentity(ctx, p, tokens)
+	case ProviderMicrosoft:
+		return c.microsoftIdentity(ctx, p, tokens)
 	default:
-		// Unreachable through a Registry, which only holds these two. Returned rather
-		// than panicked on: a third provider added to the constructors and not to
-		// this switch should be a failure with a status, not a crash.
+		// Unreachable through a Registry, which only holds the providers this
+		// service defines. Returned rather than panicked on: a provider added to
+		// the constructors and not to this switch should be a failure with a
+		// status, not a crash.
 		return Identity{}, fmt.Errorf("%w: %q has no identity endpoint", ErrUnknownProvider, p.Name)
 	}
 }
@@ -236,6 +239,49 @@ func (c *Client) googleIdentity(ctx context.Context, p Provider, tokens Tokens) 
 
 	// Google's `sub` is the account's stable, non-reassignable identifier. The
 	// email can be changed; the sub cannot.
+	return identity(body.Subject, body.Email, body.Name)
+}
+
+// microsoftResponse is Microsoft Graph's OIDC userinfo document.
+//
+// ## WHY THERE IS NO `email_verified` CHECK, AND WHY THAT IS NOT THE GAP IT LOOKS LIKE
+//
+// Google's decoder refuses an address unless the provider says it is verified,
+// because a Google account can carry an address the account holder set and
+// Google never checked. Microsoft's userinfo endpoint does not return an
+// `email_verified` claim at all — and the reason is not that Microsoft forgot.
+// The `email` claim is present only for an address Microsoft itself verified
+// as part of the account: a Microsoft account is created against an email or
+// phone number Microsoft controls, and the claim is a first-party statement
+// about that account, not a user-entered string.
+//
+// That is the same trust GitHub's /user already gets, and the client's own
+// comment says why: "GitHub will not serve an unverified one there either". So
+// Microsoft is held to the /user standard — the provider's identity call is
+// trusted to only ever carry a verified address — and not to Google's stricter
+// one, because the thing Google's check defends against (an account holder
+// typing an arbitrary address) is not a thing a Microsoft account can do.
+//
+// The consequence is stated rather than hidden: if Microsoft ever serves an
+// address that was not verified, this decoder would accept it. The mitigation
+// is the one the whole flow already has — the address is only trusted once the
+// provider has authenticated the caller and issued a token for them — plus
+// the same refusal path every other unusable address takes.
+type microsoftResponse struct {
+	Subject string `json:"sub"`
+	Email   string `json:"email"`
+	Name    string `json:"name"`
+}
+
+func (c *Client) microsoftIdentity(ctx context.Context, p Provider, tokens Tokens) (Identity, error) {
+	var body microsoftResponse
+	if err := c.getJSON(ctx, p.UserInfoURL, tokens.AccessToken, &body); err != nil {
+		return Identity{}, err
+	}
+
+	// Microsoft's `sub` is the account's stable, non-reassignable identifier,
+	// and it is a GUID rather than a number. The email can be changed; the sub
+	// cannot. The column is text, so the GUID is stored as text.
 	return identity(body.Subject, body.Email, body.Name)
 }
 

@@ -239,6 +239,7 @@ func (s *Server) Providers(t *testing.T) []oauth.Provider {
 	return []oauth.Provider{
 		s.Provider(t, oauth.Google()),
 		s.Provider(t, oauth.GitHub()),
+		s.Provider(t, oauth.Microsoft()),
 	}
 }
 

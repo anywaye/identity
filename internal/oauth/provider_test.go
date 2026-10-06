@@ -94,6 +94,11 @@ func TestTheProviderDefinitionsAreFixed(t *testing.T) {
 	}{
 		{name: "google", provider: Google(), wantName: ProviderGoogle, wantOpts: 1},
 		{name: "github", provider: GitHub(), wantName: ProviderGitHub, emails: true},
+		// Microsoft carries no extra authorize option — its offline access is a
+		// SCOPE, not a parameter, and sending Google's access_type to it would be
+		// the same noise in the other direction — and no emails endpoint, because
+		// its userinfo carries the address itself.
+		{name: "microsoft", provider: Microsoft(), wantName: ProviderMicrosoft},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -425,7 +430,7 @@ func TestLookupOnAnEmptyRegistryRefusesEverything(t *testing.T) {
 		t.Fatalf("NewRegistry: %v", err)
 	}
 
-	for _, name := range []string{ProviderGoogle, ProviderGitHub, "apple", ""} {
+	for _, name := range []string{ProviderGoogle, ProviderGitHub, ProviderMicrosoft, "apple", ""} {
 		if _, err := registry.Lookup(name); !errors.Is(err, ErrUnknownProvider) {
 			t.Errorf("Lookup(%q) on an empty registry = %v, want ErrUnknownProvider", name, err)
 		}
