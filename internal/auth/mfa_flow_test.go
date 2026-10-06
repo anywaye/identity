@@ -17,6 +17,7 @@ import (
 	"github.com/cafaye/identity/internal/platform/dbtest"
 	"github.com/cafaye/identity/internal/platform/id"
 	"github.com/cafaye/identity/internal/sessions"
+	"github.com/cafaye/identity/internal/useraudit"
 	"github.com/cafaye/identity/internal/users"
 )
 
@@ -413,6 +414,9 @@ func TestAServiceWithNoSecondFactorDependencyRefusesToLogIn(t *testing.T) {
 		// is about the MISSING SECOND FACTOR, and a nil here would make every
 		// answer it reads about the login irrelevant.
 		oidc.NewStore(pool),
+		// And the writer, for the sibling reason: one deliberately-unwired dependency
+		// per fixture, or a test cannot tell which one it is proving.
+		useraudit.NewStore(pool),
 		users.NewHasherWithParams(&argon2id.Params{
 			Memory: 8 * 1024, Iterations: 1, Parallelism: 1, SaltLength: 16, KeyLength: 32,
 		}),

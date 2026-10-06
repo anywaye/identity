@@ -75,10 +75,21 @@ type fakeAuth struct {
 	registered []auth.RegisterInput
 	loggedIn   []auth.LoginInput
 	loggedOut  []string
+	// disableInputs and enableInputs are the WHOLE input the operator surface passed
+	// down, in order.
+	//
+	// THE WHOLE INPUT AND NOT THE SUBJECT ID, and disabled-04 is why: the use case
+	// writes an audit row naming the operator, so a test asserting only that "the
+	// right user was disabled" would pass against a handler that sent the actor's
+	// ids as zeroes, or swapped them with the subject's. The fields are kept together
+	// for the same reason disabledAt was kept beside disabled — a test asserting one
+	// call's actor and subject wants them as one fact, not as two parallel slices
+	// that could disagree about which entry they belong to.
+	disableInputs []auth.DisableInput
+	enableInputs  []auth.EnableInput
 	// disabled and enabled are the user ids the operator surface asked about, in
-	// order. disabledAt is the instant Disable was handed, kept beside disabled
-	// rather than as a parallel slice because a test asserting one call's instant
-	// wants the two as one fact.
+	// order, kept because most existing assertions are about the subject and reading
+	// a subject out of a struct is a worse way to say it.
 	disabled   []id.UUID
 	disabledAt []time.Time
 	enabled    []id.UUID
@@ -162,18 +173,20 @@ func (f *fakeAuth) Logout(_ context.Context, token string) error {
 // terms as every other method on this double: what is under test at the router is
 // the credential gate and the mapping, and the transaction `auth.Service.Disable`
 // runs is internal/auth's to hold against a real database.
-func (f *fakeAuth) Disable(_ context.Context, userID id.UUID, at time.Time) error {
+func (f *fakeAuth) Disable(_ context.Context, in auth.DisableInput) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.disabled = append(f.disabled, userID)
-	f.disabledAt = append(f.disabledAt, at)
+	f.disableInputs = append(f.disableInputs, in)
+	f.disabled = append(f.disabled, in.UserID)
+	f.disabledAt = append(f.disabledAt, in.At)
 	return f.disableErr
 }
 
-func (f *fakeAuth) Enable(_ context.Context, userID id.UUID) error {
+func (f *fakeAuth) Enable(_ context.Context, in auth.EnableInput) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.enabled = append(f.enabled, userID)
+	f.enableInputs = append(f.enableInputs, in)
+	f.enabled = append(f.enabled, in.UserID)
 	return f.enableErr
 }
 
@@ -1149,9 +1162,9 @@ func (panickingAuth) Logout(context.Context, string) error {
 // They are here rather than inherited from fakeAuth because this double's whole
 // claim is that EVERY method blows up, and a missing one would make that claim a
 // narrower statement than it reads as.
-func (panickingAuth) Disable(context.Context, id.UUID, time.Time) error {
+func (panickingAuth) Disable(context.Context, auth.DisableInput) error {
 	panic("handler exploded")
 }
-func (panickingAuth) Enable(context.Context, id.UUID) error {
+func (panickingAuth) Enable(context.Context, auth.EnableInput) error {
 	panic("handler exploded")
 }

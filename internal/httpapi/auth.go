@@ -15,7 +15,6 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/cafaye/identity/internal/auth"
-	"github.com/cafaye/identity/internal/platform/id"
 	"github.com/cafaye/identity/internal/telemetry"
 	"github.com/cafaye/identity/internal/users"
 )
@@ -70,8 +69,16 @@ type Auth interface {
 	// scope a caller needs is `users:disable` and no account role reaches it. A
 	// handler cannot be the only thing standing between a tenant and a colleague in
 	// another tenant.
-	Disable(ctx context.Context, userID id.UUID, at time.Time) error
-	Enable(ctx context.Context, userID id.UUID) error
+	//
+	// BOTH TAKE AN INPUT STRUCT RATHER THAN A USER ID AND A CLOCK, and disabled-04 is
+	// why. Each writes a row naming the operator who asked, so the use case has to be
+	// TOLD who asked — and `Disable(ctx, userID, at)` had nowhere to put two actor
+	// ids and a trace id. Passing them positionally would have put a uuid beside the
+	// subject's uuid with nothing in the signature to say which was which, which is
+	// the one mistake this signature is now shaped to make impossible: an audit row
+	// blaming the subject for their own disable is worse than no row at all.
+	Disable(ctx context.Context, in auth.DisableInput) error
+	Enable(ctx context.Context, in auth.EnableInput) error
 }
 
 // WithAuth mounts the v1 routes.

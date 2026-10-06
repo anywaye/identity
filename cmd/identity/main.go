@@ -42,6 +42,7 @@ import (
 	"github.com/cafaye/identity/internal/recovery"
 	"github.com/cafaye/identity/internal/sessions"
 	"github.com/cafaye/identity/internal/telemetry"
+	"github.com/cafaye/identity/internal/useraudit"
 	"github.com/cafaye/identity/internal/users"
 )
 
@@ -487,6 +488,17 @@ func buildAuth(
 		// See that error for why the degraded "revoked the sessions, left the
 		// tokens" is not on the table.
 		oidc.NewStore(pool),
+		// The user_audit_log writer. IT IS NOT AN OPTIONAL ARGUMENT, and
+		// `auth.ErrNoUserAuditRecorder` is what a nil here would produce at the first
+		// disable rather than at boot — the same wiring argument as the revoker above,
+		// and the same answer: a disable that revokes and does not record is the gap
+		// disabled-04 exists to close, so degrading into it is not on the table.
+		//
+		// `*useraudit.Store` satisfies `auth.UserAuditRecorder` by signature, taking
+		// the transaction's querier rather than its own pool — which is what puts the
+		// audit row in the SAME transaction as the revocations and the column write
+		// rather than beside them.
+		useraudit.NewStore(pool),
 		// Built once by newApp and shared with the recovery surface, because the
 		// constructor derives a dummy digest in the login's timing equaliser and a
 		// second Hasher would derive a second one for the same purpose.

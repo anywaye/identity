@@ -43,7 +43,14 @@ type operatorFixture struct {
 	// by accident.
 	subject   id.UUID
 	keyHolder id.UUID
-	apiKey    string
+	// keyID is the api key's own row id. It is kept beside keyHolder because
+	// disabled-04 needs all THREE apart from each other: the subject is in the path,
+	// the actor's user is the token's holder, and the actor's KEY is a third value
+	// that neither of the others can stand in for. A fixture with two ids could not
+	// tell a handler that threaded the actor through from one that filled both
+	// columns with the holder's id.
+	keyID  id.UUID
+	apiKey string
 	// strangerToken is token-shaped and resolves to nothing, which is the 401 row.
 	strangerToken string
 	session       string
@@ -70,11 +77,23 @@ func newOperatorFixtureWithGrant(t *testing.T, scopes []string) *operatorFixture
 
 	auth := newFakeAuth()
 	keyHolder := id.MustNew()
+	keyID := id.MustNew()
+	// THE KEY'S OWNER IS THE CALLER, and this line makes the fixture say so. It was
+	// incoherent before: the key declared `UserID: keyHolder` while the caller the
+	// fake resolved carried `newFakeAuth`'s fixed user, so the two disagreed about
+	// who was holding the token.
+	//
+	// That mattered once the route started THREADING the actor rather than discarding
+	// it, because there is now one question with a right answer and the fixture gave
+	// two. Production cannot be incoherent — `apikeys.Caller` resolves the key's owner
+	// and the row together, and `actor_user_id` is that person's id — so a fixture that
+	// says otherwise would have been asserting a state no deployment can reach.
+	auth.user = users.User{ID: keyHolder, Email: auth.user.Email}
 	return &operatorFixture{
 		handler: New(nil,
 			WithAuth(auth),
 			WithAPIKeyCaller(newFakeAPIKeyCaller(auth.user, apikeys.Key{
-				ID:     id.MustNew(),
+				ID:     keyID,
 				UserID: keyHolder,
 				// An account id nothing else in this file knows. The route names no
 				// account and never consults one, and a test that started passing
@@ -88,6 +107,7 @@ func newOperatorFixtureWithGrant(t *testing.T, scopes []string) *operatorFixture
 		auth:          auth,
 		subject:       id.MustNew(),
 		keyHolder:     keyHolder,
+		keyID:         keyID,
 		apiKey:        apiKeySecret,
 		strangerToken: scopedTokenForTheMatrix,
 		session:       "a-session-token",
@@ -177,6 +197,113 @@ func TestTheDisabledSubjectIsTheOneThePathNames(t *testing.T) {
 		t.Error("the route disabled the CALLER. The subject is named in the path and is not " +
 			"the caller, which is the whole reason this route needs a scope rather than a session")
 	}
+}
+
+// THE ACTOR REACHES THE USE CASE, and this is the assertion the packet needs at this
+// layer.
+//
+// `requireOperatorToken` resolved the caller and — until disabled-04 — threw it away,
+// which was correct while nothing downstream wanted it. Now the use case writes a row
+// naming this operator and this api key, and a route that dropped the caller on the
+// floor would produce an audit row with zero ids in it: a record of a decision with no
+// responsible party, which is the one thing this table exists to prevent.
+//
+// IT ASSERMS ALL THREE IDS SEPARATELY, because they are three different values and a
+// single "the actor is right" check could not tell a handler that threaded the key
+// through from one that wrote the holder's id into both columns.
+func TestTheOperatorRouteHandsTheUseCaseItsOwnIdentity(t *testing.T) {
+	f := newOperatorFixture(t)
+
+	if rec := f.send(t, "disable", f.apiKey); rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204; body: %s", rec.Code, rec.Body)
+	}
+
+	if len(f.auth.disableInputs) != 1 {
+		t.Fatalf("the use case was asked %d times, want 1", len(f.auth.disableInputs))
+	}
+	in := f.auth.disableInputs[0]
+
+	if in.ActorKeyID != f.keyID {
+		t.Errorf("the input's actor KEY is %s, want the presented key's row id %s. Without it the "+
+			"audit row names no credential, and 'somebody' is not an answer an incident review "+
+			"can use — it is the id an operator revokes by.", in.ActorKeyID, f.keyID)
+	}
+	if in.ActorUserID != f.keyHolder {
+		t.Errorf("the input's actor USER is %s, want the token holder %s", in.ActorUserID, f.keyHolder)
+	}
+	if in.UserID != f.subject {
+		t.Errorf("the input's SUBJECT is %s, want the path's %s", in.UserID, f.subject)
+	}
+
+	// The trace id, and it must be the REQUEST's rather than an invented one: it is
+	// what joins the audit row to the request's log line, and a value generated
+	// anywhere else would desynchronise the header from the row.
+	if in.TraceID == "" {
+		t.Error("the input carries no trace id, so the audit row cannot be joined to the " +
+			"request's log line")
+	}
+
+	// The enable direction carries the same actor, and it is a separate assertion
+	// because the two handlers are separate functions.
+	if rec := f.send(t, "enable", f.apiKey); rec.Code != http.StatusNoContent {
+		t.Fatalf("re-enabling: status = %d, want 204; body: %s", rec.Code, rec.Body)
+	}
+	if len(f.auth.enableInputs) != 1 {
+		t.Fatalf("the use case was asked to enable %d times, want 1", len(f.auth.enableInputs))
+	}
+	en := f.auth.enableInputs[0]
+	if en.ActorKeyID != f.keyID || en.ActorUserID != f.keyHolder || en.UserID != f.subject {
+		t.Errorf("the enable's input is {%s, %s, %s}, want subject %s, holder %s, key %s. A "+
+			"re-enable that records nobody leaves a trail saying the person is still disabled.",
+			en.UserID, en.ActorUserID, en.ActorKeyID, f.subject, f.keyHolder, f.keyID)
+	}
+}
+
+// TestARefusedOperatorRouteNeverCarriesACaller is the negative direction, and it is
+// what makes the previous test's ordering mean something.
+//
+// `requireOperatorToken` puts the caller on the context only after the scope check,
+// so a route answering 403 or 401 must not be running with an authenticated caller in
+// its context. A context that carries a credential a request was REFUSED for is a
+// context that lies, and the next thing written from it would be an audit row naming
+// an operator whose request did not happen.
+func TestARefusedOperatorRouteNeverCarriesACaller(t *testing.T) {
+	tests := []struct {
+		name       string
+		credential string
+	}{
+		// A session: refused at the credential gate, before anything is resolved.
+		{"a session", "session"},
+		// A token-shaped value that resolves to no key: the 401 row.
+		{"a stranger's token", "strangerToken"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newOperatorFixture(t)
+
+			if rec := f.send(t, "disable", tt.credential); rec.Code == http.StatusNoContent {
+				t.Fatalf("status = 204 for %s, want a refusal", tt.name)
+			}
+			if len(f.auth.disableInputs) != 0 {
+				t.Errorf("a refused request still reached the use case %d time(s): %+v",
+					len(f.auth.disableInputs), f.auth.disableInputs)
+			}
+		})
+	}
+
+	// And the scope case: a caller that IS authenticated but does not hold the scope.
+	// This is the one where the caller genuinely exists, so it is the one where a
+	// context set before the check would go unnoticed.
+	t.Run("a credential without the scope", func(t *testing.T) {
+		f := newOperatorFixtureWithGrant(t, []string{})
+
+		if rec := f.send(t, "disable", f.apiKey); rec.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403", rec.Code)
+		}
+		if len(f.auth.disableInputs) != 0 {
+			t.Errorf("an under-scoped caller reached the use case: %+v", f.auth.disableInputs)
+		}
+	})
 }
 
 // TestDisablingIsRepeatableAndNeitherDirectionInspectsTheAccountsState is the

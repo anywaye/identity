@@ -298,6 +298,7 @@ type fixture struct {
 	tenancy  *fakeTenancy
 	mfa      *fakeSecondFactor
 	access   *fakeAccessRevoker
+	audit    *fakeAuditRecorder
 	uow      *fakeUnitOfWork
 	reader   *fakeReader
 	clock    *clock.Fake
@@ -340,6 +341,7 @@ func newFixture() *fixture {
 
 	f.mfa = newFakeSecondFactor()
 	f.access = &fakeAccessRevoker{}
+	f.audit = &fakeAuditRecorder{}
 	f.svc = NewService(
 		f.uow,
 		f.reader,
@@ -349,6 +351,11 @@ func newFixture() *fixture {
 		f.tenancy,
 		f.mfa,
 		f.access,
+		// disabled-04: the recorder is a required dependency beside the revoker, and
+		// it is wired in EVERY fixture rather than only in the tests that care, so a
+		// test in another file cannot accidentally pass against an implementation that
+		// skipped a nil recorder — because nothing would ever have been nil.
+		f.audit,
 		users.NewHasherWithParams(&argon2id.Params{
 			Memory: 8 * 1024, Iterations: 1, Parallelism: 1, SaltLength: 16, KeyLength: 32,
 		}),
@@ -377,6 +384,41 @@ func newFixtureWithoutAccessRevoker() *fixture {
 		f.events,
 		f.tenancy,
 		f.mfa,
+		nil,
+		// The recorder stays WIRED here on purpose. This fixture is about the missing
+		// SWEEPER; leaving the recorder out as well would mean the test reached
+		// ErrNoAccessTokenRevoker with two things missing, so it would keep passing
+		// if the two refusals were ever collapsed into one. One fault per fixture is
+		// what makes "the nil sweep is what stopped it" a fact.
+		f.audit,
+		users.NewHasherWithParams(&argon2id.Params{
+			Memory: 8 << 10, Iterations: 1, Parallelism: 1, SaltLength: 16, KeyLength: 32,
+		}),
+		f.clock,
+		24*time.Hour,
+	)
+	return f
+}
+
+// newFixtureWithoutAuditRecorder wires the same service with the AUDIT WRITER missing.
+//
+// The sibling of newFixtureWithoutAccessRevoker, and it exists for the same reason:
+// "an unwired recorder must not silently skip" is a property of the constructor as
+// well as of the use case, and this is the only way a test can reach the nil that a
+// mistake in `cmd/identity` would produce. Every other fixture wires a working one.
+func newFixtureWithoutAuditRecorder() *fixture {
+	f := newFixture()
+	f.svc = NewService(
+		f.uow,
+		f.reader,
+		f.users,
+		f.sessions,
+		f.events,
+		f.tenancy,
+		f.mfa,
+		// The revoker stays WIRED, for the reason the recorder stays wired in the
+		// sibling fixture: one missing thing at a time.
+		f.access,
 		nil,
 		users.NewHasherWithParams(&argon2id.Params{
 			Memory: 8 << 10, Iterations: 1, Parallelism: 1, SaltLength: 16, KeyLength: 32,
@@ -434,14 +476,14 @@ func ptr(t time.Time) *time.Time { return &t }
 // the same reason production does — the row is gone.
 func (f *fixture) disable(t *testing.T, userID id.UUID) {
 	t.Helper()
-	if err := f.svc.Disable(context.Background(), userID, f.clock.Now()); err != nil {
+	if err := f.svc.Disable(context.Background(), disableFor(userID, f.clock.Now())); err != nil {
 		t.Fatalf("Disable: %v", err)
 	}
 }
 
 func (f *fixture) enable(t *testing.T, userID id.UUID) {
 	t.Helper()
-	if err := f.svc.Enable(context.Background(), userID); err != nil {
+	if err := f.svc.Enable(context.Background(), enableFor(userID, f.clock.Now())); err != nil {
 		t.Fatalf("Enable: %v", err)
 	}
 }
