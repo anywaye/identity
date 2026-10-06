@@ -318,52 +318,23 @@ func TestCreateRejectsATakenSlugThroughTheService(t *testing.T) {
 	}
 }
 
-func TestGetIsInvisibleToANonMember(t *testing.T) {
-	h := newHarness(t)
-	owner := addUser(t, h.q)
-	stranger := addUser(t, h.q)
-	account := h.owned(t, "Private", owner)
-
-	if _, _, err := h.svc.Get(t.Context(), account.ID, owner); err != nil {
-		t.Fatalf("the owner cannot read their own account: %v", err)
-	}
-
-	// ErrNotAMember, not ErrNotFound: this package tells the two apart so the
-	// HTTP layer can decide, and what the HTTP layer must then do is render them
-	// identically.
-	if _, _, err := h.svc.Get(t.Context(), account.ID, stranger); !errors.Is(err, ErrNotAMember) {
-		t.Errorf("a stranger reading the account = %v, want ErrNotAMember", err)
-	}
-	if _, _, err := h.svc.Get(t.Context(), id.MustNew(), owner); !errors.Is(err, ErrNotAMember) {
-		t.Errorf("reading a missing account = %v, want ErrNotAMember — it must be indistinguishable from not being a member", err)
-	}
-}
-
-func TestListMineIsScopedToTheCaller(t *testing.T) {
-	h := newHarness(t)
-	mine := addUser(t, h.q)
-	theirs := addUser(t, h.q)
-
-	h.owned(t, "Mine One", mine)
-	h.owned(t, "Mine Two", mine)
-	h.owned(t, "Theirs", theirs)
-
-	got, err := h.svc.ListMine(t.Context(), mine)
-	if err != nil {
-		t.Fatalf("ListMine: %v", err)
-	}
-	if len(got) != 2 {
-		t.Errorf("ListMine returned %d accounts, want 2: %+v", len(got), got)
-	}
-	for _, m := range got {
-		if m.Account.Name == "Theirs" {
-			t.Error("ListMine returned somebody else's account")
-		}
-		if m.Role != RoleOwner {
-			t.Errorf("%q has role %q, want %q", m.Account.Name, m.Role, RoleOwner)
-		}
-	}
-}
+// TestGetIsInvisibleToANonMember and TestListMineIsScopedToTheCaller are GONE
+// from this file, and the reason is the whole subject of get_rls_test.go.
+//
+// Both asserted a property of the account boundary — "a non-member cannot read
+// this account", "this list is scoped to the caller" — and both passed on
+// `dbtest.Schema`, whose tables are cloned with `LIKE … INCLUDING ALL` and
+// therefore carry NO row-level security. A test that asserts a boundary
+// property and passes against a table where every row is visible to every
+// caller is not testing the boundary; it is testing the query.
+//
+// They now run against `dbtest.Pool` — the public tables, the app role, the
+// policies live — as TestGetFindsTheCallersOwnAccountUnderTheRealPolicies and
+// TestListMineIsScopedToTheCallerUnderTheRealPolicies in get_rls_test.go. That
+// is the only arrangement in which the assertions can fail for the right
+// reason: with the policies installed, a missing `tenancy.BeginUser` makes
+// `Get` refuse the owner their own account and `ListMine` answer `[]` to a user
+// who owns one, which is exactly the defects those two use cases had.
 
 func TestInviteLifecycle(t *testing.T) {
 	h := newHarness(t)
