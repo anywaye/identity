@@ -420,11 +420,40 @@ services:
     # with the driver disabled a panic is in `docker logs identity-compose-identity-1`,
     # which a developer reads; with it misconfigured the container does not start
     # and there is no log anywhere.
-    logging:
-      driver: syslog
-      options:
-        syslog-address: "${IDENTITY_SYSLOG_ADDRESS:-tcp://otel-collector:15514}"
-        tag: "identity"
+    # NO LOG-DRIVER OVERRIDE.
+    #
+    # There used to be a `syslog` driver stanza here pointing at
+    # `tcp://otel-collector:15514`, kept for a "crash layer". It is gone because
+    # on Docker Desktop / OrbStack it is not a crash layer, it is a STARTUP
+    # BLOCKER, and it fails the one way that is hardest to read:
+    #
+    #   failed to create task for container: failed to initialize logging
+    #   driver: dial tcp: lookup otel-collector on 0.250.250.200:53: no such host
+    #
+    # The container never starts. There is no log to read, because the log
+    # driver is the thing that failed. The daemon resolves the address in the
+    # HOST namespace, not the container's, so the embedded DNS that answers
+    # `otel-collector` correctly inside the platform network (127.0.0.11 ->
+    # 192.168.147.6) is never consulted; the host's resolver is, and it cannot
+    # see container names. The collector publishes no ports to the host either,
+    # so there is no host-reachable address to point at instead.
+    #
+    # The workaround this replaces was a hand-copied container IP in `.env` —
+    # the address moves every time the network is recreated, so `bin/dev nuke`
+    # broke it again, and the loop was documented as needing two runs.
+    #
+    # NOTHING IS LOST, and the in-process exporter is the reason. This service
+    # already speaks OTLP to the collector itself (`telemetry is on`,
+    # OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318), and that path
+    # is resolved INSIDE the container network, where the embedded DNS answers.
+    # The syslog driver was a second, redundant route to the same receiver.
+    # Container stdout and stderr — which is where a panic actually lands —
+    # are captured by the default `json-file` driver and read with
+    # `docker logs`, on every host, with no DNS involved.
+    #
+    # If you want forwarded crash logs back, publish the collector's syslog
+    # port to the host and point this at `host.docker.internal:<port>`, which
+    # the daemon CAN resolve. Do not reintroduce a container name here.
 
     # The database, and ONLY the database. Not the collector, for the reason at
     # the top of this file.
