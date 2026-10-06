@@ -1,4 +1,4 @@
--- 00023_user_deletion_set_null.sql — let a person actually leave.
+-- 00024_user_deletion_set_null.sql — let a person actually leave.
 --
 -- Four columns name a user with `ON DELETE RESTRICT`, and every one of them is
 -- there to protect a record SOMEBODY ELSE OWNS. Between them they decide whether
