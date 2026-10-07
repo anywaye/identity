@@ -1,25 +1,26 @@
 #!/bin/sh
 # The gate for a Go repository in the cafaye org. Download, build, test.
 #
-#   bin/prime
+#   bin/prime          the whole gate: every package, against the real database
+#   bin/prime --fast   the non-database tier only, for the inner loop
 #
 # This began as a copy of kit's Go template and has since DIVERGED from it in
 # ways worth stating rather than leaving to be discovered. kit's
 # templates/bin-prime/go.sh is `#!/usr/bin/env bash` with `set -euo pipefail`,
 # a `--fast` argument, `require go`/`require git` preflight checks, `go vet`,
-# and a closing `prime ok` line. This file is POSIX `/bin/sh`, takes no
-# arguments, and runs three commands. That is a deliberate narrowing — the
-# service needs none of kit's extras — EXCEPT that it also lost `-count=1`, which
-# was not a narrowing but a hole, and which is restored below. `if kit changes
-# it, follow kit` still holds, and this file is now closer to kit than it was.
+# and a closing `prime ok` line. This file is POSIX `/bin/sh` and runs three
+# commands. That is a deliberate narrowing — the service needs none of kit's
+# extras — EXCEPT that it also lost `-count=1`, which was not a narrowing but
+# a hole, and which is restored below. `if kit changes it, follow kit` still
+# holds, and this file is now closer to kit than it was.
 #
 # The shebang is load-bearing and it was MISSING from this file until
 # gate.yml (packet identity-13-gate). This file has the executable bit and no
 # interpreter line, so execve(2) on it fails with ENOEXEC. A shell running
 # `./bin/prime` never notices — bash and zsh both fall back to interpreting a
-# shebang-less file themselves — which is why a developer and CI were both green
-# while `core`'s `harness/gate_check.py`, which runs the declared gate with
-# subprocess and NO shell, could not start it at all:
+# shebang-less file themselves — which is why a developer and CI were both
+# green while `core`'s `harness/gate_check.py`, which runs the declared gate
+# with subprocess and NO shell, could not start it at all:
 #
 #     FAIL gate.command-missing: gate.command could not be started:
 #          [Errno 8] Exec format error: 'bin/prime'
@@ -29,10 +30,115 @@
 # time in identity-01 and nothing noticed for twelve packets. `/bin/sh` and not
 # bash: the body is three POSIX commands and `set -eu`, so the more portable
 # interpreter is the honest one, and the divergence is recorded above.
+#
+# `--fast` IS THE ONE ARGUMENT, and it is not a second gate. It runs the same
+# download and build, then the COMPLEMENT of the database tier declared in
+# gate.yml, and it refuses to run if that declaration has rotted. See the flag
+# block below for why the refusal matters more than the speed.
 set -eu
+
+fast=0
+if [ "$#" -gt 0 ]; then
+  if [ "$1" = "--fast" ] && [ "$#" -eq 1 ]; then
+    fast=1
+  else
+    printf 'bin/prime: unknown argument %s; the only flag is --fast\n' "$1" >&2
+    exit 2
+  fi
+fi
 
 go mod download
 go build ./...
+
+if [ "$fast" -eq 1 ]; then
+  # -------------------------------------------------------------------
+  # THE FAST TIER. WHY IT EXISTS: measured on this tree the full gate is
+  # ~335s wall and 1732 of its 1989 tests sit in the 16 packages that open
+  # a pool. A developer fixing a typo in internal/telemetry waits five
+  # minutes to learn that the database tier — which their change cannot
+  # affect — still passes. The fast tier runs the other 13 packages in
+  # well under a minute.
+  #
+  # WHAT IT DOES NOT DO, and saying so is the point: no database, no
+  # provisioning, no migration, no pool. `go mod download` and
+  # `go build ./...` still run, because a fast tier that skips the build
+  # proves nothing about compiling.
+  #
+  # THE PACKAGE LIST IS DECLARED, not hand-copied into a shell line. The
+  # db tier lives in gate.yml as `#   db-tier: ` marker lines — core's
+  # gate.schema.json forbids a new key (`additionalProperties: false`),
+  # so the declaration rides in the file's existing comment structure —
+  # and this block computes the COMPLEMENT over `go list ./...`.
+  #
+  # THE ANTI-ROT CHECK, which is the point of the flag. A package whose
+  # test binary links internal/platform/dbtest but is NOT in the
+  # declared tier fails the gate here, naming the package. Without it a
+  # new db package is silently excluded from the fast tier and the tier
+  # drifts into lying about what it proved. Proven red two ways:
+  # internal/platform/ci/fast_tier_test.go (the declaration against
+  # `go list`) and TestTheFastTierRefusesAnUndeclaredPoolPackage (this
+  # script, with a stubbed `go`).
+  #
+  # AND IT IS NOT THE GATE. CI and gate.yml run `bin/prime` unmodified;
+  # every proof in gate.yml is a full-gate proof. A fast tier that became
+  # the declared gate would be a gate that never looks at the database.
+  # -------------------------------------------------------------------
+  db_tier=$(sed -n 's/^#   db-tier: //p' gate.yml)
+
+  tmp=$(mktemp -d)
+  trap 'rm -rf "$tmp"' EXIT
+  go list ./... | sort > "$tmp/all.txt"
+  printf '%s\n' "$db_tier" | sort > "$tmp/declared.txt"
+
+  # The packages that actually open a pool, computed the same way the
+  # declaration was derived. comm needs sorted input on both sides.
+  go list -test -f '{{.ImportPath}} {{range .Deps}}{{.}} {{end}}' ./... |
+    awk '{deps=substr($0, length($1)+2); if (deps ~ /internal\/platform\/dbtest/) print $1}' |
+    sed 's/\.test$//; s/_test$//' | sort -u > "$tmp/opens.txt"
+
+  # The anti-rot check: a pool-opening package that is not declared. The
+  # failure direction is the whole point — the safe state is a red gate
+  # naming the package, never a quiet green over a skipped tier.
+  undeclared=$(comm -23 "$tmp/opens.txt" "$tmp/declared.txt" || true)
+  if [ -n "$undeclared" ]; then
+    {
+      echo "bin/prime --fast: refusing to run. These packages open a pool but are not declared in gate.yml's db tier:"
+      printf '%s\n' "$undeclared" | sed 's/^/  /'
+      echo "Add them to the '#   db-tier: ' list in gate.yml, or take the pool-opening import out of the package."
+    } >&2
+    exit 1
+  fi
+
+  # The complement: everything that is not in the declared tier.
+  fast_list=$(comm -23 "$tmp/all.txt" "$tmp/declared.txt")
+
+  # The counts are measured at runtime, not recalled: a fast tier that is
+  # quiet about what it skipped is worse than no fast tier. The db tier's
+  # TEST count is deliberately not quoted — it cannot be measured without
+  # running the tier, which is the one thing this flag exists to avoid.
+  printf 'FAST: %s packages run, DB tier NOT run (%s packages). Use ./bin/prime for the full gate.\n' \
+    "$(printf '%s\n' "$fast_list" | grep -c .)" \
+    "$(printf '%s\n' "$db_tier" | grep -c .)"
+
+  go test -count=1 -p 4 $fast_list
+  exit $?
+fi
+
+# ---------------------------------------------------------------------
+# THE FULL GATE. Unchanged by --fast: same commands, same flags, same
+# coverage floor (70, enforced by CI's bin/coverage-floor over this run's
+# profile — the floor did not move and --fast is not the declared gate).
+#
+# THE GATE PROVISIONS ITS OWN TEST DATABASE. When TEST_DATABASE_URL names
+# a local host, bin/provision-testdb makes the database ready before the
+# suite runs — owner role, app role, database, the grant the tenancy
+# tests' SET ROLE needs, and every migration with the pinned goose — and
+# is idempotent. A DSN naming a non-local host is refused, never
+# provisioned: this gate must never create something on a database it was
+# not pointed at. See bin/provision-testdb's header and migrations/README.md.
+if [ -n "${TEST_DATABASE_URL:-}" ]; then
+  bin/provision-testdb "$TEST_DATABASE_URL"
+fi
 
 # -count=1 defeats Go's test cache, and without it THIS GATE CAN BE GREEN
 # WITHOUT RUNNING ANYTHING. Measured on this tree: with the cache warm, a plain
