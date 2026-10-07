@@ -1661,3 +1661,78 @@ property of the surface rather than of the handlers.
 - **No "sign out of all my other sessions".** That is what a password reset, an MFA
   change and an operator disable already do through `revokeEveryCredential`, and a
   separate route for it would be a second implementation of one rule.
+
+## D16: SIGNUP_SIGNING_KEY has three answers, one per manifest, and none is a production key
+
+**Raised** 2026-10-07 by packet `identity-w63-bootkey`. The fleet narrowed to a
+launch stack and identity could not boot from any manifest the repository ships:
+`config.Load` refuses to start without `SIGNUP_SIGNING_KEY`, and no manifest
+supplied it — not `docker-compose.yml`, not `config/deploy.yml`, not `.env`, not
+the CI boot job. A launch blocker, not a missing feature.
+
+The tension is real. The repo's own tests treat this as *the deployment's* key: a
+literal in the binary "would sign nothing" and a deployment's key is the only one
+that means anything. A committed, usable production key would be a forgery tool —
+anyone could mint signup timestamps. But a stranger must be able to run the stack
+from a fresh clone, and kit's `.env.example` says outright that it carries
+"development credentials for a container bound to the host loopback".
+
+### The ruling: dev default, production required, CI test value
+
+1. **Local / compose — a dev default that is obviously a dev default.**
+   `docker-compose.yml` supplies `SIGNUP_SIGNING_KEY: ${SIGNUP_SIGNING_KEY:-<dev
+   value>}` so `docker compose up` works on a fresh clone with no `.env` editing.
+   The value is the base64url of `identity-development-signup-key!` — 32 ASCII
+   bytes, so it decodes to exactly 32 bytes and passes the length check. It is
+   not random and not secret: it is the same on every dev machine, and anyone who
+   reads the file can mint signup timestamps for a stack that carries it — which
+   is what a development stack wants, and what a production stack must never do.
+   A deployment that wants a different key sets `SIGNUP_SIGNING_KEY` in `.env`;
+   the interpolation is the whole of the override.
+2. **Production / Kamal — required, operator-supplied, never defaulted.**
+   `config/deploy.yml` lists `SIGNUP_SIGNING_KEY` in `env.secret`, read from the
+   operator's environment via `.kamal/secrets`. There is no default anywhere on
+   this path: a deploy that does not supply it fails at boot, which is the
+   behaviour that already exists and is preserved.
+3. **CI — a test value.** The boot job generates an ephemeral key per run, masks
+   it, and prints only its length. CI is not a deployment, and the compose file's
+   development default is what a production key must never look like.
+
+### What was rejected, and why
+
+- **A committed production-plausible key.** Anyone could mint signup timestamps
+  for every signup form this service serves. The repo's own `signup_wiring_call_test.go`
+  says a literal in the binary "would sign nothing" — the same argument applies to
+  a literal in a manifest, with the added defect that a manifest is the one place
+  a deployment copies from.
+- **A placeholder like `changeme`.** It fails the 32-byte length check and turns a
+  working dev loop into a confusing startup error. The default must be a literal
+  32-byte base64url string, generated once.
+- **No default anywhere.** A fresh clone that meets a startup error naming a
+  variable it has never heard of is a broken install path. The dev default is
+  what makes `docker compose up` work; the label in the comment above it is what
+  keeps it honest.
+- **The obvious mint command.** `openssl rand -base64 32` emits the standard
+  alphabet and one `=` of padding; `base64.RawURLEncoding.DecodeString` rejects
+  both, so a correctly-random key pasted from that command fails boot with
+  "it is not base64url". The documented command is
+  `openssl rand -base64 32 | tr '+/' '-_' | tr -d '='`.
+
+### The proof is an agreement test, not a literal
+
+`cmd/identity/compose_boot_test.go` reads the identity service's environment out
+of `docker-compose.yml`, resolves its `${...}` forms the way compose does, and
+boots the real `main()` with exactly that. A hand-written env literal in the test
+would pass on the day the manifest breaks — which is exactly the defect this
+packet exists to close. The test was committed red (the manifest carried no key,
+so the child died at `config.Load` naming the variable) and went green when the
+manifest gained the dev default.
+
+### What is NOT decided here
+
+- **`MFA_ENCRYPTION_KEY`, `OAUTH_ENCRYPTION_KEY` and `OIDC_SIGNING_KEY` are the
+  same shape and the same problem.** They each gate a *feature* that is allowed
+  to be absent, so they keep their supported absent states. If the fleet ever
+  makes any of them unconditional, it needs the same three-manifest ruling — and
+  the same agreement test, reading the value out of the manifest rather than
+  asserting a literal.

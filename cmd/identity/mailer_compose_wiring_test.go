@@ -27,9 +27,10 @@ package main
 //     holds the shape: a literal here is a value that has to equal a literal in
 //     another repository, and a default is a shared secret committed to this one.
 //   - SIGNUP_SIGNING_KEY, the one secret a boot cannot go without. The compose
-//     file does not carry it (that is m63's packet); every other wiring test in
-//     this package supplies it the same way, and a deployment that cannot boot
-//     produces no mailer to inspect.
+//     file carries a development default (packet w63); this test overrides it
+//     with the same fixture every other wiring test in this package uses,
+//     because the mailer's wiring never reads the value — and a deployment
+//     that cannot boot produces no mailer to inspect.
 //
 // # WHAT IS DELIBERATELY NOT ASSERTED
 //
