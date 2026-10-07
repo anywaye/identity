@@ -18,6 +18,12 @@ import (
 const (
 	resetLinkTemplate  = "https://app.example.com/reset?token=" + TokenPlaceholder
 	verifyLinkTemplate = "https://app.example.com/verify-email?token=" + TokenPlaceholder
+
+	// invitationLinkTemplate is the accept-screen link, and it is a constant for
+	// the reason the two above are: the live tier renders the link the way the
+	// adapter does, and a fixture that spelled it inline would let a test assert
+	// against a URL the production path would not produce.
+	invitationLinkTemplate = "https://app.example.com/invitations/accept?token=" + TokenPlaceholder
 )
 
 // testLinkTemplates is a complete, valid per-purpose set, for the fixtures that

@@ -894,6 +894,7 @@ func buildRecovery(
 // could intercept; `TestTheClientNeverPrintsACredential` drives a real request
 // against a server that echoes the credential back and sweeps every formatting verb
 // for it.
+
 // buildInvitationMailer builds the invitation mailer, or nil when this deployment
 // has no mail path.
 //
