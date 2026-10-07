@@ -241,7 +241,12 @@ func TestTenancyACredentialResolvesByTheDigestTheCallerPresentedAndNothingElse(t
 			names, keyNameFor(tenantA))
 	}
 
-	// 4. IT DOES NOT OPEN ANOTHER TABLE. One policy, on one named table.
+	// 4. IT DOES NOT OPEN ANOTHER TABLE BEYOND THE RESOLUTION'S OWN JOIN.
+	// One resolve policy per table, on the two named tables ByDigest joins.
+	// This seed holds NO membership rows, so account_users still reads zero
+	// here; the membership half the resolution DOES see — exactly the pair
+	// the presented live credential names — is pinned with memberships
+	// present in credential_join_test.go, which is the proof 00028 added.
 	var members int
 	if err := countInResolution(ctx, conn, digestFor(tenantA),
 		`select count(*) from account_users`, &members); err != nil {

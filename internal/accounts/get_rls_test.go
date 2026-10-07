@@ -35,10 +35,14 @@ import (
 //
 // # WHAT THAT HID
 //
-// migrations/00018 adds a fifth policy to `account_users`. The first four are on
-// `account_id`; the fifth is on the caller:
+// migrations/00018 adds a fifth policy to `account_users`, and 00028 a sixth.
+// The first four are on `account_id`; the fifth is on the caller:
 //
 //	account_users_cafaye_members  for select  using (user_id = cafaye.current_user_id())
+//
+// (The sixth, `account_users_cafaye_resolve`, admits the membership pair of a
+// presented live credential and is invisible here: no digest is set on these
+// transactions, so its EXISTS is never true.)
 //
 // A caller who has not chosen an account has no `current_account_id()`, so the
 // four account policies hide the row. The fifth is what lets a caller see their
