@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 // lookupFrom builds a Lookup from a map, mirroring os.LookupEnv semantics
@@ -188,6 +189,18 @@ func TestLoad(t *testing.T) {
 			if tt.want.MFAIssuerLabel == "" {
 				tt.want.MFAIssuerLabel = DefaultMFAIssuer
 			}
+			// RateLimit is the same shape of default, and for the same reason:
+			// the block is present by default (an unconfigured deployment must
+			// not be an unprotected one), so Load fills it in on its own.
+			if tt.want.RateLimit == (RateLimit{}) {
+				tt.want.RateLimit = RateLimit{
+					Window:          defaultRateLimitWindow,
+					Signup:          defaultRateLimitSignup,
+					Signin:          defaultRateLimitSignin,
+					SignupTimestamp: defaultRateLimitSignupTimestamp,
+					Recovery:        defaultRateLimitRecovery,
+				}
+			}
 
 			// Compared field by field rather than with ==, because Config carries the
 			// decoded MFA key as a []byte and a struct containing a slice is not
@@ -359,6 +372,235 @@ func TestConfigSlogLevel(t *testing.T) {
 
 			if got := (Config{LogLevel: tt.logLevel}).SlogLevel(); got != tt.want {
 				t.Errorf("SlogLevel() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestRequireEmailVerificationDefaultsOffAndParses is the config half of the
+// parity ruling: ABSENT IS FALSE, and that is the whole of the default.
+//
+// The reference this fleet matches does not gate sign-in on a verified
+// address, so a deployment that sets nothing behaves exactly as it did before
+// the flag existed. The behaviour half — an unverified account actually
+// signing in — is pinned in internal/auth/verification_test.go; this test
+// pins the parsing, including the direction that matters most: a value that
+// is present but unreadable is a startup failure, because a deployment that
+// believes it has the gate on and does not is the worse of the two states.
+func TestRequireEmailVerificationDefaultsOffAndParses(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		env     map[string]string
+		want    bool
+		wantErr bool
+	}{
+		{
+			// THE PARITY CASE, and the reason the flag exists in this shape:
+			// unset is the deployment that has not chosen, and it sees no change.
+			name: "unset is false (parity)",
+			want: false,
+		},
+		{
+			name: "true is true",
+			env:  map[string]string{"REQUIRE_EMAIL_VERIFICATION": "true"},
+			want: true,
+		},
+		{
+			// Case and surrounding whitespace are folded, because the value is
+			// typed into a deploy file by a human and "True" is the same word.
+			name: "TRUE with whitespace is true",
+			env:  map[string]string{"REQUIRE_EMAIL_VERIFICATION": "  TRUE  "},
+			want: true,
+		},
+		{
+			name: "false is false",
+			env:  map[string]string{"REQUIRE_EMAIL_VERIFICATION": "false"},
+			want: false,
+		},
+		{
+			// An explicitly-empty value is a deployment that has chosen "off"
+			// in writing, which is the same state as unset rather than a
+			// misconfiguration.
+			name: "empty is false",
+			env:  map[string]string{"REQUIRE_EMAIL_VERIFICATION": ""},
+			want: false,
+		},
+		{
+			// The one refusal: a value this build cannot read. Not a default,
+			// not "off" — a startup failure naming the variable.
+			name:    "unreadable is a startup failure",
+			env:     map[string]string{"REQUIRE_EMAIL_VERIFICATION": "please"},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := Load(lookupFrom(withSignupKey(tt.env)))
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("Load() = nil error, want a startup failure naming %s", RequireEmailVerificationVar)
+				}
+				if !strings.Contains(err.Error(), RequireEmailVerificationVar) {
+					t.Errorf("Load() error = %v, want it to name %s", err, RequireEmailVerificationVar)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Load() unexpected error: %v", err)
+			}
+			if got.RequireEmailVerification != tt.want {
+				t.Errorf("RequireEmailVerification = %v, want %v", got.RequireEmailVerification, tt.want)
+			}
+		})
+	}
+}
+
+// TestRateLimitBlockDefaultsAndOverrides is the config half of B3: the block
+// is present by default, and every variable overrides its own limit.
+//
+// The defaults are the point — an unconfigured deployment must not be an
+// unprotected one, so there is no "off" for this block and the defaults are
+// what a deployment that sets nothing gets. The per-route numbers are asserted
+// individually so a future default change is a diff here rather than a
+// surprise in production.
+func TestRateLimitBlockDefaultsAndOverrides(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		env   map[string]string
+		want  RateLimit
+	}{
+		{
+			name: "unset gets every default",
+			want: RateLimit{
+				Window:          time.Minute,
+				Signup:          10,
+				Signin:          20,
+				SignupTimestamp: 30,
+				Recovery:        5,
+			},
+		},
+		{
+			name: "the window overrides for every route at once",
+			env:  map[string]string{"RATE_LIMIT_WINDOW": "5m"},
+			want: RateLimit{
+				Window:          5 * time.Minute,
+				Signup:          10,
+				Signin:          20,
+				SignupTimestamp: 30,
+				Recovery:        5,
+			},
+		},
+		{
+			name: "each route overrides its own limit",
+			env: map[string]string{
+				"RATE_LIMIT_SIGNUP":           "50",
+				"RATE_LIMIT_SIGNIN":           "100",
+				"RATE_LIMIT_SIGNUP_TIMESTAMP": "200",
+				"RATE_LIMIT_RECOVERY":         "25",
+			},
+			want: RateLimit{
+				Window:          time.Minute,
+				Signup:          50,
+				Signin:          100,
+				SignupTimestamp: 200,
+				Recovery:        25,
+			},
+		},
+		{
+			// One route tuned, the rest at their defaults: the common operator
+			// action, and the one that must not disturb the others.
+			name: "one route tuned leaves the rest at their defaults",
+			env:  map[string]string{"RATE_LIMIT_RECOVERY": "1"},
+			want: RateLimit{
+				Window:          time.Minute,
+				Signup:          10,
+				Signin:          20,
+				SignupTimestamp: 30,
+				Recovery:        1,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := Load(lookupFrom(withSignupKey(tt.env)))
+			if err != nil {
+				t.Fatalf("Load() unexpected error: %v", err)
+			}
+			if got.RateLimit != tt.want {
+				t.Errorf("RateLimit = %+v, want %+v", got.RateLimit, tt.want)
+			}
+		})
+	}
+}
+
+// TestRateLimitZeroOrUnparseableIsAStartupError is the rule that reads as
+// harsh and is the reason the block exists in this shape: ZERO IS NOT
+// UNLIMITED.
+//
+// Everywhere else in this service a zero means "no limit"; here a configured
+// 0 is almost certainly a typo for "unlimited", which this service does not
+// offer on the auth surface — so it fails the boot rather than silently
+// disabling the one control between the surface and a spray. Unparseable and
+// negative values fail the same way, with the same sentinel, because they are
+// the same kind of mistake: a deployment that believes it is configured and
+// is not.
+func TestRateLimitZeroOrUnparseableIsAStartupError(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		env  map[string]string
+	}{
+		{
+			name: "a count of zero is refused, not read as unlimited",
+			env:  map[string]string{"RATE_LIMIT_SIGNIN": "0"},
+		},
+		{
+			name: "a negative count is refused",
+			env:  map[string]string{"RATE_LIMIT_SIGNUP": "-5"},
+		},
+		{
+			name: "an unparseable count is refused",
+			env:  map[string]string{"RATE_LIMIT_RECOVERY": "ten"},
+		},
+		{
+			name: "a zero window is refused",
+			env:  map[string]string{"RATE_LIMIT_WINDOW": "0s"},
+		},
+		{
+			name: "a negative window is refused",
+			env:  map[string]string{"RATE_LIMIT_WINDOW": "-1m"},
+		},
+		{
+			name: "an unparseable window is refused",
+			env:  map[string]string{"RATE_LIMIT_WINDOW": "one minute"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := Load(lookupFrom(withSignupKey(tt.env)))
+			if !errors.Is(err, ErrInvalidRateLimit) {
+				t.Fatalf("Load() error = %v, want errors.Is(_, %v)", err, ErrInvalidRateLimit)
+			}
+			// The variable is named in the message, because that is the whole
+			// of the fix — the same rule every other variable here follows.
+			for variable := range tt.env {
+				if !strings.Contains(err.Error(), variable) {
+					t.Errorf("Load() error = %v, want it to name %s", err, variable)
+				}
 			}
 		})
 	}
