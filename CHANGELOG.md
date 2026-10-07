@@ -6,6 +6,44 @@ All notable changes to identity are recorded here. The format follows
 
 ## [Unreleased]
 
+### Fixed (manager gate, 2026-10-07: the invitation time bomb — `created_at` is the service's clock)
+
+The master gate went red with **26 failing tests and 145 occurrences of
+`violates check constraint "account_invitations_expires_after_creation"`**,
+every one a 500 from `POST /v1/accounts/{id}/invitations`. It was not the
+`w70b` merge it was blamed on: the failures reproduce on master with `w70b`
+reverted, and `w70b`'s own gate was green.
+
+`account_invitations.created_at` was the one column in the repository that
+defaulted to the **database's** `now()`, while `expires_at` is the service
+clock plus seven days. The table's `expires_at > created_at` CHECK was
+therefore comparing the service's clock with Postgres's. The suites invite
+from a `Fake` clock parked at `2026-09-30 12:00`; `created_at` came from the
+real wall clock, so the CHECK passed by accident until real time crossed
+`2026-10-07 12:00`, and then refused every invitation. The tests did not
+change — time did. A production host whose clock lagged Postgres would have
+failed the same way, which is the defect this closes.
+
+`api_keys` (`00011`) and `recovery_tokens` (`00015`) carry the same CHECK and
+already pass `created_at`/`issued_at` from the injected clock, for the reason
+`00011`'s column comment gives: the row and the event announcing it have to
+agree, and only one of the two is under test control. `account_invitations`
+was the sole outlier and the outlier was the bug.
+
+- **`NewInvitation` gains `CreatedAt time.Time`**, `Service.Invite` passes the
+  same `now` it already used for `ExpiresAt` and the `member.invited` event,
+  and `Store.CreateInvitation` writes the column explicitly. The column keeps
+  `DEFAULT now()` for an out-of-band insert, but no path in this service
+  reaches it. See [DECISIONS.md](DECISIONS.md) **D17**.
+- **`TestInvitationLifecycle` asserts the row carries the instant the caller
+  asked for**, not the instant the database chose — the assertion that would
+  have caught the arming of the bomb.
+- **Comment-only corrections** in `migrations/00007_account_invitations.sql`:
+  the `created_at` column comment and the `expires_after_creation` constraint
+  comment still carried the stale "a week of margin against drift between this
+  process and the server" rationale, which described the bug rather than the
+  invariant. Migrations are not checksummed, so the correction is safe.
+
 ### Added (packet identity-w89-chart: identity's chart, generated and held to the service)
 
 identity was the last of the launch four (identity, gateway, courier,

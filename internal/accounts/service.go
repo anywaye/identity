@@ -611,6 +611,7 @@ func (s *Service) Invite(ctx context.Context, in InviteInput) (Invited, error) {
 			Email:       email,
 			Role:        in.Role,
 			TokenDigest: digest,
+			CreatedAt:   now,
 			ExpiresAt:   now.Add(InvitationTTL),
 			InvitedBy:   in.InvitedBy,
 		})

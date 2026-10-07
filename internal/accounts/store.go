@@ -89,9 +89,22 @@ type CreateParams struct {
 // and never the token, so the raw credential cannot be written by accident from
 // here.
 type NewInvitation struct {
-	AccountID   id.UUID
-	Email       string
-	Role        Role
+	AccountID id.UUID
+	Email     string
+	Role      Role
+	// CreatedAt is the SERVICE's clock, not the database's now(), and it is
+	// passed rather than defaulted for the reason api_keys and recovery_tokens
+	// pass theirs: the row and the event announcing it have to agree, and only
+	// one of the two is under test control. The table still carries
+	// `DEFAULT now()`, but the caller always supplies this, so the default is
+	// never what a real row gets.
+	//
+	// It is also the reference the account_invitations_expires_after_creation
+	// CHECK measures ExpiresAt against. Leaving it to now() made the CHECK
+	// compare the caller's clock (ExpiresAt, derived from the service clock)
+	// with the server's — a comparison that a fake test clock parked in the past
+	// fails, and that a production host with a lagging clock would fail too.
+	CreatedAt   time.Time
 	TokenDigest string
 	ExpiresAt   time.Time
 	InvitedBy   id.UUID
@@ -658,11 +671,11 @@ func (s *Store) ListForUser(ctx context.Context, q db.Querier, userID id.UUID) (
 // is generated.
 func (s *Store) CreateInvitation(ctx context.Context, q db.Querier, n NewInvitation) (Invitation, error) {
 	const query = `
-		INSERT INTO account_invitations (account_id, email, role, token_digest, expires_at, invited_by)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		INSERT INTO account_invitations (account_id, email, role, token_digest, created_at, expires_at, invited_by)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		RETURNING ` + invitationColumns
 
-	row := q.QueryRow(ctx, query, n.AccountID, n.Email, n.Role, n.TokenDigest, n.ExpiresAt, n.InvitedBy)
+	row := q.QueryRow(ctx, query, n.AccountID, n.Email, n.Role, n.TokenDigest, n.CreatedAt, n.ExpiresAt, n.InvitedBy)
 
 	inv, err := scanInvitation(row)
 	if err != nil {
