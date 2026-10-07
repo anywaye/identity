@@ -232,6 +232,14 @@ type app struct {
 	srv      *http.Server
 	listener net.Listener
 	timeout  time.Duration
+
+	// outboxPublisher is the bus connection the publisher loop drains the
+	// outbox through, or nil when this deployment has no broker (NATS_URL
+	// unset). It is closed on shutdown. The loop itself is tied to the
+	// process's context and returns on its cancellation; Close may race the
+	// loop's final pass, which is safe because a closed connection fails the
+	// publish and the batch is released rather than committed.
+	outboxPublisher *outbox.NATSPublisher
 }
 
 // newApp wires the service together. With no DATABASE_URL it builds no pool,
@@ -274,12 +282,23 @@ func newApp(ctx context.Context, cfg config.Config, logger *slog.Logger) (*app, 
 	// memory-hard work at boot for nothing.
 	hasher := users.NewHasher()
 
-	authSvc, tenancy, secondFactor, deletionSvc, mfaUsable, err := buildAuth(cfg, pool, hasher, logger)
+	// One outbox store for the whole process: the use cases below write events
+	// through it inside their transactions, and the publisher loop newApp
+	// starts drains the same table through it. It is created here rather than
+	// inside buildAuth so the loop and the writers share one object — two stores
+	// over one table would be two things to keep configured identically, and
+	// the loop is the one consumer that has to see every row the writers commit.
+	var events *outbox.Store
+	if pool != nil {
+		events = outbox.NewStore(pool)
+	}
+
+	authSvc, tenancy, secondFactor, deletionSvc, mfaUsable, err := buildAuth(cfg, pool, hasher, logger, events)
 	if err != nil {
 		return nil, err
 	}
 	if authSvc != nil {
-		machineCredentials, err := buildAPIKeys(cfg, pool, tenancy, logger)
+		machineCredentials, err := buildAPIKeys(cfg, pool, tenancy, logger, events)
 		if err != nil {
 			return nil, err
 		}
@@ -303,7 +322,7 @@ func newApp(ctx context.Context, cfg config.Config, logger *slog.Logger) (*app, 
 		// product this service has never heard of password recovery, which is both
 		// false and useless. A deployment that cannot send a message answers 503 on
 		// the routes that need one, with a sentence saying so.
-		recoverySvc, err := buildRecovery(cfg, pool, hasher, secondFactor, logger)
+		recoverySvc, err := buildRecovery(cfg, pool, hasher, secondFactor, logger, events)
 		if err != nil {
 			return nil, err
 		}
@@ -356,7 +375,7 @@ func newApp(ctx context.Context, cfg config.Config, logger *slog.Logger) (*app, 
 		logger.Warn("no DATABASE_URL configured; the /v1 auth routes are not mounted")
 	}
 
-	provider, clients, err := buildOIDC(cfg, pool, logger)
+	provider, clients, err := buildOIDC(cfg, pool, logger, events)
 	if err != nil {
 		return nil, err
 	}
@@ -372,7 +391,7 @@ func newApp(ctx context.Context, cfg config.Config, logger *slog.Logger) (*app, 
 
 	handler := httpapi.New(checks, opts...)
 
-	return &app{
+	a := &app{
 		cfg:    cfg,
 		logger: logger,
 		pool:   pool,
@@ -381,18 +400,81 @@ func newApp(ctx context.Context, cfg config.Config, logger *slog.Logger) (*app, 
 			ReadHeaderTimeout: 10 * time.Second,
 		},
 		timeout: shutdownTimeout,
-	}, nil
+	}
+
+	// THE OUTBOX PUBLISHER LOOP — the one piece of process wiring that is not an
+	// HTTP surface. It moves committed events from outbox_events onto the bus,
+	// and it runs until the process's context is done.
+	//
+	// IT IS CONDITIONAL ON NATS_URL, and the condition is the whole of this
+	// deployment's bus wiring. Unset is the shipped state and not an error: the
+	// table, the loop and the Publisher interface exist, and a deployment that
+	// has not wired a broker accumulates rows in outbox_events — the honest
+	// shape of "not started yet", because the rows are the promise and they
+	// drain the moment a broker is configured. Set is the new path: a real NATS
+	// publisher over JetStream, and the loop in a goroutine tied to the
+	// process's shutdown context — the same ctx the HTTP server drains on, so a
+	// SIGTERM stops both.
+	//
+	// A broker that is DOWN when this runs is not a boot failure: the publisher
+	// connects with RetryOnFailedConnect, so the loop starts, every publish
+	// fails, the rows stay claimable, and they drain when the broker returns.
+	// What fails the boot is a NATS_URL that does not parse — a typo belongs at
+	// boot, where an operator reads it, not at the first event, where nobody
+	// does.
+	//
+	// THE SECOND CONDITION IS THE POOL, and without it this branch would build
+	// a loop whose claimer is a nil store: NATS_URL set and DATABASE_URL unset
+	// is a misconfiguration, and a nil *Store panics on the first Claim, which
+	// in a goroutine takes the whole process down. There is no outbox table to
+	// drain without a pool, so the loop does not start — the same honest
+	// accumulation as the no-broker case, and the boot log says which of the
+	// two it is.
+	if cfg.NATSEnabled() && events != nil {
+		publisher, err := outbox.NewNATSPublisher(cfg.NATSURL)
+		if err != nil {
+			return nil, fmt.Errorf("building the NATS publisher: %w", err)
+		}
+		a.outboxPublisher = publisher
+
+		loop := outbox.NewService(events, publisher, logger, 0)
+		go func() {
+			// Run returns nil on a clean shutdown and logs its own retries, so
+			// the only thing to report is an unexpected exit — which for this
+			// loop means the process is shutting down anyway.
+			if err := loop.Run(ctx); err != nil {
+				logger.Error("the outbox publisher loop exited", "error", err)
+			}
+		}()
+
+		logger.Info("the outbox publisher is running", "broker", cfg.NATSURL)
+	} else if !cfg.NATSEnabled() {
+		logger.Info("NATS_URL is not set; the outbox publisher is not started, and " +
+			"events will accumulate in outbox_events until a broker is configured")
+	} else {
+		logger.Warn("NATS_URL is set but DATABASE_URL is not; there is no outbox " +
+			"table to drain, so the publisher loop is not started")
+	}
+
+	return a, nil
 }
 
 // buildAuth assembles the use cases over a pool, or returns nil when there is no
 // pool to build them on.
 //
-// The outbox publisher is deliberately NOT started here. The loop and the
-// Publisher interface exist and are tested, but the only implementation in this
-// packet is a no-op: starting it would mark every event published and drain the
-// outbox into nowhere, and a service that silently discards the events announcing
-// its own registrations is worse than one that has not started the loop. The NATS
-// connection is the next packet. See README.md, "Not built yet".
+// It takes the outbox store as a parameter rather than making its own: one
+// store, shared, because it is stateless apart from its pool and two of them
+// would be two objects that have to be configured identically — and because
+// the publisher loop newApp starts claims from the SAME table, so the store
+// that writes the events and the store that drains them must be one object.
+//
+// The publisher loop itself is wired by newApp, not here: what is started, and
+// under what condition, is a fact about the deployment's NATS_URL and belongs
+// at the top level of the process's assembly. When NATS_URL is unset no
+// publisher exists and no loop runs — events accumulate in outbox_events, which
+// is the honest state for a deployment that has not wired a broker: the rows
+// are the promise, and they drain the moment one is configured.
+//
 // It returns the MFA use cases alongside the auth ones because auth.Login cannot
 // work without them: a correct password must not mint a session for an account
 // that has a second factor, and the only way to know is to ask.
@@ -400,14 +482,14 @@ func newApp(ctx context.Context, cfg config.Config, logger *slog.Logger) (*app, 
 // TOTP secret, which is exactly whether the MANAGEMENT routes may be mounted.
 func buildAuth(
 	cfg config.Config, pool *pgxpool.Pool, hasher *users.Hasher, logger *slog.Logger,
+	events *outbox.Store,
 ) (*auth.Service, *accounts.Service, *mfa.Service, *deletion.Service, bool, error) {
 	if pool == nil {
 		return nil, nil, nil, nil, false, nil
 	}
 
-	// One outbox store, shared. It is stateless apart from its pool, and two of
-	// them would be two objects that have to be configured identically.
-	events := outbox.NewStore(pool)
+	// events is non-nil here: newApp creates it beside the pool and hands the
+	// same store to every use case below and to the publisher loop.
 
 	// The api key store, built BEFORE tenancy and handed to it. The dependency runs
 	// backwards from the rest of this file and the reason is a security rule rather
@@ -719,6 +801,7 @@ func buildSocial(
 func buildRecovery(
 	cfg config.Config, pool *pgxpool.Pool, hasher *users.Hasher,
 	secondFactor recovery.SecondFactorState, logger *slog.Logger,
+	events *outbox.Store,
 ) (*recovery.Service, error) {
 	if pool == nil {
 		return nil, nil
@@ -751,7 +834,7 @@ func buildRecovery(
 		// reset has to be able to end a user's JWTs on a deployment where the OIDC
 		// provider is not mounted at all.
 		oidc.NewStore(pool),
-		outbox.NewStore(pool),
+		events,
 		mailer,
 		hasher,
 		clock.System{},
@@ -928,15 +1011,17 @@ func warnSharedLinkTemplates(cfg config.Config, logger *slog.Logger) {
 // wrong one, a trust anchor that changes on a restart — do not exist here, which
 // is one of the reasons this credential is a row lookup rather than a JWT.
 //
-// The outbox store is a second one rather than the one buildAuth made, and that is
-// deliberate: the two have no state to share, and threading buildAuth's outbox
-// through a second return value would couple two builders that have nothing else to
-// do with each other. The same reasoning is in buildOIDC's last paragraph.
+// The outbox store is the one newApp made, the same object buildAuth and
+// buildOIDC receive and the publisher loop drains through: one store over one
+// table, because the store is stateless apart from its pool and a second one
+// would be a second thing to keep configured identically — and because the loop
+// is the one consumer that has to see every row the writers commit.
 func buildAPIKeys(
 	cfg config.Config,
 	pool *pgxpool.Pool,
 	tenancy *accounts.Service,
 	logger *slog.Logger,
+	events *outbox.Store,
 ) (*apikeys.Service, error) {
 	if pool == nil || tenancy == nil {
 		return nil, nil
@@ -947,7 +1032,7 @@ func buildAPIKeys(
 		acctboundary.CredentialResolver{TxRunner: db.TxRunner{Pool: pool}},
 		db.Direct{Pool: pool},
 		apikeys.NewStore(pool),
-		outbox.NewStore(pool),
+		events,
 		tenancy,
 		users.NewStore(pool),
 		clock.System{},
@@ -1011,7 +1096,7 @@ func buildMFASecret(cfg config.Config, logger *slog.Logger) (mfa.Vault, error) {
 // needs it to publish the key set; the storage, because the provider needs it for
 // every protocol decision; then the provider and the registration use cases,
 // which share the one store.
-func buildOIDC(cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger) (*oidc.Provider, *oidc.Service, error) {
+func buildOIDC(cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger, events *outbox.Store) (*oidc.Provider, *oidc.Service, error) {
 	if !cfg.OIDCEnabled() || pool == nil {
 		return nil, nil, nil
 	}
@@ -1038,9 +1123,10 @@ func buildOIDC(cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger) (*oid
 		return nil, nil, fmt.Errorf("building the OIDC provider: %w", err)
 	}
 
-	// One store, one event appender, one clock. Two of each would be two objects
-	// that have to be configured identically and nothing that stops them drifting.
-	events := outbox.NewStore(pool)
+	// The outbox store is newApp's, the same object every other writer and the
+	// publisher loop use: one store over one table, because the store is
+	// stateless apart from its pool and a second one would be a second thing to
+	// keep configured identically.
 	clients := oidc.NewService(
 		acctboundary.TxRunner{TxRunner: db.TxRunner{Pool: pool}},
 		store,
@@ -1119,8 +1205,11 @@ func (a *app) Run(ctx context.Context) error {
 	return a.serveResult(<-serveErr)
 }
 
-// Close releases the connection pool.
+// Close releases the connection pool and the outbox publisher's bus connection.
 func (a *app) Close() error {
+	if a.outboxPublisher != nil {
+		a.outboxPublisher.Close()
+	}
 	if a.pool == nil {
 		return nil
 	}

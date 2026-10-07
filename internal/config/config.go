@@ -246,6 +246,16 @@ type Config struct {
 	// MFA_ENCRYPTION_KEY follows, for the same reason: quietly stretching a
 	// short key hides a typo until the day the entropy matters.
 	SignupSigningKeyValue []byte
+
+	// NATSURL is the broker the outbox publisher publishes to. Empty means "no
+	// broker wired yet", which is a supported state and not an error: the
+	// outbox table, the loop and the Publisher interface all exist, and a
+	// deployment that has not wired a broker accumulates rows in outbox_events
+	// until it does. It is read from the environment rather than from a file
+	// because it is a deployment address and not a secret — nothing about it is
+	// credential material, and an operator has to be able to read it back off
+	// the boot log to confirm which broker their events are going to.
+	NATSURL string
 }
 
 // The social-login environment variables, named in one place.
@@ -330,6 +340,13 @@ const (
 	// address. Both absences are the provider's shape, not an oversight.
 	OAuthAppleAuthorizeURLVar = "OAUTH_APPLE_AUTHORIZE_URL"
 	OAuthAppleTokenURLVar     = "OAUTH_APPLE_TOKEN_URL"
+
+	// NATSURLVar is the broker the outbox publisher publishes to. It is OPTIONAL
+	// and its absence is a supported state rather than an error: a deployment
+	// that has not wired a broker accumulates events in outbox_events, which is
+	// the honest shape of "not started yet" — the rows are the promise, and they
+	// drain the moment a broker is configured. See Config.NATSURL.
+	NATSURLVar = "NATS_URL"
 )
 
 // oauthEndpointVars is the per-endpoint table: which variable sets which provider's
@@ -630,6 +647,11 @@ func Load(lookup Lookup) (Config, error) {
 		return Config{}, err
 	}
 
+	// Read unconditionally, like DatabaseURL: absent is the supported state, and
+	// the one place that decides what absent means is the boot wiring in
+	// cmd/identity, not a default here.
+	cfg.NATSURL = lookupValue(lookup, NATSURLVar)
+
 	if err := cfg.loadOIDC(lookup); err != nil {
 		return Config{}, err
 	}
@@ -669,6 +691,15 @@ func Load(lookup Lookup) (Config, error) {
 // answers false here, and `Load` — which validates — is what keeps that from being a
 // state a real process can reach.
 func (c Config) OAuthEnabled() bool { return c.OAuth.Enabled() }
+
+// NATSEnabled reports whether the outbox publisher loop should run.
+//
+// One boolean rather than a check at the use site, because the decision is one
+// thing — either this process has a bus or it does not — and the answer is
+// load-bearing in both directions: set means the loop runs and events leave the
+// table, unset means they accumulate in it. A caller that checked the field
+// itself could get that combination wrong in a way that reads as a feature.
+func (c Config) NATSEnabled() bool { return c.NATSURL != "" }
 
 // loadOAuth reads the social-login block.
 //

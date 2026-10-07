@@ -6,6 +6,57 @@ All notable changes to identity are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added (packet identity-w56-outboxnats: the outbox publisher reaches NATS)
+
+The publisher loop's transport was `NoopPublisher`, which returned nil and
+discarded every event: registration, email verification, MFA enable/disable,
+API-key creation, OIDC-client creation and session revocation each wrote an
+outbox row that stayed in the table forever. This packet closes the last gap in
+the outbox — the move from `COMMIT` to `PUBLISH`.
+
+- **`NATS_URL`, optional, in the config.** Absent is the shipped state and not
+  an error: no publisher is built, the loop is not started, and the boot log
+  says so — events accumulate in `outbox_events`, which is the honest shape of
+  "not wired yet". Present starts the loop at boot. A value that does not parse
+  fails the boot: a deployment that believes it has a bus and does not is the
+  worse of the two states, and the refusal belongs where an operator reads it.
+- **`outbox.NATSPublisher` over JetStream.** The subject is the event's `type`
+  — no mapping table, no prefix rewriting — and `published_at` is set from the
+  broker's ack, never before. JetStream rather than core NATS because core
+  `Publish` returns before the broker has seen the message, so marking on its
+  return would mark rows published that were never delivered: exactly the
+  failure the "ack, then mark" rule exists to prevent. A broker that is down at
+  boot is not a boot failure — the connection is made with
+  `RetryOnFailedConnect`, publishes fail while it is away, and the rows drain
+  when it returns. A publish the broker refuses (no stream matches the subject)
+  increments `attempts`, records `last_error`, and leaves the row claimable.
+- **The boot wiring.** `newApp` builds the publisher and runs
+  `outbox.NewService(events, publisher, logger, 0)` in a goroutine tied to the
+  process's shutdown context — the same `ctx` the HTTP server drains on, so a
+  SIGTERM stops both. `NATS_URL` set and `DATABASE_URL` unset starts no loop:
+  there is no outbox table to drain, and a nil store would panic the goroutine
+  on its first claim. `app.Close` releases the broker connection after the
+  loop has stopped.
+- **The tests run against an in-process NATS server with JetStream enabled**
+  (`nats-server/v2`'s `server` package, a random port, a per-test store
+  directory), so they prove the wire rather than a mock: a committed row is
+  published on the subject equal to its `type` carrying core's envelope, and
+  `published_at` is set only after the broker acknowledges; a refused publish
+  leaves the row claimable with `attempts` incremented; a re-claimed row
+  republishes the same envelope `id` — the property the consumer's dedupe
+  depends on. The end-to-end wiring test registers a user through the real
+  handler and waits for the loop to drain the row, with no request waiting on
+  it.
+
+**Fleet-level fact the stack must satisfy:** kit's broker runs with JetStream
+(`-js`) and defines no streams, and no other service publishes yet. A JetStream
+publish to a subject no stream matches is refused, so **the stack must define
+a stream whose subject filter covers what identity publishes (e.g.
+`identity.>`)** — until it does, every publish fails loudly (`attempts`
+climbs, `last_error` names the refusal) and no event leaves the table. The
+failure is the designed one; the stream's name, retention and replication are
+deployment decisions that belong to the NATS stack, not to this service.
+
 ### Added (packet identity-w51-preferences: the preferences column, and the one key the reference puts in it)
 
 The preferences half of FEATURE-PARITY row 52. `users.preferences` is one jsonb

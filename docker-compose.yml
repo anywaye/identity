@@ -242,6 +242,28 @@ services:
       DATABASE_URL: postgres://identity_app:${KIT_POSTGRES_PASSWORD:-cafaye}@postgres:5432/identity?sslmode=disable
 
       # ---------------------------------------------------------------------
+      # THE EVENT BUS, ON BY DEFAULT
+      #
+      # kit's stack runs NATS with JetStream (`-js`) on the `platform` network,
+      # which this service is also on, so the broker resolves by service name.
+      # With this set the outbox publisher loop starts at boot and every event
+      # identity writes leaves the table on the subject equal to its type.
+      #
+      # THE STREAM IS THE STACK'S, AND IT DOES NOT EXIST YET. kit defines no
+      # streams and no other service publishes, so a JetStream publish to a
+      # subject no stream matches is refused by the broker — every event stays
+      # in outbox_events with attempts climbing and last_error naming the
+      # refusal. That is the designed failure direction (loud, claimable,
+      # retryable), and the fix is a stream whose subject filter covers what
+      # identity publishes, e.g. identity.> — a deployment decision for the
+      # NATS stack, not something this service may choose for itself.
+      #
+      # The broker being absent or unhealthy is NOT a boot failure: the
+      # publisher connects with RetryOnFailedConnect, so a stack brought up
+      # before nats is ready accumulates rows and drains when it returns.
+      NATS_URL: nats://nats:4222
+
+      # ---------------------------------------------------------------------
       # SOCIAL LOGIN, OFF BY DEFAULT
       #
       # Every `OAUTH_*` variable is optional and none of them is set here, which is

@@ -148,6 +148,13 @@ func TestLoad(t *testing.T) {
 			env:  map[string]string{"DATABASE_URL": "postgresql://localhost/identity?sslmode=disable"},
 			want: Config{Port: "8080", DatabaseURL: "postgresql://localhost/identity?sslmode=disable", LogLevel: "info"},
 		},
+		{
+			// NATS_URL is the one optional address in the table: its absence is
+			// a deployment that has not wired a broker, not a misconfiguration.
+			name: "NATS_URL is read when set",
+			env:  map[string]string{"NATS_URL": "nats://localhost:4222"},
+			want: Config{Port: "8080", DatabaseURL: "", LogLevel: "info", NATSURL: "nats://localhost:4222"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -190,6 +197,21 @@ func TestLoad(t *testing.T) {
 				t.Errorf("Load() = %+v, want %+v", got, tt.want)
 			}
 		})
+	}
+}
+
+// NATSEnabled is the whole of what the boot wiring consults, so it is tested
+// rather than left to be inferred from the field. Both directions matter: a
+// false negative starts the loop with no broker (the outbox drains into
+// nowhere), a false positive leaves every event unread in the table forever.
+func TestConfigNATSEnabled(t *testing.T) {
+	t.Parallel()
+
+	if (Config{}).NATSEnabled() {
+		t.Error("an empty config reports NATS enabled; the publisher loop would start with no broker")
+	}
+	if !(Config{NATSURL: "nats://localhost:4222"}).NATSEnabled() {
+		t.Error("a config with NATS_URL reports NATS disabled; the outbox would never drain")
 	}
 }
 
