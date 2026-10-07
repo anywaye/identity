@@ -6,6 +6,39 @@ All notable changes to identity are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added (packet identity-w51-preferences: the preferences column, and the one key the reference puts in it)
+
+The preferences half of FEATURE-PARITY row 52. `users.preferences` is one jsonb
+column (`00027`, `NOT NULL DEFAULT '{}'::jsonb`) carrying exactly one key — the
+theme — with the closed set the reference (Jumpstart Pro) defines: absent (the
+system theme), `"light"`, `"dark"`. Nothing else is a theme, and no speculative
+keys were added.
+
+- **A document, not a `theme` text column**, because the reference's shape is a
+  document: the next key this profile wants is one Go change and one UPDATE, not
+  one migration. `NOT NULL DEFAULT '{}'` is the opposite of `00023`'s argument
+  for a nullable `display_name` and deliberately so — a display name is a VALUE
+  where "nobody has decided" is a state worth naming; a preferences document is a
+  CONTAINER, and an empty container is the natural "nothing in it". The theme key's
+  ABSENCE inside the document is what means the system theme, which is the
+  reference's own `theme.blank?`.
+- **`GET /v1/me` returns `theme` present-only-when-set**, matching
+  `display_name`'s `omitempty` precedent: "no theme" and "the system theme" are
+  one state with one representation, and an explicit `null` would be a second
+  representation of it.
+- **An omitted `theme` on `PATCH /v1/me` clears it**, matching the sibling: the
+  route's one omission rule is that a field you do not send returns to its zero
+  state, and the two fields cannot have two rules. The system theme — the
+  reference's `theme.blank?` — is that zero state, and it is reached by omission
+  because an absence, not a value, is what blank means in a JSON document. The
+  empty string is refused like any other non-theme, and a non-string is a 400
+  from the decoder rather than a 422 from the validation.
+- **A non-string `theme` is a 400, not a 422**: the JSON decoder refuses a value
+  of the wrong type before validation runs — the request was not understood,
+  rather than understood and unacceptable. A string outside the closed set
+  (`"blue"`, `"DARK"`, `"system"`) is the existing `invalid_format` field error,
+  the same 422 shape an over-length name gets.
+
 ### Added (packet identity-sessions-01: where am I signed in, and signing out of one of them)
 
 `GET /v1/sessions` and `DELETE /v1/sessions/{sessionId}`. Jumpstart Pro's Devise has

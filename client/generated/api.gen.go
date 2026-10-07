@@ -444,6 +444,24 @@ func (e StartedEnrollmentMethod) Valid() bool {
 	}
 }
 
+// Defines values for UserTheme.
+const (
+	UserThemeDark  UserTheme = "dark"
+	UserThemeLight UserTheme = "light"
+)
+
+// Valid indicates whether the value is a known member of the UserTheme enum.
+func (e UserTheme) Valid() bool {
+	switch e {
+	case UserThemeDark:
+		return true
+	case UserThemeLight:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for StartSocialLoginParamsProvider.
 const (
 	StartSocialLoginParamsProviderGithub StartSocialLoginParamsProvider = "github"
@@ -474,6 +492,24 @@ func (e CompleteSocialLoginParamsProvider) Valid() bool {
 	case CompleteSocialLoginParamsProviderGithub:
 		return true
 	case CompleteSocialLoginParamsProviderGoogle:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for UpdateCurrentUserJSONBodyTheme.
+const (
+	UpdateCurrentUserJSONBodyThemeDark  UpdateCurrentUserJSONBodyTheme = "dark"
+	UpdateCurrentUserJSONBodyThemeLight UpdateCurrentUserJSONBodyTheme = "light"
+)
+
+// Valid indicates whether the value is a known member of the UpdateCurrentUserJSONBodyTheme enum.
+func (e UpdateCurrentUserJSONBodyTheme) Valid() bool {
+	switch e {
+	case UpdateCurrentUserJSONBodyThemeDark:
+		return true
+	case UpdateCurrentUserJSONBodyThemeLight:
 		return true
 	default:
 		return false
@@ -1873,8 +1909,11 @@ type TransferOwnershipRequest struct {
 
 // User The public projection of an account. `display_name` is present only when
 // the user has set one; an absent field means "no name", which is the same
-// state as a null. There is no password digest, no lockout state and no
-// timestamp here, and adding one is a contract change.
+// state as a null. `theme` is present only when the user has chosen one,
+// and an absent field means the system theme — the same
+// omitted-rather-than-null reasoning. There is no password digest, no
+// lockout state and no timestamp here, and adding one is a contract
+// change.
 type User struct {
 	// DisplayName What the person is called. Absent when they have not set one —
 	// the column is NULL, and the field is omitted rather than null so a
@@ -1888,7 +1927,19 @@ type User struct {
 
 	// ID The account's identifier, and the `subject` of its events.
 	ID openapi_types.UUID `json:"id"`
+
+	// Theme The profile's theme. Absent when the user has not chosen one —
+	// the key is omitted from the preferences document, which is the
+	// same state as a null and means the system theme, the reference's
+	// own `theme.blank?`. Set or cleared via `PATCH /v1/me`.
+	Theme *UserTheme `json:"theme,omitempty"`
 }
+
+// UserTheme The profile's theme. Absent when the user has not chosen one —
+// the key is omitted from the preferences document, which is the
+// same state as a null and means the system theme, the reference's
+// own `theme.blank?`. Set or cleared via `PATCH /v1/me`.
+type UserTheme string
 
 // VerificationStatus Whether one address is proved, as `GET /v1/email-verification` reports it.
 //
@@ -2005,7 +2056,17 @@ type UpdateCurrentUserJSONBody struct {
 	// name now", and the two things they can mean are "this"
 	// and "nothing".
 	DisplayName *string `json:"display_name,omitempty"`
+
+	// Theme The theme to set. An omitted field clears it, returning
+	// the profile to the system theme — the same omission rule
+	// `display_name` above has, and the reference's
+	// `theme.blank?` is that absence. The empty string is not a
+	// theme and is refused.
+	Theme *UpdateCurrentUserJSONBodyTheme `json:"theme,omitempty"`
 }
+
+// UpdateCurrentUserJSONBodyTheme defines parameters for UpdateCurrentUser.
+type UpdateCurrentUserJSONBodyTheme string
 
 // CreateAccountJSONRequestBody defines body for CreateAccount for application/json ContentType.
 type CreateAccountJSONRequestBody = CreateAccountRequest
@@ -3939,36 +4000,48 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/me (the `GetCurrentUser` operationId).
 	GetCurrentUser(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// UpdateCurrentUserWithBody Set the caller's display name
+	// UpdateCurrentUserWithBody Set the caller's display name and theme
 	//
-	// Sets or clears the authenticated user's display name.
+	// Sets or clears the authenticated user's display name, and sets or
+	// clears the theme.
 	//
 	// The name is trimmed before storing. An empty string clears the name,
 	// returning the column to NULL — the same "no name" every user who never
 	// set one has. There is no uniqueness constraint: a display name is not
 	// an identifier.
 	//
-	// The response carries the name that was just written, so a client that
-	// renders from the response cannot be shown a stale value on the request
-	// that changed it.
+	// The theme is one of "light" or "dark". An omitted theme clears it,
+	// returning the profile to the system theme — the same omission rule
+	// `display_name` has, and the reference's `theme.blank?` is that
+	// absence.
+	//
+	// The response carries the values that were just written, so a client
+	// that renders from the response cannot be shown a stale value on the
+	// request that changed it.
 	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with PATCH /v1/me (the `UpdateCurrentUser` operationId).
 	UpdateCurrentUserWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// UpdateCurrentUser Set the caller's display name
+	// UpdateCurrentUser Set the caller's display name and theme
 	//
-	// Sets or clears the authenticated user's display name.
+	// Sets or clears the authenticated user's display name, and sets or
+	// clears the theme.
 	//
 	// The name is trimmed before storing. An empty string clears the name,
 	// returning the column to NULL — the same "no name" every user who never
 	// set one has. There is no uniqueness constraint: a display name is not
 	// an identifier.
 	//
-	// The response carries the name that was just written, so a client that
-	// renders from the response cannot be shown a stale value on the request
-	// that changed it.
+	// The theme is one of "light" or "dark". An omitted theme clears it,
+	// returning the profile to the system theme — the same omission rule
+	// `display_name` has, and the reference's `theme.blank?` is that
+	// absence.
+	//
+	// The response carries the values that were just written, so a client
+	// that renders from the response cannot be shown a stale value on the
+	// request that changed it.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -7269,18 +7342,24 @@ func (c *Client) GetCurrentUser(ctx context.Context, reqEditors ...RequestEditor
 	return c.Client.Do(req)
 }
 
-// UpdateCurrentUserWithBody Set the caller's display name
+// UpdateCurrentUserWithBody Set the caller's display name and theme
 //
-// Sets or clears the authenticated user's display name.
+// Sets or clears the authenticated user's display name, and sets or
+// clears the theme.
 //
 // The name is trimmed before storing. An empty string clears the name,
 // returning the column to NULL — the same "no name" every user who never
 // set one has. There is no uniqueness constraint: a display name is not
 // an identifier.
 //
-// The response carries the name that was just written, so a client that
-// renders from the response cannot be shown a stale value on the request
-// that changed it.
+// The theme is one of "light" or "dark". An omitted theme clears it,
+// returning the profile to the system theme — the same omission rule
+// `display_name` has, and the reference's `theme.blank?` is that
+// absence.
+//
+// The response carries the values that were just written, so a client
+// that renders from the response cannot be shown a stale value on the
+// request that changed it.
 //
 // Takes any type of body and a specified content type.
 //
@@ -7297,18 +7376,24 @@ func (c *Client) UpdateCurrentUserWithBody(ctx context.Context, contentType stri
 	return c.Client.Do(req)
 }
 
-// UpdateCurrentUser Set the caller's display name
+// UpdateCurrentUser Set the caller's display name and theme
 //
-// Sets or clears the authenticated user's display name.
+// Sets or clears the authenticated user's display name, and sets or
+// clears the theme.
 //
 // The name is trimmed before storing. An empty string clears the name,
 // returning the column to NULL — the same "no name" every user who never
 // set one has. There is no uniqueness constraint: a display name is not
 // an identifier.
 //
-// The response carries the name that was just written, so a client that
-// renders from the response cannot be shown a stale value on the request
-// that changed it.
+// The theme is one of "light" or "dark". An omitted theme clears it,
+// returning the profile to the system theme — the same omission rule
+// `display_name` has, and the reference's `theme.blank?` is that
+// absence.
+//
+// The response carries the values that were just written, so a client
+// that renders from the response cannot be shown a stale value on the
+// request that changed it.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -12579,36 +12664,48 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/me (the `GetCurrentUser` operationId).
 	GetCurrentUserWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetCurrentUserResponse, error)
 
-	// UpdateCurrentUserWithBodyWithResponse Set the caller's display name
+	// UpdateCurrentUserWithBodyWithResponse Set the caller's display name and theme
 	//
-	// Sets or clears the authenticated user's display name.
+	// Sets or clears the authenticated user's display name, and sets or
+	// clears the theme.
 	//
 	// The name is trimmed before storing. An empty string clears the name,
 	// returning the column to NULL — the same "no name" every user who never
 	// set one has. There is no uniqueness constraint: a display name is not
 	// an identifier.
 	//
-	// The response carries the name that was just written, so a client that
-	// renders from the response cannot be shown a stale value on the request
-	// that changed it.
+	// The theme is one of "light" or "dark". An omitted theme clears it,
+	// returning the profile to the system theme — the same omission rule
+	// `display_name` has, and the reference's `theme.blank?` is that
+	// absence.
+	//
+	// The response carries the values that were just written, so a client
+	// that renders from the response cannot be shown a stale value on the
+	// request that changed it.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PATCH /v1/me (the `UpdateCurrentUser` operationId).
 	UpdateCurrentUserWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateCurrentUserResponse, error)
 
-	// UpdateCurrentUserWithResponse Set the caller's display name
+	// UpdateCurrentUserWithResponse Set the caller's display name and theme
 	//
-	// Sets or clears the authenticated user's display name.
+	// Sets or clears the authenticated user's display name, and sets or
+	// clears the theme.
 	//
 	// The name is trimmed before storing. An empty string clears the name,
 	// returning the column to NULL — the same "no name" every user who never
 	// set one has. There is no uniqueness constraint: a display name is not
 	// an identifier.
 	//
-	// The response carries the name that was just written, so a client that
-	// renders from the response cannot be shown a stale value on the request
-	// that changed it.
+	// The theme is one of "light" or "dark". An omitted theme clears it,
+	// returning the profile to the system theme — the same omission rule
+	// `display_name` has, and the reference's `theme.blank?` is that
+	// absence.
+	//
+	// The response carries the values that were just written, so a client
+	// that renders from the response cannot be shown a stale value on the
+	// request that changed it.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -21778,18 +21875,24 @@ func (c *ClientWithResponses) GetCurrentUserWithResponse(ctx context.Context, re
 	return ParseGetCurrentUserResponse(rsp)
 }
 
-// UpdateCurrentUserWithBodyWithResponse Set the caller's display name
+// UpdateCurrentUserWithBodyWithResponse Set the caller's display name and theme
 //
-// Sets or clears the authenticated user's display name.
+// Sets or clears the authenticated user's display name, and sets or
+// clears the theme.
 //
 // The name is trimmed before storing. An empty string clears the name,
 // returning the column to NULL — the same "no name" every user who never
 // set one has. There is no uniqueness constraint: a display name is not
 // an identifier.
 //
-// The response carries the name that was just written, so a client that
-// renders from the response cannot be shown a stale value on the request
-// that changed it.
+// The theme is one of "light" or "dark". An omitted theme clears it,
+// returning the profile to the system theme — the same omission rule
+// `display_name` has, and the reference's `theme.blank?` is that
+// absence.
+//
+// The response carries the values that were just written, so a client
+// that renders from the response cannot be shown a stale value on the
+// request that changed it.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -21802,18 +21905,24 @@ func (c *ClientWithResponses) UpdateCurrentUserWithBodyWithResponse(ctx context.
 	return ParseUpdateCurrentUserResponse(rsp)
 }
 
-// UpdateCurrentUserWithResponse Set the caller's display name
+// UpdateCurrentUserWithResponse Set the caller's display name and theme
 //
-// Sets or clears the authenticated user's display name.
+// Sets or clears the authenticated user's display name, and sets or
+// clears the theme.
 //
 // The name is trimmed before storing. An empty string clears the name,
 // returning the column to NULL — the same "no name" every user who never
 // set one has. There is no uniqueness constraint: a display name is not
 // an identifier.
 //
-// The response carries the name that was just written, so a client that
-// renders from the response cannot be shown a stale value on the request
-// that changed it.
+// The theme is one of "light" or "dark". An omitted theme clears it,
+// returning the profile to the system theme — the same omission rule
+// `display_name` has, and the reference's `theme.blank?` is that
+// absence.
+//
+// The response carries the values that were just written, so a client
+// that renders from the response cannot be shown a stale value on the
+// request that changed it.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //

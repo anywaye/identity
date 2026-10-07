@@ -94,6 +94,9 @@ type UserStore interface {
 	// owns, and a second path to the table would be a second thing to keep in
 	// step with the first.
 	UpdateName(ctx context.Context, q db.Querier, userID id.UUID, name *string) error
+	// UpdateTheme is here for the reason UpdateName is: it is the second column
+	// the profile screen owns, and the same boundary applies.
+	UpdateTheme(ctx context.Context, q db.Querier, userID id.UUID, theme *string) error
 }
 
 // SessionStore is the part of sessions.Store that login, logout and resolution
@@ -1180,6 +1183,28 @@ func (s *Service) Authenticate(ctx context.Context, token string) (users.User, e
 func (s *Service) UpdateDisplayName(ctx context.Context, userID id.UUID, name *string) error {
 	if err := s.users.UpdateName(ctx, s.read.Queryer(), userID, name); err != nil {
 		return fmt.Errorf("setting a display name: %w", err)
+	}
+	return nil
+}
+
+// UpdateTheme sets the caller's theme, or clears it.
+//
+// IT IS THE WRITE HALF OF /v1/me's second field, and it lives here for the
+// reason UpdateDisplayName does: the handler has no querier and no business
+// having one, and a handler that reached for a pool to write one column would
+// be a second composition root for the same row.
+//
+// theme is a pointer for the reason UpdateDisplayName's is: nil clears, and a
+// cleared theme is the same state as a never-set one — the key is absent from
+// the document. The value is expected to be already checked against the closed
+// set by then; the rules are users.ValidateTheme's, and this method is the use
+// case that applies them, not the place they are defined.
+//
+// NO TRANSACTION, for the reason UpdateDisplayName gives: one UPDATE against
+// one row the caller has already been resolved to.
+func (s *Service) UpdateTheme(ctx context.Context, userID id.UUID, theme *string) error {
+	if err := s.users.UpdateTheme(ctx, s.read.Queryer(), userID, theme); err != nil {
+		return fmt.Errorf("setting a theme: %w", err)
 	}
 	return nil
 }

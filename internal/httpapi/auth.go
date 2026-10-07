@@ -105,6 +105,15 @@ type Auth interface {
 	// no display name are the same state, and the two ways of asking for it —
 	// an empty string and an omitted one — both arrive here as nil.
 	UpdateDisplayName(ctx context.Context, userID id.UUID, name *string) error
+
+	// UpdateTheme is the write half of /v1/me's second field, and it is on this
+	// interface for the reason UpdateDisplayName is.
+	//
+	// theme is a POINTER, and nil is the clearing case: a cleared theme and a
+	// never-set one are the same state (the key is absent from the document),
+	// and both an omitted field and an explicit one arrive here as nil — the
+	// same pointer's job as the name's, and the same omission semantics.
+	UpdateTheme(ctx context.Context, userID id.UUID, theme *string) error
 }
 
 // WithAuth mounts the v1 routes.
@@ -133,11 +142,19 @@ func WithAuth(a Auth) Option {
 // of, because the field is simply not there. A null would be a third answer to
 // "what is this person called", and the two answers the service has are "this"
 // and "nothing".
+//
+// theme is omitempty for the same reason, and the reasoning is the reference's
+// own: the system theme is what a user who never chose one has, so "no theme"
+// and "the system theme" are one state with one representation. A null would
+// be a second representation of it, and the answers the service has are
+// "light", "dark" and "nothing".
 type userResponse struct {
 	ID    string `json:"id"`
 	Email string `json:"email"`
 	// DisplayName is present only when the user has one. See above.
 	DisplayName *string `json:"display_name,omitempty"`
+	// Theme is present only when the user has chosen one. See above.
+	Theme *string `json:"theme,omitempty"`
 }
 
 // sessionResponse is the API surface of a login.
@@ -207,12 +224,27 @@ type loginRequest struct {
 // updateMeRequest is the body of PATCH /v1/me.
 //
 // display_name is a plain string, and an omitted one decodes as the empty
-// string — which clears. This route has exactly one field, so there is no
-// "leave it unchanged" to express: a caller who reaches PATCH /v1/me is
-// saying "this is my name now", and the two things they can mean are "this"
-// and "nothing".
+// string — which clears. That is the behaviour the display-name packet shipped
+// and the OpenAPI document describes, and it is frozen now: a client written
+// against it depends on an omitted name clearing.
+//
+// theme is a POINTER so an omitted field is distinguishable from a present
+// one — and an omitted theme CLEARS, the same semantics display_name has.
+// The two fields cannot have two omission rules, and the sibling's rule is the
+// frozen one: a caller who reaches PATCH /v1/me is saying "this is my profile
+// now", and a field they did not send returns to its zero state. The system
+// theme — the reference's theme.blank? — is that zero state, and it is
+// reached by omission because an absence, not a value, is what blank means in
+// a JSON document.
+//
+// A present theme validates against the closed set — "light" or "dark" — and
+// anything else is the 422 field error writeAuthError and the registration
+// surface already produce.
 type updateMeRequest struct {
 	DisplayName string `json:"display_name"`
+	// Theme is a pointer so an omitted field is distinguishable from an empty
+	// one. See above.
+	Theme *string `json:"theme"`
 }
 
 // registerRoutes mounts the v1 surface on r.
@@ -608,7 +640,7 @@ func (o options) handleLogout(w http.ResponseWriter, r *http.Request) {
 
 // handleMe returns the authenticated user.
 //
-//	GET /v1/me  →  200 {id, email, display_name?}
+//	GET /v1/me  →  200 {id, email, display_name?, theme?}
 func (o options) handleMe(w http.ResponseWriter, r *http.Request) {
 	token := o.presentedToken(r)
 	if token == "" {
@@ -626,12 +658,17 @@ func (o options) handleMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, userResponse{ID: user.ID.String(), Email: user.Email, DisplayName: user.DisplayName})
+	writeJSON(w, http.StatusOK, userResponse{
+		ID:          user.ID.String(),
+		Email:       user.Email,
+		DisplayName: user.DisplayName,
+		Theme:       user.Preferences.Theme,
+	})
 }
 
-// handleUpdateMe sets the caller's display name.
+// handleUpdateMe sets the caller's display name and/or theme.
 //
-//	PATCH /v1/me  {display_name}  →  200 {id, email, display_name?}
+//	PATCH /v1/me  {display_name, theme?}  →  200 {id, email, display_name?, theme?}
 //
 // THE ORDER IS THE SECURITY PROPERTY, and it is the same one handleMe has: the
 // credential is resolved BEFORE the body is read, so a stranger never reaches
@@ -639,15 +676,20 @@ func (o options) handleMe(w http.ResponseWriter, r *http.Request) {
 // be a refusal — but the refusal would be reachable by anybody, and the parse
 // would be work done for nothing on every anonymous request.
 //
-// EMPTY CLEARS, and the clearing is the point rather than an edge case: the
-// column goes to NULL, which is the same "no name" every user who never set one
-// has. There is no second representation of that state to keep in step with.
+// AN OMITTED FIELD CLEARS, for both fields, and that is the route's one
+// omission rule: display_name's clear-on-omission is frozen by the display-name
+// packet and its OpenAPI document, and the theme adopts it rather than
+// inventing a second semantics on the same route. A present theme validates
+// against the closed set — "light" or "dark" — and the refusal is the same
+// 422 field error display_name's is. The system theme is reached by omission:
+// the reference's theme.blank? is an absence, not a value.
 //
-// THE LENGTH IS ENFORCED HERE, in the handler, because this is where a refusal
+// THE RULES ARE ENFORCED HERE, in the handler, because this is where a refusal
 // is a 422 naming the field rather than a 500 from a database constraint — the
-// rule itself is users.ValidateDisplayName's, and the handler is where it is
-// applied to a request. The store does not re-check it, for the reason every
-// other store method gives: the table's surface does not define the rules.
+// rules themselves are users.ValidateDisplayName's and users.ValidateTheme's,
+// and the handler is where they are applied to a request. The store does not
+// re-check them, for the reason every other store method gives: the table's
+// surface does not define the rules.
 func (o options) handleUpdateMe(w http.ResponseWriter, r *http.Request) {
 	token := o.presentedToken(r)
 	if token == "" {
@@ -693,15 +735,44 @@ func (o options) handleUpdateMe(w http.ResponseWriter, r *http.Request) {
 		set = &name
 	}
 
+	// An omitted theme is the clearing case, the same semantics the name has —
+	// see updateMeRequest for why the two fields share one omission rule.
+	var theme *string
+	if body.Theme != nil {
+		if err := users.ValidateTheme(*body.Theme); err != nil {
+			var fe *users.FieldError
+			if !errors.As(err, &fe) {
+				unexpected(w, r, o.logger, err)
+				return
+			}
+			// The same 422 shape display_name's refusal gets, for the reason
+			// above: one document for "understood and not acceptable", so the
+			// two fields on this route cannot drift apart.
+			writeProblem(w, r, newProblem(http.StatusUnprocessableEntity, CodeValidationFailed).
+				withDetail("the request has an invalid field").
+				withFieldErrors([]FieldError{{Field: fe.Field, Code: fe.Code}}))
+			return
+		}
+		theme = body.Theme
+	}
+
 	if err := o.auth.UpdateDisplayName(r.Context(), user.ID, set); err != nil {
 		unexpected(w, r, o.logger, err)
 		return
 	}
 
-	// The response carries the name that was just written rather than the one
-	// the pre-update read had, so a client that rendered from the response
-	// cannot be shown a stale value on the request that changed it.
-	writeJSON(w, http.StatusOK, userResponse{ID: user.ID.String(), Email: user.Email, DisplayName: set})
+	// The theme is written after the name, and always: an omitted theme is a
+	// clearing, so there is no case where this route writes one column and not
+	// the other.
+	if err := o.auth.UpdateTheme(r.Context(), user.ID, theme); err != nil {
+		unexpected(w, r, o.logger, err)
+		return
+	}
+
+	// The response carries the values that were just written rather than the
+	// ones the pre-update read had, so a client that rendered from the
+	// response cannot be shown a stale value on the request that changed it.
+	writeJSON(w, http.StatusOK, userResponse{ID: user.ID.String(), Email: user.Email, DisplayName: set, Theme: theme})
 }
 
 // sessionListItem is one entry of GET /v1/sessions.

@@ -282,23 +282,23 @@ type Preferences struct {
 }
 
 // ValidateTheme checks a theme against the closed set the reference defines:
-// "light", "dark", and "" — the last of which is not a third theme but the
-// CLEARING case. The reference's system theme is a blank one
-// (User::Theme#system_theme? is theme.blank?), so the empty string is how a
-// caller asks for it, and the document it writes is the empty one — the same
-// "no theme" every user who never chose one has.
+// "light" and "dark", and nothing else. The reference's system theme is a BLANK
+// one (User::Theme#system_theme? is theme.blank?), and the JSON API's blank is
+// not a value but an ABSENCE — the key omitted from the preferences document —
+// which PATCH /v1/me expresses by omitting the field. So the empty string is
+// refused here like any other non-theme: it is not one of the two themes, and
+// the state it might have meant already has a representation.
 //
 // EVERYTHING ELSE IS REFUSED, and the refusal is invalid_format rather than a
 // code of its own: the existing codes are the contract (they land verbatim in
 // the errors[] array of the 422), and "a value outside the closed set" is a
-// format problem in exactly the sense a malformed address is. A theme is one of
-// two strings or nothing; "blue", "DARK" and "system" are not themes. A number
-// never reaches this function at all — the JSON decoder refuses it first, as a
-// 400 rather than a 422: the request was not understood, rather than understood
-// and unacceptable.
+// format problem in exactly the sense a malformed address is. "blue", "DARK"
+// and "system" are not themes. A number never reaches this function at all —
+// the JSON decoder refuses it first, as a 400 rather than a 422: the request
+// was not understood, rather than understood and unacceptable.
 func ValidateTheme(theme string) error {
 	switch theme {
-	case "", "light", "dark":
+	case "light", "dark":
 		return nil
 	default:
 		return fieldErr("theme", CodeInvalidFormat)

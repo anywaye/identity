@@ -144,11 +144,12 @@ func TestValidateTheme(t *testing.T) {
 		give     string
 		wantCode string
 	}{
-		// The closed set is the reference's: two values, plus the empty string
-		// that means the system theme. Nothing else is a theme.
+		// The closed set is the reference's: two values. The system theme is
+		// not a value but an absence — the key omitted from the document — so
+		// the empty string is refused like any other non-theme.
 		{name: "light", give: "light"},
 		{name: "dark", give: "dark"},
-		{name: "empty clears to the system theme", give: ""},
+		{name: "the empty string is not a theme — the system theme is an absence, not a value", give: "", wantCode: "invalid_format"},
 		{name: "a value outside the closed set", give: "blue", wantCode: "invalid_format"},
 		{name: "the reference's system label is not a theme", give: "system", wantCode: "invalid_format"},
 		{name: "themes are case sensitive", give: "DARK", wantCode: "invalid_format"},
