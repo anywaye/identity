@@ -264,6 +264,61 @@ services:
       NATS_URL: nats://nats:4222
 
       # ---------------------------------------------------------------------
+      # THE MAIL PATH, ON BY DEFAULT
+      #
+      # identity sends no mail itself: every recovery message goes out as
+      # `POST /v1/messages` to courier over HTTP, authenticated by the bearer
+      # token below. Without this block a composed stack boots with no mail
+      # path and every recovery route answers 503 with a sentence naming a
+      # problem the developer was never told to configure — the mail half of
+      # the sellable loop did not exist in the only bring-up this repository
+      # ships.
+      #
+      # COURIER_BASE_URL is courier's compose-network name and its OWN port
+      # (4000 — its compose `PORT`, not identity's 8080). `http` is accepted
+      # for a compose stack; the service validates the scheme at boot.
+      #
+      # COURIER_TOKEN IS REQUIRED FROM OUTSIDE THE REPOSITORY, and the
+      # interpolation's failure message is the contract rather than a
+      # decoration. The rule it states: this must be the SAME identity-issued
+      # API key that courier holds as COURIER_IDENTITY_TOKEN. courier
+      # introspects the token identity presented on the inbound request, and
+      # identity's introspection endpoint lets a token caller introspect ONLY
+      # ITSELF (internal/httpapi/apikeys.go, mayIntrospect) — so the seam works
+      # when one key is held by both services, and two distinct keys produce
+      # identity's 403 and courier's 503 with nothing in either repository to
+      # explain it. Mint one with
+      # `POST /v1/accounts/{account_id}/api-keys` against an account that belongs
+      # to the mail path and to nothing else.
+      #
+      # WHY REQUIRED AND NOT A DEFAULT. A credential cannot be defaulted
+      # honestly: an empty default is treated as absent, which is the silent
+      # 503 this block exists to end, and a non-empty default is a shared
+      # secret committed to a repository. So `docker compose up` on a fresh
+      # clone now fails naming COURIER_TOKEN before any container starts —
+      # the fail-loud direction this file chooses everywhere, and the same
+      # shape courier's own compose file already uses for
+      # COURIER_IDENTITY_TOKEN. Keeping the two equal is the install
+      # script's job (m68), which writes the value into `.env`.
+      #
+      # THE LINK TEMPLATES point at the launch front door, which is a
+      # deployment fact identity does not own — so they are supplied from
+      # outside too, with an obviously-dev default pointing at the local
+      # parlor (port 3997, its documented dev port; the two paths are
+      # parlor's reset-password and verify-email/confirm screens, both of
+      # which read `?token=`). An operator sets APP_BASE_URL in `.env` to
+      # point the links at the real front door. Unlike the token these CAN
+      # have a default: a wrong link is a broken button, not a security hole,
+      # and the default points at the one screen that exists locally. Each
+      # carries `{token}`, which config.Load requires — a template without it
+      # is refused, because a link would carry no token and the reader would
+      # reach a screen with nothing to redeem.
+      COURIER_BASE_URL: "http://courier:4000"
+      COURIER_TOKEN: "${COURIER_TOKEN:?set COURIER_TOKEN to the same identity-issued API key courier holds as COURIER_IDENTITY_TOKEN}"
+      PASSWORD_RESET_LINK_TEMPLATE: "${APP_BASE_URL:-http://localhost:3997}/reset-password?token={token}"
+      EMAIL_VERIFICATION_LINK_TEMPLATE: "${APP_BASE_URL:-http://localhost:3997}/verify-email/confirm?token={token}"
+
+      # ---------------------------------------------------------------------
       # SOCIAL LOGIN, OFF BY DEFAULT
       #
       # Every `OAUTH_*` variable is optional and none of them is set here, which is
