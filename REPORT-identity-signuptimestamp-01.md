@@ -6,6 +6,9 @@
 **Budget:** 1 hour (a previous attempt died mid-work on a model-endpoint rate
 limit; its tree was judged, kept where correct, and finished — see
 "The previous attempt" below)
+**Gate:** `bin/prime` green against `identity-w27-pg`, output pasted verbatim
+below. `go vet ./...` clean, `gofmt -l .` prints nothing, `-race` green over the
+four packages this packet touched.
 
 ## What landed
 
@@ -105,8 +108,12 @@ this is permanent.
 
 ## What parlor's follow-up packet must do
 
-The form change is **not in this packet** (the brief forbids touching parlor).
-Parlor's packet must:
+The form change is **not in this packet** (the brief forbids touching parlor), and
+**the full list is at the bottom of this report** under "What the manager should
+brief the parlor packet with" — which is written for briefing rather than for
+implementation. In short: mint on render, carry the pair on submit, treat every
+`422` identically, and use `RegisterUserWithSignupTimestamp` rather than
+`RegisterUser` from Go.
 
 1. Ask `POST /v1/signup-timestamp` when the signup form renders, and carry the
    pair on submit as `timestamp` + `signature` (the same two field names — the
@@ -116,12 +123,14 @@ Parlor's packet must:
 2. Send the timestamp back as a JSON **number**, unmodified. A client that
    re-renders it (as a float, a quoted string, or a different width) presents a
    different message than the one that was signed, and the verify refuses it.
-3. Handle the refusal as the honeypot's: a generic `422` that names no field.
-   The user-visible copy is "the form could not be submitted — reload and try
-   again", because every refusal looks the same on purpose.
-4. Treat every `422` from a registration the same way. Do not try to
-   distinguish a bad pair from a taken address from a bad password: the service
-   will not say, and a form that guesses has told a bot which check exists.
+3. The refusal a form must handle: a generic `422 validation_failed` whose detail
+   is `"the request has an invalid field"` and which names no field. That is the
+   same answer a honeypot hit gets, and the user-visible copy should be "the form
+   could not be submitted — reload and try again".
+4. Treat **every** `422` from a registration the same way, whatever the form can
+   infer about why. Do not try to distinguish a bad pair from a taken address
+   from a bad password: the service will not say, and a form that guesses has
+   told a bot which check exists.
 
 ## What was deliberately not done
 
@@ -319,10 +328,21 @@ ok  	github.com/cafaye/identity/internal/useraudit	8.107s
 ok  	github.com/cafaye/identity/internal/users	1.783s
 ```
 
-`go vet ./...` clean, `gofmt -l .` prints nothing. `-race` on the four packages
-this packet touched (`internal/httpapi`, `internal/signup`, `client`,
-`cmd/identity`) is in the log below; it is slower, so it ran over the touched
-packages rather than the whole tree inside the hour.
+`go vet ./...` clean, `gofmt -l .` prints nothing.
+
+`go test -race` over the four packages this packet touched — `internal/httpapi`
+(race is load-bearing there: `routeTable` is a shared mutable the walks read, and
+its guard is why 52–64 tests used to fail nondeterministically), plus
+`internal/signup`, `client` and `cmd/identity`:
+
+```
+ok  	github.com/cafaye/identity/internal/httpapi	147.763s
+ok  	github.com/cafaye/identity/internal/signup	1.549s
+ok  	github.com/cafaye/identity/client	7.620s
+ok  	github.com/cafaye/identity/cmd/identity	20.577s
+```
+
+Race over the whole tree was not run inside the hour; CI runs it.
 
 ## Constraints respected
 
@@ -340,7 +360,13 @@ packages rather than the whole tree inside the hour.
   - No existing test was deleted.
 - No other repository was modified.
 - No secret was hardcoded; no existing secret was reused or renamed.
-- The honeypot and the timestamp refuse with byte-identical 422s.
+- The honeypot and the timestamp refuse with the same generic 422. Both call the
+  same `problemFor(..., CodeValidationFailed, "the request has an invalid field")`
+  in `internal/httpapi/auth.go`, and `internal/httpapi/signup_test.go` asserts
+  the problem code **and** the detail string for every refused case — so the
+  claim is checked rather than phrased. It is "the same refusal", not literally
+  byte-identical output: each response carries its own `trace_id`, which is the
+  point of a trace id.
 
 ## What the manager should brief the parlor packet with
 
@@ -357,16 +383,15 @@ packages rather than the whole tree inside the hour.
    check working, and the user-visible copy should be "the form could not be
    submitted, reload and try again", because every refusal looks the same on
    purpose.
-4. Treat **every** 422 from a registration as "reload and resubmit". Do not try to
-   distinguish a bad pair from a bad password from a bad email: the service will
-   not say, and a form that guesses is a form that has told a bot which check
-   exists.
+4. Treat **every** `422` from a registration the same way, whatever the form can
+   infer about why. Do not try to distinguish a bad pair from a taken address
+   from a bad password: the service will not say, and a form that guesses has
+   told a bot which check exists.
 5. A pair is **not** single-use. There is no server-side replay store (see
    "deliberately not done"), so a retry after an ambiguous failure may re-submit
    the same pair rather than minting a new one — which is fine, and is the reason
    the decision was cheap. What a pair does **not** buy is more than one
    registration per window.
-
 6. **Nothing in identity has to change for this packet's follow-up.** The mount,
    the secret, the mint and the verify are all here. If the parlor packet needs a
    server-side change — a way to render the pair into a hidden form field, or a
