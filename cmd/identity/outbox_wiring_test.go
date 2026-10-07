@@ -17,7 +17,9 @@ import (
 	"github.com/nats-io/nats.go"
 
 	"github.com/cafaye/identity/internal/config"
+	"github.com/cafaye/identity/internal/outbox"
 	"github.com/cafaye/identity/internal/platform/dbtest"
+	"github.com/cafaye/identity/internal/platform/id"
 	"github.com/cafaye/identity/internal/signup"
 )
 
@@ -175,12 +177,18 @@ func TestNewAppWithNATSURLPublishesWhatTheProcessWrites(t *testing.T) {
 }
 
 // The stream-less twin of the test above, and the reason that test is not
-// vacuous: the same registration against a broker with no stream covering the
-// subject leaves the row unpublished, with the refusal recorded — attempts
-// climbed, last_error names it, published_at NULL. The refusal's mechanics are
+// vacuous: the same row against a broker with no stream covering the subject
+// is left unpublished, with the refusal recorded — attempts climbed,
+// last_error names it, published_at NULL. The refusal's mechanics are
 // internal/outbox's to prove at length; what is asserted here is that the
 // drain the wiring test observes is caused by the stream the stack must
 // define, and not by anything the loop does when no broker answers.
+//
+// The row is inserted directly rather than through a registration, because a
+// registration provisions a personal account in the shared public schema —
+// the race internal/accounts' count test loses to when the gate runs the
+// packages in parallel. The row is the loop's input; where it comes from is
+// the positive test's subject, not this one's.
 func TestNewAppWithNATSURLButNoStreamLeavesTheRowUnpublished(t *testing.T) {
 	dsn := testDatabaseURL(t)
 	broker := startNATS(t) // deliberately no addStream: the broker has no stream
@@ -199,33 +207,25 @@ func TestNewAppWithNATSURLButNoStreamLeavesTheRowUnpublished(t *testing.T) {
 		t.Fatal("no publisher was built with NATS_URL set")
 	}
 
-	email := dbtest.UniqueEmail(t)
-	const password = "correct horse battery staple"
-
-	pairRec := serveBody(t, a, http.MethodPost, "/v1/signup-timestamp", "", nil)
-	if pairRec.Code != http.StatusOK {
-		t.Fatalf("POST /v1/signup-timestamp = %d, want 201; body: %s", pairRec.Code, pairRec.Body)
+	pool := dbtest.Pool(t)
+	e, err := outbox.NewUserCreated(time.Now(), id.MustNew(), "nobody@example.com")
+	if err != nil {
+		t.Fatalf("building the envelope: %v", err)
 	}
-	var pair struct {
-		Timestamp int64  `json:"timestamp"`
-		Signature string `json:"signature"`
+	envelope, err := json.Marshal(e)
+	if err != nil {
+		t.Fatalf("marshalling the envelope: %v", err)
 	}
-	if err := json.Unmarshal(pairRec.Body.Bytes(), &pair); err != nil {
-		t.Fatalf("the minted pair is not JSON: %v\n%s", err, pairRec.Body)
-	}
-
-	time.Sleep(signup.MinAge + 500*time.Millisecond)
-
-	rec := serveBody(t, a, http.MethodPost, "/v1/users", `{"email":"`+email+`","password":"`+password+
-		`","timestamp":`+strconv.FormatInt(pair.Timestamp, 10)+`,"signature":"`+pair.Signature+`"}`, nil)
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("POST /v1/users = %d, want 201; body: %s", rec.Code, rec.Body)
+	if _, err := pool.Exec(context.Background(),
+		`INSERT INTO outbox_events (id, type, source, subject, occurred_at, payload, envelope)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		e.ID, e.Type, e.Source, e.Subject, e.Time, e.Data, envelope); err != nil {
+		t.Fatalf("inserting the outbox row: %v", err)
 	}
 
 	// Three poll intervals: the loop has claimed the row and tried to publish
 	// it at least twice, and every attempt was refused. The row is exactly
 	// where the contract says a refused publish leaves it.
-	pool := dbtest.Pool(t)
 	time.Sleep(3 * time.Second)
 
 	var (
@@ -234,8 +234,8 @@ func TestNewAppWithNATSURLButNoStreamLeavesTheRowUnpublished(t *testing.T) {
 		lastError   *string
 	)
 	if err := pool.QueryRow(context.Background(),
-		`SELECT published_at, attempts, last_error FROM outbox_events WHERE type = 'identity.user.created' AND subject IN (SELECT id::text FROM users WHERE email = $1)`,
-		email).Scan(&publishedAt, &attempts, &lastError); err != nil {
+		`SELECT published_at, attempts, last_error FROM outbox_events WHERE id = $1`,
+		e.ID).Scan(&publishedAt, &attempts, &lastError); err != nil {
 		t.Fatalf("reading the outbox row: %v", err)
 	}
 	if publishedAt != nil {
