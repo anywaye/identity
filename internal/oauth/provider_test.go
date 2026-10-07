@@ -30,6 +30,7 @@ package oauth
 
 import (
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -47,7 +48,7 @@ func credentials(p Provider) Provider {
 func newTestRegistry(t *testing.T, base string, names ...string) *Registry {
 	t.Helper()
 
-	all := map[string]Provider{ProviderGoogle: Google(), ProviderGitHub: GitHub()}
+	all := map[string]Provider{ProviderGoogle: Google(), ProviderGitHub: GitHub(), ProviderApple: Apple()}
 	providers := make([]Provider, 0, len(names))
 	for _, name := range names {
 		def, ok := all[name]
@@ -85,20 +86,34 @@ func newTestRegistry(t *testing.T, base string, names ...string) *Registry {
 func TestTheProviderDefinitionsAreFixed(t *testing.T) {
 	t.Parallel()
 
+	// wantEndpoints maps every endpoint field to whether it must be NON-EMPTY
+	// for that provider. The two directions are both load-bearing and neither is
+	// inferable from the provider name: Google's userinfo carries the address so
+	// it has no emails endpoint, and Apple has no userinfo endpoint at all — its
+	// identity comes from an id_token verified against JWKSURL, which is the one
+	// field no other provider has.
 	for _, tc := range []struct {
-		name     string
-		provider Provider
-		wantName string
-		wantOpts int
-		emails   bool
+		name          string
+		provider      Provider
+		wantName      string
+		wantOpts      int
+		wantEndpoints map[string]bool
 	}{
-		{name: "google", provider: Google(), wantName: ProviderGoogle, wantOpts: 1},
-		{name: "github", provider: GitHub(), wantName: ProviderGitHub, emails: true},
+		{name: "google", provider: Google(), wantName: ProviderGoogle, wantOpts: 1,
+			wantEndpoints: map[string]bool{"AuthorizeURL": true, "TokenURL": true, "UserInfoURL": true, "EmailsURL": false, "JWKSURL": false}},
+		{name: "github", provider: GitHub(), wantName: ProviderGitHub,
+			wantEndpoints: map[string]bool{"AuthorizeURL": true, "TokenURL": true, "UserInfoURL": true, "EmailsURL": true, "JWKSURL": false}},
 		// Microsoft carries no extra authorize option — its offline access is a
 		// SCOPE, not a parameter, and sending Google's access_type to it would be
 		// the same noise in the other direction — and no emails endpoint, because
 		// its userinfo carries the address itself.
-		{name: "microsoft", provider: Microsoft(), wantName: ProviderMicrosoft},
+		{name: "microsoft", provider: Microsoft(), wantName: ProviderMicrosoft,
+			wantEndpoints: map[string]bool{"AuthorizeURL": true, "TokenURL": true, "UserInfoURL": true, "EmailsURL": false, "JWKSURL": false}},
+		// Apple has no UserInfoURL — there is no userinfo endpoint to point
+		// anywhere — and no EmailsURL. Its identity comes from the id_token,
+		// verified against JWKSURL, which is the field only it carries.
+		{name: "apple", provider: Apple(), wantName: ProviderApple,
+			wantEndpoints: map[string]bool{"AuthorizeURL": true, "TokenURL": true, "UserInfoURL": false, "EmailsURL": false, "JWKSURL": true}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -114,21 +129,20 @@ func TestTheProviderDefinitionsAreFixed(t *testing.T) {
 					"it, because the parameter is Google's and sending it elsewhere is noise at best.",
 					len(tc.provider.ExtraAuthorizeOptions), tc.wantOpts, tc.name)
 			}
-			if got := tc.provider.EmailsURL != ""; got != tc.emails {
-				t.Errorf("EmailsURL set = %v, want %v for %s. It is GitHub-only: /user returns a "+
-					"null email for a private address and /user/emails is the documented way to get "+
-					"it. Google's userinfo carries the address itself.",
-					got, tc.emails, tc.name)
-			}
-			for field, value := range map[string]string{
-				"AuthorizeURL": tc.provider.AuthorizeURL,
-				"TokenURL":     tc.provider.TokenURL,
-				"UserInfoURL":  tc.provider.UserInfoURL,
-			} {
-				if value == "" {
-					t.Errorf("%s is empty on %s. The endpoints are fields rather than constants so a "+
+			for field, wantNonEmpty := range tc.wantEndpoints {
+				value := reflect.ValueOf(tc.provider).FieldByName(field)
+				if !value.IsValid() {
+					t.Errorf("Provider has no field %q, so this test's expectation for %s cannot be checked", field, tc.name)
+					continue
+				}
+				got := value.String() != ""
+				if got != wantNonEmpty {
+					t.Errorf("%s set = %v, want %v for %s. The endpoints are fields rather than constants so a "+
 						"test can point a flow at an httptest server, which means a production endpoint "+
-						"is a value nothing else in the type guarantees is right.", field, tc.name)
+						"is a value nothing else in the type guarantees is right — and an endpoint that "+
+						"should be absent (Apple's UserInfoURL, Google's EmailsURL) is a call this service "+
+						"would make to a provider that does not answer it.",
+						field, got, wantNonEmpty, tc.name)
 				}
 			}
 		})
@@ -265,7 +279,7 @@ func TestNewRegistryAcceptsABaseWithATrailingSlash(t *testing.T) {
 // TestLookupRefusesAnUnconfiguredProviderAndAnAbsentOneAlike is the property
 // `Lookup`'s own comment claims and the security reason the method exists.
 //
-// Two names are asked for: "apple", which this service has never heard of, and
+// Two names are asked for: "netflix", which this service has never heard of, and
 // "google" on a registry configured with only GitHub. Both must be
 // ErrUnknownProvider, and — the half that is easy to get wrong and the half an
 // attacker wants — both must be the same ERROR apart from the name the caller
@@ -302,7 +316,7 @@ func TestLookupRefusesAnUnconfiguredProviderAndAnAbsentOneAlike(t *testing.T) {
 
 	registry := newTestRegistry(t, "https://identity.test", ProviderGitHub)
 
-	unknown, unknownErr := registry.Lookup("apple")
+	unknown, unknownErr := registry.Lookup("netflix")
 	unconfigured, unconfiguredErr := registry.Lookup(ProviderGoogle)
 
 	for name, err := range map[string]error{
@@ -316,11 +330,11 @@ func TestLookupRefusesAnUnconfiguredProviderAndAnAbsentOneAlike(t *testing.T) {
 	}
 
 	// The comparison errors.Is does NOT cover. `google` is a real provider this
-	// deployment lacks; `apple` is not a provider at all. With the caller's own
+	// deployment lacks; `netflix` is not a provider at all. With the caller's own
 	// name substituted out, nothing else may differ.
 	const substituted = "PROVIDER"
 	strippedUnconfigured := strings.Replace(unconfiguredErr.Error(), ProviderGoogle, substituted, 1)
-	strippedUnknown := strings.Replace(unknownErr.Error(), "apple", substituted, 1)
+	strippedUnknown := strings.Replace(unknownErr.Error(), "netflix", substituted, 1)
 
 	if strippedUnconfigured != strippedUnknown {
 		t.Errorf("the two misses differ in something other than the requested name:\n"+
@@ -328,15 +342,15 @@ func TestLookupRefusesAnUnconfiguredProviderAndAnAbsentOneAlike(t *testing.T) {
 			"The requested name is the caller's own URL segment and discloses nothing. Anything else "+
 			"that differs between a provider this deployment lacks and one that does not exist is a "+
 			"configuration oracle reachable with no credential.",
-			ProviderGoogle, strippedUnconfigured, "apple", strippedUnknown)
+			ProviderGoogle, strippedUnconfigured, "netflix", strippedUnknown)
 	}
 
 	// Both misses still quote what was asked for, because that string never reaches a
 	// caller — the router renders a constant 404 — and it is the difference between a
 	// 404 an operator can debug and one they cannot.
 	for name, err := range map[string]error{
-		"apple":  unknownErr,
-		"google": unconfiguredErr,
+		"netflix": unknownErr,
+		"google":  unconfiguredErr,
 	} {
 		if !strings.Contains(err.Error(), name) {
 			t.Errorf("the refusal for %q does not quote the name asked for: %q", name, err.Error())
@@ -430,7 +444,7 @@ func TestLookupOnAnEmptyRegistryRefusesEverything(t *testing.T) {
 		t.Fatalf("NewRegistry: %v", err)
 	}
 
-	for _, name := range []string{ProviderGoogle, ProviderGitHub, ProviderMicrosoft, "apple", ""} {
+	for _, name := range []string{ProviderGoogle, ProviderGitHub, ProviderMicrosoft, ProviderApple, "netflix", ""} {
 		if _, err := registry.Lookup(name); !errors.Is(err, ErrUnknownProvider) {
 			t.Errorf("Lookup(%q) on an empty registry = %v, want ErrUnknownProvider", name, err)
 		}

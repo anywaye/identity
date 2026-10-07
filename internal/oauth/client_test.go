@@ -276,6 +276,113 @@ func TestClientIdentityReadsMicrosoft(t *testing.T) {
 	}
 }
 
+// Apple's identity comes from the id_token, verified against Apple's JWKS —
+// there is no userinfo endpoint to call. So this test drives the whole path
+// against the fake: the exchange extracts the id_token the fake minted, and
+// the identity call fetches the fake's JWKS and verifies the signature before
+// reading a single claim.
+//
+// # THIS IS ALSO THE EVIDENCE THAT THE FLOW FAILS WITHOUT ITS ADAPTER
+//
+// `Client.Identity` switches on the provider name, and the default branch
+// answers ErrUnknownProvider for a provider with no case. So if the
+// `case ProviderApple` were removed — or routed to the wrong decoder — this
+// test is the one that goes red, the same way the microsoft test is for its
+// provider.
+func TestClientIdentityReadsApple(t *testing.T) {
+	t.Parallel()
+
+	server := oauthtest.NewServer(t).Person("a1b2c3d4-e5f6-7890-abcd-ef1234567890", "kaka@example.com", "Kaka")
+
+	provider := server.Provider(t, oauth.Apple())
+	exchanged, err := newTestClient(t).Exchange(context.Background(), provider, server.Code)
+	if err != nil {
+		t.Fatalf("Exchange: %v", err)
+	}
+	if exchanged.IDToken == "" {
+		t.Fatal("the exchange extracted no id_token, so the Apple path has nothing to verify")
+	}
+
+	identity, err := newTestClient(t).Identity(context.Background(), provider, exchanged)
+	if err != nil {
+		t.Fatalf("Identity: %v", err)
+	}
+
+	if identity.ProviderUID != "a1b2c3d4-e5f6-7890-abcd-ef1234567890" {
+		t.Errorf("ProviderUID = %q, want the apple sub", identity.ProviderUID)
+	}
+	if identity.Email != "kaka@example.com" {
+		t.Errorf("Email = %q, want kaka@example.com", identity.Email)
+	}
+	// The name is empty because this service does not request the `name` scope
+	// — Apple sends it once, on the first consent, and only to a form_post
+	// callback. See Apple().
+	if identity.Name != "" {
+		t.Errorf("Name = %q, want empty: the name scope is not requested", identity.Name)
+	}
+
+	// The JWKS was fetched and the signature verified against it — the two
+	// calls are the whole of the trust, and a verifier that skipped either
+	// would not have read the claims above.
+	oauthtest.RequireCalls(t, server, oauthtest.TokenEndpointPath, oauthtest.JWKSPath)
+}
+
+// THE NEGATIVE TEST FOR THE ID_TOKEN PATH, AND THE ONE THAT PROVES THE
+// VERIFIER VERIFIES.
+//
+// The fake signs id_tokens with a key its JWKS does not publish. The verifier
+// fetches the JWKS, finds no key for the token's kid, and refuses — because a
+// token signed by a key Apple does not publish is a token Apple did not sign,
+// and accepting it would be an authentication bypass: anybody could mint an
+// id_token claiming any sub and any email.
+//
+// A verifier with no negative test is a verifier that is not proven to verify.
+// This is that test, and it is the reason the whole id_token path exists in
+// this packet rather than a userinfo call.
+func TestClientIdentityRefusesAnAppleIDTokenSignedByAnUnpublishedKey(t *testing.T) {
+	t.Parallel()
+
+	server := oauthtest.NewServer(t).
+		Person("a1b2c3d4-e5f6-7890-abcd-ef1234567890", "kaka@example.com", "Kaka").
+		WithUnpublishedKey()
+
+	provider := server.Provider(t, oauth.Apple())
+	exchanged, err := newTestClient(t).Exchange(context.Background(), provider, server.Code)
+	if err != nil {
+		t.Fatalf("Exchange: %v", err)
+	}
+
+	identity, err := newTestClient(t).Identity(context.Background(), provider, exchanged)
+	if err == nil {
+		t.Fatalf("Identity accepted an id_token signed by a key the JWKS does not publish: %+v", identity)
+	}
+	if !errors.Is(err, oauth.ErrProviderUnavailable) {
+		t.Errorf("Identity = %v, want ErrProviderUnavailable", err)
+	}
+	// The JWKS was still fetched — the refusal is about what the JWKS did not
+	// contain, not about the call failing.
+	oauthtest.RequireCalls(t, server, oauthtest.TokenEndpointPath, oauthtest.JWKSPath)
+}
+
+// A token response with no id_token is not an identity. Apple's whole identity
+// mechanism is the signed token, so a response without one has nothing to
+// verify — and the claims must not be read from anywhere else.
+func TestClientIdentityRefusesAnAppleIDTokenWithNoIDToken(t *testing.T) {
+	t.Parallel()
+
+	server := oauthtest.NewServer(t)
+
+	_, err := newTestClient(t).Identity(context.Background(), server.Provider(t, oauth.Apple()), oauth.Tokens{
+		AccessToken: server.AccessToken,
+	})
+	if !errors.Is(err, oauth.ErrProviderUnavailable) {
+		t.Errorf("Identity with no id_token = %v, want ErrProviderUnavailable", err)
+	}
+	// And the JWKS was not fetched: there is no token to verify, so there is
+	// nothing to look a key up for.
+	oauthtest.RequireCalls(t, server)
+}
+
 // GitHub returns a null email for an account whose address is private, and
 // /user/emails is the documented way to get it. Without this the service cannot
 // identify a large fraction of real GitHub accounts at all.

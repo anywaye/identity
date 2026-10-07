@@ -238,6 +238,18 @@ const (
 	// Microsoft pair.
 	OAuthMicrosoftClientIDVar     = "OAUTH_MICROSOFT_CLIENT_ID"
 	OAuthMicrosoftClientSecretVar = "OAUTH_MICROSOFT_CLIENT_SECRET"
+	// OAuthAppleClientIDVar is Apple's Services ID — the OAuth client id, and
+	// the `sub` of the client_secret this service signs.
+	OAuthAppleClientIDVar = "OAUTH_APPLE_CLIENT_ID"
+	// OAuthAppleTeamIDVar is the Apple Developer Team ID — the `iss` of that
+	// secret.
+	OAuthAppleTeamIDVar = "OAUTH_APPLE_TEAM_ID"
+	// OAuthAppleKeyIDVar is the platform key's id — the `kid` of that secret's
+	// header.
+	OAuthAppleKeyIDVar = "OAUTH_APPLE_KEY_ID"
+	// OAuthApplePrivateKeyVar is the .p8 PEM contents of the platform key —
+	// what the secret is signed with.
+	OAuthApplePrivateKeyVar = "OAUTH_APPLE_PRIVATE_KEY"
 
 	// The endpoint overrides. Every one is OPTIONAL and every one defaults to the
 	// provider's real endpoint, which is defined once in internal/oauth/endpoints.go
@@ -264,6 +276,26 @@ const (
 	OAuthMicrosoftAuthorizeURLVar = "OAUTH_MICROSOFT_AUTHORIZE_URL"
 	OAuthMicrosoftTokenURLVar     = "OAUTH_MICROSOFT_TOKEN_URL"
 	OAuthMicrosoftUserInfoURLVar  = "OAUTH_MICROSOFT_USERINFO_URL"
+	// OAuthAppleAuthorizeURLVar and OAuthAppleTokenURLVar are Apple's two
+	// overridable endpoints, following the same pattern as the other three
+	// providers.
+	//
+	// There is deliberately NO OAUTH_APPLE_JWKS_URL. The JWKS document is the
+	// TRUST ROOT for Apple's id_token — the one provider whose identity this
+	// service verifies against a published key rather than reads from a
+	// userinfo call — and a deployment that could point it anywhere could point
+	// it at a key document of its own, and then the id_token it verifies would
+	// be one the deployment signed itself: a complete authentication bypass. The
+	// authorize and token URLs carry no such power, because an id_token returned
+	// by whichever token endpoint is still verified against the PINNED Apple
+	// JWKS before a single claim is read. So Apple's key document is the one
+	// endpoint this service refuses to let a deployment choose.
+	//
+	// There is no OAUTH_APPLE_USERINFO_URL because Apple has no userinfo
+	// endpoint, and no OAUTH_APPLE_EMAILS_URL because the id_token carries the
+	// address. Both absences are the provider's shape, not an oversight.
+	OAuthAppleAuthorizeURLVar = "OAUTH_APPLE_AUTHORIZE_URL"
+	OAuthAppleTokenURLVar     = "OAUTH_APPLE_TOKEN_URL"
 )
 
 // oauthEndpointVars is the per-endpoint table: which variable sets which provider's
@@ -345,6 +377,18 @@ var oauthEndpointVars = []struct {
 		field:    "UserInfoURL",
 		variable: OAuthMicrosoftUserInfoURLVar,
 		assign:   func(s *oauth.Settings, v string) { s.Microsoft.Endpoints.UserInfoURL = v },
+	},
+	{
+		provider: oauth.ProviderApple,
+		field:    "AuthorizeURL",
+		variable: OAuthAppleAuthorizeURLVar,
+		assign:   func(s *oauth.Settings, v string) { s.Apple.Endpoints.AuthorizeURL = v },
+	},
+	{
+		provider: oauth.ProviderApple,
+		field:    "TokenURL",
+		variable: OAuthAppleTokenURLVar,
+		assign:   func(s *oauth.Settings, v string) { s.Apple.Endpoints.TokenURL = v },
 	},
 }
 
@@ -564,7 +608,7 @@ func (c Config) OAuthEnabled() bool { return c.OAuth.Enabled() }
 
 // loadOAuth reads the social-login block.
 //
-// SEVEN CREDENTIAL VARIABLES, TEN ENDPOINT OVERRIDES AND THREE PROVIDERS, and the
+// TEN CREDENTIAL VARIABLES, TWELVE ENDPOINT OVERRIDES AND FOUR PROVIDERS, and the
 // rules are oauth.Settings.Validate's rather than this function's:
 //
 //   - a provider with one half of its credentials is a STARTUP FAILURE, not a
@@ -581,7 +625,31 @@ func (c Config) OAuthEnabled() bool { return c.OAuth.Enabled() }
 //   - NO BLOCK AT ALL is a supported state. This is the one optional surface whose
 //     absence is a decision rather than a gap, and refusing to boot without it would
 //     mean this service could not be deployed password-only.
+//
+// APPLE IS THE ONE PROVIDER WHOSE SECRET IS DERIVED RATHER THAN READ. Its
+// client_secret is an ES256 JWT this service signs, minted here from the four
+// OAUTH_APPLE_* inputs by oauth.MintAppleClientSecret — once, at startup, and
+// cached, because the secret is valid for months and there is no rotation
+// machinery. The minted secret lands in Settings.Apple.ClientSecret, so the
+// exchange path needs no change. A half-configured set of the four inputs is
+// refused by the helper as ErrIncompleteProvider, the existing rule unchanged.
 func (c *Config) loadOAuth(lookup Lookup) error {
+	appleInputs := oauth.AppleSecretInputs{
+		ServicesID: lookupValue(lookup, OAuthAppleClientIDVar),
+		TeamID:     lookupValue(lookup, OAuthAppleTeamIDVar),
+		KeyID:      lookupValue(lookup, OAuthAppleKeyIDVar),
+		PrivateKey: lookupValue(lookup, OAuthApplePrivateKeyVar),
+	}
+	appleSecret, err := oauth.MintAppleClientSecret(appleInputs)
+	if err != nil {
+		// Both sentinels are preserved: ErrInvalidOAuth says the block is
+		// broken, and the inner one says WHICH rule — a half-configured Apple
+		// is ErrIncompleteProvider, the same answer the other three providers
+		// get, and an operator reading it goes looking for the same kind of
+		// missing variable.
+		return fmt.Errorf("%w: %w", ErrInvalidOAuth, err)
+	}
+
 	c.OAuth = oauth.Settings{
 		RedirectBaseURL: lookupValue(lookup, OAuthRedirectBaseURLVar),
 		EncryptionKey:   lookupValue(lookup, OAuthEncryptionKeyVar),
@@ -596,6 +664,10 @@ func (c *Config) loadOAuth(lookup Lookup) error {
 		Microsoft: oauth.ProviderSettings{
 			ClientID:     lookupValue(lookup, OAuthMicrosoftClientIDVar),
 			ClientSecret: lookupValue(lookup, OAuthMicrosoftClientSecretVar),
+		},
+		Apple: oauth.ProviderSettings{
+			ClientID:     appleInputs.ServicesID,
+			ClientSecret: appleSecret,
 		},
 	}
 	for _, v := range oauthEndpointVars {

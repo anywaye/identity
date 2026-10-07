@@ -63,6 +63,18 @@ func TestSettingsValidateRejectsAHalfConfiguredProvider(t *testing.T) {
 				Microsoft:       ProviderSettings{ClientID: "id"},
 			},
 		},
+		{
+			// The fourth provider, held to the same rule. Apple's ClientSecret
+			// is minted at startup rather than read from the environment, so a
+			// hand-built Settings carries it literally — and one half of it is
+			// the same mistake whichever provider made it.
+			name: "apple without a secret",
+			s: Settings{
+				RedirectBaseURL: "https://identity.cafaye.com",
+				EncryptionKey:   testKeyBase64(4),
+				Apple:           ProviderSettings{ClientID: "id"},
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -172,18 +184,19 @@ func TestSettingsValidateAcceptsAWorkingConfiguration(t *testing.T) {
 		Google:          ProviderSettings{ClientID: "id", ClientSecret: "secret"},
 		GitHub:          ProviderSettings{ClientID: "id2", ClientSecret: "secret2"},
 		Microsoft:       ProviderSettings{ClientID: "id3", ClientSecret: "secret3"},
+		Apple:           ProviderSettings{ClientID: "id4", ClientSecret: "secret4"},
 	}
 
 	if err := s.Validate(); err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
 	if !s.Enabled() {
-		t.Error("Enabled = false with three configured providers")
+		t.Error("Enabled = false with four configured providers")
 	}
 
 	providers := s.Providers()
-	if len(providers) != 3 {
-		t.Fatalf("Providers() returned %d, want 3", len(providers))
+	if len(providers) != 4 {
+		t.Fatalf("Providers() returned %d, want 4", len(providers))
 	}
 	// Every configured provider carries its credentials and this service's
 	// endpoints, and nothing else is included.
@@ -191,12 +204,17 @@ func TestSettingsValidateAcceptsAWorkingConfiguration(t *testing.T) {
 		if p.ClientID == "" || p.ClientSecret == "" {
 			t.Errorf("provider %q has no credentials", p.Name)
 		}
-		if p.AuthorizeURL == "" || p.TokenURL == "" || p.UserInfoURL == "" {
+		if p.AuthorizeURL == "" || p.TokenURL == "" {
 			t.Errorf("provider %q has an incomplete endpoint set: %+v", p.Name, p)
 		}
+		// Apple has no userinfo endpoint — its identity comes from the
+		// id_token — so the userinfo check is not universal.
+		if p.Name != ProviderApple && p.UserInfoURL == "" {
+			t.Errorf("provider %q has no userinfo endpoint: %+v", p.Name, p)
+		}
 	}
-	if providers[0].Name != ProviderGoogle || providers[1].Name != ProviderGitHub || providers[2].Name != ProviderMicrosoft {
-		t.Errorf("Providers() = %q, %q, %q; want a stable order", providers[0].Name, providers[1].Name, providers[2].Name)
+	if providers[0].Name != ProviderGoogle || providers[1].Name != ProviderGitHub || providers[2].Name != ProviderMicrosoft || providers[3].Name != ProviderApple {
+		t.Errorf("Providers() = %q, %q, %q, %q; want a stable order", providers[0].Name, providers[1].Name, providers[2].Name, providers[3].Name)
 	}
 }
 
@@ -272,7 +290,7 @@ func TestRegistryLookupDoesNotDistinguishUnconfiguredFromUnknown(t *testing.T) {
 		t.Fatalf("Lookup(%q) = %v, want the configured provider", ProviderGoogle, googleErr)
 	}
 
-	for _, name := range []string{ProviderGitHub, ProviderMicrosoft, "apple", "", "GOOGLE", "../google"} {
+	for _, name := range []string{ProviderGitHub, ProviderMicrosoft, ProviderApple, "netflix", "", "GOOGLE", "../google"} {
 		_, err := registry.Lookup(name)
 		if !errors.Is(err, ErrUnknownProvider) {
 			t.Errorf("Lookup(%q) = %v, want ErrUnknownProvider", name, err)

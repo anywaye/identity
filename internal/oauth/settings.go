@@ -51,6 +51,7 @@ func (s Settings) providers() []namedProvider {
 		{name: ProviderGoogle, settings: s.Google},
 		{name: ProviderGitHub, settings: s.GitHub},
 		{name: ProviderMicrosoft, settings: s.Microsoft},
+		{name: ProviderApple, settings: s.Apple},
 	}
 }
 
@@ -87,11 +88,17 @@ type Settings struct {
 	// EncryptionKey is standard base64 of 32 bytes, which is what
 	// `head -c 32 /dev/urandom | base64` prints.
 	EncryptionKey string
-	// Google, GitHub and Microsoft are per provider: credentials and endpoint
-	// overrides.
+	// Google, GitHub, Microsoft and Apple are per provider: credentials and
+	// endpoint overrides.
+	//
+	// Apple's ClientSecret is not read from the environment — it is minted at
+	// startup from the four OAUTH_APPLE_* inputs (see MintAppleClientSecret) and
+	// written here by internal/config's loadOAuth. So a deployment configures
+	// the four inputs, and this field carries the derived secret.
 	Google    ProviderSettings
 	GitHub    ProviderSettings
 	Microsoft ProviderSettings
+	Apple     ProviderSettings
 }
 
 // Validate reports whether these settings can be used to serve sign-in.
@@ -177,8 +184,8 @@ func (s Settings) Enabled() bool {
 // Providers returns the fully-configured providers, each carrying this service's
 // endpoints, this deployment's overrides and the operator's credentials.
 //
-// The order is fixed — google, github, then microsoft — so a startup log line
-// naming them is stable between restarts of the same configuration.
+// The order is fixed — google, github, microsoft, then apple — so a startup log
+// line naming them is stable between restarts of the same configuration.
 func (s Settings) Providers() []Provider {
 	out := make([]Provider, 0, len(s.providers()))
 	for _, np := range s.providers() {

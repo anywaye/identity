@@ -72,6 +72,12 @@ type Tokens struct {
 	// ExpiresAt is nil when the token does not expire. It is the provider token's
 	// expiry and has nothing to do with a session's.
 	ExpiresAt *time.Time
+	// IDToken is the provider's signed identity token, when the response carried
+	// one. Only Apple reads it — the other three providers get their identity
+	// from a userinfo call — but it is extracted for every provider because the
+	// token response is provider-agnostic and an id_token this service does not
+	// use is inert. See apple.go for what verifying it means.
+	IDToken string
 }
 
 // Identity is what a provider says about the person behind a token.
@@ -151,6 +157,12 @@ func (c *Client) Exchange(ctx context.Context, p Provider, code string) (Tokens,
 		expiry := token.Expiry.UTC()
 		out.ExpiresAt = &expiry
 	}
+	// Extracted for every provider and read by one. Apple's token response
+	// carries the identity as an id_token; the other providers' id_tokens are
+	// ignored because their identity comes from a userinfo call.
+	if idToken, ok := token.Extra("id_token").(string); ok {
+		out.IDToken = idToken
+	}
 	return out, nil
 }
 
@@ -175,6 +187,8 @@ func (c *Client) Identity(ctx context.Context, p Provider, tokens Tokens) (Ident
 		return c.githubIdentity(ctx, p, tokens)
 	case ProviderMicrosoft:
 		return c.microsoftIdentity(ctx, p, tokens)
+	case ProviderApple:
+		return c.appleIdentity(ctx, p, tokens)
 	default:
 		// Unreachable through a Registry, which only holds the providers this
 		// service defines. Returned rather than panicked on: a provider added to

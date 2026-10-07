@@ -187,7 +187,7 @@ func TestStoreCreateRefusesAProviderOutsideTheEnum(t *testing.T) {
 
 	_, err := store.Create(ctx, pool, NewAccount{
 		UserID:                newAccountUser(t, pool),
-		Provider:              "apple",
+		Provider:              "netflix",
 		ProviderUID:           "001234",
 		AccessTokenCiphertext: "v1.abcdef",
 	})

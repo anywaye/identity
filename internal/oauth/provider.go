@@ -30,12 +30,19 @@ const (
 	// and TestEveryProviderThisServiceOffersIsInTheTable (the closed set against
 	// Settings.providers()).
 	ProviderMicrosoft = "microsoft"
+	// ProviderApple is the fourth value of the `oauth_provider` enum, added by
+	// migrations/00026_oauth_provider_apple.sql — in the same migration that adds
+	// the provider, for the reason that migration's comment gives. Apple is also
+	// the one provider with a mechanism rather than a credential: its
+	// client_secret is a JWT this service signs, and its identity comes from a
+	// verified id_token rather than a userinfo call. Both live in apple.go.
+	ProviderApple = "apple"
 )
 
 // knownProviders is the closed set, in the order they are logged. An unlisted name
 // is a 404 rather than a lookup, so a typo in a URL cannot become a query against
 // a provider this service has no client credentials for.
-var knownProviders = []string{ProviderGoogle, ProviderGitHub, ProviderMicrosoft}
+var knownProviders = []string{ProviderGoogle, ProviderGitHub, ProviderMicrosoft, ProviderApple}
 
 // Errors from the registry and from Settings.Validate.
 var (
@@ -80,6 +87,19 @@ type Provider struct {
 	// address is private, and /user/emails is the documented way to get it.
 	// Empty for providers that always return the address on the identity call.
 	EmailsURL string
+	// JWKSURL is Apple-only: where the provider's public keys are published, for
+	// the one provider whose identity comes from a signed id_token this service
+	// verifies against them rather than from a userinfo call. Empty for
+	// providers with a userinfo endpoint.
+	//
+	// It is a field and not an endpoint override for the reason EmailsURL is
+	// one: it is pointed at a test server by rewriting the field, the same way
+	// every other endpoint is. There is no OAUTH_APPLE_JWKS_URL because Apple's
+	// key document is not a deployment choice the way a token endpoint is — a
+	// deployment that could point this anywhere could point it at a key document
+	// of its own, and then the id_token it verifies would be one the deployment
+	// signed itself.
+	JWKSURL string
 	// ExtraAuthorizeOptions are provider-specific parameters appended to every
 	// authorize URL. There is exactly one, and why it exists is in Google().
 	ExtraAuthorizeOptions []oauth2.AuthCodeOption
@@ -142,6 +162,32 @@ func Microsoft() Provider {
 	}
 }
 
+// Apple returns the provider definition with this service's endpoint choices.
+//
+// The scopes are `openid email` and NOTHING ELSE, and the absence of `name` is
+// the load-bearing part. Apple requires a POST callback (response_mode
+// form_post) only when the `name` scope is requested; the honest scope here is
+// openid email, because the name is not available on later authorizations
+// anyway — Apple sends it once, on the first consent, and only to a form_post
+// callback. Requesting it would mean a second, POST callback route and a name
+// this service could display once and never again. So the callback stays a GET
+// and the existing route is unchanged.
+//
+// There is no UserInfoURL because Apple has no userinfo endpoint: the identity
+// comes from the id_token, verified against JWKSURL. The client_secret is not
+// set here either — it is minted at startup from the four environment inputs
+// (see MintAppleClientSecret) and dropped into the ClientSecret field by
+// Settings.Providers, so the exchange path needs no change.
+func Apple() Provider {
+	return Provider{
+		Name:         ProviderApple,
+		Scopes:       []string{"openid", "email"},
+		AuthorizeURL: AppleAuthorizeURL,
+		TokenURL:     AppleTokenURL,
+		JWKSURL:      AppleJWKSURL,
+	}
+}
+
 // providerByName returns this service's definition for a known provider name.
 //
 // It exists because the definitions and the settings have to be walked TOGETHER —
@@ -158,6 +204,8 @@ func providerByName(name string) (Provider, bool) {
 		return GitHub(), true
 	case ProviderMicrosoft:
 		return Microsoft(), true
+	case ProviderApple:
+		return Apple(), true
 	default:
 		return Provider{}, false
 	}
@@ -217,7 +265,7 @@ func (p Provider) RedirectURI(baseURL string) string {
 // Registry is the set of providers this deployment will accept, keyed by name.
 //
 // It holds only providers that are fully configured. A name that is absent is a
-// 404 whether it is nonsense ("apple") or a real provider this deployment has no
+// 404 whether it is nonsense ("netflix") or a real provider this deployment has no
 // credentials for, and that is on purpose: an unauthenticated endpoint that
 // distinguishes those two is a way to enumerate a deployment's configuration.
 type Registry struct {

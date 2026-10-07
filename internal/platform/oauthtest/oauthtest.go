@@ -13,6 +13,9 @@
 package oauthtest
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -21,6 +24,9 @@ import (
 	"strconv"
 	"sync"
 	"testing"
+	"time"
+
+	"github.com/go-jose/go-jose/v4"
 
 	"github.com/cafaye/identity/internal/oauth"
 )
@@ -79,6 +85,25 @@ type Server struct {
 	// would keep passing every happy path.
 	UnverifiedEmail bool
 
+	// appleKey is the ES256 key the fake publishes in its JWKS and signs
+	// id_tokens with — the fake's stand-in for Apple's platform key.
+	appleKey *ecdsa.PrivateKey
+	// appleKeyID is the kid of the published key.
+	appleKeyID string
+	// unpublishedKey signs id_tokens the JWKS does NOT publish: the forged-token
+	// case, where a token is signed by a key Apple does not publish and the
+	// verifier must refuse it because its signature cannot be checked.
+	unpublishedKey *ecdsa.PrivateKey
+	// unpublishedKeyID is the kid of the unpublished key.
+	unpublishedKeyID string
+	// useUnpublishedKey makes id_tokens sign with the unpublished key.
+	useUnpublishedKey bool
+
+	// clientID is the client id Provider() stamps on every provider, and the
+	// `aud` of every id_token the fake mints — the two have to agree, because
+	// the verifier checks the audience against the provider's client id.
+	clientID string
+
 	// tokenStatus, userInfoStatus and emailsStatus are the status codes those
 	// endpoints return. Zero means 200.
 	tokenStatus    int
@@ -95,14 +120,28 @@ type Server struct {
 func NewServer(t *testing.T) *Server {
 	t.Helper()
 
+	appleKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generating the fake's ES256 key: %v", err)
+	}
+	unpublishedKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generating the fake's unpublished ES256 key: %v", err)
+	}
+
 	s := &Server{
-		Code:         "the-authorization-code",
-		AccessToken:  "an-access-token",
-		RefreshToken: "a-refresh-token",
-		ExpiresIn:    3600,
-		ProviderUID:  "107346492749283471920",
-		Email:        "kaka@example.com",
-		Name:         "Kaka",
+		Code:             "the-authorization-code",
+		AccessToken:      "an-access-token",
+		RefreshToken:     "a-refresh-token",
+		ExpiresIn:        3600,
+		ProviderUID:      "107346492749283471920",
+		Email:            "kaka@example.com",
+		Name:             "Kaka",
+		appleKey:         appleKey,
+		appleKeyID:       "test-key-id",
+		unpublishedKey:   unpublishedKey,
+		unpublishedKeyID: "unpublished-key-id",
+		clientID:         "test-client-id",
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(s.serve))
@@ -158,6 +197,22 @@ func (s *Server) WithoutExpiry() *Server {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.ExpiresIn = 0
+	return s
+}
+
+// WithUnpublishedKey makes the fake sign id_tokens with a key it does NOT
+// publish in its JWKS — the forged-token case.
+//
+// It exists because the client's Apple path verifies the id_token's signature
+// against the provider's JWKS, and a fake that only ever signed with the
+// published key would make that verification untestable in the direction that
+// matters: a token signed by a key the JWKS does not publish must be refused,
+// and a verifier that accepted it would be an authentication bypass. The knob
+// is the negative control for the whole id_token path.
+func (s *Server) WithUnpublishedKey() *Server {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.useUnpublishedKey = true
 	return s
 }
 
@@ -225,7 +280,8 @@ func (s *Server) Provider(t *testing.T, base oauth.Provider) oauth.Provider {
 	base.TokenURL = s.URL + "/token"
 	base.UserInfoURL = s.URL + "/userinfo"
 	base.EmailsURL = s.URL + "/emails"
-	base.ClientID = "test-client-id"
+	base.JWKSURL = s.URL + "/keys"
+	base.ClientID = s.clientID
 	base.ClientSecret = "test-client-secret"
 	return base
 }
@@ -240,6 +296,7 @@ func (s *Server) Providers(t *testing.T) []oauth.Provider {
 		s.Provider(t, oauth.Google()),
 		s.Provider(t, oauth.GitHub()),
 		s.Provider(t, oauth.Microsoft()),
+		s.Provider(t, oauth.Apple()),
 	}
 }
 
@@ -272,6 +329,8 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		s.serveUserInfo(w, r)
 	case "/emails":
 		s.serveEmails(w, r)
+	case "/keys":
+		s.serveJWKS(w)
 	case "/authorize":
 		// Answered rather than 404 so a test that accidentally follows the
 		// redirect gets a body it can recognise instead of chi's plain text.
@@ -323,7 +382,82 @@ func (s *Server) serveToken(w http.ResponseWriter, r *http.Request) {
 	}
 	body["redirect_uri"] = r.PostForm.Get("redirect_uri")
 
+	// Every token response carries an id_token, and only Apple's decoder reads
+	// it. The other three providers get their identity from a userinfo call, so
+	// an id_token in their response is inert — but minting it unconditionally is
+	// what makes the Apple path testable against the same fake server, and it
+	// is the honest shape: a real provider's token response is not something this
+	// service gets to choose the contents of.
+	idToken, err := s.mintIDToken()
+	if err != nil {
+		http.Error(w, `{"error":"server_error"}`, http.StatusInternalServerError)
+		return
+	}
+	body["id_token"] = idToken
+
 	writeJSON(w, http.StatusOK, body)
+}
+
+// mintIDToken signs an id_token the way Apple's token endpoint would: an ES256
+// JWT with the fake's own key, the server's person as the subject, and this
+// fake's client id as the audience.
+//
+// The claims are Apple-shaped — iss is Apple's issuer, because the verifier
+// checks it — and the signature is the fake's, because the fake is standing in
+// for Apple. A test that wants the forged-token case calls WithUnpublishedKey,
+// which swaps the signing key for one the JWKS does not publish.
+func (s *Server) mintIDToken() (string, error) {
+	key := s.appleKey
+	kid := s.appleKeyID
+	if s.useUnpublishedKey {
+		key = s.unpublishedKey
+		kid = s.unpublishedKeyID
+	}
+
+	signer, err := jose.NewSigner(
+		jose.SigningKey{Algorithm: jose.ES256, Key: key},
+		(&jose.SignerOptions{}).WithHeader("kid", kid),
+	)
+	if err != nil {
+		return "", err
+	}
+
+	now := time.Now()
+	claims := map[string]any{
+		"iss":            "https://appleid.apple.com",
+		"sub":            s.ProviderUID,
+		"aud":            s.clientID,
+		"email":          s.Email,
+		"email_verified": !s.UnverifiedEmail,
+		"iat":            now.Unix(),
+		"exp":            now.Add(time.Hour).Unix(),
+	}
+	payload, err := json.Marshal(claims)
+	if err != nil {
+		return "", err
+	}
+
+	jws, err := signer.Sign(payload)
+	if err != nil {
+		return "", err
+	}
+	return jws.CompactSerialize()
+}
+
+// serveJWKS publishes the fake's one key — the one id_tokens are signed with,
+// unless WithUnpublishedKey was called.
+//
+// It is the fake's stand-in for https://appleid.apple.com/auth/keys, and it
+// serves ONLY the published key: the whole point of the unpublished key is that
+// a token signed with it has no key here to verify against.
+func (s *Server) serveJWKS(w http.ResponseWriter) {
+	jwks := jose.JSONWebKeySet{Keys: []jose.JSONWebKey{{
+		Key:       &s.appleKey.PublicKey,
+		KeyID:     s.appleKeyID,
+		Algorithm: string(jose.ES256),
+		Use:       "sig",
+	}}}
+	writeJSON(w, http.StatusOK, jwks)
 }
 
 func (s *Server) serveTokenError(w http.ResponseWriter, status int) {
@@ -410,6 +544,7 @@ const (
 	TokenEndpointPath    = "/token"
 	UserInfoEndpointPath = "/userinfo"
 	EmailsEndpointPath   = "/emails"
+	JWKSPath             = "/keys"
 )
 
 // RequireCalls fails the test unless the endpoints were hit in this order. A flow
