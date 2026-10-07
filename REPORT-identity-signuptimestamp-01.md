@@ -396,3 +396,164 @@ Race over the whole tree was not run inside the hour; CI runs it.
    the secret, the mint and the verify are all here. If the parlor packet needs a
    server-side change — a way to render the pair into a hidden form field, or a
    route that redirects to the form with it — that is the trigger to open one.
+
+## Integration
+
+**Packet:** rebase `worker/identity-w27-signuptimestamp` onto `master` and
+re-derive the measured `coverage-exclusions` entry against the merged tree.
+**Date:** 2026-10-07. **Result:** rebased, gate green, committed. Not merged, not
+pushed — the manager does both.
+
+### The rebase
+
+```
+git fetch master                      # master in /Users/kaka/Code/any/moon/cafaye/identity is current at bef50e1
+git rebase master                     # 3 commits replayed, 4 conflicted files
+```
+
+The branch was 3 ahead / 11 behind. Master had advanced with account deletion
+(W19), microsoft OAuth (W28), mailing payloads (W25) and the redirect rule
+(W29). The three branch commits replayed as `7c5ab11`, `8ec443f`, `165bce6`
+on top of `bef50e1`; the branch is now a clean fast-forwardable series, 0
+commits behind master.
+
+### The four conflicts, and how each was resolved
+
+1. **`internal/httpapi/router_walk_test.go` — mechanical union.** Master added
+   `"deletion"` with its explanatory comment; the branch added `"signup"`. Both
+   kept, in the same list, master's comment intact. The list is the completeness
+   obligation for the router walk, so the union is the whole of the resolution.
+
+2. **`internal/config/oauth_endpoints_test.go` — union of the two sides'
+   cases.** Master added the Microsoft provider variables to `oauthTestEnv`;
+   the branch added `SIGNUP_SIGNING_KEY`. The union keeps both (the Microsoft
+   rows and the fifth secret), gofmt-aligned. `go test ./internal/config/`
+   green after the resolution.
+
+3. **`internal/httpapi/openapi_drift_test.go` — union of the two sides' route
+   expectations.** The conflict was the `info.version` pin: both sides said
+   `1.12.0`, so the number did not move; the comments were merged. Master's
+   deletion paragraph and the branch's signup-timestamp paragraph are both
+   kept, and the closing sentence now records that the merged document
+   describes sessions, the display name, the deletion **and** the signup
+   timestamp, which no single 1.11.0 publisher described. `go test
+   ./internal/httpapi/` green after the resolution.
+
+4. **`coverage-exclusions` — re-derived by measurement, not hand-merged.**
+   Master's entry said `lines=29230` / 6799 statements (deletion); the
+   branch's said `lines=29198` / 6792 statements (signup-timestamp). Neither
+   was carried forward. The merged entry keeps both sides' full history and
+   adds a rebase paragraph recording this merge's own measurement.
+
+### The re-measured figures
+
+Measured on the rebased tree, by the method the entry itself prescribes:
+
+```
+wc -l client/generated/api.gen.go
+# 29535
+
+go test -coverprofile=/tmp/w27-gen-cover.out ./client/generated/
+awk 'NR>1 {total+=$2} END {print total}' /tmp/w27-gen-cover.out
+# 6867
+```
+
+**`lines=29535`, 6867 statements.** The deltas compose exactly from both
+sides' figures — 29230+305=29535 and 6799+68=6867 — the same disjoint-
+operations arithmetic the entry has recorded for every prior merge, and
+evidence the auto-merged generated file is correct rather than coincidence.
+That file was also verified byte-identical to the pinned generator's output
+(`TestTheCommittedGeneratedFileIsWhatThePinnedGeneratorProduces`: the byte
+comparison passed; only the staged-check failed mid-rebase, which is
+expected until the commit lands and did pass in the final gate).
+
+The entry's `lines=` figure is test-verified against the tree by
+`TestTheCoverageExclusionIsOnlyGeneratedCode`'s sibling check in
+`internal/platform/ci` (it counts `\n` over the excluded directory and
+compares), and the floor check below confirms the entry end to end.
+
+### One finding: the database was not fully migrated
+
+The packet said `identity-w27-pg` was "fully migrated". It was not: `goose
+status` showed version 23 applied, with `00024_user_deletion_set_null` and
+`00025_oauth_provider_microsoft` pending — both master's, both brought in by
+the rebase. The first gate run failed two of master's own deletion tests
+(`TestAPendingInvitationDoesNotBlockTheDeletion`,
+`TestAnOIDCRegistrationTheUserMadeDoesNotBlockTheDeletion`) on the missing
+`ON DELETE SET NULL`. The branch touches nothing in `internal/deletion` or
+`migrations/` (`git diff master...HEAD -- internal/deletion migrations/` is
+empty), so the failures were the stale database, not the rebase. Brought the
+database to the state the packet described with the repository's own
+documented deploy step — `goose -dir migrations postgres "$DATABASE_URL" up`
+— which applied 00024 and 00025 and nothing else. The container was not
+rebuilt and no second one was started. The gate was then green.
+
+### The gate on the rebased, committed tree
+
+```
+export PATH="/Users/kaka/.local/share/mise/installs/go/latest/bin:$PATH"
+export TEST_DATABASE_URL="postgres://identity:cafaye@127.0.0.1:15527/identity?sslmode=disable"
+bin/prime
+```
+
+Verbatim tail (every package `ok`, no `FAIL`):
+
+```
+ok  	github.com/cafaye/identity/client	4.969s
+?   	github.com/cafaye/identity/client/generated	[no test files]
+ok  	github.com/cafaye/identity/cmd/identity	5.303s
+ok  	github.com/cafaye/identity/internal/accounts	48.355s
+ok  	github.com/cafaye/identity/internal/admin	11.614s
+ok  	github.com/cafaye/identity/internal/apikeys	42.591s
+ok  	github.com/cafaye/identity/internal/auth	35.221s
+ok  	github.com/cafaye/identity/internal/config	0.412s
+ok  	github.com/cafaye/identity/internal/courier	1.812s
+ok  	github.com/cafaye/identity/internal/deletion	2.934s
+ok  	github.com/cafaye/identity/internal/httpapi	94.665s
+ok  	github.com/cafaye/identity/internal/mfa	36.815s
+ok  	github.com/cafaye/identity/internal/oauth	8.793s
+ok  	github.com/cafaye/identity/internal/oidc	4.216s
+ok  	github.com/cafaye/identity/internal/outbox	6.271s
+ok  	github.com/cafaye/identity/internal/platform/ci	5.055s
+ok  	github.com/cafaye/identity/internal/platform/clock	0.300s
+ok  	github.com/cafaye/identity/internal/platform/db	0.358s
+?   	github.com/cafaye/identity/internal/platform/dbtest	[no test files]
+ok  	github.com/cafaye/identity/internal/platform/id	0.540s
+ok  	github.com/cafaye/identity/internal/platform/oauthtest	0.342s
+ok  	github.com/cafaye/identity/internal/recovery	23.253s
+ok  	github.com/cafaye/identity/internal/redirect	0.801s
+ok  	github.com/cafaye/identity/internal/sessions	1.477s
+ok  	github.com/cafaye/identity/internal/signup	0.290s
+ok  	github.com/cafaye/identity/internal/telemetry	0.434s
+ok  	github.com/cafaye/identity/internal/tenancy	0.877s
+ok  	github.com/cafaye/identity/internal/useraudit	6.776s
+ok  	github.com/cafaye/identity/internal/users	0.685s
+```
+
+Exit code, captured to a file: `echo $? > /tmp/w27-rebase-gate.exit` → `0`.
+
+`go vet ./...` clean. `gofmt -l .` prints nothing.
+
+The coverage-floor check confirms the re-derived entry:
+
+```
+go test -count=1 -coverprofile=/tmp/w27-cov.out ./...
+bin/coverage-floor /tmp/w27-cov.out
+# coverage 75.2% of 7170 statements, over the profile minus 5134 block(s) this file excludes
+#   client/generated  files=1 lines=29535  owner=identity since=2026-09-30 until=2027-03-31
+# floor 70%
+# coverage 75.2% at or above the 70% floor      (exit 0)
+```
+
+`go test -race -count=1 ./...` over the whole tree, exit 0 — 27 packages `ok`, no
+`FAIL`, no data race:
+
+```
+ok  	github.com/cafaye/identity/client	7.243s
+ok  	github.com/cafaye/identity/cmd/identity	20.831s
+ok  	github.com/cafaye/identity/internal/httpapi	133.391s
+ok  	github.com/cafaye/identity/internal/signup	2.240s
+ok  	github.com/cafaye/identity/internal/deletion	4.937s
+ok  	github.com/cafaye/identity/internal/platform/ci	13.293s
+   … (every package ok; full log at /tmp/w27-race.log)
+```
