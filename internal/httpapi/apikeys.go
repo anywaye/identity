@@ -509,6 +509,22 @@ func (o options) handleIntrospect(w http.ResponseWriter, r *http.Request) {
 // read a token in an account it owns, and the role comes from the membership
 // table on this request — so an owner who has been demoted loses this along with
 // everything else.
+//
+// # WHAT THE RULE REQUIRES OF A DEPLOYMENT
+//
+// Because a token may read only itself, the identity → courier mail path works
+// when both services hold the SAME identity-issued API key: identity presents it
+// as COURIER_TOKEN on `POST /v1/messages`, and courier presents it as
+// COURIER_IDENTITY_TOKEN when it introspects the inbound request to resolve the
+// principal. One key, held by both. Two distinct keys produce identity's 403 and
+// courier's 503, with nothing in either repository to explain it — so this is a
+// PROVISIONING contract, not a code change: `docker-compose.yml` requires the
+// variable from the host environment, and its failure message is the rule.
+//
+// THE RULE IS DELIBERATE. The alternatives — a caller introspecting a sibling
+// key, or a shared-secret header beside the bearer — were weighed and refused
+// in courier's `introspection.ex`. A 403 from this function is the rule working;
+// do not widen what a token may ask about to make a mail path succeed.
 func (o options) mayIntrospect(w http.ResponseWriter, r *http.Request, caller apikeys.Caller, claims apikeys.Claims) bool {
 	// A session caller: the account in the claim is the one being asked about.
 	if caller.Key.ID.IsZero() {

@@ -197,6 +197,13 @@ env:
     # environment, and that is the one honest limitation of Kamal's model,
     # recorded in DECISIONS.md.
     - DATABASE_URL
+    # The courier service credential, and the same fact the compose file's
+    # failure message carries: it must be the SAME identity-issued API key
+    # courier holds as COURIER_IDENTITY_TOKEN, because identity lets a token
+    # caller introspect only itself — two distinct keys produce identity's 403
+    # and courier's 503. Mint one with
+    # `POST /v1/accounts/{account_id}/api-keys`.
+    - COURIER_TOKEN
     - KAMAL_REGISTRY_PASSWORD
 
 # Credentials for the image host. The password is a NAME, resolved from
