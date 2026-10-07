@@ -95,6 +95,7 @@ func newFakeSocialRegistry(names ...string) *fakeSocialRegistry {
 		oauth.ProviderGoogle:    oauth.Google(),
 		oauth.ProviderGitHub:    oauth.GitHub(),
 		oauth.ProviderMicrosoft: oauth.Microsoft(),
+		oauth.ProviderApple:     oauth.Apple(),
 	}
 	for _, name := range names {
 		p := definitions[name]
@@ -597,6 +598,52 @@ func TestAFreshMicrosoftIdentityCreatesTheAccount(t *testing.T) {
 	if created.Provider != oauth.ProviderMicrosoft || created.ProviderUID != "ms-uid-1" {
 		t.Errorf("the connected account is keyed on (%q, %q), want (%q, %q)",
 			created.Provider, created.ProviderUID, oauth.ProviderMicrosoft, "ms-uid-1")
+	}
+	if created.UserID != got.User.ID {
+		t.Errorf("the connected account names user %s but the session was minted for %s",
+			created.UserID, got.User.ID)
+	}
+}
+
+// TestAFreshAppleIdentityCreatesTheAccount is the same happy path as the
+// github and microsoft ones, run through the fourth provider.
+//
+// The same reasoning as the microsoft test, and for apple it is the more
+// important half: apple's identity comes from a verified id_token rather than
+// a userinfo call, so the name that reaches the store is the one fact that
+// ties the account to the provider whose key signed the token. A provider
+// added to the registry, the settings table and the enum but not to the use
+// case's idea of the world would write a connected account keyed on a name
+// nothing else agrees on, and no other test would notice because they never
+// ask apple to do anything.
+//
+// The id_token verification itself is evidenced in
+// internal/oauth/client_test.go against the fake JWKS; this test is the use
+// case's evidence that the apple name reaches the store.
+func TestAFreshAppleIdentityCreatesTheAccount(t *testing.T) {
+	t.Parallel()
+
+	f := newSocialFixture(t, oauth.ProviderApple)
+
+	got, err := f.callback(oauth.ProviderApple, "code-apple", "apple-uid-1", "kaka@example.com")
+	if err != nil {
+		t.Fatalf("Callback: %v", err)
+	}
+
+	if got.User.Email != "kaka@example.com" {
+		t.Errorf("signed in as %q, want the address the provider reported", got.User.Email)
+	}
+	if got.Token == "" {
+		t.Error("no session token was minted for a newly created account")
+	}
+	if len(f.store.creates) != 1 {
+		t.Fatalf("%d connected accounts created, want 1", len(f.store.creates))
+	}
+
+	created := f.store.creates[0]
+	if created.Provider != oauth.ProviderApple || created.ProviderUID != "apple-uid-1" {
+		t.Errorf("the connected account is keyed on (%q, %q), want (%q, %q)",
+			created.Provider, created.ProviderUID, oauth.ProviderApple, "apple-uid-1")
 	}
 	if created.UserID != got.User.ID {
 		t.Errorf("the connected account names user %s but the session was minted for %s",

@@ -65,6 +65,7 @@ const connectedAccountProviderFile = "../../migrations/00008_connected_accounts.
 // until the first real sign-in fails at the constraint.
 var connectedAccountProviderAdditions = []string{
 	"../../migrations/00025_oauth_provider_microsoft.sql",
+	"../../migrations/00026_oauth_provider_apple.sql",
 }
 
 // enumPattern captures the quoted values of a `CREATE TYPE <name> AS ENUM (...)`

@@ -54,6 +54,24 @@ const (
 	// is. It is Microsoft Graph's OIDC userinfo endpoint, which returns the
 	// same `sub`/`email`/`email_verified` shape Google's does.
 	MicrosoftUserInfoURL = "https://graph.microsoft.com/oidc/userinfo"
+
+	// AppleAuthorizeURL is where the browser is sent to obtain a code.
+	//
+	// The same argument as the other three providers' pinned endpoints: identity
+	// is an OIDC *provider*, and a service that discovers its own RPs at boot is
+	// a service whose behaviour depends on what a third party served it that
+	// morning.
+	AppleAuthorizeURL = "https://appleid.apple.com/auth/authorize"
+	// AppleTokenURL exchanges that code for a token.
+	//
+	// It is also the `aud` of the client_secret this service signs for Apple,
+	// which is why the minted secret and this constant cannot drift: both are
+	// Apple's identity, stated in apple.go and here.
+	AppleTokenURL = "https://appleid.apple.com/auth/token"
+	// AppleJWKSURL is where Apple publishes the public keys an id_token's
+	// signature is verified against. Apple has no userinfo endpoint, so this is
+	// the only place the identity's authenticity is checked — see apple.go.
+	AppleJWKSURL = "https://appleid.apple.com/auth/keys"
 )
 
 // ErrInvalidEndpoint means an endpoint override is a value this service cannot

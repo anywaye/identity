@@ -78,6 +78,8 @@ func providerEndpoints(name string) map[string]string {
 		definition = oauth.GitHub()
 	case oauth.ProviderMicrosoft:
 		definition = oauth.Microsoft()
+	case oauth.ProviderApple:
+		definition = oauth.Apple()
 	default:
 		return nil
 	}
@@ -96,15 +98,19 @@ func providerEndpoints(name string) map[string]string {
 // no field is one that reads as if it configures something.
 //
 // The shape of the table is therefore decided by internal/oauth — three endpoints
-// for Google, four for GitHub — and not by this file, which is the point of the
-// directions: GitHub has an emails endpoint and Google does not, so
+// for Google, four for GitHub, two for Apple — and not by this file, which is the
+// point of the directions: GitHub has an emails endpoint and Google does not, so
 // OAUTH_GITHUB_EMAILS_URL exists and OAUTH_GOOGLE_EMAILS_URL is not a variable
-// anybody is missing.
+// anybody is missing. Apple has no userinfo endpoint (its identity comes from a
+// verified id_token) and its JWKS document is deliberately NOT overridable — a
+// deployment that could point it at a key document of its own could forge
+// identities — so OAUTH_APPLE_AUTHORIZE_URL and OAUTH_APPLE_TOKEN_URL exist and
+// there is no OAUTH_APPLE_JWKS_URL.
 func TestEveryOAuthEndpointHasAVariableAndEveryVariableHasAnEndpoint(t *testing.T) {
 	t.Parallel()
 
 	fromDefinitions := map[string]bool{}
-	for _, provider := range []string{oauth.ProviderGoogle, oauth.ProviderGitHub, oauth.ProviderMicrosoft} {
+	for _, provider := range []string{oauth.ProviderGoogle, oauth.ProviderGitHub, oauth.ProviderMicrosoft, oauth.ProviderApple} {
 		for field, endpoint := range providerEndpoints(provider) {
 			if endpoint == "" {
 				continue
