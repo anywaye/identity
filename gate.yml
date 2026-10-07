@@ -39,6 +39,101 @@
 #   and that is a property of the runner rather than a preference: see the note
 #   above the proof list. A `(cached)` line satisfies a package-line proof, and
 #   now that `-count=1` is in place no line in a green run is cached.
+#
+#   A THIRD COMMAND, DELIBERATELY NOT A GATE. `bin/prime --fast` runs the
+#   non-database tier only — the complement of the declared db tier below —
+#   for the inner loop, and it is NOT what CI runs and NOT what the proofs
+#   above describe. It exists because the full gate is this fleet's slowest
+#   at ~335s and 1732 of its 1989 tests sit in the 16 packages that open a
+#   pool; a developer fixing a telemetry typo should not wait five minutes
+#   to learn the database tier still passes. What keeps it honest is the
+#   anti-rot check: a pool-opening package missing from the declared tier
+#   fails the fast gate rather than being silently skipped. The declaration
+#   and the check are below and in internal/platform/ci/fast_tier_test.go.
+#
+# ---------------------------------------------------------------------
+# THE DATABASE TIER, DECLARED — the one machine-readable fact in this file.
+#
+#   `bin/prime --fast` runs the COMPLEMENT of the list below over
+#   `go list ./...`, and REFUSES to run at all if a package whose test
+#   binary links `internal/platform/dbtest` is missing from it. That
+#   refusal is the anti-rot check, and it is the point of the flag:
+#   without it, the first packet that adds a db package gets a fast
+#   tier that silently excludes it — a green inner loop over tests that
+#   never ran, which is the exact false green this fleet has been
+#   burned by before (darkroom's 44 silently-skipped tests).
+#
+#   The list is DERIVED, never hand-maintained:
+#
+#     go list -test -f '{{.ImportPath}} {{range .Deps}}{{.}} {{end}}' ./... |
+#       awk '{deps=substr($0, length($1)+2); if (deps ~ /internal\/platform\/dbtest/) print $1}'
+#
+#   keep the lines whose DEPS contain dbtest, normalise `P [P.test]` /
+#   `P.test` / `P_test` back to `P`. Measured on this tree: 16 packages.
+#   `internal/platform/dbtest` itself is NOT listed — it has no tests,
+#   and a package does not import itself.
+#
+#   The marker is `#   db-tier: ` at the start of a line. bin/prime and
+#   internal/platform/ci/fast_tier_test.go both read exactly these lines
+#   and nothing else; the marker is the contract between them, and the
+#   Go test fails in both directions — a pool package missing from the
+#   list, and a listed package that opens no pool.
+#
+#   `--fast` IS NOT THE GATE. It is an inner-loop convenience: no
+#   database, no provisioning, no migration, and none of the proofs
+#   above are fast-tier proofs. CI and this declaration run `bin/prime`
+#   unmodified; see the `ci` section below for why that distinction is
+#   load-bearing.
+#   db-tier: github.com/cafaye/identity/cmd/identity
+#   db-tier: github.com/cafaye/identity/internal/accounts
+#   db-tier: github.com/cafaye/identity/internal/admin
+#   db-tier: github.com/cafaye/identity/internal/apikeys
+#   db-tier: github.com/cafaye/identity/internal/auth
+#   db-tier: github.com/cafaye/identity/internal/courier
+#   db-tier: github.com/cafaye/identity/internal/deletion
+#   db-tier: github.com/cafaye/identity/internal/httpapi
+#   db-tier: github.com/cafaye/identity/internal/mfa
+#   db-tier: github.com/cafaye/identity/internal/oauth
+#   db-tier: github.com/cafaye/identity/internal/oidc
+#   db-tier: github.com/cafaye/identity/internal/outbox
+#   db-tier: github.com/cafaye/identity/internal/recovery
+#   db-tier: github.com/cafaye/identity/internal/sessions
+#   db-tier: github.com/cafaye/identity/internal/useraudit
+#   db-tier: github.com/cafaye/identity/internal/users
+#
+# ---------------------------------------------------------------------
+# THE GATE PROVISIONS ITS OWN TEST DATABASE, and the measurements.
+#
+#   When TEST_DATABASE_URL names a LOCAL host (127.0.0.1, localhost, ::1),
+#   bin/prime runs bin/provision-testdb before the suite: it creates the
+#   owner role, the app role and the database if they are absent, applies
+#   every migration with the pinned goose (v3.28.0, installed into
+#   $(go env GOPATH)/bin if absent — never @latest), and runs
+#   `GRANT <owner>_app TO <owner>`, the membership the tenancy tests'
+#   SET ROLE needs. It is idempotent. A DSN naming a non-local host is
+#   refused, never provisioned. The owner/app-role split is preserved —
+#   provisioning does not make the suite run as the owner, which would
+#   silently disable every row-level-security policy in migrations/00016.
+#   The admin connection is TEST_DATABASE_ADMIN_URL if set, else the DSN's
+#   own user if it can create roles (CI), else the cluster's postgres
+#   superuser. See bin/provision-testdb's header and migrations/README.md.
+#
+#   MEASURED WALL TIMES on this tree (2026-10-07):
+#
+#     full gate, from a dropped database (provisioning + suite, cold cache)
+#         ~11 min — the provisioning itself is ~1s; the rest is the build
+#     full gate, warm cache, suite only
+#         70s
+#     bin/prime --fast, warm cache
+#         11s  — the complement above, no database
+#
+#   The full gate's TEST SUITE is unchanged by --fast and provisioning, so
+#   the suite's wall time is the same before and after; what the packet
+#   adds is the 11s inner loop and a few seconds of provisioning. The
+#   coverage floor (70) is unchanged and still enforced by CI's
+#   bin/coverage-floor; --fast is not the declared gate and runs no
+#   coverage step. (The "`--fast` IS NOT THE GATE" paragraph above is the
+#   load-bearing version of that sentence; it is not repeated here.)
 version: 1
 name: identity
 

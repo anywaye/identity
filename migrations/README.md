@@ -67,6 +67,11 @@ statements into the body. It numbers itself from the highest existing file.
 Install it with `mise` (see the root `mise.toml`) or
 `go install github.com/pressly/goose/v3/cmd/goose@latest`.
 
+**The gate installs the pinned version for you.** `bin/prime` runs
+`bin/provision-testdb`, which resolves goose and, if no `v3.28.0` is found,
+installs exactly that version into `$(go env GOPATH)/bin` — never `@latest`,
+for the reason below. You do not need goose on your PATH to run the gate.
+
 ## Dev
 
 The compose stack in `docker-compose.yml` starts `postgres:17-alpine` and
@@ -76,16 +81,33 @@ the service comes up:
 ```sh
 docker compose up -d --wait postgres
 docker compose exec postgres pg_isready -U identity
-goose -dir migrations postgres "$DATABASE_URL" up
-TEST_DATABASE_URL="$DATABASE_URL" go test ./...   # runs the integration tests
 ```
+
+**The gate provisions the test database itself.** When `TEST_DATABASE_URL`
+names a local host, `bin/prime` runs `bin/provision-testdb` before the suite:
+it creates the owner role, the app role and the database if they are absent,
+applies every migration with the pinned goose, and runs
+`GRANT identity_app TO identity` — the membership the tenancy tests' `SET ROLE`
+needs. It is idempotent, so a second run changes nothing. So the inner loop is:
+
+```sh
+TEST_DATABASE_URL="$DATABASE_URL" ./bin/prime            # full gate, provisions first
+TEST_DATABASE_URL="$DATABASE_URL" ./bin/prime --fast     # non-db tier, no database
+```
+
+A DSN naming a non-local host is refused, never provisioned: the gate must
+never create something on a database it was not pointed at. And provisioning
+preserves the owner/app-role split — it does not "fix" a permission problem by
+making the suite run as the owner, which would silently disable every
+row-level-security policy in `00016`.
 
 `goose up` is a **deploy step and is above the suite**, never part of the same
 command. A suite run against an unmigrated database fails on
 `relation "public.users" does not exist` — loud, but it reads like a bug in the
 code rather than a pipeline that is wired wrong, and that is the whole reason the
 two are separate commands. [CI](../.github/workflows/ci.yml) runs them as two
-steps in that order and asserts the order.
+steps in that order and asserts the order. `bin/provision-testdb` is the same
+ordering, inside the gate, for the test database.
 
 **`TEST_DATABASE_URL` IS THE OWNER, and the pool under test is not.** One
 variable, two roles, because no single role can both apply migrations and seed
