@@ -281,6 +281,7 @@ func TestARemovalWithNoRevokerStillRemovesTheMembershipUnderTheRealPolicies(t *t
 		nil,
 		h.clock,
 		db.Direct{Pool: h.pool},
+		nil, // no mailer: this fixture is about the credential sweep, not the email
 	)
 	if err := withoutSweep.RemoveMember(ctx, RemoveMemberInput{
 		AccountID: account.ID, UserID: target, Actor: owner,

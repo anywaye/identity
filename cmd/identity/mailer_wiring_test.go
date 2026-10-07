@@ -51,9 +51,10 @@ func TestAMailerIsCouriersOrUnavailableAndNothingElse(t *testing.T) {
 		{
 			name: "a fully configured deployment gets courier",
 			env: map[string]string{
-				"COURIER_BASE_URL":       "https://courier.example.com",
-				"COURIER_TOKEN":          token,
-				"RECOVERY_LINK_TEMPLATE": "https://app.example.com/reset?token={token}",
+				"COURIER_BASE_URL":         "https://courier.example.com",
+				"COURIER_TOKEN":            token,
+				"RECOVERY_LINK_TEMPLATE":   "https://app.example.com/reset?token={token}",
+				"INVITATION_LINK_TEMPLATE": "https://app.example.com/invitations/accept?token={token}",
 			},
 			wantCourier: true,
 		},
@@ -162,9 +163,10 @@ func TestAnUnconfiguredDeploymentIsLoudAtStartup(t *testing.T) {
 // somebody reads as an identity bug.
 func TestAConfiguredDeploymentSaysWhatItCanAndCannotSend(t *testing.T) {
 	cfg, err := config.Load(lookupFrom(envWithSignupKey(map[string]string{
-		"COURIER_BASE_URL":       "https://courier.example.com",
-		"COURIER_TOKEN":          "svc-7f3a9c1e4b8d2056-the-credential",
-		"RECOVERY_LINK_TEMPLATE": "https://app.example.com/reset?token={token}",
+		"COURIER_BASE_URL":         "https://courier.example.com",
+		"COURIER_TOKEN":            "svc-7f3a9c1e4b8d2056-the-credential",
+		"RECOVERY_LINK_TEMPLATE":   "https://app.example.com/reset?token={token}",
+		"INVITATION_LINK_TEMPLATE": "https://app.example.com/invitations/accept?token={token}",
 	})))
 	if err != nil {
 		t.Fatalf("config.Load: %v", err)

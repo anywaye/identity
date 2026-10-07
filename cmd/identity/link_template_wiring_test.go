@@ -37,12 +37,16 @@ const signupKey = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY"
 //
 // It carries SIGNUP_SIGNING_KEY because a boot without it is a startup failure:
 // these tests are about the mailer the wiring produces, and a deployment that
-// cannot boot produces none.
+// cannot boot produces none. It carries INVITATION_LINK_TEMPLATE for the same
+// reason one layer down: config.Load refuses to boot a deployment that can send
+// mail and cannot say where invitation links go, and these tests are about the
+// recovery default, not about that refusal.
 func courierEnv(links map[string]string) map[string]string {
 	env := map[string]string{
-		"COURIER_BASE_URL":   "https://courier.example.com",
-		"COURIER_TOKEN":      "svc-7f3a9c1e4b8d2056-the-credential",
-		"SIGNUP_SIGNING_KEY": signupKey,
+		"COURIER_BASE_URL":         "https://courier.example.com",
+		"COURIER_TOKEN":            "svc-7f3a9c1e4b8d2056-the-credential",
+		"INVITATION_LINK_TEMPLATE": "https://app.example.com/invitations/accept?token={token}",
+		"SIGNUP_SIGNING_KEY":       signupKey,
 	}
 	for key, value := range links {
 		env[key] = value

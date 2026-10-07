@@ -211,10 +211,13 @@ func unquoteComposeValue(raw string) string {
 //     committed to this one. The failure message names COURIER_IDENTITY_TOKEN
 //     because the message IS the contract — an operator who hits it is told the
 //     rule at the moment they break it.
-//   - both link templates are outside-supplied interpolations carrying
+//   - all three link templates are outside-supplied interpolations carrying
 //     `{token}`. The hostname is a deployment fact identity does not own, and a
 //     template without the placeholder is refused by config.Load because a link
-//     with no token reaches a screen with nothing to redeem.
+//     with no token reaches a screen with nothing to redeem. The invitation one
+//     is required the moment the other two are, because the invite route is
+//     mounted unconditionally and every invite would otherwise fail at send
+//     time — so a compose stack that omitted it would not boot.
 func TestTheComposeServiceDeclaresTheCourierClientConfig(t *testing.T) {
 	env := composeIdentityEnv(t)
 
@@ -253,6 +256,7 @@ func TestTheComposeServiceDeclaresTheCourierClientConfig(t *testing.T) {
 	for _, variable := range []string{
 		"PASSWORD_RESET_LINK_TEMPLATE",
 		"EMAIL_VERIFICATION_LINK_TEMPLATE",
+		"INVITATION_LINK_TEMPLATE",
 		"EMAIL_CHANGE_LINK_TEMPLATE",
 	} {
 		raw, ok := env[variable]

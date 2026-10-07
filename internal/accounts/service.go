@@ -92,6 +92,50 @@ type CredentialRevoker interface {
 	RevokeAllForMember(ctx context.Context, q db.Querier, accountID, userID id.UUID, at time.Time) error
 }
 
+// InvitationMailer delivers the invitation email for one pending invitation.
+//
+// IT IS A SEAM RATHER THAN A COURIER CLIENT because the send is a fact about the
+// invite use case — it happens after the invitation commits, it carries the
+// invitation's one-time token, and its failure is the invite's failure — while
+// courier's vocabulary is courier's. internal/courier satisfies it, exactly as
+// it satisfies recovery.Mailer, and neither package imports the other: the
+// interface is declared here and satisfied in cmd/identity/main.go, the one
+// place that knows both.
+//
+// IT MAY BE NIL, and then an invitation is created with no mail — a deployment
+// with no mail path, which is a supported state rather than a broken one (the
+// same shape CredentialRevoker has). A mailer that is PRESENT and fails is a
+// different thing: that failure is returned to the caller, never swallowed.
+type InvitationMailer interface {
+	SendInvitation(ctx context.Context, invitation OutgoingInvitation) error
+}
+
+// OutgoingInvitation is the invitation email waiting to be sent.
+//
+// IT CARRIES THE ONE-TIME TOKEN, which is why it is built inside Invite and
+// never stored: the token exists once, in the row's digest and in this value,
+// and the mail is the only thing that takes it out of the process. The same
+// rule the Invitation struct's comment states.
+type OutgoingInvitation struct {
+	// ID is the invitation's id. It is the key the send's idempotency is
+	// derived from, and the value courier's own consumer uses as the mail's
+	// user_id — an invitee has no user, because the invitation exists
+	// precisely because they have not signed up.
+	ID id.UUID
+	// Email is the invitee's address — the recipient.
+	Email string
+	// Token is the one-time acceptance token, rendered into the link.
+	Token string
+	// AccountName is the account the invitee is invited to, which courier's
+	// template renders after "invited you to join".
+	AccountName string
+	// InvitedBy is who the mail says sent it: the inviter's display name when
+	// they have one, and their address when they do not.
+	InvitedBy string
+	// Role is the role the invitation offers, rendered after "as".
+	Role string
+}
+
 // Service is the tenancy use cases.
 type Service struct {
 	uow     UnitOfWork
@@ -99,13 +143,15 @@ type Service struct {
 	users   UserEmailReader
 	events  EventAppender
 	revokes CredentialRevoker
+	mailer  InvitationMailer
 	clock   clock.Clock
 	read    db.QuerierSource
 }
 
 // NewService wires the use cases.
 //
-// revokes may be nil — see CredentialRevoker.
+// revokes may be nil — see CredentialRevoker. mailer may be nil — see
+// InvitationMailer.
 func NewService(
 	uow UnitOfWork,
 	store AccountStore,
@@ -114,8 +160,9 @@ func NewService(
 	revokes CredentialRevoker,
 	clk clock.Clock,
 	read db.QuerierSource,
+	mailer InvitationMailer,
 ) *Service {
-	return &Service{uow: uow, store: store, users: users, events: events, revokes: revokes, clock: clk, read: read}
+	return &Service{uow: uow, store: store, users: users, events: events, revokes: revokes, mailer: mailer, clock: clk, read: read}
 }
 
 // CreateInput is a request to create an account.
@@ -633,7 +680,75 @@ func (s *Service) Invite(ctx context.Context, in InviteInput) (Invited, error) {
 	if err != nil {
 		return Invited{}, err
 	}
+
+	// THE MAIL, AFTER THE COMMIT — and the ordering is the whole of it.
+	// A mail cannot be rolled back, so it cannot go inside the transaction: an
+	// invitation that rolled back with its mail sent is a link to nothing, and
+	// an invitation that committed with its mail unsent is an admin who can
+	// revoke and re-invite. The second is recoverable and the first is not, so
+	// the send is after the commit whatever the mailer does with it — the same
+	// ordering internal/recovery's mintAndSend establishes.
+	//
+	// A NIL MAILER IS A DEPLOYMENT WITH NO MAIL PATH, not a failure: the
+	// invitation row is the promise and the token in the response is the
+	// one-time credential, exactly as it is for a deployment that cannot send
+	// recovery mail. A PRESENT mailer whose send fails is RETURNED: the admin
+	// is told the invite did not reach anybody, and the invitation row that
+	// survived is revoked and re-invited rather than guessed about. The token
+	// is not stored — only its digest is — so the failed link is gone for good
+	// and re-inviting mints a new one; that is the honest failure semantics,
+	// and it is why the error is not swallowed.
+	if s.mailer != nil {
+		outgoing, err := s.outgoingInvitation(ctx, out)
+		if err != nil {
+			return Invited{}, err
+		}
+		if err := s.mailer.SendInvitation(ctx, outgoing); err != nil {
+			return Invited{}, err
+		}
+	}
 	return out, nil
+}
+
+// outgoingInvitation gathers what the invitation email needs, after the commit.
+//
+// THE READS ARE AFTER THE COMMIT because the mail is: the transaction holds
+// only the invitation's own writes, and everything the mail needs is gathered
+// in the same post-commit block as the send it feeds. A failure here is a send
+// that cannot be composed, and it is returned like a courier failure — the
+// invitation row survives either way.
+func (s *Service) outgoingInvitation(ctx context.Context, invited Invited) (OutgoingInvitation, error) {
+	account, err := s.store.ByID(ctx, s.read.Queryer(), invited.Invitation.AccountID)
+	if err != nil {
+		return OutgoingInvitation{}, fmt.Errorf("reading the account for the invitation mail: %w", err)
+	}
+	inviter, err := s.users.ByID(ctx, s.read.Queryer(), invited.Invitation.InvitedBy)
+	if err != nil {
+		return OutgoingInvitation{}, fmt.Errorf("reading the inviter for the invitation mail: %w", err)
+	}
+	return OutgoingInvitation{
+		ID:          invited.Invitation.ID,
+		Email:       invited.Invitation.Email,
+		Token:       invited.Token,
+		AccountName: account.Name,
+		InvitedBy:   displayNameOrEmail(inviter),
+		Role:        string(invited.Invitation.Role),
+	}, nil
+}
+
+// displayNameOrEmail is who the invitation mail says sent it.
+//
+// THE DISPLAY NAME WHEN THERE IS ONE AND THE ADDRESS WHEN THERE IS NOT,
+// because courier's template renders the value immediately before "invited
+// you to join": a blank there is a mail that does not say who invited them, and
+// a uuid would be worse. Most users have no display name — the column is
+// nullable and registration does not set it — so the address is the common
+// case, and it is a value the invitee can recognise.
+func displayNameOrEmail(u users.User) string {
+	if u.DisplayName != nil && *u.DisplayName != "" {
+		return *u.DisplayName
+	}
+	return u.Email
 }
 
 // InviteRole is Invite for a caller that has a role as a string, which is what a

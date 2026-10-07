@@ -885,5 +885,6 @@ func realTenancy(pool *pgxpool.Pool, clk clock.Clock) *accounts.Service {
 		apikeys.NewStore(pool),
 		clk,
 		db.Direct{Pool: pool},
+		nil, // no mailer: these tests are about the auth routes, not the email
 	)
 }

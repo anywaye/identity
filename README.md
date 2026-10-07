@@ -266,6 +266,7 @@ service quietly listening on the wrong port.
 | `RECOVERY_LINK_TEMPLATE` | *(unset)* | **The link for every purpose that has no template of its own.** `https://app.example.com/reset?token={token}` is a working example, and `{token}` is required. **This is the single template a deployment set before the per-purpose variables existed, and it is honoured** — so setting it alone keeps an existing deployment booting with the links it had, which for the configuration that shape was introduced to replace means the address-confirmation link still points at the password-reset screen. Setting it is enough to deliver; setting it *alone* is a migration still in progress. |
 | `PASSWORD_RESET_LINK_TEMPLATE` | *(unset)* | Where the **password reset** link points. Overrides `RECOVERY_LINK_TEMPLATE` for that purpose only. `docker-compose.yml` supplies it from `APP_BASE_URL` (default `http://localhost:3997`, the local parlor's dev port). |
 | `EMAIL_VERIFICATION_LINK_TEMPLATE` | *(unset)* | Where the **address confirmation** link points. Overrides `RECOVERY_LINK_TEMPLATE` for that purpose only — and setting this one variable is the whole migration out of the state above. `docker-compose.yml` supplies it from `APP_BASE_URL` (default `http://localhost:3997`, the local parlor's dev port). |
+| `INVITATION_LINK_TEMPLATE` | *(unset)* | Where the **invitation** link points — the accept screen parlor serves. **Required at boot whenever the courier block is wired** (`COURIER_BASE_URL` + `COURIER_TOKEN` + a recovery template): the invite route is mounted unconditionally, so a deployment that can send mail and cannot say where invitation links go fails at send time on every invite. It is not a recovery purpose and has no default — inheriting the reset template would mail a link to a screen that cannot redeem an invitation token. `docker-compose.yml` supplies it from `APP_BASE_URL`. |
 | `IDENTITY_OTEL_ENDPOINT` | `http://otel-collector:4318` | The OTLP endpoint spans go to. **The only contract** (core D16), and the collector that ships with kit's stack is just its default value — so tracing is on by default and a deployer who already runs Datadog or Grafana sets one variable and kit's stack goes quiet. Unset costs spans and nothing else: no queue, no retry loop, no dial at boot. | **The only contract** (core D16), and the collector that ships with kit's stack is just its default value — so tracing is on by default and a deployer who already runs Datadog or Grafana sets one variable and kit's stack goes quiet. Unset costs spans and nothing else: no queue, no retry loop, no dial at boot. |
 | `IDENTITY_TENANT_ID` | *(unset)* | The `tenant_id` **resource** attribute. Never a span attribute — see the allowlist rule in [AGENTS.md](AGENTS.md). Unset by default, because an empty one shows up as a second service row in every collector's service list. |
 | `DEPLOYMENT_ENVIRONMENT` | *(unset)* | The `deployment.environment` resource attribute. An enum in core's resource schema (`development`/`test`/`staging`/`production`), so there is no fourth spelling to invent. |
@@ -281,7 +282,7 @@ service quietly listening on the wrong port.
 | `PATCH /v1/accounts/:id` | `200 {…}` | Rename. **The `slug` does not move** — a handle that changed would break every link already sent. Admin. |
 | `DELETE /v1/accounts/:id` | `204` | Delete, with everything under it. Irreversible, no `confirm` field. **Owner**, `accounts:delete`. |
 | `GET /v1/accounts/:id/members` | `200 {memberships, role}` | The account's members, newest first, plus the caller's own role. Every entry names its `user_id`. Member. |
-| `POST /v1/accounts/:id/invitations` | `201 {…, token}` | Invite somebody. `token` is returned here and never again, and **nothing is mailed**. `owner` is a 422; only an owner may invite an `admin`. Admin. |
+| `POST /v1/accounts/:id/invitations` | `201 {…, token}` | Invite somebody. `token` is returned here and never again. **The invitation is emailed** when this deployment can send mail — `INVITATION_LINK_TEMPLATE` is required at boot whenever the courier block is wired — and the send happens after the invitation commits: a send that fails is a `500`, and the invitation row survives it, revocable and re-invitable. A deployment with no mail path creates the invitation and mails nothing; the `201` does not say an email was sent. `owner` is a 422; only an owner may invite an `admin`. Admin. |
 | `PATCH /v1/accounts/:id/members/:userId` | `200 {…}` | Change a role. `422 last_owner` rather than leaving an account unadministerable. **Owner.** |
 | `DELETE /v1/accounts/:id/members/:userId` | `204` | Remove somebody, and stop their scoped tokens on their next request. An admin may not remove an owner. Admin. |
 | `POST /v1/accounts/:id/ownership-transfers` | `200 {account, new_owner, previous_owner}` | Hand the account to a member who is **already in it**. The new owner gets `owner`; **the previous owner becomes `admin`**, which is what keeps a transfer reversible. `422 not_transferable` for a personal account or one with a single member, `422 transfer_to_self` for naming yourself, `404` for somebody who is not a member — a transfer does not invite. The caller's authority is asked of the credential, never of the body. **Owner.** |
@@ -1456,6 +1457,7 @@ the token is in the path at all are the deployment's to choose.
 |---|---|---|---|
 | Password reset | `PASSWORD_RESET_LINK_TEMPLATE` | `https://app.example.com/reset?token={token}` | `POST /v1/password-resets/confirm` |
 | Address confirmation | `EMAIL_VERIFICATION_LINK_TEMPLATE` | `https://app.example.com/verify-email?token={token}` | `POST /v1/email-verifications/confirm` |
+| Invitation | `INVITATION_LINK_TEMPLATE` | `https://app.example.com/invitations/accept?token={token}` | `POST /v1/invitations/accept` |
 
 **These are two links and they must be two screens.** A verification token
 presented to a password-reset screen is a `404` — the tokens live in one table
@@ -1550,7 +1552,7 @@ command above the suite, and a suite run against an unmigrated database fails
 loudly with `relation "public.users" does not exist` rather than skipping.
 
 **`internal/courier`'s live tier SKIPS loudly instead, and the difference is
-deliberate.** Three tests in that package drive a real courier process, and they
+deliberate.** Four tests in that package drive a real courier process, and they
 read `TEST_COURIER_URL` and `TEST_COURIER_TOKEN`. Without them they **skip**, and
 the skip message names what would have been proven and how to run it — it is not a
 bare `t.Skip`, because a skip that says nothing is a test that silently passes

@@ -27,11 +27,12 @@ func TestTheCourierBlockIsAllOrNothing(t *testing.T) {
 		wantNoToken bool
 	}{
 		{
-			name: "all three set is the working configuration",
+			name: "all four set is the working configuration",
 			env: map[string]string{
-				"COURIER_BASE_URL":       validURL,
-				"COURIER_TOKEN":          "svc-3f9a1c7e5b2d8046",
-				"RECOVERY_LINK_TEMPLATE": validLink,
+				"COURIER_BASE_URL":         validURL,
+				"COURIER_TOKEN":            "svc-3f9a1c7e5b2d8046",
+				"RECOVERY_LINK_TEMPLATE":   validLink,
+				"INVITATION_LINK_TEMPLATE": validLink,
 			},
 			wantEnabled: true,
 		},
@@ -62,6 +63,32 @@ func TestTheCourierBlockIsAllOrNothing(t *testing.T) {
 			env: map[string]string{
 				"COURIER_BASE_URL": validURL,
 				"COURIER_TOKEN":    "svc-3f9a1c7e5b2d8046",
+			},
+			wantErr: ErrInvalidCourier,
+		},
+		{
+			// THE PACKET'S BOOT RULE, and the reason INVITATION_LINK_TEMPLATE is
+			// required rather than defaulted: the invite route is mounted
+			// unconditionally, so a deployment with a mail path and no
+			// invitation template fails at send time on every invite — a 500
+			// that names nothing actionable. The refusal is at boot, naming
+			// the variable, which is the same rule OIDC_SIGNING_KEY follows.
+			name: "a base URL and a token with the recovery templates but no invitation template",
+			env: map[string]string{
+				"COURIER_BASE_URL":       validURL,
+				"COURIER_TOKEN":          "svc-3f9a1c7e5b2d8046",
+				"RECOVERY_LINK_TEMPLATE": validLink,
+			},
+			wantErr: ErrInvalidCourier,
+		},
+		{
+			// The same rule from the other side: an invitation template with no
+			// mail path is a deployment that believes it can send invitations
+			// and cannot. It is refused rather than ignored, for the reason the
+			// recovery link template with no mail path is.
+			name: "an invitation template with no base URL",
+			env: map[string]string{
+				"INVITATION_LINK_TEMPLATE": validLink,
 			},
 			wantErr: ErrInvalidCourier,
 		},
@@ -172,7 +199,8 @@ func TestTheCourierBlockIsAllOrNothing(t *testing.T) {
 				// And the message must NAME the variable, because an operator reading
 				// a startup log cannot act on "invalid courier configuration".
 				if !strings.Contains(err.Error(), "COURIER_") &&
-					!strings.Contains(err.Error(), "RECOVERY_LINK_TEMPLATE") {
+					!strings.Contains(err.Error(), "RECOVERY_LINK_TEMPLATE") &&
+					!strings.Contains(err.Error(), "INVITATION_LINK_TEMPLATE") {
 					t.Errorf("the error names no variable: %v", err)
 				}
 				return

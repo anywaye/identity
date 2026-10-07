@@ -197,6 +197,7 @@ func realTenancy(pool db.Pool, clk clock.Clock) PersonalAccountProvisioner {
 		apikeys.NewStore(pool),
 		clk,
 		db.Direct{Pool: pool},
+		nil, // no mailer: registration does not email anybody
 	)
 }
 
@@ -325,6 +326,7 @@ func TestIntegrationRegisterRollsBackTenancy(t *testing.T) {
 		apikeys.NewStore(pool),
 		clockForTest(),
 		db.Direct{Pool: pool},
+		nil, // no mailer: registration does not email anybody
 	)}
 	broken := newServiceWithTenancy(t, pool, failing)
 

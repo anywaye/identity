@@ -3,6 +3,7 @@ package courier
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -385,6 +386,86 @@ func TestTheRequestIsRefusedBeforeTheNetwork(t *testing.T) {
 	}
 	if calls != 0 {
 		t.Errorf("courier was called %d times for a request this client could refuse", calls)
+	}
+}
+
+// TestATeamInvitationMissingARequiredFieldIsRefusedBeforeTheNetwork is the
+// team_invitation half of the refusal above, and one row per field is the
+// shape because the four required fields are four different ways to be
+// missing exactly one: a test that named no field would pass on a client
+// that refused them all for the wrong reason, and a test with one case per
+// field names the one that was wrong.
+//
+// THE REASON IS THE password_reset ONE: by the time courier answers a 422, an
+// invitation has been created and the admin has been told it was emailed.
+func TestATeamInvitationMissingARequiredFieldIsRefusedBeforeTheNetwork(t *testing.T) {
+	const validID = "6f5d4c3b-2a19-4e8f-9c07-1b2d3e4f5061"
+	const validURL = "https://app.example.com/invitations/accept?token=abc"
+
+	cases := []struct {
+		name    string
+		request MessageRequest
+	}{
+		{
+			name: "no recipient",
+			request: MessageRequest{
+				Type:        TypeTeamInvitation,
+				UserID:      validID,
+				AccountName: "Acme Corporation",
+				URL:         validURL,
+				InvitedBy:   "Kaka",
+			},
+		},
+		{
+			name: "no link",
+			request: MessageRequest{
+				Type:        TypeTeamInvitation,
+				UserID:      validID,
+				To:          "teammate@example.com",
+				AccountName: "Acme Corporation",
+				InvitedBy:   "Kaka",
+			},
+		},
+		{
+			name: "no account name",
+			request: MessageRequest{
+				Type:      TypeTeamInvitation,
+				UserID:    validID,
+				To:        "teammate@example.com",
+				URL:       validURL,
+				InvitedBy: "Kaka",
+			},
+		},
+		{
+			name: "no inviter",
+			request: MessageRequest{
+				Type:        TypeTeamInvitation,
+				UserID:      validID,
+				To:          "teammate@example.com",
+				URL:         validURL,
+				AccountName: "Acme Corporation",
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				calls++
+				w.WriteHeader(http.StatusOK)
+			}))
+			defer server.Close()
+
+			client := newTestClient(t, server.URL, "service-token-value")
+			_, err := client.SendMessage(context.Background(), tc.request)
+			if !errors.Is(err, ErrInvalidRequest) {
+				t.Fatalf("SendMessage error = %v, want one matching ErrInvalidRequest", err)
+			}
+			if calls != 0 {
+				t.Errorf("courier was called %d times for a request this client could refuse", calls)
+			}
+		})
 	}
 }
 

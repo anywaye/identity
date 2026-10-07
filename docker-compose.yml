@@ -362,6 +362,17 @@ services:
       EMAIL_VERIFICATION_LINK_TEMPLATE: "${APP_BASE_URL:-http://localhost:3997}/verify-email/confirm?token={token}"
       EMAIL_CHANGE_LINK_TEMPLATE: "${APP_BASE_URL:-http://localhost:3997}/email-change/confirm?token={token}"
 
+      # INVITATION_LINK_TEMPLATE is the fourth link, and it is REQUIRED the
+      # moment the three above are: config.Load refuses to boot a deployment
+      # that can send mail and cannot say where an invitation link goes,
+      # because the invite route is mounted unconditionally and every invite
+      # would otherwise fail at send time with a 500 that names nothing. It
+      # has no default and falls back to nothing — unlike the three above it
+      # is new, so no deployment has a working invite-by-email path to break,
+      # and inheriting the reset template would mail a link to a screen that
+      # cannot redeem an invitation token. The path is parlor's accept route.
+      INVITATION_LINK_TEMPLATE: "${APP_BASE_URL:-http://localhost:3997}/invitations/accept?token={token}"
+
       # ---------------------------------------------------------------------
       # SOCIAL LOGIN, OFF BY DEFAULT
       #

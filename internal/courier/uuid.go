@@ -89,15 +89,8 @@ func idempotencyKeyFor(purpose, userID, token string) (string, error) {
 	if token == "" {
 		return "", errors.New("courier: refusing to derive an idempotency key from nothing")
 	}
-	digest := sha256.Sum256([]byte(idempotencyKeyDomain + "\x00" +
-		purpose + "\x00" + userID + "\x00" + token))
-
-	var value id.UUID
-	copy(value[:], digest[:16])
-	value[6] = (value[6] & 0x0f) | 0x80
-	value[8] = (value[8] & 0x3f) | 0x80
-
-	return value.String(), nil
+	return deriveIdempotencyKey(idempotencyKeyDomain,
+		purpose+"\x00"+userID+"\x00"+token)
 }
 
 // isUUID reports whether a value is a uuid in the shape courier accepts.
@@ -120,3 +113,45 @@ func isUUID(value string) bool {
 // inline literal so a reader can see that it is a choice: the same token used for
 // something else in this codebase must not produce the same key.
 const idempotencyKeyDomain = "cafaye/identity/recovery/idempotency/v1"
+
+// invitationIdempotencyKeyDomain is the invitation send's separator, and it is a
+// SECOND constant rather than a parameter because the two domains must never
+// collapse into one: a recovery token and an invitation token are different
+// credentials, and a key that could be produced by both is a key whose uniqueness
+// cannot be reasoned about.
+const invitationIdempotencyKeyDomain = "cafaye/identity/invitation/idempotency/v1"
+
+// invitationIdempotencyKeyFor derives the Idempotency-Key for one invitation's
+// send, from the invitation and the token its link carries.
+//
+// THE SHAPE IS idempotencyKeyFor's — a domain-separated SHA-256 truncated to a
+// v8 uuid — with the invitation's id where recovery puts the user and no purpose
+// in the input: an invitation send has exactly one courier type, so there is no
+// kind to name. The invitation's id stands in the user's slot because an invitee
+// has no user — the invitation exists precisely because they have not signed up
+// — and courier's own consumer makes the same compromise for the same reason. The
+// cost, named there rather than hidden here: a preference check keyed by the
+// invitation rather than by the invitee.
+func invitationIdempotencyKeyFor(invitationID, token string) (string, error) {
+	if token == "" {
+		return "", errors.New("courier: refusing to derive an idempotency key from nothing")
+	}
+	return deriveIdempotencyKey(invitationIdempotencyKeyDomain, invitationID+"\x00"+token)
+}
+
+// deriveIdempotencyKey is the derivation both key functions share.
+//
+// IT IS ONE FUNCTION RATHER THAN TWO because the properties a key must have —
+// a well-formed uuid, a stable answer for the same input, and an input no other
+// domain can produce — are properties of the construction, and a second copy
+// of the construction is a second place for them to be wrong.
+func deriveIdempotencyKey(domain, input string) (string, error) {
+	digest := sha256.Sum256([]byte(domain + "\x00" + input))
+
+	var value id.UUID
+	copy(value[:], digest[:16])
+	value[6] = (value[6] & 0x0f) | 0x80
+	value[8] = (value[8] & 0x3f) | 0x80
+
+	return value.String(), nil
+}

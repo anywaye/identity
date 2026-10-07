@@ -7,7 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cafaye/identity/internal/accounts"
 	"github.com/cafaye/identity/internal/platform/dbtest"
+	"github.com/cafaye/identity/internal/platform/id"
 	"github.com/cafaye/identity/internal/recovery"
 )
 
@@ -278,12 +280,103 @@ func TestTheTwoEmailChangeMessagesReachARealCourier(t *testing.T) {
 	}
 }
 
+// TestAnInvitationGoesOutThroughARealCourier is the invitation half of the live
+// tier, and it is here for the reason the reset one is: the claim under test is
+// that bytes THIS adapter composes traverse courier's own validator and come
+// back accepted, and no fixture can answer for courier.
+//
+// # WHAT IT PROVES, AND WHAT IT DOES NOT
+//
+// It proves a real courier accepts a `team_invitation` carrying the four fields
+// courier's `required/1` names — email, url, account_name, invited_by — with the
+// link this adapter renders from the one-time token, and that the whole adapter
+// (`InvitationMailer.Send`, the path `accounts.Invite` calls) puts them there. It
+// does not prove delivery — the provider renders into memory — and it does not
+// prove the link opens the accept screen: the token's redemption is identity's
+// own accept endpoint's claim, and the screen is parlor's.
+func TestAnInvitationGoesOutThroughARealCourier(t *testing.T) {
+	live := requireLiveCourier(t)
+
+	const recipient = "identity-invite-e2e@example.com"
+	// A token with the production shape, because a courier that validated it would
+	// reject anything else — and this is the value that must reach the link.
+	token := liveToken(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// THE CLIENT LAYER first, so a refusal names the field courier objected to
+	// rather than the adapter that composed it.
+	result, err := live.invitationMailer.client.SendMessage(ctx, MessageRequest{
+		Type:        TypeTeamInvitation,
+		UserID:      testUserID.String(),
+		To:          recipient,
+		URL:         renderInvitationTestLink(t, token),
+		AccountName: "Acme Corporation",
+		InvitedBy:   "Kaka",
+		Role:        "member",
+	})
+	if err != nil {
+		t.Fatalf("a real courier refused a team_invitation identity can compose: %v", err)
+	}
+	if result.Status != StatusAccepted {
+		t.Errorf("Status = %q, want %q", result.Status, StatusAccepted)
+	}
+	if result.Type != TypeTeamInvitation {
+		t.Errorf("Type = %q, want %q", result.Type, TypeTeamInvitation)
+	}
+	if result.MessageID == "" {
+		t.Error("MessageID is empty; a bounce quoting it would tie back to nothing")
+	}
+	if result.EventID == "" {
+		t.Error("EventID is empty; it is the outbox row every bus subscriber sees")
+	}
+	if result.UserID != testUserID.String() {
+		t.Errorf("UserID = %q, want the invitation's id %q — an invitee has no user, "+
+			"and the invitation's id is what the send's idempotency is derived from",
+			result.UserID, testUserID)
+	}
+
+	// AND THE WHOLE ADAPTER, for the reason the reset test gives: `SendInvitation`
+	// is the path `accounts.Invite` calls, and driving only the client would leave
+	// the translation — the rendered link, the four fields, the derived key —
+	// untested against a real validator.
+	invitation := accounts.OutgoingInvitation{
+		ID:          id.MustNew(),
+		Email:       recipient,
+		Token:       token,
+		AccountName: "Acme Corporation",
+		InvitedBy:   "Kaka",
+		Role:        "member",
+	}
+	if err := live.invitationMailer.SendInvitation(ctx, invitation); err != nil {
+		t.Fatalf("InvitationMailer.Send against a real courier: %v", err)
+	}
+}
+
+// renderInvitationTestLink renders the invitation link the way the adapter does,
+// so this test does not assert against a URL the production path would not produce.
+func renderInvitationTestLink(t *testing.T, token string) string {
+	t.Helper()
+	rendered, err := LinkTemplate(invitationLinkTemplate).render(token)
+	if err != nil {
+		t.Fatalf("rendering the invitation link: %v", err)
+	}
+	return rendered
+}
+
 // # THE HARNESS
 
 // liveCourier is a courier this test suite is talking to for real.
 type liveCourier struct {
 	// mailer is the whole adapter, so a test can drive either layer.
 	mailer *RecoveryMailer
+
+	// invitationMailer is the invitation adapter, built over the same client for
+	// the same reason: the claim under test is that bytes THIS adapter composes
+	// traverse courier's own validator, and the invitation path composes a
+	// message type the recovery one never builds.
+	invitationMailer *InvitationMailer
 
 	// userID is an account courier will accept an arbitrary `user_id` for. courier
 	// holds no foreign key to identity's users, so any well-formed uuid works and
@@ -346,6 +439,13 @@ func requireLiveCourier(t *testing.T) *liveCourier {
 	if err != nil {
 		t.Fatalf("NewRecoveryMailer: %v", err)
 	}
+	invitationMailer, err := NewInvitationMailer(InvitationMailerConfig{
+		Client:       client,
+		LinkTemplate: invitationLinkTemplate,
+	})
+	if err != nil {
+		t.Fatalf("NewInvitationMailer: %v", err)
+	}
 
 	// A readiness probe first, so a failure here is courier's unavailability rather
 	// than a confusing 422 about something this test got wrong.
@@ -355,7 +455,7 @@ func requireLiveCourier(t *testing.T) *liveCourier {
 		t.Fatalf("the courier at %s is not ready: %v", courierURLVariable, err)
 	}
 
-	return &liveCourier{mailer: mailer}
+	return &liveCourier{mailer: mailer, invitationMailer: invitationMailer}
 }
 
 // skipWithoutCourier skips with the two facts a reader needs, and it is a NAMED

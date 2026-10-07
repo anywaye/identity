@@ -72,6 +72,7 @@ func realTenancy(pool *pgxpool.Pool, clk clock.Clock) *accounts.Service {
 		NewStore(pool),
 		clk,
 		db.Direct{Pool: pool},
+		nil, // no mailer: these tests are about the credential sweep, not the email
 	)
 }
 
