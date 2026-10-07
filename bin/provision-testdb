@@ -1,0 +1,254 @@
+#!/usr/bin/env bash
+#
+# Provisions the test database the gate runs against, so a fresh identity
+# gate does not need the manual ritual — create the database, apply every
+# migration, GRANT identity_app TO identity — that was the most error-prone
+# step in the fleet. Forget the grant and every tenancy test fails
+# `permission denied to set role` (42501); forget a migration and the merged
+# gate reds.
+#
+#   bin/provision-testdb DSN
+#
+# IDEMPOTENT: every step is a no-op when its target already exists, so a
+# second run changes nothing and is still green.
+#
+# WHAT IT CREATES, and why each piece is needed:
+#   - the owner login role (the DSN's user), if absent;
+#   - the app login role (<owner>_app), if absent — the role the pool under
+#     test connects as (dbtest.AppDSN), and the role migrations/00016's
+#     protect_table writes its row-level-security policies for;
+#   - the database, owned by the owner role, if absent;
+#   - every migration, with the pinned goose;
+#   - GRANT <owner>_app TO <owner> — the role membership the tenancy tests'
+#     SET ROLE needs.
+#
+# THE OWNER/APP-ROLE SPLIT IS PRESERVED, never collapsed. The suite connects
+# as the app role (dbtest.assertAppRole fails otherwise), so provisioning
+# does not "fix" a permission problem by making the suite run as the owner —
+# that would silently disable every row-level-security policy in 00016.
+#
+# A NON-LOCAL HOST IS REFUSED, never provisioned. This gate must never create
+# something on a database it was not pointed at: a DSN whose host is not
+# 127.0.0.1, localhost or ::1 is an error, not a provisioning target.
+#
+# THE ADMIN CONNECTION. Creating a role or a database is a superuser (or
+# CREATEROLE+CREATEDB) privilege, and the DSN's owner role does not hold it —
+# locally the cluster superuser is `postgres`, while in CI the DSN user IS
+# the superuser. So the admin DSN is, in order:
+#   1. TEST_DATABASE_ADMIN_URL, if set;
+#   2. the DSN's own user against the `postgres` maintenance database, if
+#      that user can create roles (CI);
+#   3. postgres://postgres:$POSTGRES_PASSWORD@<host>/postgres — the local
+#      cluster's superuser.
+# Whichever is chosen is verified to actually be able to create roles before
+# anything is created.
+#
+# THE PASSWORD travels as a psql variable (:'pw'), never interpolated into
+# SQL, so a password containing a quote cannot break the statement. Role and
+# database names ARE interpolated, so they are validated against a safe
+# identifier pattern rather than trusted — the DSN is caller-controlled text.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+dsn="${1:-}"
+if [ -z "$dsn" ]; then
+  echo "bin/provision-testdb: usage: bin/provision-testdb DSN" >&2
+  echo "  DSN is a postgres:// URL naming a LOCAL host (127.0.0.1, localhost, ::1)." >&2
+  exit 2
+fi
+
+log() { printf 'provision-testdb: %s\n' "$*"; }
+fail() { printf 'bin/provision-testdb: %s\n' "$*" >&2; exit 1; }
+
+# ---------------------------------------------------------------------
+# PARSE THE DSN. postgres://user:password@host:port/database?params
+# ---------------------------------------------------------------------
+scheme="${dsn%%://*}"
+case "$scheme" in
+  postgres|postgresql) ;;
+  *) fail "unsupported DSN scheme '$scheme' (wanted postgres:// or postgresql://)" ;;
+esac
+
+after_scheme="${dsn#*://}"
+[ "$after_scheme" != "$dsn" ] || fail "DSN '$dsn' has no scheme"
+
+userinfo="${after_scheme%%@*}"
+[ "$userinfo" != "$after_scheme" ] || fail "DSN '$dsn' names no user; the tests derive the app role from it"
+
+if [[ "$userinfo" == *:* ]]; then
+  owner="${userinfo%%:*}"
+  password="${userinfo#*:}"
+else
+  owner="$userinfo"
+  password=""
+fi
+[ -n "$owner" ] || fail "DSN '$dsn' names an empty user"
+
+rest="${after_scheme#*@}" # host:port/database?params
+hostport="${rest%%[/?]*}"
+[ -n "$hostport" ] || fail "DSN '$dsn' names no host"
+
+after_host="${rest#*/}"
+[ "$after_host" != "$rest" ] || fail "DSN '$dsn' names no database"
+dbname="${after_host%%\?*}"
+[ -n "$dbname" ] || fail "DSN '$dsn' names an empty database"
+
+# The query params, preserved for the derived admin DSNs below.
+dsn_base="${dsn%%\?*}"
+dsn_params="${dsn#"$dsn_base"}" # "" or "?params"
+
+# dsn_host extracts the host from a postgres:// DSN, stripping any [IPv6]
+# brackets and :port. It prints nothing for a DSN it cannot parse, which the
+# local-host refusal below treats as a refusal.
+dsn_host() {
+  local after_scheme rest hostport
+  after_scheme="${1#*://}"
+  rest="${after_scheme#*@}"
+  hostport="${rest%%[/?]*}"
+  if [[ "$hostport" == \[*\]* ]]; then
+    hostport="${hostport#\[}"
+    printf '%s' "${hostport%%\]*}"
+  else
+    printf '%s' "${hostport%%:*}"
+  fi
+}
+
+host="$(dsn_host "$dsn")"
+
+# ---------------------------------------------------------------------
+# THE LOCAL-HOST REFUSAL. The whole point: never touch a remote database.
+# ---------------------------------------------------------------------
+case "$host" in
+  127.0.0.1|localhost|::1) ;;
+  *) fail "refusing to provision: host '$host' is not local (wanted 127.0.0.1, localhost or ::1). This gate must never create something on a database it was not pointed at." ;;
+esac
+
+# ---------------------------------------------------------------------
+# RESOLVE psql. PATH first, then the known Homebrew prefix; when neither
+# has it, fail with the exact command to run rather than a bare "not found".
+# ---------------------------------------------------------------------
+psql_bin="$(command -v psql 2>/dev/null || true)"
+if [ -z "$psql_bin" ] && [ -x /opt/homebrew/opt/postgresql@17/bin/psql ]; then
+  psql_bin=/opt/homebrew/opt/postgresql@17/bin/psql
+fi
+if [ -z "$psql_bin" ]; then
+  fail "psql not found on PATH and not at /opt/homebrew/opt/postgresql@17/bin/psql. Install it with: brew install postgresql@17"
+fi
+
+# Bounded connections: a gate must not hang on an unreachable host.
+export PGCONNECT_TIMEOUT=10
+
+# ---------------------------------------------------------------------
+# RESOLVE goose, PINNED. Never @latest: the migrations were verified against
+# v3.28.0 (ci.yml installs the same pin), and a gate that depends on which
+# goose was published last night is a gate that can change under a green
+# build. Install the pinned version into $(go env GOPATH)/bin — NOT the
+# repo's bin/, which is tracked, so a binary there would be one git add away
+# from being committed.
+# ---------------------------------------------------------------------
+command -v go >/dev/null 2>&1 || fail "go is not on PATH; the pinned goose cannot be installed"
+
+goose_pin="v3.28.0"
+goose_bin=""
+for candidate in "$(command -v goose 2>/dev/null || true)" "$(go env GOPATH)/bin/goose"; do
+  [ -n "$candidate" ] && [ -x "$candidate" ] || continue
+  if "$candidate" -version 2>/dev/null | grep -q "$goose_pin"; then
+    goose_bin="$candidate"
+    break
+  fi
+done
+if [ -z "$goose_bin" ]; then
+  log "installing pinned goose $goose_pin into $(go env GOPATH)/bin"
+  go install "github.com/pressly/goose/v3/cmd/goose@$goose_pin"
+  goose_bin="$(go env GOPATH)/bin/goose"
+  [ -x "$goose_bin" ] || fail "goose $goose_pin was not installed into $(go env GOPATH)/bin; install it by hand with: go install github.com/pressly/goose/v3/cmd/goose@$goose_pin"
+fi
+
+# ---------------------------------------------------------------------
+# RESOLVE THE ADMIN DSN. See the header for the order.
+# ---------------------------------------------------------------------
+# The DSN's own user against the maintenance database (CI: the DSN user is
+# the superuser).
+dsn_maintenance="${dsn_base%/*}/postgres$dsn_params"
+
+# The local cluster's superuser.
+superuser_dsn="postgres://postgres:${POSTGRES_PASSWORD:-postgres}@${hostport}/postgres$dsn_params"
+
+# admin_can_provision reports whether the DSN's user can create both roles
+# and databases — the privileges provisioning needs. stderr is hidden
+# because a probe that fails is expected (it is how the fallback decides).
+admin_can_provision() {
+  "$psql_bin" "$1" -X -q -w -tAc \
+    "select rolsuper or (rolcreaterole and rolcreatedb) from pg_roles where rolname = current_user" \
+    2>/dev/null | grep -q t
+}
+
+admin_dsn=""
+if [ -n "${TEST_DATABASE_ADMIN_URL:-}" ]; then
+  admin_dsn="$TEST_DATABASE_ADMIN_URL"
+  log "using TEST_DATABASE_ADMIN_URL as the admin connection"
+  # An explicitly-set admin URL is caller-controlled text too: refuse a
+  # remote one, for the same reason the test DSN's host is refused.
+  case "$(dsn_host "$TEST_DATABASE_ADMIN_URL")" in
+    127.0.0.1|localhost|::1) ;;
+    *) fail "refusing to provision: TEST_DATABASE_ADMIN_URL names a host that is not local" ;;
+  esac
+else
+  if admin_can_provision "$dsn_maintenance"; then
+    admin_dsn="$dsn_maintenance"
+    log "the DSN's own user can provision; using it as the admin connection"
+  elif admin_can_provision "$superuser_dsn"; then
+    admin_dsn="$superuser_dsn"
+    log "using the cluster's postgres superuser as the admin connection"
+  fi
+fi
+[ -n "$admin_dsn" ] || fail "no admin connection works. Set TEST_DATABASE_ADMIN_URL to a superuser DSN on the local cluster."
+
+# Verify whichever admin DSN was chosen can actually provision. stderr is
+# visible here: if this fails, the real connection error is the useful part.
+if ! "$psql_bin" "$admin_dsn" -X -q -w -tAc \
+  "select rolsuper or (rolcreaterole and rolcreatedb) from pg_roles where rolname = current_user" | grep -q t; then
+  fail "the admin connection cannot create roles and databases; set TEST_DATABASE_ADMIN_URL"
+fi
+
+# ---------------------------------------------------------------------
+# PROVISION. Every step is idempotent.
+# ---------------------------------------------------------------------
+# Role and database names are interpolated into SQL below, so they are
+# validated rather than trusted: the DSN is caller-controlled text.
+for name in "$owner" "$dbname"; do
+  [[ "$name" =~ ^[a-z_][a-z0-9_]*$ ]] || fail "refusing to provision: '$name' is not a safe SQL identifier"
+done
+app_role="${owner}_app"
+[[ "$app_role" =~ ^[a-z_][a-z0-9_]*$ ]] || fail "refusing to provision: derived role '$app_role' is not a safe identifier"
+
+role_exists() {
+  "$psql_bin" "$admin_dsn" -X -q -w -tAc "select 1 from pg_roles where rolname = '$1'"
+}
+
+if [ "$(role_exists "$owner")" != "1" ]; then
+  log "creating role $owner"
+  "$psql_bin" "$admin_dsn" -X -q -w --set ON_ERROR_STOP=1 -v pw="$password" \
+    -c "CREATE ROLE $owner LOGIN PASSWORD :'pw'"
+fi
+
+if [ "$(role_exists "$app_role")" != "1" ]; then
+  log "creating role $app_role"
+  "$psql_bin" "$admin_dsn" -X -q -w --set ON_ERROR_STOP=1 -v pw="$password" \
+    -c "CREATE ROLE $app_role LOGIN PASSWORD :'pw'"
+fi
+
+if [ "$("$psql_bin" "$admin_dsn" -X -q -w -tAc "select 1 from pg_database where datname = '$dbname'")" != "1" ]; then
+  log "creating database $dbname (owner $owner)"
+  "$psql_bin" "$admin_dsn" -X -q -w --set ON_ERROR_STOP=1 \
+    -c "CREATE DATABASE $dbname OWNER $owner"
+fi
+
+log "applying migrations to $dbname"
+"$goose_bin" -dir "$ROOT/migrations" postgres "$dsn" up
+
+log "granting $app_role to $owner"
+"$psql_bin" "$admin_dsn" -X -q -w --set ON_ERROR_STOP=1 -c "GRANT $app_role TO $owner"
+
+log "provisioned $dbname (owner $owner, app role $app_role)"
