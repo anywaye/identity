@@ -354,7 +354,7 @@ func TestDeleteCascades(t *testing.T) {
 	_ = token
 	if _, err := store.CreateInvitation(t.Context(), q, NewInvitation{
 		AccountID: account.ID, Email: dbtest.UniqueEmail(t), Role: RoleMember,
-		TokenDigest: digest, ExpiresAt: time.Now().Add(7 * 24 * time.Hour), InvitedBy: user,
+		TokenDigest: digest, CreatedAt: time.Now().UTC(), ExpiresAt: time.Now().Add(7 * 24 * time.Hour), InvitedBy: user,
 	}); err != nil {
 		t.Fatalf("CreateInvitation: %v", err)
 	}
@@ -414,10 +414,11 @@ func TestInvitationLifecycle(t *testing.T) {
 		t.Fatalf("NewToken: %v", err)
 	}
 	expires := time.Now().UTC().Add(7 * 24 * time.Hour).Truncate(time.Microsecond)
+	created := time.Now().UTC().Truncate(time.Microsecond)
 
 	invitation, err := store.CreateInvitation(t.Context(), q, NewInvitation{
 		AccountID: account.ID, Email: email, Role: RoleAdmin,
-		TokenDigest: digest, ExpiresAt: expires, InvitedBy: inviter,
+		TokenDigest: digest, CreatedAt: created, ExpiresAt: expires, InvitedBy: inviter,
 	})
 	if err != nil {
 		t.Fatalf("CreateInvitation: %v", err)
@@ -427,6 +428,14 @@ func TestInvitationLifecycle(t *testing.T) {
 	}
 	if !invitation.ExpiresAt.Equal(expires) {
 		t.Errorf("expires_at = %s, want the %s the caller asked for", invitation.ExpiresAt, expires)
+	}
+	// created_at is the CALLER's clock, not the database's now(). This is the
+	// proof that the row and the event announcing it agree — and it is what
+	// account_invitations_expires_after_creation measures expires_at against, so
+	// a store that let the column default would compare the service's clock with
+	// the server's and refuse a legitimate invitation.
+	if !invitation.CreatedAt.Equal(created) {
+		t.Errorf("created_at = %s, want the %s the caller asked for", invitation.CreatedAt, created)
 	}
 
 	// Redemption is by digest, which is the only credential the table holds.
@@ -468,7 +477,7 @@ func TestMarkInvitationAcceptedIsNotTwice(t *testing.T) {
 	}
 	invitation, err := store.CreateInvitation(t.Context(), q, NewInvitation{
 		AccountID: account.ID, Email: dbtest.UniqueEmail(t), Role: RoleMember,
-		TokenDigest: digest, ExpiresAt: time.Now().Add(time.Hour), InvitedBy: inviter,
+		TokenDigest: digest, CreatedAt: time.Now().UTC(), ExpiresAt: time.Now().Add(time.Hour), InvitedBy: inviter,
 	})
 	if err != nil {
 		t.Fatalf("CreateInvitation: %v", err)
@@ -515,7 +524,7 @@ func TestCreateInvitationRejectsAPendingDuplicate(t *testing.T) {
 	}
 	if _, err := store.CreateInvitation(t.Context(), q, NewInvitation{
 		AccountID: account.ID, Email: email, Role: RoleMember,
-		TokenDigest: first, ExpiresAt: time.Now().Add(time.Hour), InvitedBy: inviter,
+		TokenDigest: first, CreatedAt: time.Now().UTC(), ExpiresAt: time.Now().Add(time.Hour), InvitedBy: inviter,
 	}); err != nil {
 		t.Fatalf("the first invitation: %v", err)
 	}
@@ -526,7 +535,7 @@ func TestCreateInvitationRejectsAPendingDuplicate(t *testing.T) {
 	}
 	_, err = store.CreateInvitation(t.Context(), q, NewInvitation{
 		AccountID: account.ID, Email: email, Role: RoleMember,
-		TokenDigest: second, ExpiresAt: time.Now().Add(time.Hour), InvitedBy: inviter,
+		TokenDigest: second, CreatedAt: time.Now().UTC(), ExpiresAt: time.Now().Add(time.Hour), InvitedBy: inviter,
 	})
 	if !errors.Is(err, ErrInvitationEmailTaken) {
 		t.Errorf("a second pending invitation for the same address = %v, want ErrInvitationEmailTaken", err)

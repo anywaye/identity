@@ -242,6 +242,7 @@ service quietly listening on the wrong port.
 | `RATE_LIMIT_SIGNUP_TIMESTAMP` | `30` | Requests per window for `POST /v1/signup-timestamp`, keyed on client address. The cheapest route on the surface — one HMAC, no database — and the one a bot polls before each signup attempt, so it is bounded even though it mints nothing. |
 | `RATE_LIMIT_RECOVERY` | `5` | Requests per window for the two anonymous recovery request routes (`POST /v1/password-resets`, `POST /v1/email-verifications`), keyed on client address. The lowest limit on the surface because every accepted request sends email: the bound is on outbound mail, not on attempts. |
 | `REQUIRE_EMAIL_VERIFICATION` | `false` | **Gate sign-in on a proved address. Off by default, and the default is parity, not an oversight**: the reference this fleet matches (Jumpstart Pro) does not use Devise's `:confirmable`, so an unverified address can sign in there. When `true`, `POST /v1/session` refuses an unverified account with `403 email_not_verified` — **after** the password verifies, so a caller told so has already proved they hold the credential. The risk the flag exists to close: an address nobody has proved can hold a session. A present-but-unreadable value is a startup failure — a deployment that believes the gate is on and is not is the worse of the two states. |
+| `SIGNUP_SIGNING_KEY` | *(none — required)* | base64url, **exactly 32 bytes**. The HMAC-SHA256 key `POST /v1/signup-timestamp` signs the pair with — the second half of signup bot defence. **The one secret with no supported absent state**: unset is a startup failure, not a reduced surface, because a process that could boot without it would serve an undefended signup form. `docker-compose.yml` supplies an obviously-development default (the base64url of `identity-development-signup-key!`) so a fresh clone boots; production sets it in `.kamal/secrets` via `config/deploy.yml`, and there is no default on that path. Mint one with `openssl rand -base64 32 \| tr '+/' '-_' \| tr -d '='` — plain `openssl rand -base64 32` emits standard base64 with one `=` of padding and fails the boot with "it is not base64url". |
 | `OIDC_ISSUER` | *(unset)* | The OpenID Connect issuer. Required with `OIDC_SIGNING_KEY`, `OIDC_SIGNING_KEY_ID` and `OIDC_LOGIN_UI_URL` — all four together, or none of them. |
 | `OIDC_SIGNING_KEY` | *(unset)* | PEM-encoded RSA private key, ≥ 2048 bits. PKCS#1 and PKCS#8 both load. |
 | `OIDC_SIGNING_KEY_ID` | *(unset)* | The `kid` published in the JWKS and signed into every token. 1-64 characters of `A-Z a-z 0-9 . _ -`. |
@@ -2030,7 +2031,7 @@ caller scope that lets `GET /v1/accounts` answer the question it exists to answe
 (see D11). Migrations are a deploy step, not a boot
 step — see [migrations/README.md](migrations/README.md).
 
-## Image
+## Image and chart
 
 Multi-stage, `CGO_ENABLED=0`, `gcr.io/distroless/static-debian12:nonroot`. No
 compiler and no shell in the shipped image:
@@ -2040,28 +2041,35 @@ docker build -t identity .
 docker run --rm -p 8080:8080 identity
 ```
 
-### Who builds it in CI
+### What a push to master publishes
 
-`.github/workflows/publish.yml`, on every push to `master` and on demand:
+`.github/workflows/publish.yml`, on every push to `master`:
 
 ```yaml
 jobs:
-  image:
-    uses: cafaye/kit/.github/workflows/image.reusable.yml@master
+  publish:
+    uses: cafaye/kit/.github/workflows/publish.reusable.yml@master
     with:
       push: true
 ```
 
-That is a **caller**, not a copy. The build lives in kit and is shared by every
-service in the fleet, so a fix to how an image is built reaches here on kit's
-next push with no pull request against this repository.
+That is a **caller**, not a copy — kit's template, verbatim. One `uses:`
+publishes **both** artifacts a deploy consumes: the image `config/deploy.yml`
+deploys (`ghcr.io/<org>/<repo>:sha-<commit>`, plus `master`, plus `latest`)
+and the chart the Argo CD `Application` pulls
+(`oci://ghcr.io/cafaye/charts/identity:<chart version>`). The composition
+lives in kit, so a fix to how either artifact is built reaches here on
+kit's next push with no pull request against this repository.
 
-Before this file existed, `config/deploy.yml` named an image and `kamal deploy`
-pulled it, and **nothing in this repository produced it** — the `docker build`
-above was the whole story, on one person's machine. A deploy config naming an
-image nothing produces is a document, not a plan.
+Before the caller existed, `config/deploy.yml` named an image and `kamal
+deploy` pulled it, and **nothing in this repository produced it** — the
+`docker build` above was the whole story, on one person's machine. A deploy
+config naming an image nothing produces is a document, not a plan. The chart
+half of that gap survived until identity-w98: the chart landed while the
+caller still named kit's image workflow, so the Application pulled a tag no
+pipeline wrote.
 
-Three things worth knowing:
+Four things worth knowing:
 
 - **The image name is not written here.** The reusable workflow derives it from
   `github.repository` and lowercases it, because `ghcr.io/Cafaye/Identity` 404s
@@ -2071,6 +2079,12 @@ Three things worth knowing:
   as a 401, which reads like a bad password rather than like the missing line.
 - **Tags are `sha-<commit>`, `master`, and `latest`** — no semver. Cutting a
   release is a decision, not a side effect of a merge.
+- **The chart's `version` is the OCI tag, and it is the tag the substrate's
+  `Application` must match.** `chart.reusable.yml` reads name and version from
+  `chart/Chart.yaml` — they are not inputs — and a Helm chart's OCI tag is its
+  `version`. `Chart.yaml` says `0.1.0`; the Application pins
+  `targetRevision: 0.1.0`. Bump one without the other and the deploy never
+  happens: Argo reports no error, it just never finds the artifact.
 
 A pull request does not trigger it: only `master` holds deployable commits, and a
 PR build would run untrusted code against a registry write.

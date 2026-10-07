@@ -144,30 +144,38 @@ func TestADeploymentConfiguredBeforePerPurposeTemplatesStillBootsAndIsToldAboutI
 // is a separate test because a warning that fires when everything is correct trains
 // an operator to ignore warnings.
 //
-// A migration that has finished — both per-purpose variables set, the legacy one
+// A migration that has finished — all three per-purpose variables set, the legacy one
 // deleted — must produce no shared-default warning at all, and the startup line must
-// name two DIFFERENT links.
+// name three DIFFERENT links.
 func TestADeploymentThatHasConfiguredEachPurposeIsNotWarned(t *testing.T) {
 	const reset = "https://app.example.com/reset?token={token}"
 	const verify = "https://app.example.com/verify-email?token={token}"
+	const change = "https://app.example.com/email-change?token={token}"
 
 	written := buildWithEnv(t, courierEnv(map[string]string{
 		"PASSWORD_RESET_LINK_TEMPLATE":     reset,
 		"EMAIL_VERIFICATION_LINK_TEMPLATE": verify,
+		"EMAIL_CHANGE_LINK_TEMPLATE":       change,
 	}))
 
 	if strings.Contains(written, "RECOVERY_LINK_TEMPLATE") {
 		t.Errorf("the startup log warns about the shared default for a deployment that "+
 			"never set it:\n%s", written)
 	}
-	for _, want := range []string{"link_template.password_reset", "link_template.verify_email"} {
+	for _, want := range []string{
+		"link_template.password_reset",
+		"link_template.verify_email",
+		"link_template.email_change",
+	} {
 		if !strings.Contains(written, want) {
 			t.Errorf("the startup log does not carry %q:\n%s", want, written)
 		}
 	}
-	// Both values are in the line, so the two screens are distinguishable at a glance.
-	if !strings.Contains(written, reset) || !strings.Contains(written, verify) {
-		t.Errorf("the startup log does not carry both configured links:\n%s", written)
+	// All three values are in the line, so the three screens are distinguishable at a
+	// glance.
+	if !strings.Contains(written, reset) || !strings.Contains(written, verify) ||
+		!strings.Contains(written, change) {
+		t.Errorf("the startup log does not carry all three configured links:\n%s", written)
 	}
 }
 

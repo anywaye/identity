@@ -6,18 +6,19 @@ import (
 	"github.com/cafaye/identity/internal/recovery"
 )
 
-// resetLinkTemplate and verifyLinkTemplate are the two things a deployment says
-// when it has said where each kind of link goes.
+// resetLinkTemplate, verifyLinkTemplate and changeLinkTemplate are the three
+// things a deployment says when it has said where each kind of link goes.
 //
 // THEY ARE CONSTANTS RATHER THAN INLINE STRINGS in every fixture, because the
-// relationship between them is what this package's per-purpose work is about: two
-// purposes, two screens, one credential shape. A fixture that spelled one out
-// inline would let a test assert "the two links differ" against two strings that
+// relationship between them is what this package's per-purpose work is about:
+// three purposes, three screens, one credential shape. A fixture that spelled one
+// out inline would let a test assert "the links differ" against strings that
 // happen to differ here, which is the tautology the negative control in
 // `link_purpose_test.go` exists to rule out.
 const (
 	resetLinkTemplate  = "https://app.example.com/reset?token=" + TokenPlaceholder
 	verifyLinkTemplate = "https://app.example.com/verify-email?token=" + TokenPlaceholder
+	changeLinkTemplate = "https://app.example.com/confirm-change?token=" + TokenPlaceholder
 )
 
 // testLinkTemplates is a complete, valid per-purpose set, for the fixtures that
@@ -27,10 +28,17 @@ const (
 // with no template — deliberately, and for the reason the field's comment gives. A
 // partial fixture would make every test that is not about link purposes fail for a
 // reason that has nothing to do with what it is checking.
+//
+// IT CARRIES THE `email_change` TEMPLATE because the current-address half of an
+// email change is delivered with its confirmation link, and the new-address half
+// is the one message of the four that carries no link — so the set is complete at
+// three purposes for four messages, and the asymmetry is courier's contract
+// rather than an omission.
 func testLinkTemplates() map[recovery.Purpose]string {
 	return map[recovery.Purpose]string{
 		recovery.PurposePasswordReset: resetLinkTemplate,
 		recovery.PurposeVerifyEmail:   verifyLinkTemplate,
+		recovery.PurposeEmailChange:   changeLinkTemplate,
 	}
 }
 
