@@ -62,6 +62,15 @@ CREATE TABLE account_invitations (
     -- at the epoch" are different answers and only one of them is true.
     accepted_at  timestamptz,
     invited_by   uuid                      NOT NULL,
+    -- The SERVICE's clock, not the server's now(), exactly as api_keys and
+    -- recovery_tokens stamp theirs: the row and the event announcing it have to
+    -- agree, and only one of the two is under test control. Store.CreateInvitation
+    -- always passes it, so this default is never what a real row gets. It is also
+    -- the reference the expires_after_creation CHECK below measures expires_at
+    -- against — leaving it to now() compared the caller's clock with the server's,
+    -- which a fake test clock parked in the past (and a production host whose
+    -- clock lags) fails. See DECISIONS.md D17, "created_at is the service's
+    -- clock".
     created_at   timestamptz               NOT NULL DEFAULT now(),
     updated_at   timestamptz               NOT NULL DEFAULT now(),
 
@@ -90,12 +99,13 @@ CREATE TABLE account_invitations (
     -- caller rather than a state worth storing, and it would be indistinguishable
     -- from a legitimate expired one when redeemed.
     --
-    -- There is deliberately NO equivalent constraint on accepted_at. expires_at is
-    -- the caller's clock plus seven days, so there is a week of margin against any
-    -- drift between this process and the server. accepted_at is the caller's clock
-    -- right now, compared against a created_at the server stamped: any host whose
-    -- clock runs even slightly behind Postgres fails every redemption with a 500 on
-    -- a constraint nobody asked for. The invariant actually worth having --
+    -- There is deliberately NO equivalent constraint on accepted_at. Both sides of
+    -- this CHECK come from the caller's clock (created_at is passed by
+    -- Store.CreateInvitation, not defaulted), so it compares two instants from ONE
+    -- clock and there is no drift to leave room for. accepted_at is the caller's
+    -- clock right now, compared against a created_at the server stamped: any host
+    -- whose clock runs even slightly behind Postgres fails every redemption with a
+    -- 500 on a constraint nobody asked for. The invariant actually worth having --
     -- accepted_at is only ever set once -- is enforced by the conditional UPDATE in
     -- Store.MarkInvitationAccepted, which is the one place it can be enforced
     -- atomically.

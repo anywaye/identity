@@ -236,6 +236,7 @@ service quietly listening on the wrong port.
 | `DATABASE_URL` | *(unset)* | Postgres DSN. Optional in v0; unset means no pool and no readiness dependency. |
 | `NATS_URL` | *(unset)* | The broker the outbox publisher publishes to. Optional, and unset is a supported state rather than an error: the outbox table, the loop and the `Publisher` interface all exist, and a deployment that has not wired a broker accumulates rows in `outbox_events` until it does — the rows are the promise, and they drain the moment a broker is configured. Set it and the publisher loop starts at boot, publishing each event on the subject equal to its `type` (no mapping, no prefix rewriting) over JetStream, and marking `published_at` from the broker's ack. A value that does not parse fails the boot. **The stack must define a JetStream stream whose subject filter covers what identity publishes (e.g. `identity.>`)** — a publish to a subject no stream matches is refused by the broker, which leaves the row claimable with `attempts` incremented and `last_error` naming the refusal: loud, and the direction a misconfiguration should fail in. |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`. Drives `log/slog`. |
+| `SIGNUP_SIGNING_KEY` | *(none — required)* | base64url, **exactly 32 bytes**. The HMAC-SHA256 key `POST /v1/signup-timestamp` signs the pair with — the second half of signup bot defence. **The one secret with no supported absent state**: unset is a startup failure, not a reduced surface, because a process that could boot without it would serve an undefended signup form. `docker-compose.yml` supplies an obviously-development default (the base64url of `identity-development-signup-key!`) so a fresh clone boots; production sets it in `.kamal/secrets` via `config/deploy.yml`, and there is no default on that path. Mint one with `openssl rand -base64 32 \| tr '+/' '-_' \| tr -d '='` — plain `openssl rand -base64 32` emits standard base64 with one `=` of padding and fails the boot with "it is not base64url". |
 | `OIDC_ISSUER` | *(unset)* | The OpenID Connect issuer. Required with `OIDC_SIGNING_KEY`, `OIDC_SIGNING_KEY_ID` and `OIDC_LOGIN_UI_URL` — all four together, or none of them. |
 | `OIDC_SIGNING_KEY` | *(unset)* | PEM-encoded RSA private key, ≥ 2048 bits. PKCS#1 and PKCS#8 both load. |
 | `OIDC_SIGNING_KEY_ID` | *(unset)* | The `kid` published in the JWKS and signed into every token. 1-64 characters of `A-Z a-z 0-9 . _ -`. |
@@ -1998,7 +1999,7 @@ caller scope that lets `GET /v1/accounts` answer the question it exists to answe
 (see D11). Migrations are a deploy step, not a boot
 step — see [migrations/README.md](migrations/README.md).
 
-## Image
+## Image and chart
 
 Multi-stage, `CGO_ENABLED=0`, `gcr.io/distroless/static-debian12:nonroot`. No
 compiler and no shell in the shipped image:
@@ -2008,28 +2009,35 @@ docker build -t identity .
 docker run --rm -p 8080:8080 identity
 ```
 
-### Who builds it in CI
+### What a push to master publishes
 
-`.github/workflows/publish.yml`, on every push to `master` and on demand:
+`.github/workflows/publish.yml`, on every push to `master`:
 
 ```yaml
 jobs:
-  image:
-    uses: cafaye/kit/.github/workflows/image.reusable.yml@master
+  publish:
+    uses: cafaye/kit/.github/workflows/publish.reusable.yml@master
     with:
       push: true
 ```
 
-That is a **caller**, not a copy. The build lives in kit and is shared by every
-service in the fleet, so a fix to how an image is built reaches here on kit's
-next push with no pull request against this repository.
+That is a **caller**, not a copy — kit's template, verbatim. One `uses:`
+publishes **both** artifacts a deploy consumes: the image `config/deploy.yml`
+deploys (`ghcr.io/<org>/<repo>:sha-<commit>`, plus `master`, plus `latest`)
+and the chart the Argo CD `Application` pulls
+(`oci://ghcr.io/cafaye/charts/identity:<chart version>`). The composition
+lives in kit, so a fix to how either artifact is built reaches here on
+kit's next push with no pull request against this repository.
 
-Before this file existed, `config/deploy.yml` named an image and `kamal deploy`
-pulled it, and **nothing in this repository produced it** — the `docker build`
-above was the whole story, on one person's machine. A deploy config naming an
-image nothing produces is a document, not a plan.
+Before the caller existed, `config/deploy.yml` named an image and `kamal
+deploy` pulled it, and **nothing in this repository produced it** — the
+`docker build` above was the whole story, on one person's machine. A deploy
+config naming an image nothing produces is a document, not a plan. The chart
+half of that gap survived until identity-w98: the chart landed while the
+caller still named kit's image workflow, so the Application pulled a tag no
+pipeline wrote.
 
-Three things worth knowing:
+Four things worth knowing:
 
 - **The image name is not written here.** The reusable workflow derives it from
   `github.repository` and lowercases it, because `ghcr.io/Cafaye/Identity` 404s
@@ -2039,6 +2047,12 @@ Three things worth knowing:
   as a 401, which reads like a bad password rather than like the missing line.
 - **Tags are `sha-<commit>`, `master`, and `latest`** — no semver. Cutting a
   release is a decision, not a side effect of a merge.
+- **The chart's `version` is the OCI tag, and it is the tag the substrate's
+  `Application` must match.** `chart.reusable.yml` reads name and version from
+  `chart/Chart.yaml` — they are not inputs — and a Helm chart's OCI tag is its
+  `version`. `Chart.yaml` says `0.1.0`; the Application pins
+  `targetRevision: 0.1.0`. Bump one without the other and the deploy never
+  happens: Argo reports no error, it just never finds the artifact.
 
 A pull request does not trigger it: only `master` holds deployable commits, and a
 PR build would run untrusted code against a registry write.

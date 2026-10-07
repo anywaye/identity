@@ -241,6 +241,115 @@ func TestTheAdapterPutsCouriersRequestOnTheWire(t *testing.T) {
 	}
 }
 
+// TestTheTwoEmailChangeHalvesPutTheirOwnFieldsOnTheWire is the byte-level half
+// of the email-change mapping, and it is two rows because an email change has two
+// addresses and each gets its own message onto its own courier type.
+//
+// # WHAT IT PROVES, AND WHY THE LIVE COURIER IS NOT THE ONLY PROOF
+//
+// `TestTheTwoEmailChangeMessagesReachARealCourier` proves a real courier ACCEPTS
+// both halves — which proves the types and fields are ones courier's validator
+// knows. It does not prove the adapter PUT the right fields on each half: a send
+// that carried `previous_email` on the current-address half, or `url` on the
+// new-address half, would be a 422 from a real courier and a silent success
+// against a stub that refuses nothing. So the field-level assertion is here,
+// against a recording stub, and the two proofs are complementary rather than
+// redundant.
+//
+// # THE TWO ASSERTIONS, AND WHY EACH IS THE ONE THAT MATTERS
+//
+// The current-address half is the ONLY warning the owner of an account has that
+// somebody is moving its address, so its request must carry the confirmation
+// link — `url` rendered from the `email_change` purpose's template — and must
+// carry NO `previous_email`, which is a field its courier type does not declare.
+//
+// The new-address half tells the new address where the account lived before, so
+// its request must carry `previous_email` and must carry NO url: courier's
+// `email_change_new` template renders the previous address and nothing else, and
+// a field its schema does not declare is a 422.
+func TestTheTwoEmailChangeHalvesPutTheirOwnFieldsOnTheWire(t *testing.T) {
+	cases := []struct {
+		name     string
+		message  recovery.Message
+		wantType string
+		// wantURL is the link the request must carry, or "" for the half whose
+		// courier type declares none.
+		wantURL string
+		// wantPrevious is the previous address the request must carry, or ""
+		// for the half whose courier type declares none.
+		wantPrevious string
+	}{
+		{
+			name:     "the current-address half carries the link and no previous address",
+			message:  changeCurrentMessage(testToken),
+			wantType: TypeEmailChangeCurrent,
+			wantURL:  "https://app.example.com/confirm-change?token=" + testToken,
+		},
+		{
+			name:         "the new-address half carries the previous address and no link",
+			message:      changeNewMessage(testToken),
+			wantType:     TypeEmailChangeNew,
+			wantPrevious: "kaka@example.com",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			server, seen := recordingCourier(t)
+			mailer := testMailer(t, server.URL, nil)
+
+			if err := mailer.Send(context.Background(), tc.message); err != nil {
+				t.Fatalf("Send: %v", err)
+			}
+			if len(*seen) != 1 {
+				t.Fatalf("courier saw %d requests, want 1", len(*seen))
+			}
+			got := (*seen)[0]
+
+			if got.body["type"] != tc.wantType {
+				t.Errorf("type = %v, want %q", got.body["type"], tc.wantType)
+			}
+			if got.body["to"] != tc.message.To {
+				t.Errorf("to = %v, want the recipient recovery rendered", got.body["to"])
+			}
+			if got.body["user_id"] != testUserID.String() {
+				t.Errorf("user_id = %v, want the account the message concerns", got.body["user_id"])
+			}
+
+			// The link, for the half whose courier type declares one. Asserted
+			// present AND rendered from the configured template, because a
+			// field that is present but empty is a mail with a button that goes
+			// nowhere — the defect the per-purpose table exists to prevent.
+			if tc.wantURL != "" {
+				url, _ := got.body["url"].(string)
+				if url != tc.wantURL {
+					t.Errorf("url = %q, want %q — the configured template rendered with the token",
+						url, tc.wantURL)
+				}
+			} else if _, present := got.body["url"]; present {
+				t.Error("the request carried a url; courier's email_change_new declares no " +
+					"such field, so this is a 422 against a real courier")
+			}
+
+			// The previous address, for the half whose courier type declares
+			// one. Asserted present AND equal to the address the account is
+			// moving from, because a field that is present but empty is a lie
+			// in the one field the new address's owner needs.
+			if tc.wantPrevious != "" {
+				previous, _ := got.body["previous_email"].(string)
+				if previous != tc.wantPrevious {
+					t.Errorf("previous_email = %q, want %q — the address the account is "+
+						"moving from", previous, tc.wantPrevious)
+				}
+			} else if _, present := got.body["previous_email"]; present {
+				t.Error("the request carried previous_email; courier's " +
+					"email_change_current declares no such field, so this is a 422 " +
+					"against a real courier")
+			}
+		})
+	}
+}
+
 // TestTheResetLinkComesFromConfigurationAndNotFromARequest is the Host-header
 // property, and it is a separate test because the property is an ABSENCE: no
 // `Host` this process can be shown can reach the link.
@@ -337,42 +446,40 @@ func TestTheResetLinkComesFromConfigurationAndNotFromARequest(t *testing.T) {
 }
 
 // TestARefusedMessageNeverReachesTheWire is the last of the wiring, and it is the
-// direction that keeps the e2e file's negative half honest.
+// direction that keeps the e2e file's positive half honest.
 //
-// `TestTheTwoEmailChangeMessagesCourierCannotSendAreRefused` proves the refusal
-// against a live courier. This proves the part that makes it SAFE rather than merely
-// correct: the refusal happens BEFORE the request, so no token is in a body any
-// courier will render.
+// `TestTheTwoEmailChangeMessagesReachARealCourier` proves the two address-change
+// messages are delivered against a live courier. This proves the part that makes
+// the refusal SAFE rather than merely correct: a message this adapter has no type
+// for is refused BEFORE the request, so no token is in a body any courier will
+// render.
 //
 // A refusal discovered as a 422 would be far too late. By then `recovery` has
 // minted a token, written its digest, and told the caller a message is on its way —
 // so the observable difference between refusing before the wire and refusing on it
 // is whether a live credential was handed to a service that would have rendered it
 // into somebody's inbox.
+//
+// THE MESSAGE IS A HYPOTHETICAL ONE — a two-factor enrolment notice, which
+// `internal/recovery` does not render. The two email-change messages were this
+// test's rows until packet m70b gave them courier types; they are delivered now,
+// and the property this test holds is the one that keeps a FIFTH message from being
+// delivered by accident through a fallback that guessed.
 func TestARefusedMessageNeverReachesTheWire(t *testing.T) {
-	cases := []struct {
-		name    string
-		message recovery.Message
-	}{
-		{name: "the current-address half of an email change", message: changeCurrentMessage(testToken)},
-		{name: "the new-address half of an email change", message: changeNewMessage(testToken)},
+	message := recoveryMessage("Confirm your new security key", "kaka@example.com",
+		"Somebody added a security key to your cafaye account.\n\n    "+testToken+"\n")
+
+	server, seen := recordingCourier(t)
+	mailer := testMailer(t, server.URL, nil)
+
+	err := mailer.Send(context.Background(), message)
+	if !isError(err, ErrUnsupportedMessage) {
+		t.Fatalf("Send = %v, want ErrUnsupportedMessage", err)
 	}
 
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			server, seen := recordingCourier(t)
-			mailer := testMailer(t, server.URL, nil)
-
-			err := mailer.Send(context.Background(), tc.message)
-			if !isError(err, ErrUnsupportedMessage) {
-				t.Fatalf("Send = %v, want ErrUnsupportedMessage", err)
-			}
-
-			if len(*seen) != 0 {
-				t.Errorf("a message courier has no type for reached the wire %d time(s). The "+
-					"token in it is a live credential, and the refusal has to happen before "+
-					"the wire rather than as a 422 after it.", len(*seen))
-			}
-		})
+	if len(*seen) != 0 {
+		t.Errorf("a message courier has no type for reached the wire %d time(s). The "+
+			"token in it is a live credential, and the refusal has to happen before "+
+			"the wire rather than as a 422 after it.", len(*seen))
 	}
 }

@@ -242,6 +242,48 @@ services:
       DATABASE_URL: postgres://identity_app:${KIT_POSTGRES_PASSWORD:-cafaye}@postgres:5432/identity?sslmode=disable
 
       # ---------------------------------------------------------------------
+      # THE SIGNUP TIMESTAMP KEY — THE ONE SECRET A BOOT CANNOT GO WITHOUT
+      #
+      # SIGNUP_SIGNING_KEY is the HMAC-SHA256 key the signup timestamp is
+      # signed under: the second half of signup bot defence, and the one
+      # secret in this block with no supported absent state. Every other
+      # secret here belongs to a feature that may be off; this one belongs to
+      # no feature, and config.Load refuses to start without it. So this
+      # block carries a value, and the value is a DEVELOPMENT one, labelled
+      # as such.
+      #
+      # WHY A DEFAULT AT ALL, WHEN COURIER_TOKEN — further down — HAS NONE.
+      # The difference is what a missing value costs. A missing COURIER_TOKEN
+      # is a feature that is off: the recovery routes answer 503 and say why,
+      # and compose's `${VAR:?}` refusal is the right shape for it. A missing
+      # SIGNUP_SIGNING_KEY is not a feature being off; it is the process
+      # refusing to start, which on a fresh clone with no `.env` is a developer
+      # who typed `docker compose up` and met a startup error naming a variable
+      # they have never heard of. The dev default is what makes the install
+      # path work; the label is what keeps it honest.
+      #
+      # THE VALUE IS THE base64url OF `identity-development-signup-key!` — 32
+      # ASCII bytes, so it decodes to exactly 32 bytes and passes the length
+      # check. It is not random and not secret: it is the same on every dev
+      # machine, and anyone who reads this file can mint signup timestamps for
+      # a stack that carries it — which is what a development stack wants, and
+      # what a production stack must never do. A deployment that wants a
+      # different key sets SIGNUP_SIGNING_KEY in `.env`; the interpolation is
+      # the whole of the override, and production gets its key from
+      # `.kamal/secrets` (config/deploy.yml), where there is no default.
+      #
+      # MINT A REAL ONE WITH:
+      #
+      #   openssl rand -base64 32 | tr '+/' '-_' | tr -d '='
+      #
+      # `openssl rand -base64 32` ALONE IS THE WRONG COMMAND: it emits the
+      # standard alphabet and one `=` of padding, and the validator is
+      # base64url WITHOUT padding, so a key pasted from it fails boot with
+      # "it is not base64url". The `tr` pair is what makes the command produce
+      # exactly what config.Load accepts.
+      SIGNUP_SIGNING_KEY: ${SIGNUP_SIGNING_KEY:-aWRlbnRpdHktZGV2ZWxvcG1lbnQtc2lnbnVwLWtleSE}
+
+      # ---------------------------------------------------------------------
       # THE EVENT BUS, ON BY DEFAULT
       #
       # kit's stack runs NATS with JetStream (`-js`) on the `platform` network,
@@ -304,12 +346,13 @@ services:
       # THE LINK TEMPLATES point at the launch front door, which is a
       # deployment fact identity does not own — so they are supplied from
       # outside too, with an obviously-dev default pointing at the local
-      # parlor (port 3997, its documented dev port; the two paths are
-      # parlor's reset-password and verify-email/confirm screens, both of
-      # which read `?token=`). An operator sets APP_BASE_URL in `.env` to
-      # point the links at the real front door. Unlike the token these CAN
-      # have a default: a wrong link is a broken button, not a security hole,
-      # and the default points at the one screen that exists locally. Each
+      # parlor (port 3997, its documented dev port; the paths are parlor's
+      # reset-password and verify-email/confirm screens, both of which read
+      # `?token=`, and the email-change/confirm path that parlor will grow
+      # beside them). An operator sets APP_BASE_URL in `.env` to point the
+      # links at the real front door. Unlike the token these CAN have a
+      # default: a wrong link is a broken button, not a security hole, and
+      # the default points at the one screen that exists locally. Each
       # carries `{token}`, which config.Load requires — a template without it
       # is refused, because a link would carry no token and the reader would
       # reach a screen with nothing to redeem.
@@ -317,6 +360,7 @@ services:
       COURIER_TOKEN: "${COURIER_TOKEN:?set COURIER_TOKEN to the same identity-issued API key courier holds as COURIER_IDENTITY_TOKEN}"
       PASSWORD_RESET_LINK_TEMPLATE: "${APP_BASE_URL:-http://localhost:3997}/reset-password?token={token}"
       EMAIL_VERIFICATION_LINK_TEMPLATE: "${APP_BASE_URL:-http://localhost:3997}/verify-email/confirm?token={token}"
+      EMAIL_CHANGE_LINK_TEMPLATE: "${APP_BASE_URL:-http://localhost:3997}/email-change/confirm?token={token}"
 
       # INVITATION_LINK_TEMPLATE is the fourth link, and it is REQUIRED the
       # moment the three above are: config.Load refuses to boot a deployment

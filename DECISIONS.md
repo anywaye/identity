@@ -29,6 +29,7 @@ and its entry here is deleted; the number is never reused.**
 | [D9](#d9-registration-publishes-that-an-address-is-taken-and-that-is-the-last-one) | `POST /v1/users` answers `409` for a taken address, so an unauthenticated caller can discover whether anybody has an account here. Is that disclosure accepted, or does registration change shape? | RULED for now: it is accepted, and it is named. Closing it is a decision about products, not about identity |
 | [D10](#d10-identity-renders-no-html-and-the-browser-belongs-to-parlor) | `identity` must not have its own views — the frontend belongs to `parlor`. But the page *is* the AS's user-agent interaction, and OpenID Connect Core §3.1.2.1 makes that part of the provider's job. Does the page move, and if so, what crosses the boundary and what does not? | RULED: it moves. identity keeps every authorization decision and hands the browser to a configured login UI. The contract is published in `internal/oidc/loginui.go` and `openid/openid.yaml` |
 | [D12](#d12-an-unknown-subject-is-a-404-behind-a-machine-credential-and-a-202-in-front-of-a-stranger) | the session-link mint names a subject. The self-service flows answer `202` for an unknown address because they have no credential. What does this one answer? | RULED: **404 with a problem document**, because the caller already holds `sessions:write` and there is no anonymous stranger left to protect. The contrast with the self-service flows is the decision, not the status |
+| [D17](#d17-created_at-is-the-services-clock-in-every-table-including-account_invitations) | `api_keys` and `recovery_tokens` stamp `created_at` from the injected service clock; `account_invitations` let it default to the database's `now()`. Which is right, and what does the `expires_after_creation` CHECK actually compare? | RULED: the service's clock, in every table. `account_invitations` was the sole outlier and it was a latent 500 — the CHECK compared the caller's clock with the server's |
 
 ## D1: twelve served operations are in no document
 
@@ -1661,3 +1662,149 @@ property of the surface rather than of the handlers.
 - **No "sign out of all my other sessions".** That is what a password reset, an MFA
   change and an operator disable already do through `revokeEveryCredential`, and a
   separate route for it would be a second implementation of one rule.
+
+## D16: SIGNUP_SIGNING_KEY has three answers, one per manifest, and none is a production key
+
+**Raised** 2026-10-07 by packet `identity-w63-bootkey`. The fleet narrowed to a
+launch stack and identity could not boot from any manifest the repository ships:
+`config.Load` refuses to start without `SIGNUP_SIGNING_KEY`, and no manifest
+supplied it — not `docker-compose.yml`, not `config/deploy.yml`, not `.env`, not
+the CI boot job. A launch blocker, not a missing feature.
+
+The tension is real. The repo's own tests treat this as *the deployment's* key: a
+literal in the binary "would sign nothing" and a deployment's key is the only one
+that means anything. A committed, usable production key would be a forgery tool —
+anyone could mint signup timestamps. But a stranger must be able to run the stack
+from a fresh clone, and kit's `.env.example` says outright that it carries
+"development credentials for a container bound to the host loopback".
+
+### The ruling: dev default, production required, CI test value
+
+1. **Local / compose — a dev default that is obviously a dev default.**
+   `docker-compose.yml` supplies `SIGNUP_SIGNING_KEY: ${SIGNUP_SIGNING_KEY:-<dev
+   value>}` so `docker compose up` works on a fresh clone with no `.env` editing.
+   The value is the base64url of `identity-development-signup-key!` — 32 ASCII
+   bytes, so it decodes to exactly 32 bytes and passes the length check. It is
+   not random and not secret: it is the same on every dev machine, and anyone who
+   reads the file can mint signup timestamps for a stack that carries it — which
+   is what a development stack wants, and what a production stack must never do.
+   A deployment that wants a different key sets `SIGNUP_SIGNING_KEY` in `.env`;
+   the interpolation is the whole of the override.
+2. **Production / Kamal — required, operator-supplied, never defaulted.**
+   `config/deploy.yml` lists `SIGNUP_SIGNING_KEY` in `env.secret`, read from the
+   operator's environment via `.kamal/secrets`. There is no default anywhere on
+   this path: a deploy that does not supply it fails at boot, which is the
+   behaviour that already exists and is preserved.
+3. **CI — a test value.** The boot job generates an ephemeral key per run, masks
+   it, and prints only its length. CI is not a deployment, and the compose file's
+   development default is what a production key must never look like.
+
+### What was rejected, and why
+
+- **A committed production-plausible key.** Anyone could mint signup timestamps
+  for every signup form this service serves. The repo's own `signup_wiring_call_test.go`
+  says a literal in the binary "would sign nothing" — the same argument applies to
+  a literal in a manifest, with the added defect that a manifest is the one place
+  a deployment copies from.
+- **A placeholder like `changeme`.** It fails the 32-byte length check and turns a
+  working dev loop into a confusing startup error. The default must be a literal
+  32-byte base64url string, generated once.
+- **No default anywhere.** A fresh clone that meets a startup error naming a
+  variable it has never heard of is a broken install path. The dev default is
+  what makes `docker compose up` work; the label in the comment above it is what
+  keeps it honest.
+- **The obvious mint command.** `openssl rand -base64 32` emits the standard
+  alphabet and one `=` of padding; `base64.RawURLEncoding.DecodeString` rejects
+  both, so a correctly-random key pasted from that command fails boot with
+  "it is not base64url". The documented command is
+  `openssl rand -base64 32 | tr '+/' '-_' | tr -d '='`.
+
+### The proof is an agreement test, not a literal
+
+`cmd/identity/compose_boot_test.go` reads the identity service's environment out
+of `docker-compose.yml`, resolves its `${...}` forms the way compose does, and
+boots the real `main()` with exactly that. A hand-written env literal in the test
+would pass on the day the manifest breaks — which is exactly the defect this
+packet exists to close. The test was committed red (the manifest carried no key,
+so the child died at `config.Load` naming the variable) and went green when the
+manifest gained the dev default.
+
+### What is NOT decided here
+
+- **`MFA_ENCRYPTION_KEY`, `OAUTH_ENCRYPTION_KEY` and `OIDC_SIGNING_KEY` are the
+  same shape and the same problem.** They each gate a *feature* that is allowed
+  to be absent, so they keep their supported absent states. If the fleet ever
+  makes any of them unconditional, it needs the same three-manifest ruling — and
+  the same agreement test, reading the value out of the manifest rather than
+  asserting a literal.
+
+## D17: `created_at` is the service's clock, in every table, including `account_invitations`
+
+**Raised** 2026-10-07 by the manager while gating the `w70b` merge. The master
+gate was **red — 26 failing tests, 145 occurrences of `violates check constraint
+"account_invitations_expires_after_creation"`**, every one of them a 500 from
+`POST /v1/accounts/{id}/invitations`. The first hypothesis was that `w70b` had
+broken the invitation flow. It had not: `w70b`'s own branch gate was green, and
+the failures reproduce on master with `w70b` reverted.
+
+### What it actually was: a time bomb, not a regression
+
+`account_invitations.created_at` was the one column in the repository that
+defaulted to the **database's** `now()`. `expires_at`, by contrast, is
+`serviceClock.Now() + 7 days` — the caller's clock. The table's
+`account_invitations_expires_after_creation` CHECK is `expires_at > created_at`,
+so it was comparing **two different clocks**: the service's and Postgres's.
+
+The test suites park a `Fake` clock at `2026-09-30 12:00` and invite from it.
+`created_at` defaulted to the real wall clock. As long as real time was before
+`2026-10-07 12:00` the CHECK passed by accident; the moment real time crossed
+that instant, every invitation from the fake clock was "expired at insert" and
+the CHECK refused it. The tests did not change. **Time did.** The suite was red
+because the calendar moved, which is the worst way for a defect to surface: it
+looks like the last commit's fault, and it would have detonated in production on
+a host whose clock lagged Postgres by any margin at all.
+
+### The ruling: the service's clock, and the sibling tables already said so
+
+`api_keys` (`00011`) and `recovery_tokens` (`00015`) carry the **same** CHECK and
+**pass `created_at`/`issued_at` from the injected clock** — `Store.CreateAPIKey`
+takes `n.CreatedAt, n.ExpiresAt` as parameters, and `00011`'s own column comment
+already gives the reason: *"the row and the event announcing it have to agree, and
+only one of the two is under test control."* An invitation row is announced by an
+`outbox.NewMemberInvited` event stamped from the same `now` the service passes to
+`ExpiresAt`; letting the column default made the row and its event disagree about
+the instant they describe. `account_invitations` was the sole outlier, and the
+outlier was the bug.
+
+So `NewInvitation` gains a `CreatedAt time.Time` field, `Service.Invite` passes
+`now`, and `Store.CreateInvitation` writes it. The column keeps `DEFAULT now()`
+so an out-of-band `psql` insert still lands, but no path in this service reaches
+the default. `TestInvitationLifecycle` now asserts the row carries **the instant
+the caller asked for**, which is the proof that the row and the event agree — and
+it is the test that would have gone red on the day the bomb armed, had it
+asserted the column instead of trusting it.
+
+### What was rejected, and why
+
+- **Widen the CHECK or drop it.** It is the only thing refusing an
+  already-expired-at-insert invitation, and it is correct once both sides come
+  from one clock. Deleting a constraint to make a fake clock pass is the
+  weakened-test failure the fleet contract names explicitly.
+- **Move the fake clock forward.** It re-arms the bomb for the next date and
+  leaves the production defect — a lagging host clock — in place.
+- **Stamp `created_at` from `now()` in the INSERT rather than the caller.** Same
+  defect with extra steps: it is still the server's clock, and it still disagrees
+  with the event.
+- **Change the 103 `time.Date(2026, …)` sites in the test corpus.** Unnecessary.
+  The service-clock fix removes the DB-wall-clock coupling entirely, and only two
+  string-literal assertions in the whole repository depend on an exact date
+  (`internal/outbox/envelope_test.go`, `internal/httpapi/sessionlinks_test.go`);
+  neither is an invitation.
+
+### What is NOT decided here
+
+- **`updated_at` keeps `DEFAULT now()`.** It is stamped by the server on every
+  write and no constraint compares it against a caller-supplied instant, so it is
+  not the same question. If a future constraint ever measures a caller's clock
+  against `updated_at`, this ruling applies to it too.
+

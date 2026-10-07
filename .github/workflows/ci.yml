@@ -361,7 +361,7 @@ jobs:
       E2E_SKIP_EXCEPTIONS: >-
         TestAPasswordResetGoesOutThroughARealCourier
         TestAVerificationLinkReachesCouriersWelcomeTemplate
-        TestTheTwoEmailChangeMessagesCourierCannotSendAreRefused
+        TestTheTwoEmailChangeMessagesReachARealCourier
 
     steps:
       - uses: actions/checkout@v7
@@ -867,6 +867,16 @@ jobs:
         # would be a secret in a repository; a literal in a step would be a secret
         # in a log that is retained, searchable, and often public.
         #
+        # SIGNUP_SIGNING_KEY IS DIFFERENT, AND EVERY PROCESS HERE CARRIES ONE.
+        # It is the one secret a boot cannot go without — config.Load refuses to
+        # start without it — so the "no key" process below is about MFA's key
+        # and not this one: a process with no MFA key and no signup key would
+        # refuse to boot for the wrong reason and prove nothing about the MFA
+        # surface. It is generated and masked the same way, and it is a test
+        # value, not a deployment: CI is not a deployment, and the compose
+        # file's development default is what a production key must never look
+        # like.
+        #
         # Five assertions, each a process expected to do a named thing:
         #   a 16-byte key, with a database -> refuses to boot, and says which
         #                                   variable
@@ -885,6 +895,12 @@ jobs:
           set -euo pipefail
           go build -o identity ./cmd/identity
           log="$RUNNER_TEMP/boot.log"
+
+          # The signup timestamp key, ephemeral like the MFA key below: the one
+          # secret a boot cannot go without, so every process in this step
+          # carries one. Generated, masked, and printed nowhere.
+          signup_key="$(head -c 32 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=\n')"
+          echo "::add-mask::${signup_key}"
 
           # Wait for a process to answer, rather than for a number of seconds. The
           # listener is the thing being asserted, so this polls a real signal to a
@@ -907,6 +923,7 @@ jobs:
           # binary can only mean it booted.
           set +e
           MFA_ENCRYPTION_KEY="$(head -c 16 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=\n')" \
+            SIGNUP_SIGNING_KEY="$signup_key" \
             DATABASE_URL="$DATABASE_URL" PORT=18081 LOG_LEVEL=error \
             timeout 15 ./identity >"$log" 2>&1
           status=$?
@@ -923,8 +940,11 @@ jobs:
           echo "refuses a 16-byte MFA_ENCRYPTION_KEY, and says which variable"
 
           # No key at all: a legitimate deployment — MFA simply is not turned on —
-          # and it must degrade in one direction only.
-          DATABASE_URL="$DATABASE_URL" PORT=18080 LOG_LEVEL=error \
+          # and it must degrade in one direction only. The signup key is still
+          # supplied: it is not a feature that can be turned off, and a boot
+          # that failed here would be failing for the wrong reason.
+          SIGNUP_SIGNING_KEY="$signup_key" \
+            DATABASE_URL="$DATABASE_URL" PORT=18080 LOG_LEVEL=error \
             ./identity >"$log" 2>&1 &
           pid=$!
           trap 'kill "$pid" 2>/dev/null || true' EXIT
@@ -944,7 +964,8 @@ jobs:
           # The real key, for this run only.
           key="$(head -c 32 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=\n')"
           echo "::add-mask::${key}"
-          MFA_ENCRYPTION_KEY="$key" DATABASE_URL="$DATABASE_URL" PORT=18080 LOG_LEVEL=error \
+          MFA_ENCRYPTION_KEY="$key" SIGNUP_SIGNING_KEY="$signup_key" \
+            DATABASE_URL="$DATABASE_URL" PORT=18080 LOG_LEVEL=error \
             ./identity >"$log" 2>&1 &
           pid=$!
           trap 'kill "$pid" 2>/dev/null || true' EXIT
@@ -970,7 +991,7 @@ jobs:
           echo "with an ephemeral key: boots, /healthz unconditional, /readyz names postgres, /v1/mfa mounted"
           kill "$pid" 2>/dev/null || true
           wait "$pid" 2>/dev/null || true
-          echo "the key was ${#key} base64url characters, generated for this run, masked, and printed nowhere"
+          echo "the keys were ${#key} and ${#signup_key} base64url characters, generated for this run, masked, and printed nowhere"
 
       # ---------------------------------------------------------------------
       # THE GATES `bin/prime` DOES NOT RUN. All three are in AGENTS.md's list of

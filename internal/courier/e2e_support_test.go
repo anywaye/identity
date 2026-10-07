@@ -112,9 +112,8 @@ const (
 //     mail into memory. Nothing here claims a message arrived.
 //   - It does not prove the other three messages. `verify_email` is delivered
 //     through courier's `welcome` type and has its own live test below; the two
-//     `email_change` messages are refused — courier has had types for both since
-//     `20373bf`, but this adapter's `courierTypeFor` maps onto neither yet
-//     (packet m70b) — which the refusal test below holds.
+//     `email_change` messages are delivered onto the two types courier built for
+//     them and have their own live test below.
 func TestAPasswordResetGoesOutThroughARealCourier(t *testing.T) {
 	live := requireLiveCourier(t)
 
@@ -224,45 +223,58 @@ func TestAVerificationLinkReachesCouriersWelcomeTemplate(t *testing.T) {
 	}
 }
 
-// TestTheTwoEmailChangeMessagesCourierCannotSendAreRefused is the negative half,
-// and it is two rows rather than three because `verify_email` now has a courier
-// type — see the test above for why `welcome` is the true one.
+// TestTheTwoEmailChangeMessagesReachARealCourier is the positive half, and it is
+// two rows because an email change has two addresses and each gets its own
+// message onto its own courier type.
 //
-// courier has no message about an address change, and the two templates that exist
-// both say something false about one:
+// # WHAT IT PROVES, AND THE CHAIN IS THE SAME ONE AS THE RESET TEST ABOVE
 //
-//   - `password_reset` tells the account owner that SOMEBODY ASKED TO RESET THEIR
-//     PASSWORD. The current-address half is the ONLY warning the owner of an account
-//     has that somebody is moving its address — the whole of the hijack property
-//     `internal/recovery` is built around. A wrong-but-delivered security notice is
-//     worse than a loud failure.
-//   - `welcome` says "Welcome aboard" to somebody being told a hijacked session is
-//     moving their address.
+//	recovery renders a Message  (internal/recovery, no double)
+//	  -> RecoveryMailer.Send     (internal/courier, no double)
+//	    -> Client.SendMessage    (internal/courier, no double)
+//	      -> POST /v1/messages   (courier master, a real process)
+//	        -> Courier.Deliver   (courier, real: preferences, suppression, render)
+//	          -> 200 accepted
 //
-// So both are refused BEFORE the wire, which means no token reaches a courier that
-// would render it, and the flow answers 503 with a sentence an operator can read.
-// The recorded 422 `unknown_notification_type` in `recorded_test.go` is what the
-// alternative produced.
-func TestTheTwoEmailChangeMessagesCourierCannotSendAreRefused(t *testing.T) {
+// The current-address half is the ONLY warning the owner of an account has that
+// somebody is moving its address — the whole of the hijack property
+// `internal/recovery` is built around — so the request it produces must carry
+// the confirmation link. The new-address half tells the new address where the
+// account lived before, so its request must carry `previous_email` and must
+// carry NO url: courier's template for `email_change_new` renders the previous
+// address and nothing else, and a field its schema does not declare is a 422.
+//
+// # AND WHAT ACCEPTANCE IS THE PROOF OF
+//
+// The fields are courier's to check, not this test's: the server on the other
+// end parses the body, checks the closed vocabulary, and answers 422 naming the
+// field for a type or a field its document does not declare. So a send that
+// SUCCEEDS is the proof that the type and the fields are the right ones for a
+// real validator — the same claim the reset test makes, and the reason this file
+// exists rather than asserting the request offline. The byte-level assertion —
+// that the adapter puts `url` on the current-address half and `previous_email`
+// on the new-address half and nothing else — is `wiring_test.go`'s, against a
+// recording stub, and the recorded 200s for both types are in
+// `recorded_test.go`.
+func TestTheTwoEmailChangeMessagesReachARealCourier(t *testing.T) {
 	live := requireLiveCourier(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 
-	token := liveToken(t)
 	cases := []struct {
 		name    string
 		message recovery.Message
 	}{
-		{name: "the current-address half of an email change", message: changeCurrentMessage(token)},
-		{name: "the new-address half of an email change", message: changeNewMessage(token)},
+		{name: "the current-address half of an email change", message: changeCurrentMessage(liveToken(t))},
+		{name: "the new-address half of an email change", message: changeNewMessage(liveToken(t))},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := live.mailer.Send(context.Background(), tc.message)
-			if !isError(err, ErrUnsupportedMessage) {
-				t.Fatalf("Send = %v, want ErrUnsupportedMessage. courier's NotificationType "+
-					"has included both email_change types since 20373bf, but this service's "+
-					"courierTypeFor maps onto neither yet (packet m70b), and neither template "+
-					"it could borrow describes an address change truthfully", err)
+			tc.message.UserID = testUserID
+			if err := live.mailer.Send(ctx, tc.message); err != nil {
+				t.Fatalf("a real courier refused an email-change message identity can "+
+					"compose: %v", err)
 			}
 		})
 	}

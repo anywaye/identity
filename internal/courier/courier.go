@@ -55,7 +55,7 @@
 //     the right end state, and it is not available today — see `RecoveryMailer`'s
 //     section on the 401.
 //
-// # WHAT THIS SERVICE DELIVERS AND WHAT IT REFUSES
+// # WHAT THIS SERVICE DELIVERS
 //
 // courier's `NotificationType` is
 // `[welcome, password_reset, team_invitation, account_security, email_change_current, email_change_new]`.
@@ -65,8 +65,8 @@
 //
 //	password_reset            -> courier's password_reset        DELIVERED
 //	verify_email              -> courier's welcome               DELIVERED
-//	email_change (current)    -> courier's email_change_current  REFUSED until m70b
-//	email_change (new)        -> courier's email_change_new      REFUSED until m70b
+//	email_change (current)    -> courier's email_change_current  DELIVERED
+//	email_change (new)        -> courier's email_change_new      DELIVERED
 //
 // `verify_email` maps to `welcome` because courier's own `welcome` template IS a
 // registration's address confirmation — "Welcome aboard. Confirm your address and
@@ -75,15 +75,16 @@
 // `RecoveryMailer` carries the argument in full, including the cost and the one
 // sentence in courier's document that is wrong about its own template.
 //
-// The two refusals are refusals, not translations, and they stand even though
-// courier HAS both messages since `20373bf`: identity's `courierTypeFor` does not
-// map onto either yet — that is packet m70b — so `RecoveryMailer` answers
-// `ErrUnsupportedMessage` and the flow answers 503 until it lands. Mapping the
-// current-address half of an email change onto courier's `password_reset` would
-// put "Somebody asked to reset the password on your account" into the one message
-// a hijacked session cannot get past, and that message is the ONLY warning the
-// owner of an account has that somebody is moving its address. A wrong-but-delivered
-// security notice is worse than a loud failure.
+// The two email-change messages were REFUSED until packet m70b, and the refusal was
+// correct: courier gained both types in `20373bf`, and mapping the current-address
+// half onto `password_reset` would have put "Somebody asked to reset the password
+// on your account" into the one message a hijacked session cannot get past — the
+// ONLY warning the owner of an account has that somebody is moving its address. A
+// wrong-but-delivered security notice is worse than a loud failure, so the
+// vocabulary was built (m70) rather than remapped, and this client now delivers
+// both halves onto their own types. The argument for why a wrong notice would be
+// worse than a failure is still the reason the two types exist rather than a
+// reuse; `RecoveryMailer` restates it where the mapping lives.
 //
 // `account_security` — courier's notice that a credential ended, branched on a
 // required `reason` — has no row in the table because identity raises no security
@@ -195,15 +196,16 @@ const (
 
 	// TypeEmailChangeCurrent is courier's notice to the address an account uses
 	// today that somebody asked to move it; it carries the confirmation link, so
-	// courier's document requires `url` for it. identity does not deliver it yet —
-	// that is packet m70b, which rewrites `courierTypeFor` — and until then
-	// `RecoveryMailer` refuses the current-address half of an email change.
+	// courier's document requires `url` for it. identity delivers the
+	// current-address half of an email change as this type, with the link rendered
+	// from the `email_change` purpose's template.
 	TypeEmailChangeCurrent = "email_change_current"
 
 	// TypeEmailChangeNew is courier's notice to the address an account is moving
 	// to, telling it where the account lived before; courier's document requires
-	// `previous_email` for it. identity does not deliver it yet — that is packet
-	// m70b — and until then `RecoveryMailer` refuses the new-address half.
+	// `previous_email` for it and carries no `url`. identity delivers the
+	// new-address half of an email change as this type, with the previous address
+	// read out of the rendered body.
 	TypeEmailChangeNew = "email_change_new"
 )
 
@@ -274,10 +276,11 @@ type MessageRequest struct {
 	// express it would have to change the day identity grows one.
 	Name string `json:"name,omitempty"`
 
-	// URL is the link the message carries. REQUIRED by `password_reset` and
-	// `team_invitation` and unused by `welcome`, which is why its absence is
-	// refused here rather than discovered as a 422 over the network: by the time
-	// courier is called, a token has been minted and a row written.
+	// URL is the link the message carries. REQUIRED by `password_reset`,
+	// `team_invitation` and `email_change_current` and unused by `welcome`, which
+	// is why its absence is refused here rather than discovered as a 422 over the
+	// network: by the time courier is called, a token has been minted and a row
+	// written.
 	URL string `json:"url,omitempty"`
 
 	// AccountName is the account the invitee is invited to. Required by
@@ -297,6 +300,14 @@ type MessageRequest struct {
 	// worse than a field the schema does not require. Sent only for
 	// `team_invitation`; meaningless for every other type.
 	Role string `json:"role,omitempty"`
+
+	// PreviousEmail is the address an account is moving FROM, carried by
+	// `email_change_new` alone: the notice to the new address tells it where the
+	// account lived before, which is the fact that makes the message worth
+	// reading. Required by that type, and omitted rather than sent empty — a
+	// message naming no previous address is a 422 from courier, and an empty
+	// string would be a lie in the one field the new address's owner needs.
+	PreviousEmail string `json:"previous_email,omitempty"`
 
 	// IdempotencyKey is the `Idempotency-Key` header.
 	//
@@ -787,11 +798,26 @@ func validate(req MessageRequest) error {
 		return fmt.Errorf("%w: %q is not a user id courier can key a preference by",
 			ErrInvalidRequest, req.UserID)
 	}
-	if req.Type == TypePasswordReset && req.URL == "" {
-		// courier's `password_reset` template renders the link, so a reset mail
-		// with no link is a mail nobody can use, and it is refused here rather than
-		// delivered.
-		return fmt.Errorf("%w: a %s needs the link it carries", ErrInvalidRequest, req.Type)
+	switch req.Type {
+	case TypePasswordReset, TypeEmailChangeCurrent:
+		// courier's templates for these render the link, so a message with no
+		// link is a mail nobody can use, and it is refused here rather than
+		// delivered. `email_change_current` is in the list for the same reason
+		// `password_reset` is: its template's whole content is the confirmation
+		// link, and the current-address half of an email change is the only
+		// warning an account owner gets that somebody is moving its address.
+		if req.URL == "" {
+			return fmt.Errorf("%w: a %s needs the link it carries", ErrInvalidRequest, req.Type)
+		}
+	case TypeEmailChangeNew:
+		// courier's `email_change_new` template branches on the previous address
+		// and its document requires the field: a message naming no previous
+		// address is a 422, and an empty string would be a lie in the one field
+		// the new address's owner needs.
+		if req.PreviousEmail == "" {
+			return fmt.Errorf("%w: a %s needs the address the account is moving from",
+				ErrInvalidRequest, req.Type)
+		}
 	}
 	if req.Type == TypeTeamInvitation {
 		// courier's `team_invitation` requires email, url, account_name and
