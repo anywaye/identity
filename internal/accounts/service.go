@@ -801,50 +801,68 @@ func (s *Service) Accept(ctx context.Context, in AcceptInput) (Membership, error
 	}
 
 	now := s.clock.Now()
-	q := s.read.Queryer()
-
-	invitation, err := s.store.InvitationByToken(ctx, q, Digest(in.Token))
-	if err != nil {
-		if errors.Is(err, ErrInvitationNotFound) {
-			return Membership{}, ErrInvitationNotFound
-		}
-		return Membership{}, fmt.Errorf("looking up the invitation: %w", err)
-	}
-
-	// REVOKED FIRST, AND IT BECOMES ErrInvitationNotFound.
-	//
-	// This is the check whose absence made a revoked invitation redeemable
-	// (identity-30), and both halves of how it fails are deliberate.
-	//
-	// It runs before the other two because a withdrawal is the strongest thing
-	// known about the token: whatever else is true of this row, an admin decided
-	// it must not work. It answers NotFound rather than ErrInvitationRevoked
-	// because openapi/v1.yaml already promises that "an invitation an admin
-	// revoked is also 404 — it is not redeemable and there is nothing to redeem",
-	// and because a distinct status would tell whoever holds the token that this
-	// invitation was once real — which is the one piece of an answer an
-	// enumeration of stolen tokens is trying to extract.
-	//
-	// The account's own admin surface does not come through here and is entitled
-	// to the distinction: it reads revocation state directly instead of by
-	// redeeming.
-	if invitation.RevokedAt != nil {
-		return Membership{}, ErrInvitationNotFound
-	}
-
-	// Order matters and it is the order a client would want them in: used before
-	// expired, because an invitation that was accepted and has since expired is
-	// "used" — the caller's link was already spent, and telling them to request a
-	// new one would be wrong advice.
-	if invitation.AcceptedAt != nil {
-		return Membership{}, ErrInvitationUsed
-	}
-	if !invitation.ExpiresAt.After(now) {
-		return Membership{}, ErrInvitationExpired
-	}
+	digest := Digest(in.Token)
 
 	var out Membership
-	err = s.uow.Do(ctx, func(ctx context.Context, q db.Querier) error {
+	err := s.uow.Do(ctx, func(ctx context.Context, q db.Querier) error {
+		// Open the resolution FIRST, as the digest and nothing else. The
+		// account is what this lookup is FOR, so there is no identity to run
+		// it under — and a lookup on a bare connection reads zero rows under
+		// the enforced boundary, which is how a fresh invitation came to 404
+		// (migrations/00029). The transaction carries the digest the caller
+		// presented, computed above before any query ran, and the policy
+		// admits exactly the row carrying it.
+		//
+		// The account follows, AFTER the lookup, and it comes from the row
+		// the caller presented rather than from the request: re-beginning as
+		// the invitation's own account is what admits the membership INSERT
+		// below. The union of the two policies inside this transaction is the
+		// invitation's row plus its account's rows, which is the redemption's
+		// own scope and nothing wider — a token still reveals only its own
+		// invitation and grants no broader read or write.
+		if err := tenancy.BeginCredential(ctx, q, digest); err != nil {
+			return fmt.Errorf("opening the invitation resolution: %w", err)
+		}
+		invitation, err := s.store.InvitationByToken(ctx, q, digest)
+		if err != nil {
+			if errors.Is(err, ErrInvitationNotFound) {
+				return ErrInvitationNotFound
+			}
+			return fmt.Errorf("looking up the invitation: %w", err)
+		}
+
+		// REVOKED FIRST, AND IT BECOMES ErrInvitationNotFound.
+		//
+		// This is the check whose absence made a revoked invitation redeemable
+		// (identity-30), and both halves of how it fails are deliberate.
+		//
+		// It runs before the other two because a withdrawal is the strongest thing
+		// known about the token: whatever else is true of this row, an admin decided
+		// it must not work. It answers NotFound rather than ErrInvitationRevoked
+		// because openapi/v1.yaml already promises that "an invitation an admin
+		// revoked is also 404 — it is not redeemable and there is nothing to redeem",
+		// and because a distinct status would tell whoever holds the token that this
+		// invitation was once real — which is the one piece of an answer an
+		// enumeration of stolen tokens is trying to extract.
+		//
+		// The account's own admin surface does not come through here and is entitled
+		// to the distinction: it reads revocation state directly instead of by
+		// redeeming.
+		if invitation.RevokedAt != nil {
+			return ErrInvitationNotFound
+		}
+
+		// Order matters and it is the order a client would want them in: used before
+		// expired, because an invitation that was accepted and has since expired is
+		// "used" — the caller's link was already spent, and telling them to request a
+		// new one would be wrong advice.
+		if invitation.AcceptedAt != nil {
+			return ErrInvitationUsed
+		}
+		if !invitation.ExpiresAt.After(now) {
+			return ErrInvitationExpired
+		}
+
 		// Begin as the account the invitation names. It is on the row rather than
 		// on the request, because accepting an invitation is the one account-scoped
 		// write a caller reaches WITHOUT being a member of the account yet — that

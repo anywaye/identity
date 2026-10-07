@@ -92,6 +92,35 @@ func beginCredential(ctx context.Context, q db.Querier, digest string) error {
 	return nil
 }
 
+// BeginCredential sets the presented digest on the caller's own transaction,
+// for the read that NAMES the account it acts as.
+//
+// THIS EXISTS FOR EXACTLY ONE CALL SITE, and it is the exception that proves
+// the rule the way BeginAccount is. `accounts.Service.Accept` resolves an
+// invitation by its token digest before any account is known — the account is
+// what that lookup is FOR — so CredentialResolver's transaction cannot serve
+// it: the resolution and the redemption write are one use case, and splitting
+// them across two transactions would reopen the revocation window
+// `MarkInvitationAccepted`'s conditional UPDATE exists to close.
+//
+// It is a function rather than a second seam type because the digest it sets
+// is the one the caller already computed — `accounts.Digest` hashes the token
+// off the request before any query runs — and this type never derives one from
+// a result. That direction is load-bearing for the reason CredentialResolver.Do
+// states.
+func BeginCredential(ctx context.Context, q db.Querier, digest string) error {
+	if digest == "" {
+		// Named rather than defaulted, for the reason beginCredential states:
+		// passing "" would set an empty GUC that reads back as NULL and looks
+		// indistinguishable from an unknown credential. `accounts.Digest` is a
+		// hex SHA-256 and is 64 characters for every input including the empty
+		// string, so no presented token can produce this — a caller reaching
+		// here with one has a bug, and it should be a loud one.
+		return fmt.Errorf("%w: refusing to begin with an empty digest", ErrNoCredential)
+	}
+	return beginCredential(ctx, q, digest)
+}
+
 // CredentialResolver runs one resolution inside a transaction that already
 // carries the digest the caller presented.
 //
