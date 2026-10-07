@@ -272,7 +272,27 @@ type Service struct {
 	hasher     *users.Hasher
 	clock      clock.Clock
 	sessionTTL time.Duration
+	// requireEmailVerification gates sign-in on a proved address, and it is
+	// OFF BY DEFAULT. See Config.RequireEmailVerification in internal/config
+	// for the whole of it: the default preserves parity with the reference
+	// this fleet matches (Jumpstart Pro does not use Devise's
+	// :confirmable), and the flag exists so a deployment that wants
+	// confirmation-gated sign-in can turn it on.
+	requireEmailVerification bool
 }
+
+// EmailNotVerifiedError is a login refused because the account's email address
+// has not been verified, when REQUIRE_EMAIL_VERIFICATION is on.
+//
+// IT IS ANCHORED IN startLogin, AFTER THE PASSWORD, and that placement is the
+// security property: a caller who is refused has already proved they hold the
+// credential and already knew the account existed. A refusal placed before the
+// password is a one-request existence oracle for every unverified account on
+// the service. See DECISIONS.md D13 for the same ruling on the disabled flag,
+// which is the precedent for how carefully these refusals are told apart.
+type EmailNotVerifiedError struct{}
+
+func (e *EmailNotVerifiedError) Error() string { return "this account's email address is not verified" }
 
 // ErrNoSecondFactor means this auth service has no second-factor dependency
 // wired, so it cannot answer the question "does this user's account have a second
@@ -312,23 +332,31 @@ func NewService(
 	hasher *users.Hasher,
 	clk clock.Clock,
 	sessionTTL time.Duration,
+	// requireEmailVerification gates sign-in on a proved address. It is a
+	// parameter rather than a setter because it is a deployment decision made
+	// once at boot, and a setter would make it a fact that could be changed
+	// after the service is built — which is the one thing a security flag
+	// must never be. The default is false (parity); see
+	// Config.RequireEmailVerification in internal/config.
+	requireEmailVerification bool,
 ) *Service {
 	if sessionTTL <= 0 {
 		sessionTTL = DefaultSessionTTL
 	}
 	return &Service{
-		uow:        uow,
-		read:       read,
-		users:      userStore,
-		sessions:   sessionStore,
-		events:     events,
-		tenancy:    tenancy,
-		mfa:        secondFactor,
-		access:     access,
-		auditor:    auditor,
-		hasher:     hasher,
-		clock:      clk,
-		sessionTTL: sessionTTL,
+		uow:                      uow,
+		read:                     read,
+		users:                    userStore,
+		sessions:                 sessionStore,
+		events:                   events,
+		tenancy:                  tenancy,
+		mfa:                      secondFactor,
+		access:                   access,
+		auditor:                  auditor,
+		hasher:                   hasher,
+		clock:                    clk,
+		sessionTTL:               sessionTTL,
+		requireEmailVerification: requireEmailVerification,
 	}
 }
 
@@ -658,6 +686,21 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (LoginResult, error)
 func (s *Service) startLogin(ctx context.Context, user users.User, in LoginInput, now time.Time) (LoginResult, error) {
 	if user.IsDisabled() {
 		return LoginResult{}, &DisabledError{}
+	}
+
+	// THE VERIFICATION GATE, anchored here and not in Login for the same reason
+	// the disabled check is: a social callback arrives here with no password, and
+	// a check in Login would leave that door open. The caller has already proved
+	// they hold the credential (or control of a provider account whose address
+	// this service already believes), so the refusal is about the ACCOUNT and
+	// not about the credential — which is why it is its own error and why saying
+	// so is safe here rather than only in the comment above.
+	//
+	// It is OFF BY DEFAULT, and the default is parity: the reference this fleet
+	// matches does not gate sign-in on verification. See
+	// Config.RequireEmailVerification in internal/config.
+	if s.requireEmailVerification && !user.IsVerified() {
+		return LoginResult{}, &EmailNotVerifiedError{}
 	}
 
 	required, err := s.requiresSecondFactor(ctx, user.ID)

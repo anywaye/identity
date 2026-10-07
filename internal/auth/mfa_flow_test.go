@@ -422,6 +422,7 @@ func TestAServiceWithNoSecondFactorDependencyRefusesToLogIn(t *testing.T) {
 		}),
 		clk,
 		24*time.Hour,
+		false,
 	)
 
 	email := dbtest.UniqueEmail(t)

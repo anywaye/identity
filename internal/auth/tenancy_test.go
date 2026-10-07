@@ -226,6 +226,7 @@ func newServiceWithTenancy(t *testing.T, pool *pgxpool.Pool, tenancy PersonalAcc
 		}),
 		clockForTest(),
 		24*time.Hour,
+		false,
 	)
 }
 

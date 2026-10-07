@@ -68,6 +68,25 @@ const (
 	// prevent.
 	CodeRateLimited = "rate_limited"
 
+	// CodeEmailNotVerified is 403 for a login refused because the account's
+	// email address has not been verified, when REQUIRE_EMAIL_VERIFICATION is
+	// on.
+	//
+	// IT SHARES THE 403 WITH THE DISABLED FLAG AND DELIBERATELY DOES NOT SHARE
+	// EITHER THE STATUS OR THE SENTENCE WITH THE LOCKOUT. The lockout is 423
+	// and means "retry at"; this is 403 and means "this account may not sign
+	// in". The two are told apart the way the disabled flag is told apart from
+	// the lockout — different status, different sentence — because a client
+	// that cannot tell them apart renders a rate limit as a lockout and a
+	// lockout as a rate limit, which is the conflation DECISIONS.md D13
+	// exists to prevent.
+	//
+	// The code is its own rather than core's `forbidden` because the two
+	// refusals have different remedies: a disabled account needs an
+	// administrator, an unverified one needs the user to click a link. A
+	// machine consumer switching on `code` is the reason to keep them apart.
+	CodeEmailNotVerified = "email_not_verified"
+
 	// CodeAccountOwnershipConflict is 409 for `DELETE /v1/me` when the caller is
 	// the only OWNER of a team account, so the deletion cannot proceed.
 	//
@@ -135,6 +154,7 @@ var titles = map[string]string{
 	CodePayloadTooLarge:    "Request body too large",
 	CodeInvalidRequest:     "Invalid request",
 	CodeRateLimited:        "Too many requests",
+	CodeEmailNotVerified:   "Email not verified",
 
 	CodeAccountOwnershipConflict: "Account ownership conflict",
 }

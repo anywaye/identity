@@ -661,6 +661,10 @@ func buildAuth(
 		// is what lets a test move time exactly.
 		clock.System{},
 		auth.DefaultSessionTTL,
+		// The sign-in verification gate, from cfg. It is OFF BY DEFAULT (parity
+		// with the reference this fleet matches); a deployment that wants
+		// confirmation-gated sign-in sets REQUIRE_EMAIL_VERIFICATION.
+		cfg.RequireEmailVerification,
 	)
 
 	return authSvc, tenancy, secondFactor, deletionSvc, mfaUsable, nil

@@ -1123,6 +1123,7 @@ func decodeBody[T any](w http.ResponseWriter, r *http.Request, dst **T) bool {
 func (o options) writeAuthError(w http.ResponseWriter, r *http.Request, err error) {
 	var locked *auth.LockedError
 	var disabled *auth.DisabledError
+	var unverified *auth.EmailNotVerifiedError
 	var fieldErr *users.FieldError
 
 	switch {
@@ -1149,6 +1150,23 @@ func (o options) writeAuthError(w http.ResponseWriter, r *http.Request, err erro
 		// avoid.
 		problemFor(w, r, http.StatusForbidden, CodeForbidden,
 			"this account is disabled; contact the person or organisation that administers it")
+
+	case errors.As(err, &unverified):
+		// 403 forbidden, anchored AFTER the password for the same reason the
+		// disabled check above is: the use case reaches this only after the
+		// credential has been verified, so a caller told their address is
+		// unverified has already proved they hold the credential and already
+		// knew the account existed. A refusal placed before the password is a
+		// one-request existence oracle for every unverified account on the
+		// service.
+		//
+		// Its own code rather than `forbidden` because the two 403s have
+		// different remedies: a disabled account needs an administrator, an
+		// unverified one needs the user to click a link. And it deliberately
+		// does not share the lockout's 423 or its sentence — see
+		// CodeEmailNotVerified and DECISIONS.md D13.
+		problemFor(w, r, http.StatusForbidden, CodeEmailNotVerified,
+			"this account's email address is not verified; verify it before signing in")
 
 	case errors.As(err, &locked):
 		// The window goes in the Retry-After header, which is where RFC 9110 puts

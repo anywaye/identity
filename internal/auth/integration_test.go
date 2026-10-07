@@ -66,6 +66,7 @@ func newIntegrationServiceWithMFA(t *testing.T) (*Service, *pgxpool.Pool, *clock
 		}),
 		clk,
 		24*time.Hour,
+		false,
 	)
 	return svc, pool, clk, second
 }
@@ -294,6 +295,7 @@ func TestIntegrationLockIsVisibleToAnotherServiceInstance(t *testing.T) {
 		}),
 		clock.NewFake(start),
 		24*time.Hour,
+		false,
 	)
 
 	var locked *LockedError
@@ -344,6 +346,7 @@ func TestIntegrationRegisterIsAtomicWhenTheEventIsRejected(t *testing.T) {
 		}),
 		clock.NewFake(start),
 		24*time.Hour,
+		false,
 	)
 
 	if _, err := svc.Register(ctx, RegisterInput{Email: email, Password: "correct horse battery"}); err == nil {

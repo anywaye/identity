@@ -471,6 +471,7 @@ func newFixture() *fixture {
 		}),
 		f.clock,
 		24*time.Hour,
+		false,
 	)
 	return f
 }
@@ -506,6 +507,7 @@ func newFixtureWithoutAccessRevoker() *fixture {
 		}),
 		f.clock,
 		24*time.Hour,
+		false,
 	)
 	return f
 }
@@ -535,6 +537,7 @@ func newFixtureWithoutAuditRecorder() *fixture {
 		}),
 		f.clock,
 		24*time.Hour,
+		false,
 	)
 	return f
 }
