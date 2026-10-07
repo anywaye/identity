@@ -11,13 +11,17 @@ import (
 
 // # PER-PURPOSE LINK TEMPLATES, AS A DEPLOYMENT SEES THEM
 //
-// Three variables, and the shape of the rule is a default plus two overrides:
+// Four variables, and the shape of the rule is a default plus three overrides:
 //
 //	RECOVERY_LINK_TEMPLATE            the link for EVERY purpose that has no
 //	                                  variable of its own. This is the variable that
 //	                                  existed before there were per-purpose ones.
 //	PASSWORD_RESET_LINK_TEMPLATE      the password reset link, and only that.
 //	EMAIL_VERIFICATION_LINK_TEMPLATE  the address-confirmation link, and only that.
+//	EMAIL_CHANGE_LINK_TEMPLATE        the email-change confirmation link, and only
+//	                                  that — the current-address half of an email
+//	                                  change, which is the only warning an account
+//	                                  owner gets that somebody is moving its address.
 //
 // The default is not a convenience. It is what keeps every deployment configured
 // before this change booting, and the cost of it — that an unmigrated deployment's
@@ -30,12 +34,12 @@ import (
 // # WHAT IS ASSERTED HERE, AND WHAT IS ASSERTED NEXT DOOR
 //
 // HERE: that a deployment's environment resolves to one template per purpose, that
-// the old environment still resolves to two, that a purpose with neither its own
+// the old environment still resolves to three, that a purpose with neither its own
 // variable nor the default is a STARTUP FAILURE rather than a silent fallback, and
 // that every refusal names the variable that caused it.
 //
 // NEXT DOOR, in `internal/courier`: that the resolved templates actually produce
-// two different links and that each carries a credential its own endpoint accepts.
+// different links and that each carries a credential its own endpoint accepts.
 // Neither file can hold the other's half — this one has no adapter and that one has
 // no environment.
 
@@ -56,6 +60,7 @@ const defaultTemplate = "https://app.example.com/reset?token=" + recoveryTokenPl
 func TestTheDefaultLinkTemplateIsTheDefaultForEveryPurpose(t *testing.T) {
 	const resetLink = "https://app.example.com/reset?token=" + recoveryTokenPlaceholder
 	const verifyLink = "https://app.example.com/verify-email?token=" + recoveryTokenPlaceholder
+	const changeLink = "https://app.example.com/confirm-change?token=" + recoveryTokenPlaceholder
 
 	credentials := map[string]string{
 		"COURIER_BASE_URL": "https://courier.example.com",
@@ -76,7 +81,7 @@ func TestTheDefaultLinkTemplateIsTheDefaultForEveryPurpose(t *testing.T) {
 	}{
 		{
 			// THE COMPATIBILITY ROW, and the reason this packet does not break every
-			// install that exists. One variable, two purposes, both links exactly as
+			// install that exists. One variable, three purposes, all links exactly as
 			// they were — which is to say: the reset one is right and the verification
 			// one is what identity-24 found. The compatibility promise is about BOOTING
 			// and about the reset link, and the migration is one more variable.
@@ -85,6 +90,7 @@ func TestTheDefaultLinkTemplateIsTheDefaultForEveryPurpose(t *testing.T) {
 			want: map[recovery.Purpose]string{
 				recovery.PurposePasswordReset: resetLink,
 				recovery.PurposeVerifyEmail:   resetLink,
+				recovery.PurposeEmailChange:   resetLink,
 			},
 		},
 		{
@@ -98,6 +104,7 @@ func TestTheDefaultLinkTemplateIsTheDefaultForEveryPurpose(t *testing.T) {
 			want: map[recovery.Purpose]string{
 				recovery.PurposePasswordReset: resetLink,
 				recovery.PurposeVerifyEmail:   verifyLink,
+				recovery.PurposeEmailChange:   resetLink,
 			},
 		},
 		{
@@ -110,6 +117,24 @@ func TestTheDefaultLinkTemplateIsTheDefaultForEveryPurpose(t *testing.T) {
 			want: map[recovery.Purpose]string{
 				recovery.PurposePasswordReset: "https://app.example.com/forgot?token=" + recoveryTokenPlaceholder,
 				recovery.PurposeVerifyEmail:   verifyLink,
+				recovery.PurposeEmailChange:   resetLink,
+			},
+		},
+		{
+			// The email-change row of the migration: the current-address half of an
+			// email change carries the confirmation link, and an unmigrated
+			// deployment's link for it is whatever the one template says — the
+			// password reset screen, where a change-confirmation token answers 404.
+			name: "the default plus an email-change link of its own",
+			env: map[string]string{
+				"RECOVERY_LINK_TEMPLATE":           resetLink,
+				"EMAIL_VERIFICATION_LINK_TEMPLATE": verifyLink,
+				"EMAIL_CHANGE_LINK_TEMPLATE":       changeLink,
+			},
+			want: map[recovery.Purpose]string{
+				recovery.PurposePasswordReset: resetLink,
+				recovery.PurposeVerifyEmail:   verifyLink,
+				recovery.PurposeEmailChange:   changeLink,
 			},
 		},
 		{
@@ -120,10 +145,12 @@ func TestTheDefaultLinkTemplateIsTheDefaultForEveryPurpose(t *testing.T) {
 			env: map[string]string{
 				"PASSWORD_RESET_LINK_TEMPLATE":     resetLink,
 				"EMAIL_VERIFICATION_LINK_TEMPLATE": verifyLink,
+				"EMAIL_CHANGE_LINK_TEMPLATE":       changeLink,
 			},
 			want: map[recovery.Purpose]string{
 				recovery.PurposePasswordReset: resetLink,
 				recovery.PurposeVerifyEmail:   verifyLink,
+				recovery.PurposeEmailChange:   changeLink,
 			},
 		},
 	}
@@ -191,19 +218,38 @@ func TestAPurposeWithNeitherItsOwnVariableNorTheDefaultRefusesToBoot(t *testing.
 		wantMissing bool
 	}{
 		{
+			// THE REFUSAL NAMES THE FIRST MISSING PURPOSE IN SORTED ORDER, which is
+			// `email_change` — so a deployment that configured one variable and no
+			// default is told to set EMAIL_CHANGE_LINK_TEMPLATE, not the one it
+			// might have expected. The order is the variables', and it is fixed so
+			// two boots name the same thing. See `linkPurposesInOrder` in
+			// `internal/courier`.
 			name:      "a reset link configured and nothing to fall back to",
 			env:       map[string]string{"PASSWORD_RESET_LINK_TEMPLATE": defaultTemplate},
-			wantNamed: "EMAIL_VERIFICATION_LINK_TEMPLATE",
+			wantNamed: "EMAIL_CHANGE_LINK_TEMPLATE",
 		},
 		{
 			name:      "a verification link configured and nothing to fall back to",
 			env:       map[string]string{"EMAIL_VERIFICATION_LINK_TEMPLATE": defaultTemplate},
+			wantNamed: "EMAIL_CHANGE_LINK_TEMPLATE",
+		},
+		{
+			name:      "an email-change link configured and nothing to fall back to",
+			env:       map[string]string{"EMAIL_CHANGE_LINK_TEMPLATE": defaultTemplate},
 			wantNamed: "PASSWORD_RESET_LINK_TEMPLATE",
+		},
+		{
+			name: "every purpose but the verification configured",
+			env: map[string]string{
+				"PASSWORD_RESET_LINK_TEMPLATE": defaultTemplate,
+				"EMAIL_CHANGE_LINK_TEMPLATE":   defaultTemplate,
+			},
+			wantNamed: "EMAIL_VERIFICATION_LINK_TEMPLATE",
 		},
 		{
 			name:      "no link template at all, so no mail has anything to click",
 			env:       map[string]string{},
-			wantNamed: "RECOVERY_LINK_TEMPLATE",
+			wantNamed: "EMAIL_CHANGE_LINK_TEMPLATE",
 		},
 	}
 
@@ -306,11 +352,12 @@ func TestEveryLinkTemplateIsHeldToTheSameRefusalsAndNamesItsOwnVariable(t *testi
 		"RECOVERY_LINK_TEMPLATE",
 		"PASSWORD_RESET_LINK_TEMPLATE",
 		"EMAIL_VERIFICATION_LINK_TEMPLATE",
+		"EMAIL_CHANGE_LINK_TEMPLATE",
 	}
 
 	for _, variable := range variables {
 		t.Run(variable, func(t *testing.T) {
-			// A WORKING value in the two variables this one does not cover, so the
+			// A WORKING value in the other variables this one does not cover, so the
 			// refusal under test is the one being injected and not a configuration
 			// that was already incomplete.
 			for _, tc := range refusals {
@@ -326,6 +373,8 @@ func TestEveryLinkTemplateIsHeldToTheSameRefusalsAndNamesItsOwnVariable(t *testi
 						env["PASSWORD_RESET_LINK_TEMPLATE"] = defaultTemplate
 						env["EMAIL_VERIFICATION_LINK_TEMPLATE"] =
 							"https://app.example.com/verify-email?token=" + recoveryTokenPlaceholder
+						env["EMAIL_CHANGE_LINK_TEMPLATE"] =
+							"https://app.example.com/confirm-change?token=" + recoveryTokenPlaceholder
 					}
 					// The other per-purpose variable is covered by the default above,
 					// and the default is validated whatever else is set, so a refusal
@@ -410,13 +459,15 @@ func TestAnInsecureLinkTemplateIsDescribedAsThoughHTTPSWereTheOnlyOneAccepted(t 
 // the question, and asking it by reading a source file is how it was going to be
 // done otherwise.
 func TestLinkTemplateVariableNamesEveryPurposeThatCanHaveALink(t *testing.T) {
-	// The two purposes that have messages a courier can render today. `email_change`
-	// is deliberately absent: courier has no type for it, its messages are refused
-	// before a link is ever rendered, and a variable for it would be a setting an
-	// operator changes and nothing happens.
+	// The three purposes whose messages carry a link. `email_change` is in the set
+	// because courier has carried both address-change types since `20373bf` and
+	// this adapter now delivers the current-address half with its confirmation
+	// link; the new-address half carries no link and so has no variable of its
+	// own, but the purpose is one and the variable configures the half that has one.
 	want := map[recovery.Purpose]string{
 		recovery.PurposePasswordReset: "PASSWORD_RESET_LINK_TEMPLATE",
 		recovery.PurposeVerifyEmail:   "EMAIL_VERIFICATION_LINK_TEMPLATE",
+		recovery.PurposeEmailChange:   "EMAIL_CHANGE_LINK_TEMPLATE",
 	}
 
 	got := map[recovery.Purpose]string{}
@@ -438,12 +489,6 @@ func TestLinkTemplateVariableNamesEveryPurposeThatCanHaveALink(t *testing.T) {
 		if got[purpose] != variable {
 			t.Errorf("the %s link is configured by %q, want %q", purpose, got[purpose], variable)
 		}
-	}
-	// And a purpose with no link of its own says so rather than returning a name
-	// that would be set and ignored.
-	if variable, ok := LinkTemplateVariable(recovery.PurposeEmailChange); ok {
-		t.Errorf("the email change has a link variable (%s) and no message that carries "+
-			"one; courier refuses both of its messages before a link is rendered", variable)
 	}
 }
 

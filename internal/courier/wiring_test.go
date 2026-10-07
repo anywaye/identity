@@ -9,8 +9,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-
-	"github.com/cafaye/identity/internal/recovery"
 )
 
 // # THE WIRING, PROVABLE WITHOUT A COURIER
@@ -337,42 +335,40 @@ func TestTheResetLinkComesFromConfigurationAndNotFromARequest(t *testing.T) {
 }
 
 // TestARefusedMessageNeverReachesTheWire is the last of the wiring, and it is the
-// direction that keeps the e2e file's negative half honest.
+// direction that keeps the e2e file's positive half honest.
 //
-// `TestTheTwoEmailChangeMessagesCourierCannotSendAreRefused` proves the refusal
-// against a live courier. This proves the part that makes it SAFE rather than merely
-// correct: the refusal happens BEFORE the request, so no token is in a body any
-// courier will render.
+// `TestTheTwoEmailChangeMessagesReachARealCourier` proves the two address-change
+// messages are delivered against a live courier. This proves the part that makes
+// the refusal SAFE rather than merely correct: a message this adapter has no type
+// for is refused BEFORE the request, so no token is in a body any courier will
+// render.
 //
 // A refusal discovered as a 422 would be far too late. By then `recovery` has
 // minted a token, written its digest, and told the caller a message is on its way —
 // so the observable difference between refusing before the wire and refusing on it
 // is whether a live credential was handed to a service that would have rendered it
 // into somebody's inbox.
+//
+// THE MESSAGE IS A HYPOTHETICAL ONE — a two-factor enrolment notice, which
+// `internal/recovery` does not render. The two email-change messages were this
+// test's rows until packet m70b gave them courier types; they are delivered now,
+// and the property this test holds is the one that keeps a FIFTH message from being
+// delivered by accident through a fallback that guessed.
 func TestARefusedMessageNeverReachesTheWire(t *testing.T) {
-	cases := []struct {
-		name    string
-		message recovery.Message
-	}{
-		{name: "the current-address half of an email change", message: changeCurrentMessage(testToken)},
-		{name: "the new-address half of an email change", message: changeNewMessage(testToken)},
+	message := recoveryMessage("Confirm your new security key", "kaka@example.com",
+		"Somebody added a security key to your cafaye account.\n\n    "+testToken+"\n")
+
+	server, seen := recordingCourier(t)
+	mailer := testMailer(t, server.URL, nil)
+
+	err := mailer.Send(context.Background(), message)
+	if !isError(err, ErrUnsupportedMessage) {
+		t.Fatalf("Send = %v, want ErrUnsupportedMessage", err)
 	}
 
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			server, seen := recordingCourier(t)
-			mailer := testMailer(t, server.URL, nil)
-
-			err := mailer.Send(context.Background(), tc.message)
-			if !isError(err, ErrUnsupportedMessage) {
-				t.Fatalf("Send = %v, want ErrUnsupportedMessage", err)
-			}
-
-			if len(*seen) != 0 {
-				t.Errorf("a message courier has no type for reached the wire %d time(s). The "+
-					"token in it is a live credential, and the refusal has to happen before "+
-					"the wire rather than as a 422 after it.", len(*seen))
-			}
-		})
+	if len(*seen) != 0 {
+		t.Errorf("a message courier has no type for reached the wire %d time(s). The "+
+			"token in it is a live credential, and the refusal has to happen before "+
+			"the wire rather than as a 422 after it.", len(*seen))
 	}
 }

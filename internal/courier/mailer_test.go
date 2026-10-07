@@ -22,8 +22,12 @@ import (
 // Three groups, in the order a reader should care about them:
 //
 //  1. What the adapter REFUSES, because that is the decision with a security
-//     consequence: two of `recovery`'s four messages describe an event no courier
-//     template describes, and the wrong translation is a security notice that lies.
+//     consequence: a message `internal/recovery` renders that courier has no
+//     type for must be refused before the wire, and the wrong translation is a
+//     security notice that lies. The table is empty today — courier has carried
+//     both email-change types since `20373bf` and this adapter uses them — so
+//     the group is the safety net that keeps a fifth message from being delivered
+//     by accident through a fallback that guessed.
 //  2. What it SENDS, asserted against courier's request vocabulary.
 //  3. What it NEVER PRINTS, which is the credential and the token and the
 //     recipient.
@@ -49,9 +53,11 @@ func resetMessageFor(email, token string) recovery.Message {
 // They exist as builders because the end-to-end file needs to present them to a
 // courier, and because a test that hand-wrote a subject would be testing a string
 // the adapter and `internal/recovery` agree on by accident rather than by
-// contract. Of `internal/recovery`'s four messages, two are deliverable
-// (`password_reset` and `verify_email`) and the `email_change` pair is refused,
-// which is what the two groups of tests here assert.
+// contract. All four of `internal/recovery`'s messages are deliverable, and the
+// two email-change halves are built with the bodies `internal/recovery` actually
+// renders: the new-address half carries a token in its body because that is what
+// the real body has — the token is what the `Idempotency-Key` is derived from —
+// even though courier's `email_change_new` template does not render one.
 func verificationMessage(token string) recovery.Message {
 	message := recoveryMessage(kindVerifyEmail, "kaka@example.com",
 		"Confirm the address kaka@example.com for your cafaye account.\n\n"+
@@ -71,7 +77,8 @@ func changeCurrentMessage(token string) recovery.Message {
 
 func changeNewMessage(token string) recovery.Message {
 	message := recoveryMessage(kindChangeNew, "new@example.com",
-		"Somebody asked to move the cafaye account on kaka@example.com to this address.\n")
+		"Somebody asked to move the cafaye account on kaka@example.com to this address.\n\n"+
+			"Confirm it with this code:\n\n    "+token+"\n")
 	message.UserID = testUserID
 	return message
 }
@@ -103,7 +110,7 @@ const testToken = "K7dQm2xR9vTb4nLpZcHs1JfWy6AeUi0O"
 //
 // The claim is about MESSAGES, not about the request: every message of
 // `internal/recovery`'s that courier can express must produce a real courier send,
-// and the three refusals must not quietly become four. It reads `knownSubjects` —
+// and the refusals must not quietly reappear. It reads `knownSubjects` —
 // the same set the refusal table's drift check holds against
 // `internal/recovery/message.go` — so a fifth message added there fails HERE rather
 // than being absent from both tables.
@@ -116,15 +123,17 @@ func TestEveryRecoverableMessageReachesCourier(t *testing.T) {
 
 	// Both halves of the claim, stated as numbers so a change in either direction is
 	// a visible edit to this test rather than a silent drift.
-	if len(deliverable) != 2 {
-		t.Errorf("%d messages are deliverable, want 2: %v. identity's address "+
-			"verification maps onto courier's `welcome` and its password reset onto "+
-			"courier's `password_reset`; the two email-change messages have no courier "+
-			"equivalent and must stay refused", len(deliverable), deliverable)
+	if len(deliverable) != 4 {
+		t.Errorf("%d messages are deliverable, want 4: %v. identity's address "+
+			"verification maps onto courier's `welcome`, its password reset onto "+
+			"courier's `password_reset`, and the two halves of an email change onto "+
+			"the two types courier built for them", len(deliverable), deliverable)
 	}
-	if len(knownSubjects)-len(deliverable) != 2 {
-		t.Errorf("%d of %d messages are refused, want 2", len(knownSubjects)-len(deliverable),
-			len(knownSubjects))
+	if len(knownSubjects)-len(deliverable) != 0 {
+		t.Errorf("%d of %d messages are refused, want 0: courier has carried both "+
+			"email-change types since 20373bf and this adapter now uses them, so a "+
+			"refusal here is a mapping somebody forgot to update",
+			len(knownSubjects)-len(deliverable), len(knownSubjects))
 	}
 
 	for _, subject := range deliverable {
@@ -146,6 +155,10 @@ func TestEveryRecoverableMessageReachesCourier(t *testing.T) {
 				message = resetMessageFor("kaka@example.com", testToken)
 			case kindVerifyEmail:
 				message = verificationMessage(testToken)
+			case kindChangeCurrent:
+				message = changeCurrentMessage(testToken)
+			case kindChangeNew:
+				message = changeNewMessage(testToken)
 			default:
 				t.Fatalf("no fixture for %q; add one or remove it from courierTypeFor", subject)
 			}
@@ -157,23 +170,24 @@ func TestEveryRecoverableMessageReachesCourier(t *testing.T) {
 	}
 }
 
-// TestAMessageCourierHasNoTypeForIsRefused is the packet's most important security
-// assertion, so it is stated as a table over BOTH of `recovery`'s messages courier
-// cannot render rather than as one case.
+// TestAMessageCourierHasNoTypeForIsRefused is the safety net under the whole
+// mapping, and it is stated as a table over a message `internal/recovery` does
+// not render rather than over one of its four.
 //
-// The claim is: identity renders four messages; courier's `NotificationType` has
-// SIX types and has included both `email_change` notices since `20373bf`; this
-// service's `courierTypeFor` maps onto neither of them yet (that is packet m70b),
-// and neither of the templates it could borrow describes an address change
-// truthfully — so the two email-change messages must be REFUSED rather than
-// translated onto something that renders.
+// THE TABLE IS EMPTY TODAY, and that is the state this packet exists to leave:
+// courier has carried both email-change types since `20373bf`, and this adapter
+// maps all four of `recovery`'s messages onto them. So the refusal this test
+// guards is the one that keeps a FIFTH message from being delivered by accident —
+// somebody adding a two-factor enrolment notice, say, and this adapter guessing a
+// type for it. The drift check `TestEveryMessageRecoveryRendersIsAccountedFor`
+// fails loudly when such a message appears in `internal/recovery`; this test
+// fails loudly if the adapter would have SENT it rather than refused it.
 //
-// The two `verify_email` and `password_reset` rows are NOT here, and their absence
-// is the other half of the claim: `TestEveryRecoverableMessageReachesCourier`
-// holds that BOTH of them are delivered, so this table cannot pass by refusing
-// everything. A refusal table with no positive counterpart is satisfied by a
-// package that cannot send mail at all, and that is the state this packet exists
-// to leave.
+// The four real messages are NOT here, and their absence is the other half of the
+// claim: `TestEveryRecoverableMessageReachesCourier` holds that ALL FOUR are
+// delivered, so this table cannot pass by refusing everything. A refusal test
+// with no positive counterpart is satisfied by a package that cannot send mail
+// at all.
 func TestAMessageCourierHasNoTypeForIsRefused(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -181,21 +195,20 @@ func TestAMessageCourierHasNoTypeForIsRefused(t *testing.T) {
 		why     string
 	}{
 		{
-			name: "the current-address half of an email change",
-			message: recoveryMessage(kindChangeCurrent, "kaka@example.com",
-				"Somebody signed in to the cafaye account on kaka@example.com and asked to\n"+
-					"change the address it uses.\n\nIf that was you, confirm it with this code:\n\n    "+
-					testToken+"\n\nIf it was not you, do nothing.\n"),
-			why: "courier's password_reset template would tell the account owner that " +
-				"somebody asked to RESET THEIR PASSWORD, and this message is the only " +
-				"warning they get that somebody is moving their address",
+			name: "a two-factor enrolment notice",
+			message: recoveryMessage("Confirm your new security key", "kaka@example.com",
+				"Somebody added a security key to your cafaye account.\n\n    "+testToken+"\n"),
+			why: "courier's NotificationType has no security-key type, and inventing " +
+				"one would mean identity owning a template courier renders",
 		},
 		{
-			name: "the new-address half of an email change",
-			message: recoveryMessage(kindChangeNew, "new@example.com",
-				"Somebody asked to move the cafaye account on kaka@example.com to this address.\n"),
-			why: "no courier template describes a change confirmation, and inventing one " +
-				"would mean identity owning a template courier renders",
+			name: "a subject that is almost a real one",
+			message: recoveryMessage("Reset your cafaye password.", "kaka@example.com",
+				"Somebody asked to reset the password for the account registered to "+
+					"kaka@example.com.\n\n    "+testToken+"\n"),
+			why: "the match on the subject is exact and not a normalisation: a subject " +
+				"with a trailing period is a different message, and a fuzzy match " +
+				"would deliver it onto the reset type",
 		},
 	}
 
