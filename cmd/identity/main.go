@@ -991,7 +991,8 @@ func warnSharedLinkTemplates(cfg config.Config, logger *slog.Logger) {
 	logger.Warn("RECOVERY_LINK_TEMPLATE is the link for every purpose with no variable " +
 		"of its own, and it is currently the link for: " + strings.Join(purposes, ", ") + ". " +
 		"If that template is the password reset screen then an address confirmation " +
-		"lands the reader on a screen that answers 404 for a verification token. " +
+		"or an email-change confirmation lands the reader on a screen that answers " +
+		"404 for the token it carries. " +
 		"Set " + strings.Join(variables, " and ") + " to say where each kind of link goes.")
 }
 
