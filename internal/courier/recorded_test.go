@@ -14,12 +14,18 @@ import (
 
 // # WHAT THIS FILE IS, AND EXACTLY WHAT IT PROVES
 //
-// Every response below was captured from a REAL courier at master `f776b86`, by
-// running that repository's own Phoenix application against a real Postgres with
-// its own migrations applied. The account uuid, the trace ids, the message ids and
-// the `event_id`s in these fixtures are the ones courier actually produced; the
-// setup is in `e2e_support_test.go` under "HOW TO RUN IT", and it is the same
-// setup these were taken with.
+// Every response below was captured from a REAL courier, by running that
+// repository's own Phoenix application against a real Postgres with its own
+// migrations applied. The account uuid, the trace ids, the message ids and the
+// `event_id`s in these fixtures are the ones courier actually produced; the setup
+// is in `e2e_support_test.go` under "HOW TO RUN IT", and it is the same setup
+// these were taken with. The courier master each fixture was captured at is named
+// on the fixture: the refusals and the reset 200 at `f776b86`, the two
+// email-change 200s at `4f85b65` — the commit that had m70's two types merged.
+// The recorder verified alongside each 200 that the `outbox_events` row for the
+// quoted `message_id` was in the database of the courier it started, which is
+// the only thing that distinguishes "a real courier accepted these bytes" from
+// "a real courier accepted these bytes, the one you happened to be talking to".
 //
 // The `503` was captured from a second run with courier's Swoosh adapter pointed at
 // an SMTP relay on 127.0.0.1:1, so the failure is a real connection refusal inside
@@ -30,7 +36,8 @@ import (
 // # IT PROVES FOUR THINGS
 //
 //  1. This client's REQUEST is one courier accepts — a real 200 with a real
-//     `message_id` and a real `event_id` came back for the exact bytes it writes.
+//     `message_id` and a real `event_id` came back for the exact bytes it writes,
+//     for the password reset, the `welcome`, and both email-change types.
 //  2. Every refusal is read as the refusal courier meant. The 409, the declined
 //     422, the unknown-field 422, the non-uuid 422, the missing-url 422, the
 //     `idempotency_key_reused` 409, the anonymous 401 and the provider-refused 503
@@ -63,10 +70,18 @@ import (
 // courier's key order, because a re-serialised problem document would be a fixture
 // of this file's own JSON encoder rather than of courier's response.
 type recordedCase struct {
-	name       string
-	status     int
-	headers    map[string]string
-	body       string
+	name    string
+	status  int
+	headers map[string]string
+	body    string
+	// request is the request that produced this response. nil means the
+	// password-reset request below, which is what the older fixtures were
+	// recorded with.
+	request MessageRequest
+	// wantType is the `notification_type` the response echoes back. Empty means
+	// `password_reset`, which is what every fixture recorded before the
+	// email-change types existed was about.
+	wantType   string
 	wantErrIs  error
 	wantCode   string
 	wantTrace  string
@@ -91,6 +106,65 @@ func TestAgainstInteractionsRecordedFromRealCourier(t *testing.T) {
 				`"message_id":"courier-16c22f7a-deda-443c-bdac-d7dcf2405b70",` +
 				`"event_id":"0f1d27fc-47ed-4547-aba6-3e98aeaaa198",` +
 				`"notification_type":"password_reset"}}`,
+			wantType: TypePasswordReset,
+			wantCode: "accepted",
+		},
+		{
+			// Recorded from a real courier at master `4f85b65`, the commit that
+			// had m70's two types merged, by the procedure in
+			// `e2e_support_test.go`: courier's own Phoenix application against
+			// its own Postgres, a principal resolver accepting any bearer, and
+			// `Swoosh.Adapters.Local` as the provider. The recorder verified
+			// alongside it that the `outbox_events` row for the quoted
+			// `message_id` and `notification_type` was in the database of the
+			// courier it started.
+			name:   "the current-address half of an email change is accepted with its link",
+			status: http.StatusOK,
+			headers: map[string]string{
+				"content-type": "application/json; charset=utf-8",
+				"x-trace-id":   "b17533f1-5a5c-478d-9ec3-c21ebb935fdf",
+			},
+			// The request that produced it: `email_change_current` carrying the
+			// confirmation link, which is the only warning an account owner gets
+			// that somebody is moving their address.
+			request: MessageRequest{
+				Type:   TypeEmailChangeCurrent,
+				UserID: userID,
+				To:     "identity-e2e-change-current@example.com",
+				URL:    "https://app.example.com/confirm-change?token=K7dQm2xR9vTb4nLpZcHs1JfWy6AeUi0O",
+			},
+			body: `{"data":{"status":"accepted","user_id":"` + userID + `",` +
+				`"event_id":"be852c34-7286-43ba-b728-04d506415959",` +
+				`"notification_type":"email_change_current",` +
+				`"message_id":"courier-db7a1cef-510d-45da-9d0e-e66bb27de573"}}`,
+			wantType: TypeEmailChangeCurrent,
+			wantCode: "accepted",
+		},
+		{
+			// The same run, the new-address half. Its request carries
+			// `previous_email` and NO url — courier's `email_change_new`
+			// template renders the previous address and nothing else, and a
+			// field its schema does not declare is a 422. The negative control
+			// was captured in the same run: the same request without
+			// `previous_email` answered 422 `invalid_format` naming the field,
+			// which is what makes this 200 a validation and not a shrug.
+			name:   "the new-address half of an email change is accepted with its previous address",
+			status: http.StatusOK,
+			headers: map[string]string{
+				"content-type": "application/json; charset=utf-8",
+				"x-trace-id":   "25196fc2-511a-49e2-b883-6276347b7f45",
+			},
+			request: MessageRequest{
+				Type:          TypeEmailChangeNew,
+				UserID:        userID,
+				To:            "identity-e2e-change-new@example.com",
+				PreviousEmail: "kaka@example.com",
+			},
+			body: `{"data":{"status":"accepted","user_id":"` + userID + `",` +
+				`"event_id":"e37a02de-a50e-4581-b428-09cea0661057",` +
+				`"notification_type":"email_change_new",` +
+				`"message_id":"courier-be8e0269-9c79-40e9-bfd6-421ea08a04a1"}}`,
+			wantType: TypeEmailChangeNew,
 			wantCode: "accepted",
 		},
 		{
@@ -342,7 +416,11 @@ func TestAgainstInteractionsRecordedFromRealCourier(t *testing.T) {
 			defer server.Close()
 
 			client := newTestClient(t, server.URL, "service-token-value")
-			got, err := client.SendMessage(context.Background(), validRecordedRequest(userID))
+			request := tc.request
+			if request.Type == "" {
+				request = validRecordedRequest(userID)
+			}
+			got, err := client.SendMessage(context.Background(), request)
 
 			if tc.wantErrIs == nil {
 				if err != nil {
@@ -685,8 +763,12 @@ func assertRecordedAccepted(t *testing.T, got MessageResult, tc recordedCase) {
 	if got.Status != StatusAccepted {
 		t.Errorf("Status = %q, want %q", got.Status, StatusAccepted)
 	}
-	if got.Type != TypePasswordReset {
-		t.Errorf("Type = %q, want %q", got.Type, TypePasswordReset)
+	wantType := tc.wantType
+	if wantType == "" {
+		wantType = TypePasswordReset
+	}
+	if got.Type != wantType {
+		t.Errorf("Type = %q, want %q", got.Type, wantType)
 	}
 	if got.MessageID == "" {
 		t.Error("MessageID is empty; courier always returns one and a bounce is tied to it")
@@ -694,7 +776,6 @@ func assertRecordedAccepted(t *testing.T, got MessageResult, tc recordedCase) {
 	if got.EventID == "" {
 		t.Error("EventID is empty; it is the outbox row a subscriber will see")
 	}
-	_ = tc
 }
 
 // findCourierOpenAPI locates courier's document, and the ORDER is the point.

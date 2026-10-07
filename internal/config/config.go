@@ -870,15 +870,19 @@ const defaultLinkTemplateVariable = "RECOVERY_LINK_TEMPLATE"
 // linkTemplateVariables is the per-purpose table: which variable names which
 // purpose's link.
 //
-// IT IS THE COMPLETE SET OF PURPOSES A DEPLOYMENT CAN PUT A LINK IN, and
-// `email_change` is deliberately absent — courier has no message for an address
-// change, its messages are refused before a link is ever rendered, and a variable
-// for it would be a setting an operator changes and nothing happens.
+// IT IS THE COMPLETE SET OF PURPOSES A DEPLOYMENT CAN PUT A LINK IN. `email_change`
+// is in it because courier has carried both address-change types since `20373bf`
+// and this adapter now delivers both halves: the current-address half carries the
+// confirmation link, and that link has to point somewhere. The new-address half
+// carries no link and so needs no variable of its own — but the purpose is one,
+// and the variable configures the half that has one.
+//
 // `internal/courier`'s `TestEveryPurposeThisAdapterCanDeliverHasAVariableToConfigureItsLink`
-// is what holds that absence against the adapter's own set.
+// is what holds this set against the adapter's own, in both directions.
 var linkTemplateVariables = map[recovery.Purpose]string{
 	recovery.PurposePasswordReset: "PASSWORD_RESET_LINK_TEMPLATE",
 	recovery.PurposeVerifyEmail:   "EMAIL_VERIFICATION_LINK_TEMPLATE",
+	recovery.PurposeEmailChange:   "EMAIL_CHANGE_LINK_TEMPLATE",
 }
 
 // loadCourier reads and validates the courier block.
@@ -1022,11 +1026,13 @@ func resolveLinkTemplates(lookup Lookup) (map[recovery.Purpose]string, error) {
 	if configured == 0 && defaultTemplate == "" {
 		return nil, fmt.Errorf("%w: a deployment that can send mail needs at least one link "+
 			"template: set %s to the screen that redeems a password reset, %s to the "+
-			"screen that redeems an address confirmation, or %s to apply to every "+
-			"purpose. Without one a message arrives with nothing to click",
+			"screen that redeems an address confirmation, %s to the screen that redeems "+
+			"an email-change confirmation, or %s to apply to every purpose. Without one "+
+			"a message arrives with nothing to click",
 			ErrInvalidCourier,
 			linkTemplateVariables[recovery.PurposePasswordReset],
 			linkTemplateVariables[recovery.PurposeVerifyEmail],
+			linkTemplateVariables[recovery.PurposeEmailChange],
 			defaultLinkTemplateVariable)
 	}
 

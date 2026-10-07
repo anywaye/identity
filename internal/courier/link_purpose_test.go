@@ -63,11 +63,13 @@ import (
 // IT IS DECLARED RATHER THAN DERIVED because `recovery.Purpose` is a string type
 // with no enumeration to range over, and a list that only contained the deliverable
 // purposes could not answer "is there a purpose nobody gives a link to" — which is
-// half of what the drift check is for.
+// half of what the drift check is for. `session_link` is that purpose: no message
+// of `internal/recovery`'s is rendered for it, so no link is ever configured.
 var allPurposes = []recovery.Purpose{
 	recovery.PurposePasswordReset,
 	recovery.PurposeVerifyEmail,
 	recovery.PurposeEmailChange,
+	recovery.PurposeSessionLink,
 }
 
 // deploymentEnv is what a deployment writes when it has said where EACH purpose's
@@ -84,6 +86,7 @@ func deploymentEnv(overrides map[string]string) map[string]string {
 		"COURIER_TOKEN":                    "svc-4b1d7e0a3c95f28",
 		"PASSWORD_RESET_LINK_TEMPLATE":     "https://app.example.com/reset?token={token}",
 		"EMAIL_VERIFICATION_LINK_TEMPLATE": "https://app.example.com/verify-email?token={token}",
+		"EMAIL_CHANGE_LINK_TEMPLATE":       "https://app.example.com/confirm-change?token={token}",
 		// SIGNUP_SIGNING_KEY is the one secret a boot cannot go without, so
 		// every deployment in this file supplies it. The value is the same
 		// 32-byte shape the other secrets take, base64url.
@@ -366,16 +369,16 @@ func TestEveryPurposeThisAdapterCanDeliverHasAVariableToConfigureItsLink(t *test
 	}
 
 	// SECOND DIRECTION: no variable may configure a link for a purpose this adapter
-	// cannot deliver. `email_change` is that purpose today — it has two messages and
-	// no courier type, so its messages are refused before a link is ever rendered —
+	// cannot deliver. `session_link` is that purpose today — no message of
+	// `internal/recovery`'s is rendered for it, so no link is ever rendered with it —
 	// and a variable for it would be a setting an operator changes and nothing
 	// happens.
 	//
 	// IT IS ASSERTED AGAINST THE CONSTRUCTOR rather than against `config`'s table,
 	// because the constructor is the thing that would have to honour it. `config` has
 	// no way to know which purposes courier can deliver, and it must not be made to:
-	// that knowledge is courier's adapter's, and a table in `config` listing
-	// `EMAIL_CHANGE_LINK_TEMPLATE` is exactly the drift this catches.
+	// that knowledge is courier's adapter's, and a table in `config` listing a
+	// variable for a purpose with no message is exactly the drift this catches.
 	for _, purpose := range allPurposes {
 		deliverable := false
 		for _, deliverablePurpose := range linkPurposeFor {
@@ -397,19 +400,22 @@ func TestEveryPurposeThisAdapterCanDeliverHasAVariableToConfigureItsLink(t *test
 	// with no courier message is refused, at construction, naming the purpose. This
 	// is the fault `config`'s table cannot currently express and the constructor has
 	// to catch anyway, because `main` passes `Config.LinkTemplates` straight through.
+	// EVERY deliverable purpose is configured, so the refusal under test is the
+	// extra one rather than a configuration that was already incomplete.
 	_, err := NewRecoveryMailer(RecoveryMailerConfig{
 		Client: newTestClient(t, "https://courier.example.com", "svc-4b1d7e0a3c95f28"),
 		LinkTemplates: map[recovery.Purpose]string{
 			recovery.PurposePasswordReset: "https://app.example.com/reset?token={token}",
 			recovery.PurposeVerifyEmail:   "https://app.example.com/verify-email?token={token}",
 			recovery.PurposeEmailChange:   "https://app.example.com/confirm-change?token={token}",
+			recovery.PurposeSessionLink:   "https://app.example.com/relay?token={token}",
 		},
 	})
 	if err == nil {
-		t.Fatal("a link template for the email change was accepted, and courier has no " +
-			"message for an address change; the setting would be honoured nowhere")
+		t.Fatal("a link template for the session link was accepted, and no message this " +
+			"adapter can deliver carries it; the setting would be honoured nowhere")
 	}
-	if !strings.Contains(err.Error(), string(recovery.PurposeEmailChange)) {
+	if !strings.Contains(err.Error(), string(recovery.PurposeSessionLink)) {
 		t.Errorf("the refusal does not name the purpose it is about: %v", err)
 	}
 }
@@ -436,9 +442,12 @@ func TestTheConstructorRefusesAPurposeWithNoLinkTemplate(t *testing.T) {
 		wantNamed recovery.Purpose
 	}{
 		{
+			// EVERY OTHER deliverable purpose is configured, so the refusal names
+			// the one under test rather than the first missing in sorted order.
 			name: "no template for the password reset",
 			templates: map[recovery.Purpose]string{
 				recovery.PurposeVerifyEmail: "https://app.example.com/verify-email?token={token}",
+				recovery.PurposeEmailChange: "https://app.example.com/confirm-change?token={token}",
 			},
 			wantNamed: recovery.PurposePasswordReset,
 		},
@@ -446,13 +455,25 @@ func TestTheConstructorRefusesAPurposeWithNoLinkTemplate(t *testing.T) {
 			name: "no template for the verification",
 			templates: map[recovery.Purpose]string{
 				recovery.PurposePasswordReset: "https://app.example.com/reset?token={token}",
+				recovery.PurposeEmailChange:   "https://app.example.com/confirm-change?token={token}",
 			},
 			wantNamed: recovery.PurposeVerifyEmail,
 		},
 		{
-			name:      "no template for either",
+			name: "no template for the email change",
+			templates: map[recovery.Purpose]string{
+				recovery.PurposePasswordReset: "https://app.example.com/reset?token={token}",
+				recovery.PurposeVerifyEmail:   "https://app.example.com/verify-email?token={token}",
+			},
+			wantNamed: recovery.PurposeEmailChange,
+		},
+		{
+			// THE FIRST IN SORTED PURPOSE ORDER, which is `email_change` — the
+			// refusal names the same variable on every boot, and the order is
+			// the variables' rather than the subjects'. See `linkPurposesInOrder`.
+			name:      "no template for any of them",
 			templates: map[recovery.Purpose]string{},
-			wantNamed: recovery.PurposePasswordReset,
+			wantNamed: recovery.PurposeEmailChange,
 		},
 	}
 
@@ -505,16 +526,18 @@ func TestEachPurposesLinkTemplateIsHeldToTheSameThreeRefusals(t *testing.T) {
 	accepted := map[recovery.Purpose]string{
 		recovery.PurposePasswordReset: "https://app.example.com/reset?token={token}",
 		recovery.PurposeVerifyEmail:   "https://app.example.com/verify-email?token={token}",
+		recovery.PurposeEmailChange:   "https://app.example.com/confirm-change?token={token}",
 	}
 
 	purposes := make([]recovery.Purpose, 0, len(linkPurposeFor))
 	for _, purpose := range linkPurposeFor {
 		purposes = append(purposes, purpose)
 	}
-	if len(purposes) != 2 {
-		t.Fatalf("%d purposes have a link, want 2 (password reset and address "+
-			"verification); the two email-change messages are refused before a link is "+
-			"ever rendered and must not grow a template here", len(purposes))
+	if len(purposes) != 3 {
+		t.Fatalf("%d purposes have a link, want 3 (password reset, address verification "+
+			"and the current-address half of an email change); the new-address half is "+
+			"courier's one message with no link and must not grow a template here",
+			len(purposes))
 	}
 
 	for _, purpose := range purposes {
@@ -526,6 +549,7 @@ func TestEachPurposesLinkTemplateIsHeldToTheSameThreeRefusals(t *testing.T) {
 				LinkTemplates: map[recovery.Purpose]string{
 					recovery.PurposePasswordReset: accepted[recovery.PurposePasswordReset],
 					recovery.PurposeVerifyEmail:   accepted[recovery.PurposeVerifyEmail],
+					recovery.PurposeEmailChange:   accepted[recovery.PurposeEmailChange],
 				},
 			}); err != nil {
 				t.Fatalf("a working configuration was refused: %v", err)
@@ -533,15 +557,20 @@ func TestEachPurposesLinkTemplateIsHeldToTheSameThreeRefusals(t *testing.T) {
 
 			for _, tc := range refusals {
 				t.Run(tc.name, func(t *testing.T) {
-					// The OTHER purpose is valid in every row, so the refusal under
+					// The OTHER purposes are valid in every row, so the refusal under
 					// test is the one being injected rather than a configuration
 					// that was already broken. Otherwise every row would pass for
 					// the wrong reason and the table would prove nothing about
-					// the template.
+					// the template. A purpose with no accepted template of its own
+					// (`session_link`, which no message carries) is left out: the
+					// constructor does not require one for it.
 					templates := map[recovery.Purpose]string{purpose: tc.template}
 					for _, other := range allPurposes {
-						if other != purpose && other != recovery.PurposeEmailChange {
-							templates[other] = accepted[other]
+						if other == purpose {
+							continue
+						}
+						if working, ok := accepted[other]; ok {
+							templates[other] = working
 						}
 					}
 					_, err := NewRecoveryMailer(RecoveryMailerConfig{
@@ -563,37 +592,54 @@ func TestEachPurposesLinkTemplateIsHeldToTheSameThreeRefusals(t *testing.T) {
 }
 
 // TestEveryRecoverableMessageHasALinkPurposeAndOneDoesNot holds `courierTypeFor` and
-// `linkPurposeFor` to the same keys, in BOTH directions.
+// `linkPurposeFor` in step, in BOTH directions, with the ONE divergence that is
+// courier's contract rather than an omission.
 //
 // # WHY TWO TABLES AND NOT ONE, RESTATED AS A CHECK
 //
 // `courierTypeFor` says which of courier's six messages can express a message of
 // `internal/recovery`'s, and `linkPurposeFor` says what the token in that message is
 // FOR. They are kept apart because they are different vocabularies with different
-// owners — courier's and `recovery`'s — and because they will diverge: the moment
-// courier grows an `email_verification` type, the two answers to "which message is
-// this" stop being the same shape, and a struct that held both would have made that
-// a change to a struct rather than a change to one table.
+// owners — courier's and `recovery`'s — and because they diverged the moment the
+// new-address half of an email change was mapped: courier's `email_change_new`
+// template renders the previous address and nothing else, so that message is
+// delivered with no url and has no link purpose to consult.
 //
 // # WHAT EACH DIRECTION COSTS IF IT DRIFTS
 //
-//	a deliverable message with no purpose   `Send` refuses it, so a message this
-//	                                        adapter can deliver stops being
-//	                                        delivered — a regression that only
-//	                                        shows up when somebody tries to send.
+//	a deliverable message with no purpose   `Send` delivers it with NO url, which
+//	                                        is right for the new-address half and
+//	                                        wrong for any other — a reset or a
+//	                                        verification mailed with no link is a
+//	                                        mail nobody can use.
 //	a purpose no message carries            the constructor refuses it, so a
 //	                                        deployment that configured a link gets
 //	                                        a startup failure naming a message
 //	                                        that does not exist.
 //
-// The refusal is the right answer in both cases and neither is silent, which is why
-// this test exists to keep the two tables from making them necessary.
+// # AND THE ONE DIVERGENCE, WHICH IS THE POINT
+//
+// `kindChangeNew` is deliverable and has no link purpose, and that is the whole of
+// why the two tables differ by one. The test pins the difference to THIS message:
+// a second divergence in either direction is a mapping somebody forgot to update,
+// and the count below is what makes it a visible edit rather than a silent widening.
 func TestEveryRecoverableMessageHasALinkPurposeAndOneDoesNot(t *testing.T) {
+	noLinkPurpose := ""
 	for subject := range courierTypeFor {
 		if _, present := linkPurposeFor[subject]; !present {
-			t.Errorf("%q is deliverable but has no link purpose, so `Send` would refuse "+
-				"it and no link could ever be rendered for it", subject)
+			if noLinkPurpose != "" {
+				t.Errorf("%q and %q are both deliverable with no link purpose; the "+
+					"new-address half is the only message courier's template renders "+
+					"no link for", noLinkPurpose, subject)
+			}
+			noLinkPurpose = subject
 		}
+	}
+	if noLinkPurpose != kindChangeNew {
+		t.Errorf("the one deliverable message with no link purpose is %q, want %q — "+
+			"courier's email_change_new template renders the previous address and "+
+			"nothing else, so any other message delivered without a link would be a "+
+			"mail nobody can use", noLinkPurpose, kindChangeNew)
 	}
 	for subject := range linkPurposeFor {
 		if _, deliverable := courierTypeFor[subject]; !deliverable {
@@ -604,9 +650,10 @@ func TestEveryRecoverableMessageHasALinkPurposeAndOneDoesNot(t *testing.T) {
 	}
 	// And the count, so a purpose added to both tables without the fixture being
 	// updated is a visible edit here rather than a silent widening.
-	if len(linkPurposeFor) != len(courierTypeFor) {
-		t.Errorf("linkPurposeFor has %d entries and courierTypeFor has %d; they are "+
-			"meant to cover the same messages", len(linkPurposeFor), len(courierTypeFor))
+	if len(courierTypeFor)-len(linkPurposeFor) != 1 {
+		t.Errorf("courierTypeFor has %d entries and linkPurposeFor has %d; the "+
+			"difference must be exactly the new-address half",
+			len(courierTypeFor), len(linkPurposeFor))
 	}
 }
 

@@ -63,11 +63,11 @@ var courierFields = map[string]struct{}{
 
 // courierRequired is `Courier.Mailers.required/1`: what each type must carry.
 //
-// The `welcome` row is present because the VOCABULARY is courier's and this fake is
-// courier's, not because identity sends a `welcome`. Nothing in this package maps a
-// message onto it: `TestAMessageCourierHasNoTypeForIsRefused` holds that an address
-// verification is REFUSED rather than translated onto a template whose words
-// ("Welcome aboard") are about a registration. The row is here so a test that
+// The `welcome` row is present because identity sends an address confirmation as
+// it — courier's own `welcome` template IS a registration's address confirmation,
+// and it renders `url` — and because the VOCABULARY is courier's and this fake is
+// courier's. The mapping is `verify_email` → `welcome`, and the argument for it is
+// in `RecoveryMailer`'s section on the mapping. The row is here so a test that
 // exercises courier's own validation directly has the full set, and so the type
 // exists in the fake's vocabulary as it does in courier's.
 //
@@ -77,7 +77,8 @@ var courierFields = map[string]struct{}{
 // descriptions name `url` as required by `password_reset`, `team_invitation` and
 // `email_change_current`, `reason` by `account_security`, and `previous_email` by
 // `email_change_new` — the same lists `Courier.Mailers.required/1` returns. The
-// two `email_change` rows will be exercised by packet m70b, which sends them.
+// two `email_change` rows are exercised by the adapter's own tests, which send
+// both halves of an email change through this fake.
 var courierRequired = map[string][]string{
 	TypeWelcome:            {"user_id", "to"},
 	TypePasswordReset:      {"user_id", "to", "url"},

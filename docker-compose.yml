@@ -346,12 +346,13 @@ services:
       # THE LINK TEMPLATES point at the launch front door, which is a
       # deployment fact identity does not own — so they are supplied from
       # outside too, with an obviously-dev default pointing at the local
-      # parlor (port 3997, its documented dev port; the two paths are
-      # parlor's reset-password and verify-email/confirm screens, both of
-      # which read `?token=`). An operator sets APP_BASE_URL in `.env` to
-      # point the links at the real front door. Unlike the token these CAN
-      # have a default: a wrong link is a broken button, not a security hole,
-      # and the default points at the one screen that exists locally. Each
+      # parlor (port 3997, its documented dev port; the paths are parlor's
+      # reset-password and verify-email/confirm screens, both of which read
+      # `?token=`, and the email-change/confirm path that parlor will grow
+      # beside them). An operator sets APP_BASE_URL in `.env` to point the
+      # links at the real front door. Unlike the token these CAN have a
+      # default: a wrong link is a broken button, not a security hole, and
+      # the default points at the one screen that exists locally. Each
       # carries `{token}`, which config.Load requires — a template without it
       # is refused, because a link would carry no token and the reader would
       # reach a screen with nothing to redeem.
@@ -359,6 +360,7 @@ services:
       COURIER_TOKEN: "${COURIER_TOKEN:?set COURIER_TOKEN to the same identity-issued API key courier holds as COURIER_IDENTITY_TOKEN}"
       PASSWORD_RESET_LINK_TEMPLATE: "${APP_BASE_URL:-http://localhost:3997}/reset-password?token={token}"
       EMAIL_VERIFICATION_LINK_TEMPLATE: "${APP_BASE_URL:-http://localhost:3997}/verify-email/confirm?token={token}"
+      EMAIL_CHANGE_LINK_TEMPLATE: "${APP_BASE_URL:-http://localhost:3997}/email-change/confirm?token={token}"
 
       # ---------------------------------------------------------------------
       # SOCIAL LOGIN, OFF BY DEFAULT
