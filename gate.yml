@@ -301,6 +301,20 @@ gate:
     # rather than in a review.
     - id: generated-excluded
       match: '^\?\s+github\.com/cafaye/identity/client/generated\t\[no test files\]$'
+    # 9-10. THE TWO PACKAGES identity-w69-authsurface ADDED TESTS TO, and the
+    # proofs exist because a package with no proof is a package the gate does not
+    # claim ran. internal/auth carries the login path: the per-account lockout,
+    # the timing equalization, and now the opt-in verification gate and its
+    # parity default — the five tests in verification_test.go are the contract
+    # that the gate's default is off and the refusal is after the password.
+    # internal/config carries the parsing of both new blocks, including the rule
+    # that a configured RATE_LIMIT_* zero is a startup error rather than
+    # "unlimited". Neither package had a proof before this packet; both are
+    # security-boundary code and both now have one.
+    - id: auth-tests-passed
+      match: '^ok\s+github\.com/cafaye/identity/internal/auth\t'
+    - id: config-tests-passed
+      match: '^ok\s+github\.com/cafaye/identity/internal/config\t'
 
     # ---------------------------------------------------------------------
     # THIS GATE HAS BEEN OBSERVED RED. A declaration that has only ever been

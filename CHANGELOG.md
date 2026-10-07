@@ -6,6 +6,55 @@ All notable changes to identity are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added (packet identity-w69-authsurface: the auth surface is rate-limited, and confirmation-gating becomes a choice)
+
+Two launch blockers on the auth surface, closed. The first is a real blocker;
+the second is **not what it looks like**, and the honest action was to make the
+choice explicit rather than to "fix" it.
+
+- **A request-rate limit on the unauthenticated auth surface** (`POST /v1/users`,
+  `POST /v1/session`, `POST /v1/signup-timestamp` and the two recovery request
+  routes). What existed before was not a substitute: the per-account lockout
+  (5 failures / 15 min) does not slow one address spraying a password across
+  many accounts and does not touch signup or recovery at all; the per-address
+  recovery cooldown is a cooldown, not a rate limit; signup's honeypot and
+  signed timestamp are bot deterrence. Nothing bounded one client address, so
+  the surface a customer's security review looks at first was unbounded. The
+  limiter is **in-process** (one launch replica, no fail-open question), fixed
+  window, keyed on **client address + route pattern — never the attempted
+  account**: an account-keyed 429 is an enumeration oracle, and the key choice
+  is proven by a test in the same spirit as the anonymous-enumeration suite
+  rather than assumed. The refusal comes **after** the handler runs, so the
+  memory-hard work `Login` does for timing equalization is never
+  short-circuited — a limiter that returned before that work would reintroduce
+  the timing signal. It answers `429 rate_limited`, sharing neither the
+  lockout's `423` nor its sentence (DECISIONS.md D13 is the precedent for how
+  carefully these refusals are told apart). Five operator variables with
+  defaults (`RATE_LIMIT_WINDOW` 1m; signup 10, signin 20, signup-timestamp 30,
+  recovery 5 — the recovery limit is lowest because every accepted request
+  sends email), and **a configured zero is a startup error, not "unlimited"**:
+  this service does not offer unlimited on the auth surface. A red-then-green
+  test issues more requests than the limit and asserts the refusal, and that
+  a request under it is untouched — a configured number is not the proof.
+- **`REQUIRE_EMAIL_VERIFICATION`, an opt-in sign-in gate defaulting to parity.**
+  An unverified address can sign in, and that is **parity with Jumpstart Pro**,
+  which does not use Devise's `:confirmable` — not a bug. When the flag is
+  `true`, `POST /v1/session` refuses an unverified account with `403
+  email_not_verified`, anchored **after the password** (a caller told so has
+  already proved they hold the credential) and in `startLogin` rather than
+  `Login` (the social callback arrives with no password, and a check in `Login`
+  would leave that door open). The default is pinned by a test so a successor
+  cannot flip it by accident. The risk the flag exists to close: an address
+  nobody has proved can hold a session.
+
+**What this packet did NOT do**, one sentence each: no shared limiter store
+(one replica for launch; a shared store would need a consensus protocol or a
+single-writer deployment, and neither is a launch-week question); no change to
+the lockout or the recovery cooldown (they are different mechanisms with their
+own rulings — the lockout is per-account and temporary, the cooldown is
+per-address and about mail); and **no change to the default verification
+behaviour** (parity).
+
 ### Added (packet identity-w89-chart: identity's chart, generated and held to the service)
 
 identity was the last of the launch four (identity, gateway, courier,
