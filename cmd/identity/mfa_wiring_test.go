@@ -45,6 +45,7 @@ func TestNewAppMountsMFAWithAKey(t *testing.T) {
 		Port: "0", LogLevel: "error", DatabaseURL: dsn,
 		MFAEncryptionKeyValue: mustDecodeKey(t, mfaKey(t)),
 		MFAIssuerLabel:        config.DefaultMFAIssuer,
+		SignupSigningKeyValue: signupKeyValue,
 	}
 	a, err := newApp(ctx, cfg, discardLogger())
 	if err != nil {
@@ -53,15 +54,7 @@ func TestNewAppMountsMFAWithAKey(t *testing.T) {
 	defer a.Close()
 
 	email := dbtest.UniqueEmail(t)
-	rec := serveBody(t, a, http.MethodPost, "/v1/users",
-		`{"email":"`+email+`","password":"correct horse battery staple"}`, nil)
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("POST /v1/users = %d; body: %s", rec.Code, rec.Body.String())
-	}
-	var created struct {
-		ID string `json:"id"`
-	}
-	decodeJSON(t, rec, &created)
+	registerUserWithPair(t, a, email, "correct horse battery staple")
 
 	// With no second factor, the login is a plain 200 with a session. The
 	// compatibility property, asserted here rather than only in internal/httpapi,
@@ -122,7 +115,6 @@ func TestNewAppMountsMFAWithAKey(t *testing.T) {
 		t.Errorf("POST /v1/session/mfa with a bogus challenge = %d, want 404; body: %s",
 			step.Code, step.Body.String())
 	}
-	_ = created
 }
 
 // TestNewAppWithoutMFAKeyMountsNoManagementRoutesAndStillChallenges: THE test.
@@ -138,7 +130,7 @@ func TestNewAppWithoutMFAKeyMountsNoManagementRoutesAndStillChallenges(t *testin
 	dsn := testDatabaseURL(t)
 	ctx := context.Background()
 
-	cfg := config.Config{Port: "0", LogLevel: "error", DatabaseURL: dsn}
+	cfg := config.Config{Port: "0", LogLevel: "error", DatabaseURL: dsn, SignupSigningKeyValue: signupKeyValue}
 	a, err := newApp(ctx, cfg, discardLogger())
 	if err != nil {
 		t.Fatalf("newApp: %v", err)
@@ -146,11 +138,7 @@ func TestNewAppWithoutMFAKeyMountsNoManagementRoutesAndStillChallenges(t *testin
 	defer a.Close()
 
 	email := dbtest.UniqueEmail(t)
-	rec := serveBody(t, a, http.MethodPost, "/v1/users",
-		`{"email":"`+email+`","password":"correct horse battery staple"}`, nil)
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("POST /v1/users = %d; body: %s", rec.Code, rec.Body.String())
-	}
+	registerUserWithPair(t, a, email, "correct horse battery staple")
 	login := serveBody(t, a, http.MethodPost, "/v1/session",
 		`{"email":"`+email+`","password":"correct horse battery staple"}`, nil)
 	if login.Code != http.StatusOK {

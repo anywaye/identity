@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/base64"
 	"errors"
 	"strings"
 	"testing"
@@ -59,6 +60,11 @@ func TestTheDefaultLinkTemplateIsTheDefaultForEveryPurpose(t *testing.T) {
 	credentials := map[string]string{
 		"COURIER_BASE_URL": "https://courier.example.com",
 		"COURIER_TOKEN":    "svc-3f9a1c7e5b2d8046",
+		// SIGNUP_SIGNING_KEY is the one secret a boot cannot go without, so
+		// every case in this table supplies it. The cases below that expect
+		// ErrInvalidCourier are unaffected: the courier block is checked
+		// before the signup key.
+		"SIGNUP_SIGNING_KEY": base64.RawURLEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef")),
 	}
 
 	cases := []struct {
@@ -466,6 +472,8 @@ func TestABlankLinkTemplateIsAbsentRatherThanBroken(t *testing.T) {
 		"COURIER_TOKEN":                    "svc-3f9a1c7e5b2d8046",
 		"RECOVERY_LINK_TEMPLATE":           defaultTemplate,
 		"EMAIL_VERIFICATION_LINK_TEMPLATE": "   ",
+		// The one required secret, so the boot this test is about can happen.
+		"SIGNUP_SIGNING_KEY": base64.RawURLEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef")),
 	}))
 	if err != nil {
 		t.Fatalf("a blank variable must be absent, not a startup failure: %v", err)

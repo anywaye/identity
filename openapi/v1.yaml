@@ -510,6 +510,59 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  /v1/signup-timestamp:
+    post:
+      tags: [users]
+      operationId: mintSignupTimestamp
+      summary: Mint a signed timestamp for the signup form
+      description: |
+        Hands out a fresh `timestamp` + `signature` pair — the second half of signup
+        bot defence. The pair is an HMAC-SHA256 over the timestamp, keyed with a
+        server secret this service holds and the client cannot sign. The form
+        (rendered by parlor, not by this service) asks for a pair before it renders
+        and carries it on `POST /v1/users`, where the same secret verifies it.
+
+        **The endpoint is public and unauthenticated**, exactly as `POST /v1/users`
+        is: a browser arriving at the form holds nothing but the address it was
+        sent to. It takes no body and no credential, and the response carries
+        nothing but the pair — no account, no user, no state — which is what makes
+        it safe to leave open.
+
+        **The pair is a bearer credential with a one-hour window.** A timestamp
+        older than one hour is refused at submission, because a captured pair must
+        not stay usable for the life of the deployment. A timestamp younger than
+        two seconds is refused too, because a person needs seconds to fill a form
+        and a bot submits instantly. The two bounds are the whole of the
+        protection; the signature is what makes a forged pair indistinguishable
+        from a real one.
+
+        The `timestamp` is a Unix integer, not an RFC 3339 string: the signature is
+        over the exact bytes of the message, so the message must have exactly one
+        canonical form, and a Unix integer has one while an RFC 3339 string has
+        several.
+      security: []
+      responses:
+        '200':
+          description: |
+            A fresh pair. `timestamp` is the Unix instant the pair was minted at;
+            `signature` is the base64url (no padding) HMAC-SHA256 over the decimal
+            string of `timestamp`.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SignupTimestamp'
+              examples:
+                default:
+                  summary: a fresh pair
+                  value:
+                    timestamp: 1759843200
+                    signature: gtgjejEJsFxhBcnLydfWAw4T0Sl1xZQQm44LIEN0lSw
+        '500':
+          $ref: '#/components/responses/InternalError'
+
   /v1/users/{user_id}/disable:
     post:
       tags: [operator]
@@ -5777,6 +5830,34 @@ components:
             When it stops working, on the clock the mint was served from. It is the
             link's window and not a session's: redeeming writes a session that lives
             on the session's own much longer clock.
+
+    SignupTimestamp:
+      type: object
+      description: |
+        A minted signup timestamp pair, and the shape `POST /v1/users` carries back.
+        Two fields and no third: the timestamp the pair was minted at, and the
+        signature over it. The signature is the whole of the protection — a forged
+        pair is refused at submission with the same generic `422` as any other
+        validation failure, so a bot cannot tell a real pair from a fake one.
+      required: [timestamp, signature]
+      additionalProperties: false
+      properties:
+        timestamp:
+          type: integer
+          format: int64
+          description: |
+            The Unix instant the pair was minted at, in seconds. A Unix integer
+            rather than an RFC 3339 string because the signature is over the exact
+            bytes of the decimal string, and a Unix integer has exactly one
+            canonical form while an RFC 3339 string has several.
+        signature:
+          type: string
+          description: |
+            The base64url (no padding) HMAC-SHA256 over the decimal string of
+            `timestamp`, keyed with a server secret this service holds and the
+            client cannot sign. The pair is a bearer credential: it expires one
+            hour after it is minted, and a timestamp younger than two seconds is
+            refused because a bot submits instantly.
 
     RedeemSessionLinkRequest:
       type: object

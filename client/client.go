@@ -60,6 +60,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"time"
@@ -370,13 +371,192 @@ func (c *Client) Readiness(ctx context.Context) (*generated.Health, error) {
 	return &out, err
 }
 
+// MintSignupTimestamp hands out a fresh signed timestamp pair for the signup
+// form. Corresponds to `POST /v1/signup-timestamp`.
+//
+// The pair is a bearer credential with a one-hour window: the form carries it on
+// `POST /v1/users`, where the same secret verifies it and refuses a forged,
+// instant or expired pair with the same generic `422` as any other validation
+// failure. A caller that loses a pair mints another.
+func (c *Client) MintSignupTimestamp(ctx context.Context) (*generated.SignupTimestamp, error) {
+	var out generated.SignupTimestamp
+	err := call(c, "mint_signup_timestamp", func() (*http.Response, error) {
+		return c.transport.MintSignupTimestamp(ctx)
+	}, &out)
+	return &out, err
+}
+
 // RegisterUser creates a user. Corresponds to `POST /v1/users`.
+//
+// **A REGISTRATION WITHOUT A SIGNUP TIMESTAMP IS REFUSED**, so this method
+// returns a `*ValidationError` for every body it is handed. It is kept — it is
+// the shape of the documented operation and every other consumer of this client
+// depends on it existing — but `RegisterUserWithSignupTimestamp` is the method a
+// form uses, and the reason is below.
 func (c *Client) RegisterUser(ctx context.Context, body generated.RegisterUserJSONRequestBody) (*generated.User, error) {
 	var out generated.User
 	err := call(c, "registerUser", func() (*http.Response, error) {
 		return c.transport.RegisterUser(ctx, body)
 	}, &out)
 	return &out, err
+}
+
+// RegisterUserWithSignupTimestamp creates a user carrying a signed timestamp
+// pair, which is what `POST /v1/users` requires. Corresponds to the same
+// operation, with the pair the generated body type cannot carry.
+//
+// # WHY THIS EXISTS RATHER THAN TWO FIELDS ON RegisterRequest
+//
+// The pair is DELIBERATELY ABSENT from `openapi/v1.yaml`, on the same reasoning
+// the honeypot field is: a bot defence documented in the contract is a bot
+// defence the next bot reads around. `generated.RegisterRequest` is generated
+// FROM that document, so the pair cannot be a field on it, and a Go consumer
+// using `RegisterUser` alone would be refused by every registration this service
+// serves. That is a break in the committed client introduced by a protection,
+// and the hand-written wrapper is where the tree puts the seam between "what the
+// document says" and "what a caller actually needs" — the same place `MintSignupTimestamp`
+// sits.
+//
+// # IT IS A REQUEST EDITOR, AND THAT IS THE GENERATOR'S OWN SEAM
+//
+// The pair is added to the marshalled body by a `RequestEditorFn`, so the request
+// this builds is the documented request plus two fields, and the generated
+// client's status handling, body closing and error typing are reused rather than
+// re-implemented. A hand-written `http.NewRequest` here would be a second
+// transport in a package whose whole argument is that there is one.
+func (c *Client) RegisterUserWithSignupTimestamp(
+	ctx context.Context,
+	body generated.RegisterUserJSONRequestBody,
+	pair generated.SignupTimestamp,
+) (*generated.User, error) {
+	// THE EDITOR RUNS BEFORE THE REQUEST IS SENT, and this is the only place its
+	// refusal can become something typed rather than a raw error out of a
+	// request editor. An editor error surfaces from the generated client as a
+	// plain error with no operation name and no status, and a caller that cannot
+	// tell "I sent a body this client could not rewrite" from "the network
+	// failed" is debugging a bot defence instead of the bug.
+	editor := withSignupTimestamp(pair)
+	if err := editor(ctx, probeRequestEditorInput(body)); err != nil {
+		return nil, &CallError{
+			Operation: "registerUser",
+			redactor:  c.redactor,
+			message: c.redactor.String("the signup timestamp could not be added to the " +
+				"registration body: " + err.Error()),
+		}
+	}
+
+	var out generated.User
+	err := call(c, "registerUser", func() (*http.Response, error) {
+		return c.transport.RegisterUser(ctx, body, editor)
+	}, &out)
+	return &out, err
+}
+
+// probeRequestEditorInput builds a throwaway request carrying the marshalled
+// body, so the editor can be run for its refusal before a real request exists.
+//
+// IT IS A PRE-FLIGHT, not a shortcut: the same editor runs again on the real
+// request, so this cannot change what is sent. It exists so a body the editor
+// cannot rewrite is refused by a typed error here rather than by an untyped one
+// from inside the generated client.
+func probeRequestEditorInput(body generated.RegisterUserJSONRequestBody) *http.Request {
+	encoded, err := json.Marshal(body)
+	if err != nil {
+		// Unreachable for this struct: two string fields. If it ever became
+		// reachable the editor's own unmarshal below is what reports it, and a
+		// nil body here produces that report rather than a silent success.
+		encoded = nil
+	}
+	// A relative URL is deliberate: nothing here sends this request, and
+	// `http.NewRequest` needs a parseable target to fill in the fields the editor
+	// reads. A fixed path keeps the pre-flight free of any configuration.
+	req, err := http.NewRequest(http.MethodPost, "http://identity.invalid/v1/users", bytes.NewReader(encoded))
+	if err != nil {
+		// Also unreachable for the same reason as the marshal above. Handed back
+		// anyway so the editor runs against a non-nil request and reports
+		// whatever is actually wrong with the body.
+		return &http.Request{Method: http.MethodPost, Body: http.NoBody}
+	}
+	return req
+}
+
+// withSignupTimestamp returns the request editor that adds the pair to a
+// registration body.
+//
+// IT REWRITES THE BODY RATHER THAN APPENDING TO IT, and the reason is that
+// `additionalProperties: false` is what the document says about a registration
+// and the server's decoder is not the only thing reading this request: a body
+// this function could not parse must be an error here rather than a request sent
+// with a pair missing, because the server's answer to that is a 422 naming
+// nothing and the caller's only way to tell a wiring mistake from a bot defence
+// is to read this function.
+//
+// The pair is read back out of the body and re-rendered, never logged and never
+// placed in an error message: a signature is a one-hour bearer credential for one
+// form submission, and this package's rule is that a credential reaches no
+// string a human reads.
+func withSignupTimestamp(pair generated.SignupTimestamp) generated.RequestEditorFn {
+	return func(_ context.Context, req *http.Request) error {
+		if req.Body == nil {
+			return fmt.Errorf("the registration request has no body to add the signup timestamp to")
+		}
+
+		sent, err := io.ReadAll(io.LimitReader(req.Body, maxResponseBytes+1))
+		if err != nil {
+			return fmt.Errorf("reading the registration body to add the signup timestamp: %w", err)
+		}
+		if len(sent) > maxResponseBytes {
+			return fmt.Errorf("the registration body is over this client's %d-byte limit", maxResponseBytes)
+		}
+		// An empty body reads as no bytes rather than as an error, so it is named
+		// here. "unexpected end of JSON input" is a message about this function;
+		// the caller needs to hear that a registration with no body is what it
+		// handed over.
+		if len(bytes.TrimSpace(sent)) == 0 {
+			return fmt.Errorf("the registration request has an empty body to add the signup " +
+				"timestamp to")
+		}
+
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(sent, &fields); err != nil {
+			return fmt.Errorf("the registration body is not a JSON object, so the signup "+
+				"timestamp cannot be added to it: %w", err)
+		}
+		// `null` unmarshals into a NIL map with no error, and the assignment
+		// below would panic on it. A registration body is caller-supplied, and a
+		// panic on one is this package's worst possible answer: it takes the
+		// process down rather than returning a refusal a caller can act on.
+		if fields == nil {
+			return fmt.Errorf("the registration body is JSON null, so the signup timestamp cannot " +
+				"be added to it")
+		}
+
+		// Marshal the two values rather than splicing strings in: the signature is
+		// base64url and the timestamp a number, and a hand-built `"…":"…"` is a
+		// place a quoting mistake could turn a credential into malformed JSON.
+		timestamp, err := json.Marshal(pair.Timestamp)
+		if err != nil {
+			return fmt.Errorf("encoding the signup timestamp: %w", err)
+		}
+		signature, err := json.Marshal(pair.Signature)
+		if err != nil {
+			return fmt.Errorf("encoding the signup signature: %w", err)
+		}
+		fields["timestamp"] = timestamp
+		fields["signature"] = signature
+
+		rewritten, err := json.Marshal(fields)
+		if err != nil {
+			return fmt.Errorf("re-encoding the registration body: %w", err)
+		}
+
+		req.Body = io.NopCloser(bytes.NewReader(rewritten))
+		req.ContentLength = int64(len(rewritten))
+		req.GetBody = func() (io.ReadCloser, error) {
+			return io.NopCloser(bytes.NewReader(rewritten)), nil
+		}
+		return nil
+	}
 }
 
 // CreateSession logs in. Corresponds to `POST /v1/session`.

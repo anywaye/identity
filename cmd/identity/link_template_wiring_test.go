@@ -9,6 +9,15 @@ import (
 	"github.com/cafaye/identity/internal/recovery"
 )
 
+// signupKey is the SIGNUP_SIGNING_KEY every deployment in this file supplies:
+// 32 bytes, base64url, the shape the environment takes.
+//
+// It is a constant rather than a generated value because these tests assert on
+// the LOG the wiring produces, and the log does not carry the key — but a
+// missing key would change the outcome from a mailer to a startup failure,
+// which is not what any test here is about.
+const signupKey = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY"
+
 // # THE SHARED DEFAULT, AS AN OPERATOR SEES IT
 //
 // Everything in `internal/courier/link_purpose_test.go` and `internal/config` is
@@ -25,10 +34,15 @@ import (
 // sending verification links to the reset screen has no other way to find out.
 
 // courierEnv is a deployment with both credentials and the given link variables.
+//
+// It carries SIGNUP_SIGNING_KEY because a boot without it is a startup failure:
+// these tests are about the mailer the wiring produces, and a deployment that
+// cannot boot produces none.
 func courierEnv(links map[string]string) map[string]string {
 	env := map[string]string{
-		"COURIER_BASE_URL": "https://courier.example.com",
-		"COURIER_TOKEN":    "svc-7f3a9c1e4b8d2056-the-credential",
+		"COURIER_BASE_URL":   "https://courier.example.com",
+		"COURIER_TOKEN":      "svc-7f3a9c1e4b8d2056-the-credential",
+		"SIGNUP_SIGNING_KEY": signupKey,
 	}
 	for key, value := range links {
 		env[key] = value

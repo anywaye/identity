@@ -30,6 +30,11 @@ func oauthTestKey() string {
 // overridden. Every endpoint test starts from it, because an endpoint override in a
 // deployment with no credentials is a deployment that does not mount the routes at
 // all.
+//
+// It carries SIGNUP_SIGNING_KEY because a boot without it is a startup failure:
+// the endpoint tests are about the OAuth block, and a deployment that cannot
+// boot cannot dial any endpoint. The value is the same 32-byte shape
+// oauthTestKey uses, base64url.
 func oauthTestEnv() map[string]string {
 	return map[string]string{
 		OAuthRedirectBaseURLVar:       "https://identity.cafaye.com",
@@ -40,6 +45,7 @@ func oauthTestEnv() map[string]string {
 		OAuthGitHubClientSecretVar:    "github-secret",
 		OAuthMicrosoftClientIDVar:     "microsoft-id",
 		OAuthMicrosoftClientSecretVar: "microsoft-secret",
+		"SIGNUP_SIGNING_KEY":          base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{9}, 32)),
 	}
 }
 

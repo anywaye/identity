@@ -111,6 +111,11 @@ type Transport interface {
 	RedeemSessionLink(ctx context.Context, body generated.RedeemSessionLinkJSONRequestBody, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	Liveness(ctx context.Context, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	Readiness(ctx context.Context, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
+	// MintSignupTimestamp is the signup form's mint: a fresh `timestamp` +
+	// `signature` pair, the second half of signup bot defence. It is public and
+	// unauthenticated like the probes — a browser arriving at the form holds
+	// nothing but the address it was sent to — and it takes no body.
+	MintSignupTimestamp(ctx context.Context, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	ListAccountAuditLog(ctx context.Context, accountId openapiTypes.UUID, params *generated.ListAccountAuditLogParams, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	// The operator surface. `userId` is a PERSON and not a member of `accountId`,
 	// which is why there is no account parameter at all — a token holding

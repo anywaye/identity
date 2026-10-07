@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/base64"
 	"errors"
 	"strings"
 	"testing"
@@ -171,6 +172,14 @@ func TestLoadOIDC(t *testing.T) {
 			if _, set := env[oidc.LoginUIEnvVar]; !set && mentionsTheOIDCBlock(env) {
 				env[oidc.LoginUIEnvVar] = "https://login.cafaye.com/sign-in/oidc"
 			}
+			// SIGNUP_SIGNING_KEY is the one secret a boot cannot go without, so
+			// every case that expects Load to succeed supplies it — the same
+			// pattern the login UI injection above follows. The error cases are
+			// unaffected: the OIDC block is checked before the signup key, so
+			// they refuse for their own reason first.
+			if tt.wantErr == nil {
+				env["SIGNUP_SIGNING_KEY"] = base64.RawURLEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef"))
+			}
 
 			cfg, err := Load(mapOf(env))
 			if tt.wantErr != nil {
@@ -244,6 +253,10 @@ func TestTheLoginUIIsPartOfTheOIDCBlock(t *testing.T) {
 				"OIDC_SIGNING_KEY":    keyPEM,
 				"OIDC_SIGNING_KEY_ID": "cafaye-2026-09",
 				oidc.LoginUIEnvVar:    "https://login.cafaye.com/sign-in/oidc",
+				// The one required secret, so the boot this case is about can
+				// happen. The three refusal cases above are unaffected: the
+				// OIDC block is checked before the signup key.
+				"SIGNUP_SIGNING_KEY": base64.RawURLEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef")),
 			},
 		},
 	}
@@ -285,6 +298,8 @@ func TestLoadTrimsTheSigningKey(t *testing.T) {
 		"OIDC_SIGNING_KEY":    "  -----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----  ",
 		"OIDC_SIGNING_KEY_ID": "k1",
 		oidc.LoginUIEnvVar:    "https://login.cafaye.com/sign-in/oidc",
+		// The one required secret, so the boot this test is about can happen.
+		"SIGNUP_SIGNING_KEY": base64.RawURLEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef")),
 	}
 	cfg, err := Load(mapOf(env))
 	if err != nil {

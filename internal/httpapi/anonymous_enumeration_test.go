@@ -128,6 +128,13 @@ var auditFamilyPrefixes = []string{
 	"/v1/email-verification",
 	"/v1/email-changes",
 	"/v1/introspections",
+	// The signup timestamp mint. It is a PUBLIC, unauthenticated endpoint that
+	// answers an anonymous caller, so it is in this family by the same rule every
+	// other row is: a stranger can reach it, and the question "can the response
+	// tell 'this account exists' from 'it does not'?" is live on it even though
+	// the answer is "nothing" — the pair it hands out is a bearer credential for
+	// one form submission, not a fact about any account.
+	"/v1/signup-timestamp",
 }
 
 // anonymousFamilyAudit is the table, one row per route.
@@ -146,6 +153,23 @@ func anonymousFamilyAudit() []auditRoute {
 				"One bit, and it is the one disclosure on this service that cannot be removed: " +
 				"one account per address is the unique index, and a caller registering has to be " +
 				"told. Pinned by TestRegistrationPublishesOnlyThatAnAddressIsTaken",
+		},
+		{
+			// THE MINT, and the row that exists because the endpoint is PUBLIC. It
+			// takes no body and no credential, and the response carries nothing but
+			// the pair — a bearer credential for one form submission, not a fact
+			// about any account. The question this file asks ("can the response
+			// tell 'this account exists' from 'it does not'?") has the answer
+			// "nothing": there is no account, no user, no identifier of any kind in
+			// the request or the response. The pair expires on its own, and a
+			// captured pair is a one-hour credential for one form, which is the
+			// whole of the blast radius.
+			name: "mint a signup timestamp", method: http.MethodPost, pattern: "/v1/signup-timestamp",
+			probe:     `{}`,
+			anonymous: http.StatusOK,
+			discloses: "nothing: a fresh timestamp and signature, which are a bearer credential for " +
+				"submitting the form and expire in one hour. No account, no user, no identifier — " +
+				"the request carries nothing and the response carries nothing but the pair",
 		},
 		{
 			name: "sign in", method: http.MethodPost, pattern: "/v1/session",
@@ -931,6 +955,20 @@ func newAuditFixture(t *testing.T) *auditFixture {
 		// Without it the route is not mounted at all, and the census above would read
 		// a smaller service than the one that runs.
 		WithIntrospection(keys),
+		// The signup timestamp mint, for the same reason: it is a PUBLIC route in
+		// the audited family, and a fixture without it would answer 404 to the
+		// audit's own probe while the row says 200 — the drift the census exists
+		// to catch, reproduced inside the fixture.
+		//
+		// IT ACCEPTS EVERY PAIR, and that is deliberate: this audit asks what a
+		// route discloses once a submission is past the bot check, and a fixture
+		// that refused every probe would answer a fixed 422 and measure nothing —
+		// the 409/423 shapes below are what the rows are about. The bot check's
+		// own refusals are proved where they are this packet's subject, in
+		// signup_test.go; a fixture that did not skip them would be auditing one
+		// question with the answers to another. The mint route itself still runs
+		// the real Mint, so its shape is still measured.
+		WithSignup(acceptsEveryPair()),
 		WithLogger(slogLogger(&recordingHandler{})),
 	)
 
@@ -1036,7 +1074,7 @@ func mountedFamilyRoutes() []string {
 	var found []string
 
 	r := chi.NewRouter()
-	options{
+	o := options{
 		auth:         newFakeAuth(),
 		deletion:     newFakeDeletion(),
 		tenancy:      newFakeTenancy(),
@@ -1048,7 +1086,14 @@ func mountedFamilyRoutes() []string {
 		oidcClients:  newFakeOIDCClients(),
 		admin:        newFakeAdmin(),
 		recovery:     newFakeRecovery(),
-	}.registerRoutes(r)
+		signup:       newFakeSignup(),
+	}
+	// registerSignupRoutes is called beside registerRoutes, not inside it, because
+	// the mint route needs no database — the same reason newMux calls it there. A
+	// walk that called registerRoutes alone would not see the mint route, and the
+	// public endpoint would be a route this census cannot report.
+	o.registerRoutes(r)
+	o.registerSignupRoutes(r)
 
 	_ = chi.Walk(r, func(method string, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
 		clean := normalizeRoute(method, route)

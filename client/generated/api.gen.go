@@ -1735,6 +1735,26 @@ type SessionSummary struct {
 	UserAgent string `json:"user_agent"`
 }
 
+// SignupTimestamp A minted signup timestamp pair, and the shape `POST /v1/users` carries back.
+// Two fields and no third: the timestamp the pair was minted at, and the
+// signature over it. The signature is the whole of the protection — a forged
+// pair is refused at submission with the same generic `422` as any other
+// validation failure, so a bot cannot tell a real pair from a fake one.
+type SignupTimestamp struct {
+	// Signature The base64url (no padding) HMAC-SHA256 over the decimal string of
+	// `timestamp`, keyed with a server secret this service holds and the
+	// client cannot sign. The pair is a bearer credential: it expires one
+	// hour after it is minted, and a timestamp younger than two seconds is
+	// refused because a bot submits instantly.
+	Signature string `json:"signature"`
+
+	// Timestamp The Unix instant the pair was minted at, in seconds. A Unix integer
+	// rather than an RFC 3339 string because the signature is over the exact
+	// bytes of the decimal string, and a Unix integer has exactly one
+	// canonical form while an RFC 3339 string has several.
+	Timestamp int64 `json:"timestamp"`
+}
+
 // SocialLinked The 200 from the **link** path of `completeSocialLogin`: a provider
 // identity was attached to the account the caller was already signed in as,
 // and **no session was minted**.
@@ -4877,6 +4897,36 @@ type ClientInterface interface {
 	//
 	// Corresponds with DELETE /v1/sessions/{session_id} (the `DeleteSessionByID` operationId).
 	DeleteSessionByID(ctx context.Context, sessionID openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// MintSignupTimestamp Mint a signed timestamp for the signup form
+	//
+	// Hands out a fresh `timestamp` + `signature` pair — the second half of signup
+	// bot defence. The pair is an HMAC-SHA256 over the timestamp, keyed with a
+	// server secret this service holds and the client cannot sign. The form
+	// (rendered by parlor, not by this service) asks for a pair before it renders
+	// and carries it on `POST /v1/users`, where the same secret verifies it.
+	//
+	// **The endpoint is public and unauthenticated**, exactly as `POST /v1/users`
+	// is: a browser arriving at the form holds nothing but the address it was
+	// sent to. It takes no body and no credential, and the response carries
+	// nothing but the pair — no account, no user, no state — which is what makes
+	// it safe to leave open.
+	//
+	// **The pair is a bearer credential with a one-hour window.** A timestamp
+	// older than one hour is refused at submission, because a captured pair must
+	// not stay usable for the life of the deployment. A timestamp younger than
+	// two seconds is refused too, because a person needs seconds to fill a form
+	// and a bot submits instantly. The two bounds are the whole of the
+	// protection; the signature is what makes a forged pair indistinguishable
+	// from a real one.
+	//
+	// The `timestamp` is a Unix integer, not an RFC 3339 string: the signature is
+	// over the exact bytes of the message, so the message must have exactly one
+	// canonical form, and a Unix integer has one while an RFC 3339 string has
+	// several.
+	//
+	// Corresponds with POST /v1/signup-timestamp (the `MintSignupTimestamp` operationId).
+	MintSignupTimestamp(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RegisterUserWithBody Register an account
 	//
@@ -8438,6 +8488,46 @@ func (c *Client) DeleteSessionByID(ctx context.Context, sessionID openapi_types.
 	return c.Client.Do(req)
 }
 
+// MintSignupTimestamp Mint a signed timestamp for the signup form
+//
+// Hands out a fresh `timestamp` + `signature` pair — the second half of signup
+// bot defence. The pair is an HMAC-SHA256 over the timestamp, keyed with a
+// server secret this service holds and the client cannot sign. The form
+// (rendered by parlor, not by this service) asks for a pair before it renders
+// and carries it on `POST /v1/users`, where the same secret verifies it.
+//
+// **The endpoint is public and unauthenticated**, exactly as `POST /v1/users`
+// is: a browser arriving at the form holds nothing but the address it was
+// sent to. It takes no body and no credential, and the response carries
+// nothing but the pair — no account, no user, no state — which is what makes
+// it safe to leave open.
+//
+// **The pair is a bearer credential with a one-hour window.** A timestamp
+// older than one hour is refused at submission, because a captured pair must
+// not stay usable for the life of the deployment. A timestamp younger than
+// two seconds is refused too, because a person needs seconds to fill a form
+// and a bot submits instantly. The two bounds are the whole of the
+// protection; the signature is what makes a forged pair indistinguishable
+// from a real one.
+//
+// The `timestamp` is a Unix integer, not an RFC 3339 string: the signature is
+// over the exact bytes of the message, so the message must have exactly one
+// canonical form, and a Unix integer has one while an RFC 3339 string has
+// several.
+//
+// Corresponds with POST /v1/signup-timestamp (the `MintSignupTimestamp` operationId).
+func (c *Client) MintSignupTimestamp(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewMintSignupTimestampRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // RegisterUserWithBody Register an account
 //
 // Creates a user and, in the same database transaction, records an
@@ -10555,6 +10645,33 @@ func NewDeleteSessionByIDRequest(server string, sessionID openapi_types.UUID) (*
 	}
 
 	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewMintSignupTimestampRequest constructs an http.Request for the MintSignupTimestamp method
+func NewMintSignupTimestampRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/signup-timestamp")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -13428,6 +13545,38 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with DELETE /v1/sessions/{session_id} (the `DeleteSessionByID` operationId).
 	DeleteSessionByIDWithResponse(ctx context.Context, sessionID openapi_types.UUID, reqEditors ...RequestEditorFn) (*DeleteSessionByIDResponse, error)
+
+	// MintSignupTimestampWithResponse Mint a signed timestamp for the signup form
+	//
+	// Hands out a fresh `timestamp` + `signature` pair — the second half of signup
+	// bot defence. The pair is an HMAC-SHA256 over the timestamp, keyed with a
+	// server secret this service holds and the client cannot sign. The form
+	// (rendered by parlor, not by this service) asks for a pair before it renders
+	// and carries it on `POST /v1/users`, where the same secret verifies it.
+	//
+	// **The endpoint is public and unauthenticated**, exactly as `POST /v1/users`
+	// is: a browser arriving at the form holds nothing but the address it was
+	// sent to. It takes no body and no credential, and the response carries
+	// nothing but the pair — no account, no user, no state — which is what makes
+	// it safe to leave open.
+	//
+	// **The pair is a bearer credential with a one-hour window.** A timestamp
+	// older than one hour is refused at submission, because a captured pair must
+	// not stay usable for the life of the deployment. A timestamp younger than
+	// two seconds is refused too, because a person needs seconds to fill a form
+	// and a bot submits instantly. The two bounds are the whole of the
+	// protection; the signature is what makes a forged pair indistinguishable
+	// from a real one.
+	//
+	// The `timestamp` is a Unix integer, not an RFC 3339 string: the signature is
+	// over the exact bytes of the message, so the message must have exactly one
+	// canonical form, and a Unix integer has one while an RFC 3339 string has
+	// several.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/signup-timestamp (the `MintSignupTimestamp` operationId).
+	MintSignupTimestampWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*MintSignupTimestampResponse, error)
 
 	// RegisterUserWithBodyWithResponse Register an account
 	//
@@ -19220,6 +19369,68 @@ func (r DeleteSessionByIDResponse) ContentType() string {
 	return ""
 }
 
+// MintSignupTimestampResponse200Headers the declared response headers of an HTTP 200 response for MintSignupTimestamp
+type MintSignupTimestampResponse200Headers struct {
+	XTraceID string
+}
+
+// MintSignupTimestampResponse500Headers the declared response headers of an HTTP 500 response for MintSignupTimestamp
+type MintSignupTimestampResponse500Headers struct {
+	XTraceID string
+}
+
+type MintSignupTimestampResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *SignupTimestamp
+	// ApplicationProblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationProblemJSON500 *InternalError
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *MintSignupTimestampResponse200Headers
+	// Headers500 the parsed response headers for an HTTP 500 response
+	Headers500 *MintSignupTimestampResponse500Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r MintSignupTimestampResponse) GetJSON200() *SignupTimestamp {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r MintSignupTimestampResponse) GetApplicationProblemJSON500() *InternalError {
+	return r.ApplicationProblemJSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r MintSignupTimestampResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r MintSignupTimestampResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r MintSignupTimestampResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r MintSignupTimestampResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // RegisterUserResponse201Headers the declared response headers of an HTTP 201 response for RegisterUser
 type RegisterUserResponse201Headers struct {
 	XTraceID string
@@ -22688,6 +22899,44 @@ func (c *ClientWithResponses) DeleteSessionByIDWithResponse(ctx context.Context,
 		return nil, err
 	}
 	return ParseDeleteSessionByIDResponse(rsp)
+}
+
+// MintSignupTimestampWithResponse Mint a signed timestamp for the signup form
+//
+// Hands out a fresh `timestamp` + `signature` pair — the second half of signup
+// bot defence. The pair is an HMAC-SHA256 over the timestamp, keyed with a
+// server secret this service holds and the client cannot sign. The form
+// (rendered by parlor, not by this service) asks for a pair before it renders
+// and carries it on `POST /v1/users`, where the same secret verifies it.
+//
+// **The endpoint is public and unauthenticated**, exactly as `POST /v1/users`
+// is: a browser arriving at the form holds nothing but the address it was
+// sent to. It takes no body and no credential, and the response carries
+// nothing but the pair — no account, no user, no state — which is what makes
+// it safe to leave open.
+//
+// **The pair is a bearer credential with a one-hour window.** A timestamp
+// older than one hour is refused at submission, because a captured pair must
+// not stay usable for the life of the deployment. A timestamp younger than
+// two seconds is refused too, because a person needs seconds to fill a form
+// and a bot submits instantly. The two bounds are the whole of the
+// protection; the signature is what makes a forged pair indistinguishable
+// from a real one.
+//
+// The `timestamp` is a Unix integer, not an RFC 3339 string: the signature is
+// over the exact bytes of the message, so the message must have exactly one
+// canonical form, and a Unix integer has one while an RFC 3339 string has
+// several.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/signup-timestamp (the `MintSignupTimestamp` operationId).
+func (c *ClientWithResponses) MintSignupTimestampWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*MintSignupTimestampResponse, error) {
+	rsp, err := c.MintSignupTimestamp(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseMintSignupTimestampResponse(rsp)
 }
 
 // RegisterUserWithBodyWithResponse Register an account
@@ -28899,6 +29148,62 @@ func ParseDeleteSessionByIDResponse(rsp *http.Response) (*DeleteSessionByIDRespo
 		response.Headers404 = &headers
 	case rsp.StatusCode == 500:
 		var headers DeleteSessionByIDResponse500Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers500 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseMintSignupTimestampResponse parses an HTTP response from a MintSignupTimestampWithResponse call
+func ParseMintSignupTimestampResponse(rsp *http.Response) (*MintSignupTimestampResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &MintSignupTimestampResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SignupTimestamp
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON500 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers MintSignupTimestampResponse200Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 500:
+		var headers MintSignupTimestampResponse500Headers
 		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {

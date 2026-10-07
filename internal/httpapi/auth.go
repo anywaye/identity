@@ -17,6 +17,7 @@ import (
 
 	"github.com/cafaye/identity/internal/auth"
 	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/cafaye/identity/internal/signup"
 	"github.com/cafaye/identity/internal/telemetry"
 	"github.com/cafaye/identity/internal/users"
 )
@@ -177,12 +178,24 @@ type challengeResponse struct {
 // the next bot skips. The field is accepted here so the form can send it (empty) and
 // so a bot's populated value is refused with the same generic 422 a validation
 // failure gets, rather than with an "unknown field" that names the trap.
+//
+// Timestamp and Signature are the signed pair, and they follow the SAME
+// discipline: accepted here so the form can send them, absent from the OpenAPI
+// document so a bot reading the contract does not learn that the pair is the
+// second check. A submission that carries a populated honeypot OR a bad pair is
+// refused with the SAME generic 422 — a bot must not learn which check caught
+// it, and the two refusals are byte-identical.
 type registerRequest struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
 	// Website is the honeypot. See the type's comment for why it is here and why it
 	// is not in the OpenAPI document.
 	Website string `json:"website"`
+	// Timestamp and Signature are the signed pair the form carries. See the
+	// type's comment for why they are here and why they are not in the OpenAPI
+	// document.
+	Timestamp int64  `json:"timestamp"`
+	Signature string `json:"signature"`
 }
 
 // loginRequest is the body of POST /v1/session.
@@ -453,6 +466,29 @@ func (o options) handleRegister(w http.ResponseWriter, r *http.Request) {
 		problemFor(w, r, http.StatusUnprocessableEntity, CodeValidationFailed,
 			"the request has an invalid field")
 		return
+	}
+
+	// THE SIGNED TIMESTAMP, checked after the honeypot and before the use case is
+	// called — for the reason the honeypot is: a bot that gets a row in the
+	// database has won. The pair is verified in constant time inside
+	// signup.Service (hmac.Equal), the age window is enforced there too, and
+	// EVERY rejection is the same generic 422 the honeypot gives — a forged
+	// signature, an instant submission, an expired one and a future one are
+	// four answers a bot must not be able to tell apart.
+	//
+	// The check is conditional on the service being wired, which in a running
+	// process it always is: SIGNUP_SIGNING_KEY is required at boot, so a process
+	// that can serve POST /v1/users can always verify the pair. The condition
+	// is the same fail-closed shape every other surface has — a test that
+	// builds a router without the signup service gets a register route that
+	// does not verify, which is the honest state for "this router was not wired
+	// with the key" rather than a silent skip in production.
+	if o.signup != nil {
+		if !o.signup.Verify(signup.Pair{Timestamp: body.Timestamp, Signature: body.Signature}, o.clk.Now()) {
+			problemFor(w, r, http.StatusUnprocessableEntity, CodeValidationFailed,
+				"the request has an invalid field")
+			return
+		}
 	}
 
 	created, err := o.auth.Register(r.Context(), auth.RegisterInput{

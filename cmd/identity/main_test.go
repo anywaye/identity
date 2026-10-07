@@ -23,6 +23,23 @@ import (
 // is on a channel that the code under test signals, or a failure deadline.
 const testTimeout = 5 * time.Second
 
+// signupKeyValue is the SIGNUP_SIGNING_KEY every Config literal in this package
+// carries: 32 bytes, the shape the environment takes.
+//
+// It is a constant rather than a generated value because these tests assert on
+// behaviour and logs, not on the key — but a missing key would change the
+// outcome from a running process to a startup failure, which is not what any
+// test here is about. The same value, base64url, is what the child process in
+// TestMainHandlesSIGTERM is given.
+var signupKeyValue = []byte("0123456789abcdef0123456789abcdef")
+
+// withSignupKey returns a copy of cfg with SignupSigningKeyValue set, for the
+// literals that need a bootable configuration.
+func withSignupKey(cfg config.Config) config.Config {
+	cfg.SignupSigningKeyValue = signupKeyValue
+	return cfg
+}
+
 // newDiscardApp builds an app with logs thrown away. Tests that assert on log
 // output live in internal/httpapi.
 func newDiscardApp(t *testing.T, cfg config.Config) *app {
@@ -103,7 +120,7 @@ func serveOne(t *testing.T, a *app, method, target string) (int, string) {
 }
 
 func TestRunServesRequestsAndStopsWhenTheContextIsCancelled(t *testing.T) {
-	a := newServer(t, config.Config{Port: "0", LogLevel: "info"})
+	a := newServer(t, withSignupKey(config.Config{Port: "0", LogLevel: "info"}))
 	base := "http://" + a.Addr()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -136,7 +153,7 @@ func TestRunServesRequestsAndStopsWhenTheContextIsCancelled(t *testing.T) {
 }
 
 func TestRunLetsInFlightRequestsFinish(t *testing.T) {
-	a := newServer(t, config.Config{Port: "0", LogLevel: "info"})
+	a := newServer(t, withSignupKey(config.Config{Port: "0", LogLevel: "info"}))
 
 	started := make(chan struct{})
 	release := make(chan struct{})
@@ -189,7 +206,7 @@ func TestRunLetsInFlightRequestsFinish(t *testing.T) {
 }
 
 func TestRunReportsServeFailures(t *testing.T) {
-	a := newServer(t, config.Config{Port: "0", LogLevel: "info"})
+	a := newServer(t, withSignupKey(config.Config{Port: "0", LogLevel: "info"}))
 	if err := a.listener.Close(); err != nil {
 		t.Fatalf("closing the listener: %v", err)
 	}
@@ -206,7 +223,7 @@ func TestRunReportsServeFailures(t *testing.T) {
 
 func TestNewAppWiresReadinessToTheDatabase(t *testing.T) {
 	t.Run("no DATABASE_URL means no dependencies", func(t *testing.T) {
-		a := newDiscardApp(t, config.Config{Port: "0", LogLevel: "info"})
+		a := newDiscardApp(t, withSignupKey(config.Config{Port: "0", LogLevel: "info"}))
 		defer a.Close()
 
 		code, body := serveOne(t, a, http.MethodGet, "/readyz")
@@ -222,11 +239,11 @@ func TestNewAppWiresReadinessToTheDatabase(t *testing.T) {
 	t.Run("an unreachable database fails readiness", func(t *testing.T) {
 		// A port nothing listens on refuses connections immediately, so this
 		// exercises the real pgx path without waiting on a network timeout.
-		a := newDiscardApp(t, config.Config{
+		a := newDiscardApp(t, withSignupKey(config.Config{
 			Port:        "0",
 			LogLevel:    "info",
 			DatabaseURL: "postgres://identity@127.0.0.1:" + freePort(t) + "/identity?sslmode=disable",
-		})
+		}))
 		defer a.Close()
 
 		code, body := serveOne(t, a, http.MethodGet, "/readyz")
@@ -245,7 +262,7 @@ func TestNewAppWiresReadinessToTheDatabase(t *testing.T) {
 			t.Skip("TEST_DATABASE_URL not set; skipping Postgres integration test")
 		}
 
-		a := newDiscardApp(t, config.Config{Port: "0", LogLevel: "info", DatabaseURL: dsn})
+		a := newDiscardApp(t, withSignupKey(config.Config{Port: "0", LogLevel: "info", DatabaseURL: dsn}))
 		defer a.Close()
 
 		code, body := serveOne(t, a, http.MethodGet, "/readyz")
@@ -260,11 +277,11 @@ func TestNewAppWiresReadinessToTheDatabase(t *testing.T) {
 }
 
 func TestNewAppRejectsAnUnusableDatabaseURL(t *testing.T) {
-	a, err := newApp(context.Background(), config.Config{
+	a, err := newApp(context.Background(), withSignupKey(config.Config{
 		Port:        "0",
 		LogLevel:    "info",
 		DatabaseURL: "postgres://user@host:not-a-port/db",
-	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	}), slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	if err == nil {
 		a.Close()
@@ -285,10 +302,15 @@ func TestMainHandlesSIGTERM(t *testing.T) {
 
 	port := freePort(t)
 	cmd := exec.Command(os.Args[0], "-test.run=^TestMainHandlesSIGTERM$")
+	// SIGNUP_SIGNING_KEY is the one secret a boot cannot go without, and the
+	// child runs the REAL main(), which reads the REAL environment: without
+	// it the child refuses to start and the signal lands on a dead process.
+	// The value is the base64url of the 32 bytes the other literals carry.
 	cmd.Env = append(os.Environ(),
 		"IDENTITY_TEST_CHILD=1",
 		"PORT="+port,
 		"LOG_LEVEL=info",
+		"SIGNUP_SIGNING_KEY=MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY",
 	)
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
