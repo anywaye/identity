@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/cafaye/identity/internal/oauth"
 	"github.com/cafaye/identity/internal/oidc"
@@ -114,6 +115,18 @@ var (
 	// 16-byte key has configured half the entropy they think they have, and a
 	// timestamp signed under a short key is a timestamp anybody can forge.
 	ErrInvalidSignupSigningKey = errors.New("invalid SIGNUP_SIGNING_KEY")
+
+	// ErrInvalidRateLimit means a RATE_LIMIT_* variable is present and
+	// unparseable, or parses to a non-positive number. A startup failure rather
+	// than a fallback, for the reason the whole config package follows: a
+	// deployment that believes it has a limit and has one that does not exist
+	// is worse than one that refuses to start. The zero case is the one that
+	// reads as harsh — "I set 0 and the process would not boot" — and it is
+	// the point: 0 means "unlimited" everywhere else in computing, and this
+	// service does not offer unlimited on the auth surface. A typo for 0 is a
+	// typo the operator should meet at boot, not a silent disabling of the
+	// only control that bounds a spray.
+	ErrInvalidRateLimit = errors.New("invalid RATE_LIMIT_* configuration")
 )
 
 // DefaultMFAIssuer is what an authenticator app displays next to the entry when
@@ -256,6 +269,80 @@ type Config struct {
 	// credential material, and an operator has to be able to read it back off
 	// the boot log to confirm which broker their events are going to.
 	NATSURL string
+
+	// RateLimit is the request-rate limit block for the unauthenticated auth
+	// surface. It is NOT a feature block in the sense OIDC, MFA, courier and
+	// OAuth are: those are absent when unconfigured, because they belong to a
+	// features a deployment may not have turned on. This one is present by
+	// default, because the surface it protects is the one a customer's security
+	// review looks at first and an unconfigured deployment must not be an
+	// unprotected one.
+	//
+	// THE LIMITS HAVE DEFAULTS, AND A CONFIGURED ZERO IS A STARTUP ERROR. The
+	// two rules together are the whole of the block's contract: a deployment
+	// that sets nothing gets the defaults and is protected, and a deployment
+	// that sets a limit to 0 — almost certainly a typo for "unlimited", which
+	// this service does not offer — fails the boot rather than silently
+	// disabling the one control that stands between the auth surface and a
+	// spray. See loadRateLimit for the per-variable rules.
+	RateLimit RateLimit
+
+	// RequireEmailVerification gates sign-in on a proved address, and it is
+	// OFF BY DEFAULT.
+	//
+	// # WHY OFF IS THE DEFAULT, AND IT IS PARITY
+	//
+	// The reference this fleet matches — Jumpstart Pro — uses
+	// `has_secure_password` and does NOT use Devise's `:confirmable`, so an
+	// unverified address can sign in there. Gating sign-in on verification
+	// would be a deviation from parity, and a worker who flipped the default
+	// would have broken the thing the fleet exists to match. So the default is
+	// off, and the behaviour is pinned by a test so a successor cannot flip it
+	// by accident.
+	//
+	// # WHAT THE FLAG IS FOR
+	//
+	// The risk it exists to let an operator close: an address nobody has
+	// proved can hold a session. A deployment that wants confirmation-gated
+	// sign-in — because it sells to a regulated market, or because it has been
+	// through an incident — sets one variable and gets a documented, tested
+	// gate. Nobody who does not set it sees any change.
+	//
+	// # THE REFUSAL IS AFTER THE PASSWORD, AND THAT IS THE SECURITY PROPERTY
+	//
+	// The check lives in auth's startLogin, after the password is verified, so
+	// a caller who is refused has already proved they hold the credential and
+	// already knew the account existed. A refusal placed before the password is
+	// a one-request existence oracle for every unverified account on the
+	// service. See DECISIONS.md D13 for the same ruling on the disabled flag,
+	// which is the precedent for how carefully these refusals are told apart.
+	RequireEmailVerification bool
+}
+
+// RateLimit is the per-route request-rate limit block.
+//
+// It is a struct and not five loose fields because the five travel together:
+// one window shared by every route on the surface, and a limit per route. A
+// deployment that tunes one route's limit understands the window it is tuned
+// against, and a deployment that changes the window changes it for every
+// route at once — which is the honest shape of "how long is a minute of
+// abuse".
+type RateLimit struct {
+	// Window is how long a limit lasts. One window for every route, because
+	// the routes are one surface and a per-route window would be five things
+	// to reason about where one suffices.
+	Window time.Duration
+	// Signup bounds POST /v1/users.
+	Signup int
+	// Signin bounds POST /v1/session.
+	Signin int
+	// SignupTimestamp bounds POST /v1/signup-timestamp.
+	SignupTimestamp int
+	// Recovery bounds the two anonymous recovery request routes,
+	// POST /v1/password-resets and POST /v1/email-verifications. One limit
+	// for both because they are the same shape — an address in, a message
+	// out — and a deployment that mails one mails the other.
+	Recovery int
 }
 
 // The social-login environment variables, named in one place.
@@ -347,6 +434,33 @@ const (
 	// the honest shape of "not started yet" — the rows are the promise, and they
 	// drain the moment a broker is configured. See Config.NATSURL.
 	NATSURLVar = "NATS_URL"
+
+	// The request-rate limit variables. Every one is OPTIONAL and every one
+	// has a DEFAULT, which is the difference between this block and every
+	// other feature block in this file: absent is not "feature off", it is
+	// "the default limit applies", because the surface these protect is the
+	// one a security review looks at first and an unconfigured deployment
+	// must not be an unprotected one.
+	//
+	// A PRESENT VALUE THAT DOES NOT PARSE, OR PARSES TO A NON-POSITIVE NUMBER,
+	// IS A STARTUP ERROR. The zero case is the rule that reads as harsh and is
+	// the reason this block exists: 0 means "unlimited" everywhere else, and
+	// this service does not offer unlimited on the auth surface. See
+	// ErrInvalidRateLimit.
+	//
+	// The per-route numbers and their reasons are in the README's operator
+	// table, because a number without its reason is a default nobody revisits.
+	RateLimitWindowVar          = "RATE_LIMIT_WINDOW"
+	RateLimitSignupVar          = "RATE_LIMIT_SIGNUP"
+	RateLimitSigninVar          = "RATE_LIMIT_SIGNIN"
+	RateLimitSignupTimestampVar = "RATE_LIMIT_SIGNUP_TIMESTAMP"
+	RateLimitRecoveryVar        = "RATE_LIMIT_RECOVERY"
+
+	// RequireEmailVerificationVar gates sign-in on a proved address. It is a
+	// BOOL and it is OFF BY DEFAULT, because the reference this fleet matches
+	// does not gate sign-in on verification and the default must preserve
+	// parity. See Config.RequireEmailVerification for the whole of it.
+	RequireEmailVerificationVar = "REQUIRE_EMAIL_VERIFICATION"
 )
 
 // oauthEndpointVars is the per-endpoint table: which variable sets which provider's
@@ -668,6 +782,34 @@ func Load(lookup Lookup) (Config, error) {
 		return Config{}, err
 	}
 
+	if err := cfg.loadRateLimit(lookup); err != nil {
+		return Config{}, err
+	}
+
+	// THE SIGN-IN VERIFICATION GATE, parsed here rather than in a loader of its
+	// own because it is one variable and one line of logic, and a function for
+	// either would be a second place to look for a fact about the auth surface.
+	// Absent is false — parity with the reference, pinned by a test. Present
+	// and unreadable is a startup failure, the rule every other variable here
+	// follows: a deployment that believes it has the gate on and does not is
+	// the worse of the two states.
+	if _, ok := lookup(RequireEmailVerificationVar); ok {
+		switch strings.ToLower(strings.TrimSpace(lookupValue(lookup, RequireEmailVerificationVar))) {
+		case "true", "1", "yes":
+			cfg.RequireEmailVerification = true
+		case "false", "0", "no", "":
+		default:
+			// A plain error and not a sentinel, because no caller matches on
+			// this one with errors.Is — a bool flag has no downstream decision
+			// to make, and the message names the variable, which is the whole
+			// of the fix. The startup-failure rule is unchanged: a deployment
+			// that believes it has the gate on and does not is the worse of the
+			// two states.
+			return Config{}, fmt.Errorf("%s is %q, want true or false",
+				RequireEmailVerificationVar, lookupValue(lookup, RequireEmailVerificationVar))
+		}
+	}
+
 	// THE ONE UNCONDITIONAL SECRET, checked last so that a deployment with
 	// several things wrong reports the feature blocks first: each of those
 	// has its own variable to fix, and an operator who fixes them one at a
@@ -937,6 +1079,91 @@ func (c *Config) loadCourier(lookup Lookup) error {
 	c.CourierTokenValue = token
 	c.LinkTemplates = templates
 	c.DefaultLinkTemplate = lookupValue(lookup, defaultLinkTemplateVariable)
+	return nil
+}
+
+// Rate-limit defaults. Every one is a bound on abuse, not a guarantee against a
+// burst, and the window is fixed rather than sliding — see internal/ratelimit for
+// what that costs and why it is accepted.
+const (
+	defaultRateLimitWindow          = time.Minute
+	defaultRateLimitSignup          = 10
+	defaultRateLimitSignin          = 20
+	defaultRateLimitSignupTimestamp = 30
+	defaultRateLimitRecovery        = 5
+)
+
+// loadRateLimit reads and validates the request-rate limit block.
+//
+// THE DEFAULTS ARE THE POINT. Every other feature block in this file is absent
+// when unconfigured, because they belong to features a deployment may not have
+// turned on. This one is present by default, because the surface it protects is
+// the one a customer's security review looks at first and an unconfigured
+// deployment must not be an unprotected one.
+//
+// A PRESENT VALUE THAT DOES NOT PARSE, OR PARSES TO A NON-POSITIVE NUMBER, IS A
+// STARTUP ERROR. The zero case is the rule that reads as harsh and is the reason
+// this block exists: 0 means "unlimited" everywhere else, and this service does
+// not offer unlimited on the auth surface. See ErrInvalidRateLimit.
+func (c *Config) loadRateLimit(lookup Lookup) error {
+	c.RateLimit = RateLimit{
+		Window:          defaultRateLimitWindow,
+		Signup:          defaultRateLimitSignup,
+		Signin:          defaultRateLimitSignin,
+		SignupTimestamp: defaultRateLimitSignupTimestamp,
+		Recovery:        defaultRateLimitRecovery,
+	}
+
+	if err := c.loadRateLimitDuration(lookup, RateLimitWindowVar, &c.RateLimit.Window); err != nil {
+		return err
+	}
+	if err := c.loadRateLimitCount(lookup, RateLimitSignupVar, &c.RateLimit.Signup); err != nil {
+		return err
+	}
+	if err := c.loadRateLimitCount(lookup, RateLimitSigninVar, &c.RateLimit.Signin); err != nil {
+		return err
+	}
+	if err := c.loadRateLimitCount(lookup, RateLimitSignupTimestampVar, &c.RateLimit.SignupTimestamp); err != nil {
+		return err
+	}
+	return c.loadRateLimitCount(lookup, RateLimitRecoveryVar, &c.RateLimit.Recovery)
+}
+
+// loadRateLimitDuration reads a duration variable, defaulting when absent.
+func (c *Config) loadRateLimitDuration(lookup Lookup, variable string, target *time.Duration) error {
+	value := lookupValue(lookup, variable)
+	if value == "" {
+		return nil
+	}
+	d, err := time.ParseDuration(value)
+	if err != nil {
+		return fmt.Errorf("%w: %s is %q, want a duration like \"1m\" or \"30s\"",
+			ErrInvalidRateLimit, variable, value)
+	}
+	if d <= 0 {
+		return fmt.Errorf("%w: %s is %q, want a positive duration",
+			ErrInvalidRateLimit, variable, value)
+	}
+	*target = d
+	return nil
+}
+
+// loadRateLimitCount reads a count variable, defaulting when absent.
+func (c *Config) loadRateLimitCount(lookup Lookup, variable string, target *int) error {
+	value := lookupValue(lookup, variable)
+	if value == "" {
+		return nil
+	}
+	n, err := strconv.Atoi(value)
+	if err != nil {
+		return fmt.Errorf("%w: %s is %q, want a whole number",
+			ErrInvalidRateLimit, variable, value)
+	}
+	if n <= 0 {
+		return fmt.Errorf("%w: %s is %d, want a positive number (0 is not unlimited)",
+			ErrInvalidRateLimit, variable, n)
+	}
+	*target = n
 	return nil
 }
 
