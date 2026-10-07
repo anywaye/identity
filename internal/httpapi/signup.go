@@ -117,7 +117,12 @@ func (o options) registerSignupRoutes(r chiRouter) {
 	// holds nothing but the address it was sent to. The pair is the only thing
 	// the endpoint hands out, and it is a bearer credential with a one-hour
 	// window rather than a secret.
-	r.Post("/v1/signup-timestamp", o.handleMintSignupTimestamp)
+	//
+	// Behind the request-rate limiter, like every other unauthenticated route
+	// on this surface: the mint costs one HMAC and answers the same to
+	// everybody, but a loop that mints in a burst is a burden the launch does
+	// not need to carry.
+	r.Post("/v1/signup-timestamp", o.rateLimit("/v1/signup-timestamp", o.handleMintSignupTimestamp))
 }
 
 // ---------------------------------------------------------------------------

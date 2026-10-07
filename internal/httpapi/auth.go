@@ -253,8 +253,13 @@ func (o options) registerRoutes(r chiRouter) {
 		return
 	}
 
-	r.Post("/v1/users", o.handleRegister)
-	r.Post("/v1/session", o.handleLogin)
+	// THE TWO UNAUTHENTICATED AUTH ROUTES, each behind the request-rate
+	// limiter. The limiter is keyed on the client address and the route
+	// pattern, never the account being attempted, so the 429 it answers is
+	// identical for every account — existing or not. See ratelimit.go for
+	// why the refusal comes AFTER the handler's work.
+	r.Post("/v1/users", o.rateLimit("/v1/users", o.handleRegister))
+	r.Post("/v1/session", o.rateLimit("/v1/session", o.handleLogin))
 	// SESSION-ONLY, and it has to be said out loud rather than left to fall out of
 	// the lookup: a token presented here resolves to no session, Logout treats an
 	// unknown token as a success because logging out twice is not an error, and the

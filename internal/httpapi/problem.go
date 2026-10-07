@@ -54,6 +54,20 @@ const (
 	CodeInvalidJSON      = "invalid_json"
 	CodePayloadTooLarge  = "payload_too_large"
 
+	// CodeRateLimited is 429 for a request refused by the request-rate limiter.
+	//
+	// IT IS DELIBERATELY NOT 423, and the reason is DECISIONS.md D13's ruling
+	// applied to the limiter. 423 in this service means "locked, retry at",
+	// carries a Retry-After, and every client that knows the code renders it as
+	// a countdown. A rate limit is not a lockout: it is a bound on what one
+	// client ADDRESS may do, it is not per-account, and it carries no retry-at
+	// instant the client can act on — the window is fixed and the client can
+	// compute it from the limit it was given. Sharing a status or a sentence
+	// with the lockout would tell a client to "retry after" a window that is
+	// not a lockout, which is the conflation migrations/00021 exists to
+	// prevent.
+	CodeRateLimited = "rate_limited"
+
 	// CodeAccountOwnershipConflict is 409 for `DELETE /v1/me` when the caller is
 	// the only OWNER of a team account, so the deletion cannot proceed.
 	//
@@ -120,6 +134,7 @@ var titles = map[string]string{
 	CodeInvalidJSON:        "Malformed request body",
 	CodePayloadTooLarge:    "Request body too large",
 	CodeInvalidRequest:     "Invalid request",
+	CodeRateLimited:        "Too many requests",
 
 	CodeAccountOwnershipConflict: "Account ownership conflict",
 }

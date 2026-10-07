@@ -907,7 +907,7 @@ type auditFixture struct {
 	*recoveryServerFixture
 }
 
-func newAuditFixture(t *testing.T) *auditFixture {
+func newAuditFixture(t *testing.T, opts ...Option) *auditFixture {
 	t.Helper()
 
 	pool := dbtest.Schema(t)
@@ -917,7 +917,11 @@ func newAuditFixture(t *testing.T) *auditFixture {
 	tenancy := realTenancy(pool, clk)
 	keys := matrixAPIKeys(pool, clk, tenancy)
 
-	handler := New(nil,
+	// The fixture's own options, with any the caller appended. The append
+	// rather than a trailing `opts...` is because Go refuses to mix individual
+	// variadic arguments with a spread in one call, and the caller's options
+	// (a rate limiter, a clock) are the seam this fixture exists to offer.
+	allOpts := []Option{
 		WithAuth(authServiceFor(pool, clk)),
 		WithTenancy(tenancy),
 		WithRecovery(recovery.NewService(
@@ -970,7 +974,9 @@ func newAuditFixture(t *testing.T) *auditFixture {
 		// the real Mint, so its shape is still measured.
 		WithSignup(acceptsEveryPair()),
 		WithLogger(slogLogger(&recordingHandler{})),
-	)
+	}
+	allOpts = append(allOpts, opts...)
+	handler := New(nil, allOpts...)
 
 	return &auditFixture{recoveryServerFixture: &recoveryServerFixture{
 		handler: handler,

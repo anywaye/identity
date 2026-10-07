@@ -40,6 +40,7 @@ import (
 	"github.com/cafaye/identity/internal/outbox"
 	"github.com/cafaye/identity/internal/platform/clock"
 	"github.com/cafaye/identity/internal/platform/db"
+	"github.com/cafaye/identity/internal/ratelimit"
 	"github.com/cafaye/identity/internal/recovery"
 	"github.com/cafaye/identity/internal/sessions"
 	"github.com/cafaye/identity/internal/signup"
@@ -273,6 +274,29 @@ func newApp(ctx context.Context, cfg config.Config, logger *slog.Logger) (*app, 
 	// process that can register can verify, because both need nothing but this
 	// key.
 	opts = append(opts, httpapi.WithSignup(signup.New(cfg.SignupSigningKeyValue)))
+
+	// THE REQUEST-RATE LIMITER for the unauthenticated auth surface, wired
+	// UNCONDITIONALLY. It is not a feature block in the sense OIDC, MFA,
+	// courier and OAuth are: those are absent when unconfigured, because they
+	// belong to features a deployment may not have turned on. This one is
+	// present by default, because the surface it protects is the one a
+	// customer's security review looks at first and an unconfigured
+	// deployment must not be an unprotected one — every limit has a default
+	// (internal/config). The key is the client address and the route
+	// pattern, never the account being attempted, so the 429 is identical
+	// for every account.
+	//
+	// The store is in-process for launch: one replica is what the launch
+	// has, and an in-process counter has no fail-open question. What a
+	// shared store would need later is recorded in the packet report, not
+	// built now.
+	opts = append(opts, httpapi.WithRateLimiter(ratelimit.New(clock.System{}, map[string]ratelimit.Limit{
+		"/v1/users":              {Max: cfg.RateLimit.Signup, Window: cfg.RateLimit.Window},
+		"/v1/session":            {Max: cfg.RateLimit.Signin, Window: cfg.RateLimit.Window},
+		"/v1/signup-timestamp":   {Max: cfg.RateLimit.SignupTimestamp, Window: cfg.RateLimit.Window},
+		"/v1/password-resets":    {Max: cfg.RateLimit.Recovery, Window: cfg.RateLimit.Window},
+		"/v1/email-verifications": {Max: cfg.RateLimit.Recovery, Window: cfg.RateLimit.Window},
+	})))
 
 	// ONE HASHER FOR THE WHOLE PROCESS, and it is built here rather than inside
 	// buildAuth because two surfaces need one: a password reset hashes a new

@@ -17,6 +17,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/cafaye/identity/internal/platform/clock"
+	"github.com/cafaye/identity/internal/ratelimit"
 )
 
 // DefaultReadinessTimeout bounds a single readiness probe so a hung
@@ -103,6 +104,14 @@ type options struct {
 	// cannot exchange a code with.
 	social Social
 
+	// rateLimiter bounds what one client address can do on the unauthenticated
+	// auth surface. It is wired UNCONDITIONALLY by main from cfg.RateLimit,
+	// because the surface it protects is the one a security review looks at
+	// first and an unconfigured deployment must not be an unprotected one —
+	// the limits have defaults. The Option exists so a test can build a
+	// router with a limiter tuned to what it is asserting.
+	rateLimiter *ratelimit.Limiter
+
 	// panicOnRoute is a TEST seam: a route pattern that is registered with a
 	// handler which panics, so a test can reach the recovery path and the 500 it
 	// writes without a database.
@@ -161,6 +170,21 @@ func WithClock(c clock.Clock) Option {
 	return func(o *options) {
 		if c != nil {
 			o.clk = c
+		}
+	}
+}
+
+// WithRateLimiter sets the request-rate limiter for the unauthenticated auth
+// surface.
+//
+// main wires it unconditionally from cfg.RateLimit, so a running process
+// always has one; the Option exists so a test can build a router with a
+// limiter tuned to what it is asserting — a low limit for the red-then-green
+// proof, a window the test can advance for the reset.
+func WithRateLimiter(l *ratelimit.Limiter) Option {
+	return func(o *options) {
+		if l != nil {
+			o.rateLimiter = l
 		}
 	}
 }

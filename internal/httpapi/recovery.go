@@ -110,9 +110,14 @@ func (o options) registerRecoveryRoutes(r chiRouter) {
 	if o.recovery == nil {
 		return
 	}
-	r.Post("/v1/password-resets", o.sessionCredentialOnly(o.handleRequestPasswordReset))
+	// THE TWO ANONYMOUS RECOVERY REQUEST ROUTES, behind the request-rate
+	// limiter. They share one limit because they are the same shape — an
+	// address in, a message out — and a deployment that mails one mails the
+	// other. The limiter is OUTSIDE sessionCredentialOnly so it counts every
+	// request a stranger makes, whatever credential shape they present.
+	r.Post("/v1/password-resets", o.rateLimit("/v1/password-resets", o.sessionCredentialOnly(o.handleRequestPasswordReset)))
 	r.Post("/v1/password-resets/confirm", o.sessionCredentialOnly(o.handleRedeemPasswordReset))
-	r.Post("/v1/email-verifications", o.sessionCredentialOnly(o.handleRequestVerification))
+	r.Post("/v1/email-verifications", o.rateLimit("/v1/email-verifications", o.sessionCredentialOnly(o.handleRequestVerification)))
 	r.Post("/v1/email-verifications/confirm", o.sessionCredentialOnly(o.handleRedeemVerification))
 	r.Get("/v1/email-verification", o.sessionCredentialOnly(o.handleVerificationStatus))
 	r.Post("/v1/email-changes", o.sessionCredentialOnly(o.handleRequestEmailChange))
