@@ -253,6 +253,7 @@ func TestTheComposeServiceDeclaresTheCourierClientConfig(t *testing.T) {
 	for _, variable := range []string{
 		"PASSWORD_RESET_LINK_TEMPLATE",
 		"EMAIL_VERIFICATION_LINK_TEMPLATE",
+		"EMAIL_CHANGE_LINK_TEMPLATE",
 	} {
 		raw, ok := env[variable]
 		if !ok {
