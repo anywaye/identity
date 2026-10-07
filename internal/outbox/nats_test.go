@@ -214,19 +214,119 @@ func TestNATSPublisherPublishesTheEnvelopeOnTheSubjectOfTheType(t *testing.T) {
 	}
 }
 
-// A publish the broker refuses must leave the row exactly as the contract says:
-// attempts incremented, published_at NULL, the reason recorded, the row still
-// claimable. The next pass republishes it — same id, so a consumer that already
-// saw it dedupes.
+// assertFailedPublishLeftTheRowClaimable asserts the row state a failed
+// publish leaves: attempts incremented, published_at NULL, the reason
+// recorded, and the row still claimable. Both failure modes — a silent broker
+// and a refusing one — leave the row in exactly this state, which is the
+// contract.
+func assertFailedPublishLeftTheRowClaimable(t *testing.T, pool *pgxpool.Pool, store *Store, ctx context.Context, e Envelope) {
+	t.Helper()
+
+	state := rowStateOf(t, pool, e.ID)
+	if state.attempts != 1 {
+		t.Errorf("attempts = %d, want 1", state.attempts)
+	}
+	if state.published != nil {
+		t.Errorf("published_at = %v, want NULL — a failed publish is not a delivery", *state.published)
+	}
+	if state.lastError == nil || *state.lastError == "" {
+		t.Error("last_error is empty; an operator watching attempts climb has nothing to act on")
+	}
+
+	// And the row is still claimable, so the retry is real.
+	batch, err := store.Claim(ctx, 10)
+	if err != nil {
+		t.Fatalf("Claim: %v", err)
+	}
+	defer batch.Release(ctx)
+
+	claimable := false
+	for _, got := range batch.Events() {
+		if got.ID == e.ID {
+			claimable = true
+		}
+	}
+	if !claimable {
+		t.Error("the failed event is no longer claimable")
+	}
+}
+
+// A publish the broker never answers must leave the row exactly as the
+// contract says: attempts incremented, published_at NULL, the reason recorded,
+// the row still claimable. The next pass republishes it — same id, so a
+// consumer that already saw it dedupes.
+//
+// The broker here is SILENT, not refusing, and the distinction is the whole of
+// this test. There is no stream covering the subject, so JetStream never acks;
+// and there IS a core subscriber on the subject, which suppresses the broker's
+// no-responders error. The publish is delivered to core interest and then waits
+// for an ack that will not come — with an unbounded context it waits forever,
+// which is the production hang this packet fixes. DefaultPublishTimeout is
+// what turns that silence into the failure the contract requires: Publish
+// returns an error, the loop records it, and the row stays claimable.
 func TestNATSPublisherFailureLeavesTheRowClaimable(t *testing.T) {
 	t.Parallel()
 
 	nc := startNATS(t)
-	// Deliberately no stream: a JetStream publish to a subject no stream
-	// matches is refused by the broker (ErrNoMatchingStream), which is the
-	// "broker refused, or no stream" case. The refusal is the point — it is
-	// what leaves the row claimable with attempts incremented.
+	// Deliberately no stream, and deliberately a core subscriber: the
+	// subscriber is what makes the broker go silent rather than refuse.
 	msgs := subscribe(t, nc, EventUserCreated)
+
+	pool := dbtest.Schema(t)
+	store := NewStore(pool)
+	ctx := context.Background()
+
+	e := mustUserCreated(t, dbtest.UniqueEmail(t))
+	if err := store.Append(ctx, pool, e); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+
+	pub, err := NewNATSPublisher(nc.ConnectedUrl())
+	if err != nil {
+		t.Fatalf("NewNATSPublisher: %v", err)
+	}
+	defer pub.Close()
+
+	svc := NewService(store, pub, discardLogger(), 0)
+	n, err := svc.RunOnce(ctx)
+	if err != nil {
+		t.Fatalf("RunOnce = %v; a silent publish must not fail the pass", err)
+	}
+	if n != 0 {
+		t.Errorf("RunOnce published %d events, want 0", n)
+	}
+
+	assertFailedPublishLeftTheRowClaimable(t, pool, store, ctx, e)
+
+	// The message DID reach the core subscriber — that is the mechanism of the
+	// silence, and asserting it is what proves the hang was real rather than a
+	// broker that refused. A core subscriber suppresses the no-responders
+	// error; with no stream, JetStream never acks. The publish was delivered to
+	// core interest and then waited for an ack that the budget turned into a
+	// failure.
+	select {
+	case m := <-msgs:
+		if m.Subject != e.Type {
+			t.Errorf("the message arrived on subject %q, want %q", m.Subject, e.Type)
+		}
+	default:
+		t.Error("nothing reached the core subscriber; the silence this test depends on could not have happened")
+	}
+}
+
+// The other way a publish fails: the broker REFUSES. No stream and no core
+// subscriber, so nothing answers the request and the broker returns
+// no-responders, which nats.go retries and then reports as
+// ErrNoStreamResponse. This is the case production actually hits when the
+// stack defines no stream (see "THE STREAM IS THE STACK'S" above): the
+// refusal is fast and loud, and the row is left claimable exactly as the
+// silence case leaves it.
+func TestNATSPublisherRefusalLeavesTheRowClaimable(t *testing.T) {
+	t.Parallel()
+
+	nc := startNATS(t)
+	// Deliberately no stream and deliberately no subscriber: with nothing to
+	// answer the request, the broker refuses it rather than going silent.
 
 	pool := dbtest.Schema(t)
 	store := NewStore(pool)
@@ -252,40 +352,7 @@ func TestNATSPublisherFailureLeavesTheRowClaimable(t *testing.T) {
 		t.Errorf("RunOnce published %d events, want 0", n)
 	}
 
-	state := rowStateOf(t, pool, e.ID)
-	if state.attempts != 1 {
-		t.Errorf("attempts = %d, want 1", state.attempts)
-	}
-	if state.published != nil {
-		t.Errorf("published_at = %v, want NULL — a refused publish is not a delivery", *state.published)
-	}
-	if state.lastError == nil || *state.lastError == "" {
-		t.Error("last_error is empty; an operator watching attempts climb has nothing to act on")
-	}
-
-	// Nothing reached the bus: the refusal is a refusal, not a silent drop.
-	select {
-	case m := <-msgs:
-		t.Errorf("a message arrived on the subject despite the refusal: %s", m.Data)
-	case <-time.After(200 * time.Millisecond):
-	}
-
-	// And the row is still claimable, so the retry is real.
-	batch, err := store.Claim(ctx, 10)
-	if err != nil {
-		t.Fatalf("Claim: %v", err)
-	}
-	defer batch.Release(ctx)
-
-	claimable := false
-	for _, got := range batch.Events() {
-		if got.ID == e.ID {
-			claimable = true
-		}
-	}
-	if !claimable {
-		t.Error("the refused event is no longer claimable")
-	}
+	assertFailedPublishLeftTheRowClaimable(t, pool, store, ctx, e)
 }
 
 // At-least-once means a duplicate is survivable, and it is survivable only

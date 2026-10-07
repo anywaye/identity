@@ -17,6 +17,23 @@ import (
 // a broker that is slow to answer rather than one that is absent.
 const DefaultNATSConnectTimeout = 5 * time.Second
 
+// DefaultPublishTimeout bounds one publish's wait for the broker's ack.
+//
+// JetStream's PublishMsg is a request that blocks until the broker acks or the
+// context dies, and the loop's context — the process's — has no deadline, so
+// without a budget a single unanswered publish hangs the drain loop and holds
+// its transaction open for the life of the process. The budget is applied
+// inside Publish, so every caller is protected and not just the loop.
+//
+// Ten seconds is long enough that a slow-but-healthy broker never trips it (a
+// healthy one acks in milliseconds) and short enough that a silent one costs
+// the loop one bounded wait per event rather than the process's remaining
+// lifetime. It is a package constant so a deployment can reason about the
+// worst case: a full batch against a fully silent broker drains in at most
+// DefaultBatchSize * DefaultPublishTimeout, loudly, with every row left
+// claimable.
+const DefaultPublishTimeout = 10 * time.Second
+
 // NATSPublisher publishes envelopes to a NATS JetStream subject.
 //
 // # WHY JETSTREAM AND NOT CORE NATS
@@ -26,9 +43,24 @@ const DefaultNATSConnectTimeout = 5 * time.Second
 // the failure the table exists to prevent. Core NATS' Publish returns when the
 // message is on the wire, not when the broker has stored it, so marking on its
 // return would mark rows published that were never delivered. JetStream's
-// PublishMsg is a request that blocks until the broker acks (or the context
-// dies), so a nil return from Publish IS the ack the loop marks the row from —
-// "ack, then mark" is the call, not a convention layered around it.
+// PublishMsg is a request that blocks until the broker acks, so a nil return
+// from Publish IS the ack the loop marks the row from — "ack, then mark" is
+// the call, not a convention layered around it.
+//
+// # THE PUBLISH IS BOUNDED BY A BUDGET, AND AN UNANSWERED PUBLISH IS A FAILURE
+//
+// "Until the broker acks" is not the same as "forever". PublishMsg is a select
+// on the reply inbox and the context's Done channel, so a broker that neither
+// acks nor errors — a half-configured stream, a network black hole, a
+// JetStream layer that is up but has no matching stream and no core
+// subscriber — blocks the call for as long as the context allows. The loop
+// runs on the process's context, which has no deadline, so an unbounded
+// publish is a publish that can hang the drain loop (and hold its transaction
+// open) for the life of the process. Publish therefore applies
+// DefaultPublishTimeout to every call: a publish that is not acknowledged
+// within the budget returns an error, which is what the loop records in
+// last_error and what leaves the row claimable for the next pass. The budget
+// is the difference between a slow broker and a wedged one.
 //
 // # THE SUBJECT IS THE EVENT TYPE
 //
@@ -91,18 +123,27 @@ func NewNATSPublisher(url string) (*NATSPublisher, error) {
 
 // Publish puts one envelope on the subject named by its type.
 //
-// It returns nil only after the broker has acked, and an error otherwise —
-// including when the context dies mid-publish, which is how a shutdown aborts
-// an in-flight publish instead of letting it hold the loop's transaction open.
-// The error is what the loop records in last_error and what leaves the row
-// claimable for the next pass; the row is never marked published on this path.
+// It returns nil only after the broker has acked, and an error otherwise. The
+// wait is bounded by DefaultPublishTimeout: a publish that is not acknowledged
+// within the budget is a failure, not a wait — the error is what the loop
+// records in last_error and what leaves the row claimable for the next pass,
+// and the row is never marked published on this path. A cancelled context (a
+// shutdown) aborts an in-flight publish the same way, because the budget is
+// derived from the caller's context.
 func (p *NATSPublisher) Publish(ctx context.Context, e Envelope) error {
 	payload, err := json.Marshal(e)
 	if err != nil {
 		return fmt.Errorf("outbox: marshalling the envelope: %w", err)
 	}
 
-	if _, err := p.js.PublishMsg(&nats.Msg{Subject: e.Type, Data: payload}, nats.Context(ctx)); err != nil {
+	// The budget is applied here, inside Publish, so every caller is protected
+	// and not just the loop: the process's context has no deadline, and an
+	// unbounded publish is a publish that can hang forever. Deriving from the
+	// caller's context keeps a shutdown able to abort the publish immediately.
+	publishCtx, cancel := context.WithTimeout(ctx, DefaultPublishTimeout)
+	defer cancel()
+
+	if _, err := p.js.PublishMsg(&nats.Msg{Subject: e.Type, Data: payload}, nats.Context(publishCtx)); err != nil {
 		return fmt.Errorf("outbox: publishing %s: %w", e.Type, err)
 	}
 	return nil
