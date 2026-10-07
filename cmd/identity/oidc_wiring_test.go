@@ -53,6 +53,9 @@ func oidcConfig(t *testing.T, dsn string) config.Config {
 		OIDCSigningKey: testKeyPEM(t),
 		OIDCKeyID:      "cafaye-wiring-test",
 		OIDCLoginUIURL: "https://login.example.com/sign-in/oidc",
+		// The one secret a boot cannot go without, carried here so the app mints
+		// and verifies under a real key rather than the nil a zero Config holds.
+		SignupSigningKeyValue: signupKeyValue,
 	}
 }
 
@@ -130,12 +133,10 @@ func TestNewAppWithoutOIDCKeysIsNotAProvider(t *testing.T) {
 	}
 
 	// The /v1 surface is untouched, which is the point: a process that is not a
-	// provider is not a broken one.
-	email := dbtest.UniqueEmail(t)
-	rec := serveBody(t, a, http.MethodPost, "/v1/users", `{"email":"`+email+`","password":"correct horse battery staple"}`, nil)
-	if rec.Code != http.StatusCreated {
-		t.Errorf("POST /v1/users = %d, want 201; the /v1 surface must not depend on the OIDC configuration", rec.Code)
-	}
+	// provider is not a broken one. The registration carries a signup timestamp
+	// pair, as every registration now must — the verify is wired by the same
+	// option as the mint, and a deployment that can register can verify.
+	registerUserWithPair(t, a, dbtest.UniqueEmail(t), "correct horse battery staple")
 }
 
 // Keys with no database is the configuration that cannot work, and it says so by

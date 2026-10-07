@@ -40,8 +40,8 @@ const signupKey = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY"
 // cannot boot produces none.
 func courierEnv(links map[string]string) map[string]string {
 	env := map[string]string{
-		"COURIER_BASE_URL": "https://courier.example.com",
-		"COURIER_TOKEN":    "svc-7f3a9c1e4b8d2056-the-credential",
+		"COURIER_BASE_URL":   "https://courier.example.com",
+		"COURIER_TOKEN":      "svc-7f3a9c1e4b8d2056-the-credential",
 		"SIGNUP_SIGNING_KEY": signupKey,
 	}
 	for key, value := range links {

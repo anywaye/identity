@@ -279,6 +279,11 @@ func servedRoutes(t *testing.T) map[operationKey]string {
 		// whose failure message was the work order for mounting this surface was
 		// GREEN on the day it appeared. See oauth_fake_test.go's header.
 		social: newFakeSocial(),
+		// signup is the fourth instance. The mint route is mounted unconditionally
+		// in newMux (it needs no database, only the key), so a walk that did not set
+		// this field would not see it — and the public, unauthenticated endpoint
+		// would be a route no documentation check could report.
+		signup: newFakeSignup(),
 	}
 
 	served := map[operationKey]string{}
@@ -596,14 +601,20 @@ func TestTheDocumentIsOpenAPI31AndCarriesAVersion(t *testing.T) {
 	// that kept calling `DELETE /v1/session` and never learned it could end one
 	// session rather than all of them.
 	//
-	// 1.12.0 is the account self-deletion: `DELETE /v1/me`. It is written in a merge
-	// commit rather than a packet because TWO packets each bumped the document to
-	// 1.11.0 — the sessions packet on master and the deletion packet on its branch —
-	// and merging them folded both documents' additions under one number, which is
-	// exactly the invisibility this pin exists to prevent. The display name's
-	// `PATCH /v1/me` rode in under 1.11.0 the same way and is named here so the
-	// record is honest: the merged document describes sessions, the display name and
-	// the deletion, and a consumer pinned at 1.10.0 saw none of the three.
+	// 1.12.0 is the account self-deletion (`DELETE /v1/me`) and the signup timestamp
+	// mint (`POST /v1/signup-timestamp` and its `SignupTimestamp` schema). The
+	// deletion is written in a merge commit rather than a packet because TWO packets
+	// each bumped the document to 1.11.0 — the sessions packet on master and the
+	// deletion packet on its branch — and merging them folded both documents'
+	// additions under one number, which is exactly the invisibility this pin exists
+	// to prevent. The display name's `PATCH /v1/me` rode in under 1.11.0 the same
+	// way. The signup timestamp mint is a NON-BREAKING addition and a
+	// GENERATED-SOURCE change at once — a public, unauthenticated endpoint that
+	// hands out a fresh signed pair for the signup form, and the second half of
+	// signup bot defence after the honeypot. A Go consumer that names the new
+	// method gets it and every other consumer cannot tell the difference. The
+	// merged document describes sessions, the display name, the deletion and the
+	// signup timestamp, and a consumer pinned at 1.10.0 saw none of the four.
 	const want = "1.12.0"
 	if doc.InfoVersion != want {
 		t.Errorf("%s declares info.version %q, not %q. core's sync rule is that the /v1 "+

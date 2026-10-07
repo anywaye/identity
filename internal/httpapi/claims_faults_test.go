@@ -71,6 +71,12 @@ func walkOptions() options {
 		// the walk these tests configure could not see the two routes and
 		// TestTheClaimWalkSeesEveryConditionalSurface had no row asserting it could.
 		social: newFakeSocial(),
+		// signup is the sixth instance of the same omission, and the row below is
+		// the one that asserts the walk can see its route. The mint is mounted
+		// beside registerRoutes (it needs no database), so a walk that did not set
+		// this field would not see it — and the public, unauthenticated endpoint
+		// would be a route no claim check could report.
+		signup: newFakeSignup(),
 	}
 }
 
@@ -126,6 +132,11 @@ func TestTheClaimWalkSeesEveryConditionalSurface(t *testing.T) {
 		// router_walk_test.go: this test is the one that would have caught it, had
 		// anybody thought to add the row before mounting the surface.
 		{"social", operationKey{Method: "GET", Path: "/v1/auth/oauth/{}"}},
+		// The signup timestamp mint, and the row exists for the reason social's
+		// does: it is a PUBLIC, unauthenticated route, so it is the one a walk with
+		// the field out would miss first — and the miss is silent, because every
+		// other row in this table is a route that demands a credential.
+		{"signup", operationKey{Method: "POST", Path: "/v1/signup-timestamp"}},
 	} {
 		if _, ok := found[want.key]; !ok {
 			t.Errorf("the claim walk does not see %s, so it does not see %s. The `options` "+

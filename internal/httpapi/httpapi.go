@@ -86,6 +86,13 @@ type options struct {
 	// A 404 here would tell a product this service has never heard of password
 	// recovery, and that is the one answer that is both false and useless.
 	recovery Recovery
+	// signup is the SIGNUP TIMESTAMP surface: the mint the form carries and the
+	// check that reads it. It is absent without a key, like every other surface
+	// here — but the key is REQUIRED at boot, so a running process always has
+	// it and the mint route is always mounted. The Option exists so a test can
+	// build a router without it, and so the registrar's early return is the
+	// same fail-closed shape every other surface has.
+	signup Signup
 	// social is the SOCIAL LOGIN surface: the configured OAuth providers and the
 	// use case that finishes a round trip. It is absent without a provider, and it
 	// is the only surface here whose absence is not a misconfiguration — a
@@ -281,6 +288,15 @@ func newMux(checks []Check, o options) *chi.Mux {
 	// to answer a probe for its own metadata.
 	o.registerOIDCWellKnownRoutes(r)
 	o.registerRoutes(r)
+	// The signup timestamp mint, mounted here rather than inside registerRoutes
+	// for the reason the probes are: it is a PUBLIC endpoint that needs no
+	// database and no session — only the signup service, which is built from a
+	// key that is required at boot. registerRoutes returns early when there is
+	// no auth service (no DATABASE_URL), and a process with a key but no
+	// database would then serve no mint route for a form that cannot exist
+	// there anyway. The registrar's own early return is the fail-closed shape:
+	// no key, no route.
+	o.registerSignupRoutes(r)
 	routeTableMu.Lock()
 	routeTable = r.patterns
 	routeTableMu.Unlock()

@@ -8,11 +8,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cafaye/identity/internal/config"
 	"github.com/cafaye/identity/internal/platform/dbtest"
+	"github.com/cafaye/identity/internal/signup"
 )
 
 // discardLogger matches the helper the app tests use: assertions on log output
@@ -52,8 +55,33 @@ func TestNewAppServesTheAuthSurfaceWithADatabase(t *testing.T) {
 	email := dbtest.UniqueEmail(t)
 	const password = "correct horse battery staple"
 
+	// Mint a signup timestamp pair, the way the form does. The registration
+	// carries it, and the verify refuses a submission without one — so this test
+	// mints through the real endpoint rather than constructing a pair by hand:
+	// the point is that newApp mounts the mint AND wires the verify, and a
+	// hand-built pair would prove only the second.
+	pairRec := serveBody(t, a, http.MethodPost, "/v1/signup-timestamp", "", nil)
+	if pairRec.Code != http.StatusOK {
+		t.Fatalf("POST /v1/signup-timestamp = %d, want 200; body: %s", pairRec.Code, pairRec.Body)
+	}
+	var pair struct {
+		Timestamp int64  `json:"timestamp"`
+		Signature string `json:"signature"`
+	}
+	if err := json.Unmarshal(pairRec.Body.Bytes(), &pair); err != nil {
+		t.Fatalf("the minted pair is not JSON: %v\n%s", err, pairRec.Body)
+	}
+
+	// Wait out the two-second floor. It is the protection — a bot submits
+	// instantly — so the test cannot avoid it any more than a bot can: the pair
+	// must be at least MinAge old before the submission verifies. The sleep is
+	// the honest cost of a real clock; the unit tests move time exactly through
+	// the fake clock instead.
+	time.Sleep(signup.MinAge + 500*time.Millisecond)
+
 	// Register.
-	rec := serveBody(t, a, http.MethodPost, "/v1/users", `{"email":"`+email+`","password":"`+password+`"}`, nil)
+	rec := serveBody(t, a, http.MethodPost, "/v1/users", `{"email":"`+email+`","password":"`+password+
+		`","timestamp":`+strconv.FormatInt(pair.Timestamp, 10)+`,"signature":"`+pair.Signature+`"}`, nil)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("POST /v1/users = %d, want 201; body: %s", rec.Code, rec.Body)
 	}
@@ -164,6 +192,26 @@ func TestNewAppWithAnUnreachableDatabaseStillBuilds(t *testing.T) {
 	rec := serveBody(t, a, http.MethodGet, "/healthz", "", nil)
 	if rec.Code != http.StatusOK {
 		t.Errorf("GET /healthz = %d, want 200 with an unreachable database; body: %s", rec.Code, rec.Body)
+	}
+}
+
+// registerUserWithPair registers a user the way the form does: it carries a
+// signup timestamp pair minted under the app's own key.
+//
+// The pair is minted directly rather than through POST /v1/signup-timestamp
+// because these tests are about the MFA/OIDC wiring, not the mint — the mint's
+// end-to-end proof is TestNewAppServesTheAuthSurfaceWithADatabase, which mints
+// through the real endpoint and waits out the floor. The timestamp is 30 s in
+// the past, so the pair is already past the two-second floor and no sleep is
+// needed; the verify it passes through is the real one, under the real key.
+func registerUserWithPair(t *testing.T, a *app, email, password string) {
+	t.Helper()
+
+	pair := signup.New(a.cfg.SignupSigningKeyValue).Mint(time.Now().Add(-30 * time.Second))
+	rec := serveBody(t, a, http.MethodPost, "/v1/users", `{"email":"`+email+`","password":"`+password+
+		`","timestamp":`+strconv.FormatInt(pair.Timestamp, 10)+`,"signature":"`+pair.Signature+`"}`, nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("POST /v1/users = %d; body: %s", rec.Code, rec.Body.String())
 	}
 }
 

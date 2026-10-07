@@ -17,12 +17,12 @@ import (
 // derived, so a reader can see which side of which bound each row sits on.
 
 var (
-	mintKey    = []byte("a-test-key-that-is-32-bytes-long!!") // 32 bytes
-	otherKey   = []byte("a-different-key-32-bytes-long!!!!!!") // 32 bytes
-	mintAt     = time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
-	service    = New(mintKey)
-	otherSvc   = New(otherKey)
-	minted     = service.Mint(mintAt)
+	mintKey  = []byte("a-test-key-that-is-32-bytes-long!!")  // 32 bytes
+	otherKey = []byte("a-different-key-32-bytes-long!!!!!!") // 32 bytes
+	mintAt   = time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
+	service  = New(mintKey)
+	otherSvc = New(otherKey)
+	minted   = service.Mint(mintAt)
 )
 
 func TestVerify(t *testing.T) {

@@ -70,7 +70,7 @@ var conditionalSurfaces = []string{
 	// walkOptions set this field. See oauth_fake_test.go's header for the whole of
 	// it, including why nobody noticed for a whole packet.
 	"auth", "tenancy", "apiKeyCaller", "introspector", "apiKeys", "oidc",
-	"oidcClients", "mfa", "admin", "recovery", "social",
+	"oidcClients", "mfa", "admin", "recovery", "signup", "social",
 
 	// `deletion` is here because a NEW surface did exactly what `social` did and
 	// the list is the only thing standing between that and a silent pass.
@@ -205,6 +205,31 @@ func TestTheDriftWalkSeesTheSessionLinkSurface(t *testing.T) {
 			t.Errorf("walkOptions did not report %s. The two options literals describe the "+
 				"same deployed router, and a suite that walks two different routers reports "+
 				"agreement about a service neither one is", want)
+		}
+	}
+}
+
+// TestTheDriftWalkSeesTheSignupSurface is the behavioural instance for the signup
+// timestamp mint, and it is the fifth instance of the same bug.
+//
+// IT IS HERE FOR A REASON SPECIFIC TO THIS SURFACE: the mint is mounted in newMux
+// BESIDE registerRoutes (it needs no database, only the key), so it is the one
+// conditional surface whose routes are not reached by a walk that calls
+// registerRoutes alone. servedRoutes in openapi_drift_test.go walks newMux, so it
+// sees the mint — but a walk that assembled the router by hand would not, and the
+// public, unauthenticated endpoint would be a route no documentation check could
+// report. The row asserts the walk FINDS the route, not that a field was set.
+func TestTheDriftWalkSeesTheSignupSurface(t *testing.T) {
+	t.Parallel()
+
+	for _, want := range []operationKey{
+		{Method: "POST", Path: "/v1/signup-timestamp"},
+	} {
+		if _, seen := servedRoutes(t)[want]; !seen {
+			t.Errorf("servedRoutes did not report %s as served. The router mounts it once "+
+				"`options.signup` is set, and this walk is what decides whether its "+
+				"documentation is checked — a route invisible here is a route whose document "+
+				"entry nothing verifies", want)
 		}
 	}
 }

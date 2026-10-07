@@ -42,6 +42,7 @@ import (
 	"github.com/cafaye/identity/internal/platform/db"
 	"github.com/cafaye/identity/internal/recovery"
 	"github.com/cafaye/identity/internal/sessions"
+	"github.com/cafaye/identity/internal/signup"
 	"github.com/cafaye/identity/internal/telemetry"
 	"github.com/cafaye/identity/internal/useraudit"
 	"github.com/cafaye/identity/internal/users"
@@ -251,6 +252,19 @@ func newApp(ctx context.Context, cfg config.Config, logger *slog.Logger) (*app, 
 	}
 
 	opts := []httpapi.Option{httpapi.WithLogger(logger)}
+
+	// THE SIGNUP TIMESTAMP SURFACE, and it is the one option here that is
+	// UNCONDITIONAL: it needs no database, no pool and no feature flag, only the
+	// key — and the key is the one secret a boot cannot go without, so a process
+	// that can serve anything can mint a pair. It is mounted beside
+	// registerRoutes in newMux for the same reason the probes are: a deployment
+	// with no DATABASE_URL has no signup form to defend, but the mint costs one
+	// HMAC, answers the same to everybody, and a pair from it is a credential
+	// this deployment's POST /v1/users would refuse anyway (it is not mounted
+	// there). The verify on POST /v1/users is wired by the same option: a
+	// process that can register can verify, because both need nothing but this
+	// key.
+	opts = append(opts, httpapi.WithSignup(signup.New(cfg.SignupSigningKeyValue)))
 
 	// ONE HASHER FOR THE WHOLE PROCESS, and it is built here rather than inside
 	// buildAuth because two surfaces need one: a password reset hashes a new
