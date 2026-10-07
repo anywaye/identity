@@ -252,7 +252,9 @@ func (s *Service) Delete(ctx context.Context, in DeleteInput) error {
 		//
 		// `account_users_cafaye_members` (00018) is the fifth policy, and it filters
 		// on `user_id = cafaye.current_user_id()` — which is admitted for SELECT and
-		// nothing else, deliberately ("discovery is not authorisation"). Two of the
+		// nothing else, deliberately ("discovery is not authorisation"). (00028
+		// adds a sixth, `account_users_cafaye_resolve`, for the credential
+		// transaction; no digest is set here so it admits nothing.) Two of the
 		// writes below do not need it: `users` and `accounts` carry no policy at all
 		// (00016 says so and explains why — `accounts` has no `account_id` column for
 		// a predicate to use), and the membership rows go by the `users` foreign-key
