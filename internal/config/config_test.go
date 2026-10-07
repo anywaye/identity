@@ -472,9 +472,9 @@ func TestRateLimitBlockDefaultsAndOverrides(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name  string
-		env   map[string]string
-		want  RateLimit
+		name string
+		env  map[string]string
+		want RateLimit
 	}{
 		{
 			name: "unset gets every default",

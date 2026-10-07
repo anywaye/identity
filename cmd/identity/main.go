@@ -291,10 +291,10 @@ func newApp(ctx context.Context, cfg config.Config, logger *slog.Logger) (*app, 
 	// shared store would need later is recorded in the packet report, not
 	// built now.
 	opts = append(opts, httpapi.WithRateLimiter(ratelimit.New(clock.System{}, map[string]ratelimit.Limit{
-		"/v1/users":              {Max: cfg.RateLimit.Signup, Window: cfg.RateLimit.Window},
-		"/v1/session":            {Max: cfg.RateLimit.Signin, Window: cfg.RateLimit.Window},
-		"/v1/signup-timestamp":   {Max: cfg.RateLimit.SignupTimestamp, Window: cfg.RateLimit.Window},
-		"/v1/password-resets":    {Max: cfg.RateLimit.Recovery, Window: cfg.RateLimit.Window},
+		"/v1/users":               {Max: cfg.RateLimit.Signup, Window: cfg.RateLimit.Window},
+		"/v1/session":             {Max: cfg.RateLimit.Signin, Window: cfg.RateLimit.Window},
+		"/v1/signup-timestamp":    {Max: cfg.RateLimit.SignupTimestamp, Window: cfg.RateLimit.Window},
+		"/v1/password-resets":     {Max: cfg.RateLimit.Recovery, Window: cfg.RateLimit.Window},
 		"/v1/email-verifications": {Max: cfg.RateLimit.Recovery, Window: cfg.RateLimit.Window},
 	})))
 
