@@ -143,6 +143,19 @@ func (f *fakeUsers) UpdateName(_ context.Context, _ db.Querier, userID id.UUID, 
 	return nil
 }
 
+// UpdateTheme mirrors UpdateName, including the ErrNotFound on a user that is not
+// there and the write to both maps, for the reasons UpdateName gives.
+func (f *fakeUsers) UpdateTheme(_ context.Context, _ db.Querier, userID id.UUID, theme *string) error {
+	u, ok := f.byID[userID]
+	if !ok {
+		return users.ErrNotFound
+	}
+	u.Preferences.Theme = theme
+	f.byID[userID] = u
+	f.byEmail[u.Email] = u
+	return nil
+}
+
 func (f *fakeUsers) ClearFailures(_ context.Context, _ db.Querier, userID id.UUID) error {
 	f.cleared++
 	u, ok := f.byID[userID]

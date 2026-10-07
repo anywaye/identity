@@ -605,6 +605,160 @@ func TestEndToEndWriteFailureIs500AndLeaksNothing(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// PATCH /v1/me — theme
+// ---------------------------------------------------------------------------
+
+// The theme's whole lifecycle through the HTTP surface: absent for a new user,
+// set, read back, switched, cleared. Every read is GET /v1/me, so the
+// assertion is about what the caller sees rather than about the row — and the
+// column is reached only because the migration this suite's own path applied
+// (dbtest clones the migrated `public.users`) put it there.
+func TestEndToEndThemeSetGetSwitchAndClear(t *testing.T) {
+	h, _, _ := newTestServer(t)
+	email := dbtest.UniqueEmail(t)
+	registerThrough(t, h, email)
+	token := loginToken(t, h, email)
+
+	// A new user has no theme: the key is absent from the response, which is
+	// the system theme — the reference's theme.blank?.
+	if theme := themeOf(t, meWithToken(t, h, token)); theme != nil {
+		t.Errorf("a new user's theme = %q, want the key absent (the system theme)", *theme)
+	}
+
+	// Set dark: the PATCH response echoes it, and a subsequent GET agrees.
+	rec := patchMeWithToken(t, h, token, `{"theme":"dark"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PATCH theme=dark = %d, want 200; body: %s", rec.Code, rec.Body)
+	}
+	if theme := themeOf(t, rec); theme == nil || *theme != "dark" {
+		t.Errorf("the PATCH response theme = %v, want dark", theme)
+	}
+	if theme := themeOf(t, meWithToken(t, h, token)); theme == nil || *theme != "dark" {
+		t.Errorf("GET after the write = %v, want dark", theme)
+	}
+
+	// Switch to light.
+	rec = patchMeWithToken(t, h, token, `{"theme":"light"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PATCH theme=light = %d, want 200; body: %s", rec.Code, rec.Body)
+	}
+	if theme := themeOf(t, meWithToken(t, h, token)); theme == nil || *theme != "light" {
+		t.Errorf("GET after switching = %v, want light", theme)
+	}
+
+	// The field goes back to absent by being OMITTED, which is the same
+	// omission rule display_name has: a field the caller does not send returns
+	// to its zero state, and the system theme — the reference's theme.blank? —
+	// is that zero state. The empty string is not a theme and is refused.
+	rec = patchMeWithToken(t, h, token, `{"display_name":"Kaka"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PATCH without a theme = %d, want 200; body: %s", rec.Code, rec.Body)
+	}
+	if theme := themeOf(t, rec); theme != nil {
+		t.Errorf("the PATCH response theme = %v, want the key absent after the omission cleared it", *theme)
+	}
+	if theme := themeOf(t, meWithToken(t, h, token)); theme != nil {
+		t.Errorf("GET after the omission = %v, want the key absent", *theme)
+	}
+}
+
+// THE THEME IS PER-USER: the row the handler reads is the caller's own, so one
+// user's choice is invisible to another's. This is the tenancy-adjacent
+// behaviour of the profile surface — two accounts, two credentials, and a
+// preference that does not cross the boundary either way.
+func TestEndToEndThemeIsPerUser(t *testing.T) {
+	h, _, _ := newTestServer(t)
+
+	firstEmail := dbtest.UniqueEmail(t)
+	secondEmail := dbtest.UniqueEmail(t)
+	registerThrough(t, h, firstEmail)
+	registerThrough(t, h, secondEmail)
+	first := loginToken(t, h, firstEmail)
+	second := loginToken(t, h, secondEmail)
+
+	// Neither has a theme.
+	if theme := themeOf(t, meWithToken(t, h, first)); theme != nil {
+		t.Errorf("the first user's theme = %q, want absent", *theme)
+	}
+	if theme := themeOf(t, meWithToken(t, h, second)); theme != nil {
+		t.Errorf("the second user's theme = %q, want absent", *theme)
+	}
+
+	// The first user chooses dark. The second user's profile does not change:
+	// the write went to the first user's row and the second user's GET reads
+	// the second user's row.
+	if rec := patchMeWithToken(t, h, first, `{"theme":"dark"}`); rec.Code != http.StatusOK {
+		t.Fatalf("the first user's PATCH = %d, want 200; body: %s", rec.Code, rec.Body)
+	}
+	if theme := themeOf(t, meWithToken(t, h, first)); theme == nil || *theme != "dark" {
+		t.Errorf("the first user's GET = %v, want dark", theme)
+	}
+	if theme := themeOf(t, meWithToken(t, h, second)); theme != nil {
+		t.Errorf("the second user's GET = %v, want absent — the first user's theme crossed into it", *theme)
+	}
+
+	// The second user chooses light, and the first user's dark survives it.
+	if rec := patchMeWithToken(t, h, second, `{"theme":"light"}`); rec.Code != http.StatusOK {
+		t.Fatalf("the second user's PATCH = %d, want 200; body: %s", rec.Code, rec.Body)
+	}
+	if theme := themeOf(t, meWithToken(t, h, first)); theme == nil || *theme != "dark" {
+		t.Errorf("the first user's GET = %v, want dark, untouched by the second user's write", theme)
+	}
+	if theme := themeOf(t, meWithToken(t, h, second)); theme == nil || *theme != "light" {
+		t.Errorf("the second user's GET = %v, want light", theme)
+	}
+}
+
+// An invalid theme is refused with the 422 field error, and the stored
+// preference is UNCHANGED — the refusal happens before any write, so a rejected
+// value cannot overwrite the one the user already had. A number is refused
+// earlier still, by the decoder, as a 400.
+func TestEndToEndInvalidThemeLeavesTheStoredPreferenceUnchanged(t *testing.T) {
+	h, _, _ := newTestServer(t)
+	email := dbtest.UniqueEmail(t)
+	registerThrough(t, h, email)
+	token := loginToken(t, h, email)
+
+	if rec := patchMeWithToken(t, h, token, `{"theme":"dark"}`); rec.Code != http.StatusOK {
+		t.Fatalf("PATCH theme=dark = %d, want 200; body: %s", rec.Code, rec.Body)
+	}
+
+	// "blue" is not a theme: 422, one field error naming theme, and the dark
+	// the user already had is still there. So is the empty string — the system
+	// theme is an absence, not a value, and "" is refused like any other
+	// non-theme.
+	for _, give := range []string{"blue", ""} {
+		rec := patchMeWithToken(t, h, token, `{"theme":"`+give+`"}`)
+		if rec.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("PATCH theme=%q = %d, want 422; body: %s", give, rec.Code, rec.Body)
+		}
+		p := decodeProblem(t, rec)
+		if p.Code != CodeValidationFailed {
+			t.Errorf("code = %q, want %q", p.Code, CodeValidationFailed)
+		}
+		if len(p.Errors) != 1 || p.Errors[0].Field != "theme" || p.Errors[0].Code != users.CodeInvalidFormat {
+			t.Errorf("errors = %v, want one entry naming theme/%s", p.Errors, users.CodeInvalidFormat)
+		}
+		if theme := themeOf(t, meWithToken(t, h, token)); theme == nil || *theme != "dark" {
+			t.Errorf("GET after the refused write = %v, want dark — the stored preference changed", theme)
+		}
+	}
+
+	// A number never reaches the validation: the decoder refuses the wrong JSON
+	// type first, as a 400 rather than a 422.
+	rec := patchMeWithToken(t, h, token, `{"theme":42}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("PATCH theme=42 = %d, want 400; body: %s", rec.Code, rec.Body)
+	}
+	if p := decodeProblem(t, rec); p.Code != CodeInvalidJSON {
+		t.Errorf("code = %q, want %q", p.Code, CodeInvalidJSON)
+	}
+	if theme := themeOf(t, meWithToken(t, h, token)); theme == nil || *theme != "dark" {
+		t.Errorf("GET after the refused write = %v, want dark", theme)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
 
@@ -661,6 +815,50 @@ func meWithToken(t *testing.T, h http.Handler, token string) *httptest.ResponseR
 	req.Header.Set("Authorization", "Bearer "+token)
 	h.ServeHTTP(rec, req)
 	return rec
+}
+
+// patchMeWithToken is meWithToken's write half: PATCH /v1/me with a bearer
+// token, for the tests that change the caller's own profile.
+func patchMeWithToken(t *testing.T, h http.Handler, token, body string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPatch, "/v1/me", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+// loginToken registers nothing — it logs in a user that is already there and
+// returns the session token, the way a browser would hold it.
+func loginToken(t *testing.T, h http.Handler, email string) string {
+	t.Helper()
+
+	rec := post(t, h, "/v1/session", `{"email":"`+email+`","password":"`+validPassword+`"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /v1/session = %d, want 200; body: %s", rec.Code, rec.Body)
+	}
+	var login sessionResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &login); err != nil {
+		t.Fatalf("the login body is not JSON: %v", err)
+	}
+	if login.Token == "" {
+		t.Fatal("the login returned no token")
+	}
+	return login.Token
+}
+
+// themeOf decodes a /v1/me response and returns the caller's theme, or nil
+// when the key is absent — which is the system theme, not a value.
+func themeOf(t *testing.T, rec *httptest.ResponseRecorder) *string {
+	t.Helper()
+
+	var me userResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &me); err != nil {
+		t.Fatalf("the /v1/me body is not JSON: %v\n%s", err, rec.Body)
+	}
+	return me.Theme
 }
 
 func cookieValue(t *testing.T, rec *httptest.ResponseRecorder) string {

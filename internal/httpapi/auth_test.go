@@ -86,6 +86,14 @@ type fakeAuth struct {
 	// as one fact rather than as two parallel slices.
 	updatedDisplayNameFor []id.UUID
 	updatedDisplayName    *string
+	// updateThemeErr is what UpdateTheme returns, and updatedThemeFor /
+	// updatedTheme record what it was asked for, on the same terms as the name
+	// pair above: the caller's own id from the credential, and the theme from
+	// the body — nil being the clearing case, and an omitted theme never
+	// arriving here at all.
+	updateThemeErr  error
+	updatedThemeFor []id.UUID
+	updatedTheme    *string
 	// disableInputs and enableInputs are the WHOLE input the operator surface passed
 	// down, in order.
 	//
@@ -251,6 +259,19 @@ func (f *fakeAuth) UpdateDisplayName(_ context.Context, userID id.UUID, name *st
 	f.updatedDisplayNameFor = append(f.updatedDisplayNameFor, userID)
 	f.updatedDisplayName = name
 	return f.updateNameErr
+}
+
+// UpdateTheme records what it was asked for and returns a programmable error,
+// on the same terms as every other method on this double: what is under test
+// at the router is the credential gate, the validation mapping and the
+// response shape, and the write itself is internal/auth's to hold against a
+// real database.
+func (f *fakeAuth) UpdateTheme(_ context.Context, userID id.UUID, theme *string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.updatedThemeFor = append(f.updatedThemeFor, userID)
+	f.updatedTheme = theme
+	return f.updateThemeErr
 }
 
 // post sends a JSON body and returns the recorder.
@@ -1079,6 +1100,155 @@ func TestUpdateMeTrimsTheDisplayName(t *testing.T) {
 	}
 }
 
+// The theme is set the way the name is: the value from the body, written for the
+// caller's own id, and echoed in the response. Both values in the closed set.
+func TestUpdateMeSetsTheTheme(t *testing.T) {
+	t.Parallel()
+
+	for _, want := range []string{"light", "dark"} {
+		t.Run(want, func(t *testing.T) {
+			t.Parallel()
+
+			f := newFakeAuth()
+			req := httptest.NewRequest(http.MethodPatch, "/v1/me", strings.NewReader(`{"theme":"`+want+`"}`))
+			req.Header.Set("Content-Type", "application/json")
+			req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: "a-session-token"})
+
+			rec := httptest.NewRecorder()
+			New(nil, WithAuth(f)).ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body)
+			}
+
+			var body map[string]any
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+				t.Fatalf("the body is not JSON: %v", err)
+			}
+			if body["theme"] != want {
+				t.Errorf("theme = %v, want %s", body["theme"], want)
+			}
+
+			// The write went to the caller's own id with the theme from the body.
+			if len(f.updatedThemeFor) != 1 || f.updatedThemeFor[0] != f.user.ID {
+				t.Errorf("UpdateTheme was called for %v, want the caller's id %s", f.updatedThemeFor, f.user.ID)
+			}
+			if f.updatedTheme == nil || *f.updatedTheme != want {
+				t.Errorf("UpdateTheme was given %v, want %s", f.updatedTheme, want)
+			}
+		})
+	}
+}
+
+// A theme outside the closed set is the same 422 field error an over-long name
+// gets — one document for "understood and not acceptable", so the two fields
+// on this route cannot drift apart. And NOTHING IS WRITTEN: the refusal
+// happens before either store call, so a rejected theme cannot take the name
+// down with it. The empty string is in the table because the system theme is
+// an ABSENCE, not a value: the way to reach it is to omit the field, and "" is
+// refused like any other non-theme.
+func TestUpdateMeRejectsAnInvalidTheme(t *testing.T) {
+	t.Parallel()
+
+	for _, give := range []string{"", "blue", "system", "DARK", " dark "} {
+		t.Run(give, func(t *testing.T) {
+			t.Parallel()
+
+			f := newFakeAuth()
+			req := httptest.NewRequest(http.MethodPatch, "/v1/me", strings.NewReader(`{"theme":"`+give+`"}`))
+			req.Header.Set("Content-Type", "application/json")
+			req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: "a-session-token"})
+
+			rec := httptest.NewRecorder()
+			New(nil, WithAuth(f)).ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusUnprocessableEntity {
+				t.Fatalf("status = %d, want 422; body: %s", rec.Code, rec.Body)
+			}
+			p := decodeProblem(t, rec)
+			if p.Code != CodeValidationFailed {
+				t.Errorf("code = %q, want %q", p.Code, CodeValidationFailed)
+			}
+			if len(p.Errors) != 1 || p.Errors[0].Field != "theme" || p.Errors[0].Code != users.CodeInvalidFormat {
+				t.Errorf("errors = %v, want one entry naming theme/%s", p.Errors, users.CodeInvalidFormat)
+			}
+
+			if len(f.updatedThemeFor) != 0 {
+				t.Errorf("UpdateTheme was called %d times on a refused request, want 0", len(f.updatedThemeFor))
+			}
+			if len(f.updatedDisplayNameFor) != 0 {
+				t.Errorf("UpdateDisplayName was called %d times on a refused request, want 0", len(f.updatedDisplayNameFor))
+			}
+		})
+	}
+}
+
+// A number is not a theme and never reaches the validation: the JSON decoder
+// refuses a value of the wrong type first, as a 400 rather than a 422 — the
+// request was not understood, rather than understood and unacceptable.
+func TestUpdateMeRejectsANonStringTheme(t *testing.T) {
+	t.Parallel()
+
+	f := newFakeAuth()
+	req := httptest.NewRequest(http.MethodPatch, "/v1/me", strings.NewReader(`{"theme":42}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: "a-session-token"})
+
+	rec := httptest.NewRecorder()
+	New(nil, WithAuth(f)).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", rec.Code, rec.Body)
+	}
+	p := decodeProblem(t, rec)
+	if p.Code != CodeInvalidJSON {
+		t.Errorf("code = %q, want %q", p.Code, CodeInvalidJSON)
+	}
+}
+
+// AN OMITTED THEME CLEARS, the same semantics display_name has — the route's
+// one omission rule, and the decision this packet makes: the two fields cannot
+// have two rules, and the sibling's is the frozen one. A caller who renames
+// themselves and does not mention the theme is saying "the system theme", which
+// is the reference's theme.blank? — an absence, reached by omission because an
+// absence is what blank means in a JSON document.
+func TestUpdateMeClearsTheThemeWhenTheFieldIsOmitted(t *testing.T) {
+	t.Parallel()
+
+	f := newFakeAuth()
+	dark := "dark"
+	f.user.Preferences.Theme = &dark
+
+	req := httptest.NewRequest(http.MethodPatch, "/v1/me", strings.NewReader(`{"display_name":"Kaka"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: "a-session-token"})
+
+	rec := httptest.NewRecorder()
+	New(nil, WithAuth(f)).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body)
+	}
+
+	// The response omits the theme: the field the caller did not send returned
+	// to its zero state, and the zero state has no representation.
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("the body is not JSON: %v", err)
+	}
+	if _, present := body["theme"]; present {
+		t.Errorf("theme is present in the response (%v), want it omitted when cleared", body["theme"])
+	}
+
+	// The write happened, as a nil pointer — the clearing case.
+	if len(f.updatedThemeFor) != 1 {
+		t.Fatalf("UpdateTheme was called %d times, want 1", len(f.updatedThemeFor))
+	}
+	if f.updatedTheme != nil {
+		t.Errorf("UpdateTheme was given %v, want nil (the clearing case)", *f.updatedTheme)
+	}
+}
+
 func TestUpdateMeRejectsAnonymous(t *testing.T) {
 	t.Parallel()
 
@@ -1170,6 +1340,65 @@ func TestMeOmitsTheDisplayNameWhenUnset(t *testing.T) {
 	}
 	if _, present := body["display_name"]; present {
 		t.Errorf("display_name is present in the response, want it omitted when unset")
+	}
+	if len(body) != 2 {
+		t.Errorf("the response has %d fields (%v), want exactly id and email", len(body), body)
+	}
+}
+
+// The theme is projected the way the name is: present when the user has
+// chosen one, omitted when they have not. An absent theme means the system
+// theme — the reference's theme.blank? — so "no theme" and "the system
+// theme" are one state with one representation, and a null would be a second
+// representation of it.
+func TestMeReturnsTheThemeWhenSet(t *testing.T) {
+	t.Parallel()
+
+	f := newFakeAuth()
+	dark := "dark"
+	f.user.Preferences.Theme = &dark
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/me", nil)
+	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: "a-session-token"})
+
+	rec := httptest.NewRecorder()
+	New(nil, WithAuth(f)).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body)
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("the body is not JSON: %v", err)
+	}
+	if body["theme"] != "dark" {
+		t.Errorf("theme = %v, want dark", body["theme"])
+	}
+}
+
+func TestMeOmitsTheThemeWhenUnset(t *testing.T) {
+	t.Parallel()
+
+	f := newFakeAuth()
+	// f.user.Preferences.Theme is nil — the default.
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/me", nil)
+	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: "a-session-token"})
+
+	rec := httptest.NewRecorder()
+	New(nil, WithAuth(f)).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body)
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("the body is not JSON: %v", err)
+	}
+	if _, present := body["theme"]; present {
+		t.Errorf("theme is present in the response, want it omitted when unset")
 	}
 	if len(body) != 2 {
 		t.Errorf("the response has %d fields (%v), want exactly id and email", len(body), body)
@@ -1534,5 +1763,8 @@ func (panickingAuth) Enable(context.Context, auth.EnableInput) error {
 	panic("handler exploded")
 }
 func (panickingAuth) UpdateDisplayName(context.Context, id.UUID, *string) error {
+	panic("handler exploded")
+}
+func (panickingAuth) UpdateTheme(context.Context, id.UUID, *string) error {
 	panic("handler exploded")
 }

@@ -1833,18 +1833,24 @@ paths:
     patch:
       tags: [sessions]
       operationId: updateCurrentUser
-      summary: Set the caller's display name
+      summary: Set the caller's display name and theme
       description: |
-        Sets or clears the authenticated user's display name.
+        Sets or clears the authenticated user's display name, and sets or
+        clears the theme.
 
         The name is trimmed before storing. An empty string clears the name,
         returning the column to NULL — the same "no name" every user who never
         set one has. There is no uniqueness constraint: a display name is not
         an identifier.
 
-        The response carries the name that was just written, so a client that
-        renders from the response cannot be shown a stale value on the request
-        that changed it.
+        The theme is one of "light" or "dark". An omitted theme clears it,
+        returning the profile to the system theme — the same omission rule
+        `display_name` has, and the reference's `theme.blank?` is that
+        absence.
+
+        The response carries the values that were just written, so a client
+        that renders from the response cannot be shown a stale value on the
+        request that changed it.
       security:
         - sessionCookie: []
         - bearerToken: []
@@ -1867,6 +1873,15 @@ paths:
                     express, so a caller here is always saying "this is my
                     name now", and the two things they can mean are "this"
                     and "nothing".
+                theme:
+                  type: string
+                  enum: [light, dark]
+                  description: |
+                    The theme to set. An omitted field clears it, returning
+                    the profile to the system theme — the same omission rule
+                    `display_name` above has, and the reference's
+                    `theme.blank?` is that absence. The empty string is not a
+                    theme and is refused.
             examples:
               default:
                 value:
@@ -5985,8 +6000,11 @@ components:
       description: |
         The public projection of an account. `display_name` is present only when
         the user has set one; an absent field means "no name", which is the same
-        state as a null. There is no password digest, no lockout state and no
-        timestamp here, and adding one is a contract change.
+        state as a null. `theme` is present only when the user has chosen one,
+        and an absent field means the system theme — the same
+        omitted-rather-than-null reasoning. There is no password digest, no
+        lockout state and no timestamp here, and adding one is a contract
+        change.
       additionalProperties: false
       required: [id, email]
       properties:
@@ -6008,6 +6026,14 @@ components:
             client written against the two-field response cannot tell a user
             with no name from a user whose name this service has never heard
             of. Set or cleared via `PATCH /v1/me`.
+        theme:
+          type: string
+          enum: [light, dark]
+          description: |
+            The profile's theme. Absent when the user has not chosen one —
+            the key is omitted from the preferences document, which is the
+            same state as a null and means the system theme, the reference's
+            own `theme.blank?`. Set or cleared via `PATCH /v1/me`.
 
     RegisterRequest:
       type: object

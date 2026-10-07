@@ -88,6 +88,11 @@ type User struct {
 	// the same state, and the column is NULL for both — a second way to say it
 	// is a second thing to disagree with this one.
 	DisplayName *string
+	// Preferences is the profile's settings document (00027). A struct value
+	// rather than a pointer because the column is NOT NULL DEFAULT '{}'::jsonb:
+	// every row has a document, and "no preferences" is the empty document
+	// rather than a NULL. See Preferences for the one key it carries and why.
+	Preferences Preferences
 	// PasswordDigest is an argon2id encoded digest, never a plaintext password.
 	PasswordDigest      string
 	FailedLoginAttempts int
@@ -254,4 +259,48 @@ func ValidateDisplayName(name string) error {
 		return fieldErr("display_name", CodeTooLong)
 	}
 	return nil
+}
+
+// Preferences is the jsonb document in users.preferences (00027).
+//
+// EXACTLY ONE FIELD, because the reference has exactly one: the theme. The
+// document is a container for the profile's settings, and the closed set of keys
+// is a code fact — the same reasoning migrations/00011 gives for an api key's
+// scopes and 00012 for an audit log's action: adding a key is one Go change and
+// one UPDATE, not one migration, and a migration per key would be a schema that
+// drifts from the code that reads it. The day a second key lands, this struct
+// gains a field and nothing else moves.
+//
+// Theme is a pointer with no `false`, for the reason DisplayName is one: the
+// document is a map, and "the key is absent" and "the key is present and null"
+// are the same state — the system theme, which is the reference's
+// `theme.blank?`. The JSON tag is omitempty so a cleared theme marshals to the
+// empty document rather than to {"theme":null}, and the two stop being two
+// spellings of one answer.
+type Preferences struct {
+	Theme *string `json:"theme,omitempty"`
+}
+
+// ValidateTheme checks a theme against the closed set the reference defines:
+// "light" and "dark", and nothing else. The reference's system theme is a BLANK
+// one (User::Theme#system_theme? is theme.blank?), and the JSON API's blank is
+// not a value but an ABSENCE — the key omitted from the preferences document —
+// which PATCH /v1/me expresses by omitting the field. So the empty string is
+// refused here like any other non-theme: it is not one of the two themes, and
+// the state it might have meant already has a representation.
+//
+// EVERYTHING ELSE IS REFUSED, and the refusal is invalid_format rather than a
+// code of its own: the existing codes are the contract (they land verbatim in
+// the errors[] array of the 422), and "a value outside the closed set" is a
+// format problem in exactly the sense a malformed address is. "blue", "DARK"
+// and "system" are not themes. A number never reaches this function at all —
+// the JSON decoder refuses it first, as a 400 rather than a 422: the request
+// was not understood, rather than understood and unacceptable.
+func ValidateTheme(theme string) error {
+	switch theme {
+	case "light", "dark":
+		return nil
+	default:
+		return fieldErr("theme", CodeInvalidFormat)
+	}
 }
