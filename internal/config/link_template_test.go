@@ -44,6 +44,13 @@ import (
 // drift apart from the fixture they describe.
 const defaultTemplate = "https://app.example.com/reset?token=" + recoveryTokenPlaceholder
 
+// invitationLink is the accept-screen template every courier-wired fixture in
+// this file supplies, the way they supply the credentials: it is required
+// whenever the courier block is wired, and the tables below are about the
+// RECOVERY default, not about the invitation refusal (which courier_test.go
+// holds).
+const invitationLink = "https://app.example.com/invitations/accept?token=" + recoveryTokenPlaceholder
+
 // TestTheDefaultLinkTemplateIsTheDefaultForEveryPurpose is the backwards
 // compatibility claim, as a table over the four configurations a deployment can be
 // in once the per-purpose variables exist.
@@ -137,6 +144,9 @@ func TestTheDefaultLinkTemplateIsTheDefaultForEveryPurpose(t *testing.T) {
 			for key, value := range tc.env {
 				env[key] = value
 			}
+			// Required whenever the courier block is wired, so every row supplies
+			// it the way it supplies the credentials.
+			env["INVITATION_LINK_TEMPLATE"] = invitationLink
 
 			cfg, err := Load(lookupFrom(env))
 			if err != nil {
@@ -144,6 +154,10 @@ func TestTheDefaultLinkTemplateIsTheDefaultForEveryPurpose(t *testing.T) {
 			}
 			if !cfg.CourierEnabled() {
 				t.Fatal("CourierEnabled = false for a fully configured deployment")
+			}
+			if cfg.InvitationLinkTemplate != invitationLink {
+				t.Errorf("InvitationLinkTemplate = %q, want the variable's value %q",
+					cfg.InvitationLinkTemplate, invitationLink)
 			}
 			if len(cfg.LinkTemplates) != len(tc.want) {
 				t.Fatalf("LinkTemplates has %d purposes (%v), want %d",
@@ -472,6 +486,7 @@ func TestABlankLinkTemplateIsAbsentRatherThanBroken(t *testing.T) {
 		"COURIER_TOKEN":                    "svc-3f9a1c7e5b2d8046",
 		"RECOVERY_LINK_TEMPLATE":           defaultTemplate,
 		"EMAIL_VERIFICATION_LINK_TEMPLATE": "   ",
+		"INVITATION_LINK_TEMPLATE":         invitationLink,
 		// The one required secret, so the boot this test is about can happen.
 		"SIGNUP_SIGNING_KEY": base64.RawURLEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef")),
 	}))
@@ -498,12 +513,15 @@ func TestABlankLinkTemplateIsAbsentRatherThanBroken(t *testing.T) {
 	}
 
 	// The same rule with no default to fall back to: a blank variable is then a
-	// purpose with nothing, which is the refusal the other test asserts.
+	// purpose with nothing, which is the refusal the other test asserts. The
+	// invitation template is supplied so the refusal is THIS one and not the
+	// invitation variable's — the two are distinguished by what they name.
 	if _, err := Load(lookupFrom(map[string]string{
 		"COURIER_BASE_URL":                 "https://courier.example.com",
 		"COURIER_TOKEN":                    "svc-3f9a1c7e5b2d8046",
 		"PASSWORD_RESET_LINK_TEMPLATE":     defaultTemplate,
 		"EMAIL_VERIFICATION_LINK_TEMPLATE": "   ",
+		"INVITATION_LINK_TEMPLATE":         invitationLink,
 	})); !errors.Is(err, ErrInvalidCourier) {
 		t.Errorf("Load = %v, want one matching ErrInvalidCourier; a blank variable with no "+
 			"default leaves the purpose with nothing", err)

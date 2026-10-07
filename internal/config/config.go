@@ -216,6 +216,29 @@ type Config struct {
 	// operator to discover it from a user.
 	DefaultLinkTemplate string
 
+	// InvitationLinkTemplate is the value of INVITATION_LINK_TEMPLATE, and it is
+	// REQUIRED whenever the courier block is wired — see loadCourier.
+	//
+	// IT IS NOT A RECOVERY PURPOSE AND MUST NOT BECOME ONE: the recovery
+	// machinery is keyed by `recovery.Purpose`, a closed set of two, and an
+	// invitation is an accounts concept — its token is an invitation token and
+	// its screen is the product's accept route. The per-purpose link machinery
+	// covers password_reset and verify_email because those are the purposes
+	// recovery can deliver; an invitation is delivered here, by this service,
+	// because the accept link is built from a token only this process holds.
+	//
+	// IT HAS NO DEFAULT AND FALLS BACK TO NOTHING, which is the difference from
+	// the recovery templates and the whole reason it is a separate variable.
+	// The recovery default exists because every deployment in existence already
+	// has RECOVERY_LINK_TEMPLATE set; no such promise exists for invitations,
+	// because no deployment has ever had a working invite-by-email path to
+	// break. And the failure direction is the one identity-24 fixed: an
+	// invitation link inheriting the reset template is a mail whose button
+	// leads to a screen that cannot redeem it. So a deployment that can send
+	// mail and cannot say where invitation links go refuses to start, naming
+	// the variable, rather than discovering it at a user's first invite.
+	InvitationLinkTemplate string
+
 	// OAuth is the social-login block, read as one `oauth.Settings` rather than as
 	// six fields.
 	//
@@ -525,7 +548,8 @@ func (c Config) CourierToken() (string, error) {
 // `courier.NewRecoveryMailer`, which refuses a purpose with no template rather than
 // substituting another purpose's.
 func (c Config) CourierEnabled() bool {
-	return c.CourierBaseURL != "" && c.CourierTokenValue != "" && len(c.LinkTemplates) > 0
+	return c.CourierBaseURL != "" && c.CourierTokenValue != "" &&
+		len(c.LinkTemplates) > 0 && c.InvitationLinkTemplate != ""
 }
 
 // LinkTemplateFor reports the template a purpose resolved to, or "" for a purpose
@@ -932,12 +956,56 @@ func (c *Config) loadCourier(lookup Lookup) error {
 	if err != nil {
 		return err
 	}
+	invitationTemplate, err := resolveInvitationLinkTemplate(lookup)
+	if err != nil {
+		return err
+	}
 
 	c.CourierBaseURL = baseURL
 	c.CourierTokenValue = token
 	c.LinkTemplates = templates
 	c.DefaultLinkTemplate = lookupValue(lookup, defaultLinkTemplateVariable)
+	c.InvitationLinkTemplate = invitationTemplate
 	return nil
+}
+
+// invitationLinkTemplateVariable names the one link an invitation's accept
+// screen is reached by.
+//
+// IT IS A CONSTANT RATHER THAN A LITERAL AT THE CALL SITE for the reason
+// defaultLinkTemplateVariable is: a variable an operator types has to be spelled
+// the same in the environment, the refusal, and the compose file, and a second
+// spelling is a second thing to drift.
+const invitationLinkTemplateVariable = "INVITATION_LINK_TEMPLATE"
+
+// resolveInvitationLinkTemplate reads and validates the invitation link.
+//
+// IT IS REQUIRED WHENEVER THE COURIER BLOCK IS WIRED, and that is the whole
+// rule. The invite route is mounted unconditionally — it is part of the
+// tenancy surface, not a conditional one — so a deployment with a mail path
+// and no invitation template is not a legitimate steady state: it is a
+// deployment whose invite path fails at send time, on every invite, with a 500
+// that names nothing actionable. Failing at boot costs one log line naming
+// the variable; failing at invite time costs an admin who cannot invite
+// anybody and cannot tell why from the response.
+//
+// THE VALIDATION IS validateLinkTemplate's, applied here rather than delegated,
+// for the reason validateMailBaseURL gives: this service must refuse to start
+// on a broken link whether or not a courier client is built.
+func resolveInvitationLinkTemplate(lookup Lookup) (string, error) {
+	variable := invitationLinkTemplateVariable
+	raw := lookupValue(lookup, variable)
+	if raw == "" {
+		return "", fmt.Errorf("%w: %s is not set, and a deployment that can send mail "+
+			"needs it: every invitation is mailed with a link to the accept "+
+			"screen, and without this variable each one would be mailed with "+
+			"nothing to click. Set %s to the screen that redeems an invitation",
+			ErrInvalidCourier, variable, variable)
+	}
+	if err := validateLinkTemplate(variable, raw); err != nil {
+		return "", err
+	}
+	return raw, nil
 }
 
 // anyLinkTemplateConfigured reports whether any link variable is set, and which one
@@ -950,6 +1018,9 @@ func (c *Config) loadCourier(lookup Lookup) error {
 func anyLinkTemplateConfigured(lookup Lookup) (bool, string) {
 	if value := lookupValue(lookup, defaultLinkTemplateVariable); value != "" {
 		return true, defaultLinkTemplateVariable
+	}
+	if value := lookupValue(lookup, invitationLinkTemplateVariable); value != "" {
+		return true, invitationLinkTemplateVariable
 	}
 	for _, variable := range sortedLinkTemplateVariables() {
 		if value := lookupValue(lookup, variable); value != "" {

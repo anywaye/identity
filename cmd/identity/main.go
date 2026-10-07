@@ -509,6 +509,19 @@ func buildAuth(
 	// two blocks is the dependency order, which is the reason they share a
 	// function rather than being two independent builders in newApp.
 	accountStore := accounts.NewStore(pool)
+
+	// The invitation mailer, built beside the tenancy service it feeds and
+	// passed into it. It is nil when this deployment has no mail path — a
+	// supported state, not a broken one: the invitation is created and no mail
+	// is claimed, and the 201 does not say an email was on its way. When the
+	// deployment can send, it is built from the same resolved configuration
+	// the recovery mailer uses, and config.Load has already refused to boot a
+	// deployment that cannot say where invitation links go.
+	invitationMailer, err := buildInvitationMailer(cfg, logger)
+	if err != nil {
+		return nil, nil, nil, nil, false, err
+	}
+
 	tenancy := accounts.NewService(
 		acctboundary.TxRunner{TxRunner: db.TxRunner{Pool: pool}},
 		accountStore,
@@ -517,6 +530,7 @@ func buildAuth(
 		apiKeyStore,
 		clock.System{},
 		db.Direct{Pool: pool},
+		invitationMailer,
 	)
 
 	// THE DELETION SERVICE, and it is built HERE rather than on its own because it
@@ -880,6 +894,52 @@ func buildRecovery(
 // could intercept; `TestTheClientNeverPrintsACredential` drives a real request
 // against a server that echoes the credential back and sweeps every formatting verb
 // for it.
+// buildInvitationMailer builds the invitation mailer, or nil when this deployment
+// has no mail path.
+//
+// IT IS NIL RATHER THAN A REFUSING IMPLEMENTATION, and that is the difference from
+// recovery's mailer. A deployment with no mail path still has a tenancy feature:
+// the invitation is created, the token is returned to the admin, and no mail is
+// claimed. The refusing shape exists for recovery because its routes are mounted
+// and answer 503; the invite route answers 201 with a token the admin can give
+// the invitee by hand, which is the better answer for a deployment that cannot
+// send.
+//
+// THE TEMPLATE IS config.Load's RESOLVED value, for the reason buildMailer's
+// templates are: a caller that re-resolved it here would be a second answer to
+// "where does this link point". And config.Load has already refused to boot when
+// the variable is unset or broken, so a deployment that reaches this function
+// with a mail path has a template courier will accept.
+func buildInvitationMailer(cfg config.Config, logger *slog.Logger) (*courier.InvitationMailer, error) {
+	if !cfg.CourierEnabled() {
+		return nil, nil
+	}
+
+	client, err := courier.New(courier.Config{
+		BaseURL: cfg.CourierBaseURL,
+		Token:   cfg.CourierTokenValue,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("building the courier client: %w", err)
+	}
+	mailer, err := courier.NewInvitationMailer(courier.InvitationMailerConfig{
+		Client:       client,
+		LinkTemplate: cfg.InvitationLinkTemplate,
+		Logger:       logger,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("building the invitation mailer: %w", err)
+	}
+
+	// ONE LINE, and what it does not say matches the recovery mailer's: it does
+	// not say the invitation was sent. courier's `/readyz` says courier's
+	// database answers; a send is where a misconfigured provider is found.
+	logger.Info("invitations can be emailed through courier",
+		"link_template", cfg.InvitationLinkTemplate,
+	)
+	return mailer, nil
+}
+
 func buildMailer(cfg config.Config, logger *slog.Logger) (recovery.Mailer, error) {
 	if !cfg.CourierEnabled() {
 		logger.Warn("account recovery is mounted, but this deployment cannot send email. " +

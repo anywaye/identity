@@ -177,10 +177,10 @@ const (
 	// account that already exists rather than about joining it.
 	TypePasswordReset = "password_reset"
 
-	// TypeTeamInvitation is courier's account-invitation message. identity mounts
-	// no invitation flow that sends mail, so nothing here builds a request for it;
-	// the constant exists so the vocabulary is complete and the drift test has
-	// something to compare against.
+	// TypeTeamInvitation is courier's account-invitation message, and identity
+	// sends it: an invitation's accept link is built from the one-time token
+	// only identity holds, so the mail goes out directly through this client
+	// rather than through the bus. See InvitationMailer.
 	TypeTeamInvitation = "team_invitation"
 
 	// TypeAccountSecurity is courier's security notice: the mail a person is owed
@@ -242,6 +242,15 @@ type FieldError struct {
 // whose value could only ever be empty. Sending `omitempty` placeholders for them
 // would be a request courier has to be told to ignore, and the vocabulary is
 // closed precisely so that nothing has to be ignored.
+//
+// THE THREE `team_invitation` FIELDS ARE THE EXCEPTION THAT PROVES THE RULE, and
+// they are in it rather than omitted because identity now sends that message:
+// an invitation's accept link is built from a token only this process holds, so
+// the mail cannot wait for a consumer that can never render it. They are
+// `omitempty` because they are meaningless for every other type — a `welcome`
+// with an `account_name` is a field courier's schema does not use — and
+// `validate` refuses a `team_invitation` missing any of the four, so the
+// vocabulary stays closed in both directions.
 type MessageRequest struct {
 	// Type is one of the `Type*` constants. Required.
 	Type string `json:"type"`
@@ -270,6 +279,24 @@ type MessageRequest struct {
 	// refused here rather than discovered as a 422 over the network: by the time
 	// courier is called, a token has been minted and a row written.
 	URL string `json:"url,omitempty"`
+
+	// AccountName is the account the invitee is invited to. Required by
+	// `team_invitation` alone — courier's template renders "invited you to join
+	// <account_name>" — and omitted for every other type, for the reason the
+	// type's own comment gives.
+	AccountName string `json:"account_name,omitempty"`
+
+	// InvitedBy is the name of the person who sent the invitation, rendered by
+	// courier's template immediately before "invited you to join". Required by
+	// `team_invitation` alone, and omitted everywhere else.
+	InvitedBy string `json:"invited_by,omitempty"`
+
+	// Role is the role the invitation offers, which courier's template renders
+	// as "as <role>". Optional in courier's schema and always populated here,
+	// because the invitation carries one and a template that renders "as ." is
+	// worse than a field the schema does not require. Sent only for
+	// `team_invitation`; meaningless for every other type.
+	Role string `json:"role,omitempty"`
 
 	// IdempotencyKey is the `Idempotency-Key` header.
 	//
@@ -741,10 +768,10 @@ func (c *Client) scrubbed(err error) error {
 
 // validate refuses everything this client can know is wrong before the wire.
 //
-// The three checks are courier's own rules, read from its document, and each one
-// is here rather than discovered as a 422 because by the time courier answers, a
-// recovery token has been minted, its digest written, and the caller has been told
-// a message is on its way.
+// The checks are courier's own rules, read from its document, and each one is
+// here rather than discovered as a 422 because by the time courier answers, a
+// token has been minted, its digest written, and the caller has been told a
+// message is on its way.
 func validate(req MessageRequest) error {
 	if !IsType(req.Type) {
 		return fmt.Errorf("%w: %q is not a type courier sends", ErrInvalidRequest, req.Type)
@@ -765,6 +792,23 @@ func validate(req MessageRequest) error {
 		// with no link is a mail nobody can use, and it is refused here rather than
 		// delivered.
 		return fmt.Errorf("%w: a %s needs the link it carries", ErrInvalidRequest, req.Type)
+	}
+	if req.Type == TypeTeamInvitation {
+		// courier's `team_invitation` requires email, url, account_name and
+		// invited_by — its own `required/1` — and each is checked here for the
+		// reason the password_reset check gives: by the time courier answers a
+		// 422, a token has been minted and a row written. The email is checked
+		// above for every type; the other three are this type's own.
+		if req.URL == "" {
+			return fmt.Errorf("%w: a %s needs the link it carries", ErrInvalidRequest, req.Type)
+		}
+		if req.AccountName == "" {
+			return fmt.Errorf("%w: a %s needs the account it invites to", ErrInvalidRequest, req.Type)
+		}
+		if req.InvitedBy == "" {
+			return fmt.Errorf("%w: a %s needs the name of the person who sent it",
+				ErrInvalidRequest, req.Type)
+		}
 	}
 	return nil
 }
