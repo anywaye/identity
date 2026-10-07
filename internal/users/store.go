@@ -37,7 +37,7 @@ func NewStore(pool db.Pool) *Store { return &Store{pool: pool} }
 
 // userColumns is the select list, in the order scan expects. One constant, so a
 // column added here cannot be forgotten in one query and present in another.
-const userColumns = `id, email, display_name, password_digest, failed_login_attempts, locked_until, ` +
+const userColumns = `id, email, display_name, preferences, password_digest, failed_login_attempts, locked_until, ` +
 	`email_verified_at, disabled_at, created_at, updated_at`
 
 // Create inserts a user and returns the stored row.
@@ -53,7 +53,7 @@ func (s *Store) Create(ctx context.Context, q db.Querier, p CreateParams) (User,
 
 	var u User
 	err := q.QueryRow(ctx, query, p.Email, p.PasswordDigest).Scan(
-		&u.ID, &u.Email, &u.DisplayName, &u.PasswordDigest, &u.FailedLoginAttempts, &u.LockedUntil,
+		&u.ID, &u.Email, &u.DisplayName, &u.Preferences, &u.PasswordDigest, &u.FailedLoginAttempts, &u.LockedUntil,
 		&u.EmailVerifiedAt, &u.DisabledAt, &u.CreatedAt, &u.UpdatedAt,
 	)
 	if err != nil {
@@ -221,6 +221,42 @@ func (s *Store) UpdateName(ctx context.Context, q db.Querier, userID id.UUID, na
 	return nil
 }
 
+// UpdateTheme writes the preferences document, setting the theme or clearing it.
+//
+// theme is A POINTER for the reason UpdateName's is: nil is the clearing case
+// rather than a zero value. A cleared theme and a never-set theme are the same
+// state — the key is absent from the document — and both arrive here as nil, so
+// the document written is the empty one and not {"theme":null}. A non-nil value
+// writes {"theme": *theme}; the value is expected to be already checked against
+// the closed set, because the rules live in ValidateTheme for the reason every
+// other method here gives: the store does not decide what a valid theme is, it
+// decides what a valid UPDATE is.
+//
+// THE DOCUMENT IS WHOLE, not merged: this method writes the one key the
+// document has, and a merge would be a read-modify-write against a column
+// nothing else writes. The caller is the use case that owns the profile
+// surface, and it is the only writer.
+func (s *Store) UpdateTheme(ctx context.Context, q db.Querier, userID id.UUID, theme *string) error {
+	var prefs Preferences
+	if theme != nil {
+		prefs.Theme = theme
+	}
+
+	const query = `
+		UPDATE users
+		SET preferences = $2, updated_at = now()
+		WHERE id = $1`
+
+	tag, err := q.Exec(ctx, query, userID, prefs)
+	if err != nil {
+		return fmt.Errorf("setting a theme: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // Disable stamps `disabled_at` and does nothing else to the row.
 //
 // # IT IS NOT A LOCKOUT, AND IT IS NOT A PASSWORD RESET
@@ -381,7 +417,7 @@ func (s *Store) MarkEmailVerified(ctx context.Context, q db.Querier, userID id.U
 func scanOne(row interface{ Scan(...any) error }) (User, error) {
 	var u User
 
-	err := row.Scan(&u.ID, &u.Email, &u.DisplayName, &u.PasswordDigest, &u.FailedLoginAttempts, &u.LockedUntil,
+	err := row.Scan(&u.ID, &u.Email, &u.DisplayName, &u.Preferences, &u.PasswordDigest, &u.FailedLoginAttempts, &u.LockedUntil,
 		&u.EmailVerifiedAt, &u.DisabledAt, &u.CreatedAt, &u.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return User{}, ErrNotFound

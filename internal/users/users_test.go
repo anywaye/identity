@@ -136,6 +136,43 @@ func TestValidatePassword(t *testing.T) {
 	}
 }
 
+func TestValidateTheme(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		give     string
+		wantCode string
+	}{
+		// The closed set is the reference's: two values, plus the empty string
+		// that means the system theme. Nothing else is a theme.
+		{name: "light", give: "light"},
+		{name: "dark", give: "dark"},
+		{name: "empty clears to the system theme", give: ""},
+		{name: "a value outside the closed set", give: "blue", wantCode: "invalid_format"},
+		{name: "the reference's system label is not a theme", give: "system", wantCode: "invalid_format"},
+		{name: "themes are case sensitive", give: "DARK", wantCode: "invalid_format"},
+		{name: "whitespace is not trimmed away", give: " dark ", wantCode: "invalid_format"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := ValidateTheme(tt.give)
+
+			if tt.wantCode == "" {
+				if err != nil {
+					t.Errorf("ValidateTheme(%q) = %v, want nil", tt.give, err)
+				}
+				return
+			}
+
+			assertFieldError(t, err, "theme", tt.wantCode)
+		})
+	}
+}
+
 func TestFieldErrorCarriesTheFieldAndTheCode(t *testing.T) {
 	t.Parallel()
 

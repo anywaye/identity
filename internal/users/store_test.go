@@ -413,6 +413,92 @@ func TestStoreUpdateNameMissesCleanly(t *testing.T) {
 	}
 }
 
+// UpdateTheme sets the theme and reads it back, for both values in the closed
+// set. The read is through ByID, so the assertion is about the row rather than
+// about what the UPDATE was handed.
+func TestStoreUpdateThemeSetsAndReadsBack(t *testing.T) {
+	pool := dbtest.Pool(t)
+	store := NewStore(pool)
+
+	ctx := context.Background()
+	created, err := store.Create(ctx, pool, CreateParams{
+		Email:          dbtest.UniqueEmail(t),
+		PasswordDigest: "$argon2id$fake",
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// A new user has no theme, which is the state the migration leaves every
+	// existing row in: the key is absent, and the system theme is what an
+	// absent key means.
+	if created.Preferences.Theme != nil {
+		t.Errorf("Preferences.Theme for a new user = %q, want nil", *created.Preferences.Theme)
+	}
+
+	for _, want := range []string{"light", "dark"} {
+		t.Run(want, func(t *testing.T) {
+			if err := store.UpdateTheme(ctx, pool, created.ID, &want); err != nil {
+				t.Fatalf("UpdateTheme(%q): %v", want, err)
+			}
+
+			byID, err := store.ByID(ctx, pool, created.ID)
+			if err != nil {
+				t.Fatalf("ByID: %v", err)
+			}
+			if byID.Preferences.Theme == nil || *byID.Preferences.Theme != want {
+				t.Errorf("Preferences.Theme = %v, want %q", byID.Preferences.Theme, want)
+			}
+		})
+	}
+}
+
+// UpdateTheme with nil clears the theme, and the cleared state is the same
+// "no theme" a user who never set one has: the key is absent, not present-and-
+// empty. That is the reference's theme.blank?, and it is what makes the GET
+// projection omit the field rather than render "".
+func TestStoreUpdateThemeClearsWithNil(t *testing.T) {
+	pool := dbtest.Pool(t)
+	store := NewStore(pool)
+
+	ctx := context.Background()
+	created, err := store.Create(ctx, pool, CreateParams{
+		Email:          dbtest.UniqueEmail(t),
+		PasswordDigest: "$argon2id$fake",
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	dark := "dark"
+	if err := store.UpdateTheme(ctx, pool, created.ID, &dark); err != nil {
+		t.Fatalf("UpdateTheme set: %v", err)
+	}
+	if err := store.UpdateTheme(ctx, pool, created.ID, nil); err != nil {
+		t.Fatalf("UpdateTheme clear: %v", err)
+	}
+
+	byID, err := store.ByID(ctx, pool, created.ID)
+	if err != nil {
+		t.Fatalf("ByID: %v", err)
+	}
+	if byID.Preferences.Theme != nil {
+		t.Errorf("Preferences.Theme = %v, want nil after clearing", *byID.Preferences.Theme)
+	}
+}
+
+// UpdateTheme on a missing user returns ErrNotFound.
+func TestStoreUpdateThemeMissesCleanly(t *testing.T) {
+	pool := dbtest.Pool(t)
+	store := NewStore(pool)
+
+	ctx := context.Background()
+	dark := "dark"
+	if err := store.UpdateTheme(ctx, pool, id.MustNew(), &dark); !errors.Is(err, ErrNotFound) {
+		t.Errorf("UpdateTheme on a missing user = %v, want errors.Is(_, ErrNotFound)", err)
+	}
+}
+
 // A row that has always had no display name reads fine, and that is the state
 // every user who existed before this migration is in.
 //
