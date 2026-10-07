@@ -567,7 +567,7 @@ func TestEachPurposesLinkTemplateIsHeldToTheSameThreeRefusals(t *testing.T) {
 //
 // # WHY TWO TABLES AND NOT ONE, RESTATED AS A CHECK
 //
-// `courierTypeFor` says which of courier's three messages can express a message of
+// `courierTypeFor` says which of courier's six messages can express a message of
 // `internal/recovery`'s, and `linkPurposeFor` says what the token in that message is
 // FOR. They are kept apart because they are different vocabularies with different
 // owners — courier's and `recovery`'s — and because they will diverge: the moment

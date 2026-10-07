@@ -70,10 +70,50 @@ var courierFields = map[string]struct{}{
 // ("Welcome aboard") are about a registration. The row is here so a test that
 // exercises courier's own validation directly has the full set, and so the type
 // exists in the fake's vocabulary as it does in courier's.
+//
+// The three rows courier grew in `20373bf` are here for the same reason, and their
+// required-field lists are READ FROM COURIER'S DOCUMENT rather than guessed:
+// `SendMessageRequest` requires `user_id` and `to` of every type, and its field
+// descriptions name `url` as required by `password_reset`, `team_invitation` and
+// `email_change_current`, `reason` by `account_security`, and `previous_email` by
+// `email_change_new` — the same lists `Courier.Mailers.required/1` returns. The
+// two `email_change` rows will be exercised by packet m70b, which sends them.
 var courierRequired = map[string][]string{
-	TypeWelcome:        {"user_id", "to"},
-	TypePasswordReset:  {"user_id", "to", "url"},
-	TypeTeamInvitation: {"user_id", "to", "url", "account_name", "invited_by"},
+	TypeWelcome:            {"user_id", "to"},
+	TypePasswordReset:      {"user_id", "to", "url"},
+	TypeTeamInvitation:     {"user_id", "to", "url", "account_name", "invited_by"},
+	TypeAccountSecurity:    {"user_id", "to", "reason"},
+	TypeEmailChangeCurrent: {"user_id", "to", "url"},
+	TypeEmailChangeNew:     {"user_id", "to", "previous_email"},
+}
+
+// TestTheFakesVocabularyIsThePackages holds the fake's THIRD copy of the vocabulary
+// to the other two.
+//
+// `courierRequired`'s keys are what the fake will ACCEPT, and the fake is
+// courier's send path in Go — so its vocabulary is courier's whole catalog, which
+// is this package's constants, which is the enum in courier's document. Three
+// lists that must agree with nothing in the type system joining them: the drift
+// check holds the constants against courier's document, and this holds the fake
+// against the constants. A type the fake refuses is a 422
+// `unknown_notification_type` for a request courier would have accepted; a row
+// for a type nothing declares is a vocabulary this package claims and does not
+// have. Either direction is the failure this packet exists to fix.
+func TestTheFakesVocabularyIsThePackages(t *testing.T) {
+	for typ := range courierRequired {
+		if !IsType(typ) {
+			t.Errorf("the fake accepts %q, which is not one of this package's "+
+				"Type* constants; courier's send path and this package's vocabulary "+
+				"have drifted apart", typ)
+		}
+	}
+	for _, typ := range identityTypes {
+		if _, ok := courierRequired[typ]; !ok {
+			t.Errorf("this package declares %q and the fake has no row for it, so "+
+				"a test exercising courier's own validation of that type would get "+
+				"a 422 unknown_notification_type", typ)
+		}
+	}
 }
 
 // courierCredentials is what a fake courier demands. A caller that presents nothing

@@ -933,18 +933,20 @@ func buildMailer(cfg config.Config, logger *slog.Logger) (recovery.Mailer, error
 	}
 	logger.Info("account recovery can send email through courier", attrs...)
 
-	// WHAT IS AND IS NOT DELIVERABLE, said out loud. courier's NotificationType is
-	// [welcome, password_reset, team_invitation], which covers this service's
-	// password reset and its address verification — the latter through courier's
-	// `welcome` template, whose words are true for an account that has never proved
-	// an address. The two halves of an EMAIL CHANGE are not covered by any of them,
-	// and the current-address half is the only warning an account owner gets that
-	// somebody is moving their address, so it is refused rather than translated onto
-	// a template that would say something false. See internal/courier's
-	// RecoveryMailer for that argument in full.
-	logger.Warn("courier cannot render this service's email change messages, so " +
-		"POST /v1/email-changes answers 503 until courier's vocabulary includes them; " +
-		"password reset and address verification are delivered")
+	// WHAT IS AND IS NOT DELIVERABLE, said out loud. courier's NotificationType
+	// covers this service's password reset and its address verification — the
+	// latter through courier's `welcome` template, whose words are true for an
+	// account that has never proved an address. The two halves of an EMAIL CHANGE
+	// are in courier's vocabulary since `20373bf` but NOT in this service's
+	// `courierTypeFor` yet (that is packet m70b), and the current-address half is
+	// the only warning an account owner gets that somebody is moving their
+	// address, so it is refused rather than translated onto a template that would
+	// say something false. See internal/courier's RecoveryMailer for that argument
+	// in full.
+	logger.Warn("courier's vocabulary includes both email change notices, but this " +
+		"service's mapping does not use them yet (packet m70b), so POST " +
+		"/v1/email-changes answers 503 until it lands; password reset and address " +
+		"verification are delivered")
 
 	// THE SHARED-DEFAULT WARNING, which is the one that closes identity-24's finding
 	// from the operator's side rather than the test's.

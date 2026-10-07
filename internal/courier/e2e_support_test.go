@@ -108,9 +108,11 @@ const (
 //   - It does not prove delivery. courier answers `accepted` because a submission
 //     protocol says nothing about arrival, and `Swoosh.Adapters.Local` renders the
 //     mail into memory. Nothing here claims a message arrived.
-//   - It does not prove the other three messages. courier has no type for them and
-//     this adapter refuses them, which `TestAMessageCourierHasNoTypeForIsRefused`
-//     holds and which is a courier contract gap rather than an identity one.
+//   - It does not prove the other three messages. `verify_email` is delivered
+//     through courier's `welcome` type and has its own live test below; the two
+//     `email_change` messages are refused — courier has had types for both since
+//     `20373bf`, but this adapter's `courierTypeFor` maps onto neither yet
+//     (packet m70b) — which the refusal test below holds.
 func TestAPasswordResetGoesOutThroughARealCourier(t *testing.T) {
 	live := requireLiveCourier(t)
 
@@ -256,8 +258,9 @@ func TestTheTwoEmailChangeMessagesCourierCannotSendAreRefused(t *testing.T) {
 			err := live.mailer.Send(context.Background(), tc.message)
 			if !isError(err, ErrUnsupportedMessage) {
 				t.Fatalf("Send = %v, want ErrUnsupportedMessage. courier's NotificationType "+
-					"is [welcome, password_reset, team_invitation] and neither template "+
-					"describes an address change truthfully", err)
+					"has included both email_change types since 20373bf, but this service's "+
+					"courierTypeFor maps onto neither yet (packet m70b), and neither template "+
+					"it could borrow describes an address change truthfully", err)
 			}
 		})
 	}
