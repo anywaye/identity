@@ -63,11 +63,11 @@ var courierFields = map[string]struct{}{
 
 // courierRequired is `Courier.Mailers.required/1`: what each type must carry.
 //
-// The `welcome` row is present because the VOCABULARY is courier's and this fake is
-// courier's, not because identity sends a `welcome`. Nothing in this package maps a
-// message onto it: `TestAMessageCourierHasNoTypeForIsRefused` holds that an address
-// verification is REFUSED rather than translated onto a template whose words
-// ("Welcome aboard") are about a registration. The row is here so a test that
+// The `welcome` row is present because identity sends an address confirmation as
+// it — courier's own `welcome` template IS a registration's address confirmation,
+// and it renders `url` — and because the VOCABULARY is courier's and this fake is
+// courier's. The mapping is `verify_email` → `welcome`, and the argument for it is
+// in `RecoveryMailer`'s section on the mapping. The row is here so a test that
 // exercises courier's own validation directly has the full set, and so the type
 // exists in the fake's vocabulary as it does in courier's.
 //

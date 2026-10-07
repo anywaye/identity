@@ -70,10 +70,10 @@ import (
 // courier's key order, because a re-serialised problem document would be a fixture
 // of this file's own JSON encoder rather than of courier's response.
 type recordedCase struct {
-	name       string
-	status     int
-	headers    map[string]string
-	body       string
+	name    string
+	status  int
+	headers map[string]string
+	body    string
 	// request is the request that produced this response. nil means the
 	// password-reset request below, which is what the older fixtures were
 	// recorded with.
