@@ -234,6 +234,7 @@ service quietly listening on the wrong port.
 |---|---|---|
 | `PORT` | `8080` | TCP port to bind. Must be 1-65535. |
 | `DATABASE_URL` | *(unset)* | Postgres DSN. Optional in v0; unset means no pool and no readiness dependency. |
+| `NATS_URL` | *(unset)* | The broker the outbox publisher publishes to. Optional, and unset is a supported state rather than an error: the outbox table, the loop and the `Publisher` interface all exist, and a deployment that has not wired a broker accumulates rows in `outbox_events` until it does — the rows are the promise, and they drain the moment a broker is configured. Set it and the publisher loop starts at boot, publishing each event on the subject equal to its `type` (no mapping, no prefix rewriting) over JetStream, and marking `published_at` from the broker's ack. A value that does not parse fails the boot. **The stack must define a JetStream stream whose subject filter covers what identity publishes (e.g. `identity.>`)** — a publish to a subject no stream matches is refused by the broker, which leaves the row claimable with `attempts` incremented and `last_error` naming the refusal: loud, and the direction a misconfiguration should fail in. |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`. Drives `log/slog`. |
 | `OIDC_ISSUER` | *(unset)* | The OpenID Connect issuer. Required with `OIDC_SIGNING_KEY`, `OIDC_SIGNING_KEY_ID` and `OIDC_LOGIN_UI_URL` — all four together, or none of them. |
 | `OIDC_SIGNING_KEY` | *(unset)* | PEM-encoded RSA private key, ≥ 2048 bits. PKCS#1 and PKCS#8 both load. |

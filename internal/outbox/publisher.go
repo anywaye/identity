@@ -36,27 +36,27 @@ type Claimer interface {
 // Publisher puts one envelope on the bus.
 //
 // The interface is one method wide because that is the whole contract with a
-// transport. Everything this service does not yet know about a bus — connection
-// handling, subject naming, headers, retries — belongs behind it, which is why
-// swapping NATS in later touches one implementation and nothing else.
+// transport. Everything the transport owns — connection handling, subject
+// naming, headers, retries — belongs behind it, which is why the NATS
+// implementation is one file and nothing else: a second bus, or a change to
+// this one, touches the implementation and not the loop.
 type Publisher interface {
 	Publish(ctx context.Context, e Envelope) error
 }
 
 // NoopPublisher accepts events and reports success.
 //
-// This is what ships in this packet: the outbox table, the loop and the interface
-// are real, and the NATS connection is explicitly a later one. Wiring NoopPublisher
-// into the running service would mark every event published and drain the outbox
-// into nowhere, so the service does *not* start a publisher loop — see
-// cmd/identity and the "Not built yet" section of README.md. It exists so the
-// loop has a working implementation to be tested against, and so the wiring
-// compiles.
+// It is the loop's test double and nothing else: the running service gets
+// NATSPublisher when NATS_URL is set and no loop at all when it is not — see
+// cmd/identity for that condition. What it is NOT is the shipped publisher.
+// Wiring it into the running service would mark every event published and drain
+// the outbox into nowhere, which is worse than the honest accumulation an
+// unconfigured broker produces: the rows are the promise, and a promise this
+// process keeps by discarding is not a promise.
 //
-// The alternative — leaving Publisher unimplemented and refusing to start — was
-// rejected because it would make the service unbootable in this packet. A
-// half-built loop that silently discards events is the worse of the two, which is
-// why the loop is not started rather than started with this.
+// It stays because the loop's tests need a Publisher that never touches a
+// network, and because deleting a tested implementation to leave the interface
+// abstract would make the loop's own tests lie about what they are testing.
 type NoopPublisher struct{}
 
 // Publish discards the event. It never fails, so it is a valid target for tests
