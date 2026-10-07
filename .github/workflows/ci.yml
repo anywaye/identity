@@ -361,7 +361,7 @@ jobs:
       E2E_SKIP_EXCEPTIONS: >-
         TestAPasswordResetGoesOutThroughARealCourier
         TestAVerificationLinkReachesCouriersWelcomeTemplate
-        TestTheTwoEmailChangeMessagesCourierCannotSendAreRefused
+        TestTheTwoEmailChangeMessagesReachARealCourier
 
     steps:
       - uses: actions/checkout@v7

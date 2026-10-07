@@ -56,7 +56,7 @@ import (
 var e2eSkipExceptions = []string{
 	"TestAPasswordResetGoesOutThroughARealCourier",
 	"TestAVerificationLinkReachesCouriersWelcomeTemplate",
-	"TestTheTwoEmailChangeMessagesCourierCannotSendAreRefused",
+	"TestTheTwoEmailChangeMessagesReachARealCourier",
 }
 
 // TestTheExemptionListIsExactlyTheseThreeNames is the pin, and it fails in both

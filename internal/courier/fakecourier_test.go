@@ -77,7 +77,8 @@ var courierFields = map[string]struct{}{
 // descriptions name `url` as required by `password_reset`, `team_invitation` and
 // `email_change_current`, `reason` by `account_security`, and `previous_email` by
 // `email_change_new` — the same lists `Courier.Mailers.required/1` returns. The
-// two `email_change` rows will be exercised by packet m70b, which sends them.
+// two `email_change` rows are exercised by the adapter's own tests, which send
+// both halves of an email change through this fake.
 var courierRequired = map[string][]string{
 	TypeWelcome:            {"user_id", "to"},
 	TypePasswordReset:      {"user_id", "to", "url"},

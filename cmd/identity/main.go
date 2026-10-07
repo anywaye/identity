@@ -933,20 +933,18 @@ func buildMailer(cfg config.Config, logger *slog.Logger) (recovery.Mailer, error
 	}
 	logger.Info("account recovery can send email through courier", attrs...)
 
-	// WHAT IS AND IS NOT DELIVERABLE, said out loud. courier's NotificationType
-	// covers this service's password reset and its address verification — the
-	// latter through courier's `welcome` template, whose words are true for an
-	// account that has never proved an address. The two halves of an EMAIL CHANGE
-	// are in courier's vocabulary since `20373bf` but NOT in this service's
-	// `courierTypeFor` yet (that is packet m70b), and the current-address half is
-	// the only warning an account owner gets that somebody is moving their
-	// address, so it is refused rather than translated onto a template that would
-	// say something false. See internal/courier's RecoveryMailer for that argument
-	// in full.
-	logger.Warn("courier's vocabulary includes both email change notices, but this " +
-		"service's mapping does not use them yet (packet m70b), so POST " +
-		"/v1/email-changes answers 503 until it lands; password reset and address " +
-		"verification are delivered")
+	// WHAT IS DELIVERABLE, said out loud. All four of `internal/recovery`'s
+	// messages have a courier type: the password reset onto `password_reset`,
+	// the address verification onto `welcome` — whose words are true for an
+	// account that has never proved an address — and the two halves of an EMAIL
+	// CHANGE onto the two types courier built for them (`20373bf`, packet m70):
+	// the current-address half, which is the only warning an account owner gets
+	// that somebody is moving their address, carries the confirmation link, and
+	// the new-address half carries the previous address and no link. See
+	// internal/courier's RecoveryMailer for why a wrong notice would have been
+	// worse than a refusal, and for the mapping in full.
+	logger.Info("account recovery can send all four messages through courier: " +
+		"password reset, address verification, and both halves of an email change")
 
 	// THE SHARED-DEFAULT WARNING, which is the one that closes identity-24's finding
 	// from the operator's side rather than the test's.
