@@ -6,6 +6,34 @@ All notable changes to identity are recorded here. The format follows
 
 ## [Unreleased]
 
+### Fixed (packet identity-w104-rlsbydigest: ByDigest is unresolvable under RLS — every API key 401s)
+
+The site-loop walk found that **every freshly minted API key 401s on
+`POST /v1/introspections`** while the session that minted it works: the row
+exists, is live, and its digest matches, but `Store.ByDigest` joins
+`account_users`, which carries only account/user predicates, and the
+credential transaction sets neither — so the join reads zero rows. The
+repository's 28 packages were green throughout, because no test ran the join
+under the enforced boundary.
+
+- **Migration `00028` adds one SELECT policy,
+  `account_users_cafaye_resolve`**, admitting exactly the membership rows of
+  the (account, user) pair the presented *live* credential names
+  (`revoked_at IS NULL` is in the policy; expiry stays judged against the
+  service clock in the query). No existing policy is touched, FORCE stays on,
+  no `SECURITY DEFINER`. The alternative — a two-step resolve that sets an
+  account identity from an unauthenticated read — would break the structural
+  property `CredentialResolver` exists to hold. See [DECISIONS.md](DECISIONS.md)
+  **D18**.
+- **`TestTenancyACredentialJoinSeesItsMembership`** runs ByDigest's exact join
+  as the application role on the real protected tables: resolves with its
+  role, sees exactly its own membership, a foreign digest and a revoked key
+  resolve nothing. Red before the migration, green after.
+- The `cafaye.credential_tables()` audit reports `account_users` as
+  `(unresolved)` with no change to the audit itself; comment updates in
+  `internal/tenancy/credential.go` and `credential_lookup_test.go` where "a
+  resolution opens no other table" stopped being true.
+
 ### Fixed (manager gate, 2026-10-07: the invitation time bomb — `created_at` is the service's clock)
 
 The master gate went red with **26 failing tests and 145 occurrences of

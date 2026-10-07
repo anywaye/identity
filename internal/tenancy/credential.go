@@ -125,19 +125,27 @@ type CredentialResolver struct {
 //
 // # WHAT THE SESSION MAY DO WITH IT
 //
-// Exactly one thing: read the row whose digest it presented. `select *` from
-// api_keys inside one of these transactions returns THAT row and not the table,
-// because the predicate is in the POLICY as well as in the caller's query —
-// RLS policies combine permissively, and a policy that merely said "a credential
-// session may select this table" would hand the caller a table-wide browse.
+// Exactly two things, and the second is 00028's: read the credential row
+// whose digest it presented, and read the membership rows of that row's
+// (account, user) pair — which is what lets ByDigest's JOIN return. The
+// membership half is admitted by account_users_cafaye_resolve, whose EXISTS
+// runs under api_keys' own policies and so can only match the presented
+// row, and only while it is live (revoked_at IS NULL is in the policy).
+// `select *` from api_keys inside one of these transactions returns THAT row
+// and not the table, because the predicate is in the POLICY as well as in
+// the caller's query — RLS policies combine permissively, and a policy that
+// merely said "a credential session may select this table" would hand the
+// caller a table-wide browse.
 //
-// It cannot write. There is no insert/update/delete counterpart on a resolve
-// policy, so a resolution session meets the ordinary account policies on the
-// write side, where a NULL identity is 42501: a service cannot mint a credential
-// while resolving one.
+// It cannot write. There is no insert/update/delete counterpart on either
+// resolve policy, so a resolution session meets the ordinary account policies
+// on the write side, where a NULL identity is 42501: a service cannot mint a
+// credential while resolving one.
 //
-// And it does not open another table. One policy, on one named table, so
-// `account_users` still reads zero rows from inside a resolution.
+// And it opens no third table. Two policies, on the two named tables the
+// resolution query joins, and the membership one names the credential's own
+// pair rather than the caller — there is still no session in which a digest
+// reads a membership it did not present the credential for.
 func (r CredentialResolver) Do(ctx context.Context, digest string, fn func(ctx context.Context, q db.Querier) error) error {
 	return r.TxRunner.Do(ctx, func(ctx context.Context, q db.Querier) error {
 		if err := beginCredential(ctx, q, digest); err != nil {

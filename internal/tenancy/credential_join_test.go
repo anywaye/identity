@@ -6,8 +6,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-
-	"github.com/cafaye/identity/internal/platform/dbtest"
 )
 
 // TestTenancyACredentialJoinSeesItsMembership is the class of test the F2
@@ -31,13 +29,15 @@ import (
 // TestTenancyACredentialResolvesByTheDigestTheCallerPresentedAndNothingElse
 // runs against the real tables.
 //
-// WHY THE APP ROLE AND NOT THE OWNER. The tenancy proof connects as the
+// WHY THE APP ROLE, REACHED BY SET ROLE. The tenancy proof connects as the
 // owner and sets identities; the owner is named in every policy, so that
 // proves the policies exist. This test proves what production answers, and
-// production connects as identity_app. dbtest.AppDSN derives that login from
-// TEST_DATABASE_URL rather than reaching it by SET ROLE, which would succeed
-// against a role that cannot log in at all and prove nothing about the one
-// that can.
+// production connects as identity_app. The connection below is the owner DSN
+// with `SET ROLE identity_app` — the same impersonation the package proof
+// uses, possible because the cluster grants the app role to the owner — so
+// every policy evaluates for exactly the role production answers under. What
+// SET ROLE does not prove is that the role can log in at all; that is proven
+// everywhere dbtest.Pool connects as it, and is not this test's claim.
 func TestTenancyACredentialJoinSeesItsMembership(t *testing.T) {
 	ownerDSN := dsnOrSkip(t)
 
@@ -50,14 +50,18 @@ func TestTenancyACredentialJoinSeesItsMembership(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = owner.Close(context.Background()) })
 
-	// The assertions run as the login production uses. Seeding stays on the
-	// owner connection: the app role cannot write the unprotected tables the
-	// fixture is built from, and the seed is not what is under test.
-	app, err := pgx.Connect(ctx, dbtest.AppDSN(t))
+	// A second connection for the assertions, impersonating the login
+	// production uses. Seeding stays on the owner connection: the app role
+	// cannot write the unprotected tables the fixture is built from, and the
+	// seed is not what is under test.
+	app, err := pgx.Connect(ctx, ownerDSN)
 	if err != nil {
-		t.Fatalf("connecting as the app role: %v", err)
+		t.Fatalf("connecting for the app-role assertions: %v", err)
 	}
 	t.Cleanup(func() { _ = app.Close(context.Background()) })
+	if _, err := app.Exec(ctx, `SET ROLE identity_app`); err != nil {
+		t.Fatalf("assuming the app role: %v", err)
+	}
 
 	tenantA, tenantB := seedJoinRows(t, ctx, owner)
 
@@ -143,8 +147,16 @@ func TestTenancyACredentialJoinSeesItsMembership(t *testing.T) {
 	// membership half again: the row is still there, the digest still matches,
 	// and the resolution must still answer nothing.
 	t.Run("a revoked credential resolves nothing", func(t *testing.T) {
-		if _, err := owner.Exec(ctx,
-			`update api_keys set revoked_at = now() where token_digest = $1`, digestFor(tenantA)); err != nil {
+		// The revocation sets the whole triple: the table's CHECK refuses a
+		// revoked_at without its revoked_by, so a one-column UPDATE is a
+		// 23514 rather than a revocation. revoked_by is the key's own user,
+		// read back rather than threaded through the seed.
+		if err := inTransaction(ctx, owner, `select cafaye.begin_account($1)`, tenantA,
+			func(ctx context.Context, tx pgx.Tx) error {
+				_, err := tx.Exec(ctx,
+					`update api_keys set revoked_at = now(), revoked_by = user_id where token_digest = $1`, digestFor(tenantA))
+				return err
+			}); err != nil {
 			t.Fatalf("revoking tenant A's key: %v", err)
 		}
 		got, err := byDigestJoinAs(ctx, app, digestFor(tenantA), time.Now())

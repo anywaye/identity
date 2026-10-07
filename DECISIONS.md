@@ -1808,3 +1808,67 @@ asserted the column instead of trusting it.
   not the same question. If a future constraint ever measures a caller's clock
   against `updated_at`, this ruling applies to it too.
 
+
+## D18: the credential resolution reads the membership it names (00028), and the two-step resolve was rejected
+
+**Raised** 2026-10-07 by packet identity-w104-rlsbydigest, from the F2 the
+site-loop walk proved live in both directions: every API key 401s on
+`POST /v1/introspections` — freshly minted, live, digest matching — because
+`Store.ByDigest` is `api_keys JOIN account_users`, `account_users` carries
+only account/user predicates, and the credential transaction sets neither.
+Adding a digest-scoped policy flips introspection to `200 active:true`;
+dropping it returns 401. The suite was green throughout, because no test ran
+the join under the enforced boundary.
+
+### The ruling: a digest-scoped SELECT policy on `account_users`, and nothing else
+
+Migration `00028` installs `account_users_cafaye_resolve`, `FOR SELECT`, whose
+`USING` is an `EXISTS` over `api_keys` matching the membership's own
+`(account_id, user_id)` to the presented digest with `revoked_at IS NULL`.
+The subquery runs under `api_keys`' own policies, so it can only ever match
+the row the caller presented — the resolve policy admits exactly that row and
+the account policies admit nothing with no account set. ByDigest's query is
+byte-identical; the GUC discipline is unchanged (digest only,
+transaction-local); no existing policy is touched, FORCE stays on, no
+`SECURITY DEFINER`, no new table opened beyond the join's own two.
+
+Two narrowing choices are load-bearing rather than incidental. `revoked_at IS
+NULL` is in the policy so a withdrawn credential opens nothing even at the
+SQL level. `expires_at` is NOT: expiry is judged against the service-clock
+instant ByDigest receives, and duplicating that boundary with the database's
+`now()` would make two implementations of one instant — the reason
+`Store.ByDigest` documents for taking `now` as a parameter. An
+expired-but-unrevoked digest can therefore still read its own membership row
+inside the transaction, which the query refuses to return; the application
+answers nothing either way.
+
+### What was rejected, and why
+
+- **The two-step resolve** (read the key under digest scope, then the role
+  under the account scope the key names). It requires the resolution path to
+  set an account identity derived from an unauthenticated read, which breaks
+  the structural property `CredentialResolver` exists to hold — there is no
+  spelling of it that sets an account — and it splits the single statement
+  whose four filters deliberately share one `ErrNotFound` so no caller can
+  tell them apart.
+- **A policy predicated on the caller (`begin_user`).** The resolution has no
+  authenticated user yet — the user is what it is FOR. Scoping by caller
+  would need the user before it is resolved, which is the same circle the
+  account predicate already loses.
+- **Weakening anything existing**: dropping FORCE, a `SECURITY DEFINER`
+  reader (FORCE applies to the definer), a `USING (true)` resolve policy. All
+  three were measured dead in MD24/00016, and all three are broader than the
+  one-pair EXISTS installed here.
+
+### What is NOT decided here
+
+- **The "opens no other table" statements in 00016's substrate copy.**
+  `00016` is applied in deployed environments and is not edited; its claim
+  that a resolution opens no second table is narrowed by this migration to
+  the pair the presented live credential names, and this file states the
+  narrowing. `credential.go` is updated to point here.
+- **Invitation redemption.** `account_invitations.token_digest` is the same
+  shape of secret and deliberately still has no resolve policy (00016 names
+  the reason: mechanism without its Go half breaks redemption the same way).
+  When that half lands, this decision is its template and its audit
+  (`credential_tables()` already reports this policy's shape) is its check.
