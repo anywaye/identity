@@ -51,7 +51,7 @@ func startNATS(t *testing.T) string {
 
 // addStream creates a JetStream stream covering subjects, the way the fleet's
 // stack must. A publish to a subject no stream matches is refused by the
-// broker — that refusal is internal/outbox's TestNATSPublisherFailureLeavesTheRowClaimable;
+// broker — that refusal is internal/outbox's TestNATSPublisherRefusalLeavesTheRowClaimable;
 // what this helper buys the wiring test is a broker that actually stores what
 // the process publishes, so the drain is observable rather than assumed.
 func addStream(t *testing.T, url string, subjects ...string) {
