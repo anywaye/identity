@@ -98,6 +98,7 @@ func newRealAccountHarness(t *testing.T) *harness {
 			revokes,
 			clk,
 			db.Direct{Pool: pool},
+			nil, // no mailer: these tests are about the RLS policies, not the email
 		),
 	}
 }

@@ -202,13 +202,14 @@ func newInvitationFixture() invitationFixture {
 func newInvitationService(
 	order *orderLog,
 	store *fakeStore,
-	mailer *fakeMailer,
+	mailer InvitationMailer,
 	clk *clock.Fake,
 	fx invitationFixture,
 ) *Service {
 	store.account = fx.account
 	store.invitation = fx.invitation
 	store.member = Membership{Role: RoleOwner}
+	store.order = order
 	return NewService(
 		fakeUow{order: order},
 		store,
@@ -303,12 +304,19 @@ func TestInviteSendsAfterTheTransactionCommits(t *testing.T) {
 		t.Fatalf("Invite: %v", err)
 	}
 
-	// The invitation's own writes, then the commit, then the send. A send
-	// anywhere before "commit" is a mail that outlives a rollback.
+	// The invitation's own writes, then the commit, then the send.
+	//
+	// THE ASSERTION IS ON THE LAST FOUR STEPS rather than on the whole log,
+	// because Invite reads the inviter's membership first and that read is its
+	// own transaction — its "commit" is the first entry here, and it is not the
+	// commit the send is ordered against. What must hold is that the
+	// invitation's writes precede ITS commit, and the send follows it: a send
+	// anywhere before that commit is a mail that outlives a rollback.
 	want := []string{"create-invitation", "append-event", "commit", "send"}
-	if got := order.snapshot(); !reflect.DeepEqual(got, want) {
-		t.Errorf("the sequence of events was %v, want %v — the send must be after "+
-			"the commit, never inside the transaction", got, want)
+	got := order.snapshot()
+	if len(got) < len(want) || !reflect.DeepEqual(got[len(got)-len(want):], want) {
+		t.Errorf("the last steps were %v (full log %v), want %v — the send must "+
+			"be after the commit, never inside the transaction", got[len(got)-len(want):], got, want)
 	}
 }
 
@@ -350,11 +358,14 @@ func TestInviteReturnsTheSendFailureAndKeepsTheInvitation(t *testing.T) {
 		t.Errorf("the store was asked to create the invitation %d times, want 1 — "+
 			"the row either survived the failed send or it did not", store.createCalls)
 	}
-	if got := order.snapshot(); !reflect.DeepEqual(got, []string{
-		"create-invitation", "append-event", "commit", "send",
-	}) {
-		t.Errorf("the sequence of events was %v, want the committed invitation "+
-			"followed by exactly one failed send", got)
+	// The same suffix as the ordering test: the inviter-membership read's own
+	// commit leads the log, and what matters is the invitation's writes, its
+	// commit, then the one failed send.
+	want := []string{"create-invitation", "append-event", "commit", "send"}
+	got := order.snapshot()
+	if len(got) < len(want) || !reflect.DeepEqual(got[len(got)-len(want):], want) {
+		t.Errorf("the last steps were %v (full log %v), want the committed "+
+			"invitation followed by exactly one failed send", got[len(got)-len(want):], got)
 	}
 }
 
@@ -368,16 +379,7 @@ func TestInviteWithoutAMailerCreatesTheInvitation(t *testing.T) {
 	order := &orderLog{}
 	store := &fakeStore{}
 	clk := clock.NewFake(time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC))
-	svc := NewService(
-		fakeUow{order: order},
-		store,
-		fakeUsers{user: fx.inviter},
-		&fakeEvents{order: order},
-		nil,
-		clk,
-		fakeRead{},
-		nil, // no mailer: this deployment cannot send email
-	)
+	svc := newInvitationService(order, store, nil, clk, fx) // nil mailer: no mail path
 
 	invited, err := svc.Invite(context.Background(), InviteInput{
 		AccountID: fx.account.ID,
@@ -393,10 +395,12 @@ func TestInviteWithoutAMailerCreatesTheInvitation(t *testing.T) {
 		t.Error("Invite returned no token, so the admin has nothing to give the " +
 			"invitee by hand and the invitation is only revocable")
 	}
-	if got := order.snapshot(); !reflect.DeepEqual(got, []string{
-		"create-invitation", "append-event", "commit",
-	}) {
-		t.Errorf("the sequence of events was %v, want the committed invitation "+
-			"and no send", got)
+	// The same suffix as the ordering test, minus the send: the inviter
+	// membership read's own commit leads the log.
+	want := []string{"create-invitation", "append-event", "commit"}
+	got := order.snapshot()
+	if len(got) < len(want) || !reflect.DeepEqual(got[len(got)-len(want):], want) {
+		t.Errorf("the last steps were %v (full log %v), want the committed "+
+			"invitation and no send", got[len(got)-len(want):], got)
 	}
 }

@@ -66,6 +66,7 @@ func newHarness(t *testing.T) *harness {
 			revokes,
 			clk,
 			db.Direct{Pool: pool},
+			nil, // no mailer: these tests are about the tenancy writes, not the email
 		),
 	}
 }
@@ -940,6 +941,7 @@ func TestARemovalWithNoRevokerStillRemovesTheMembership(t *testing.T) {
 		nil,
 		h.clock,
 		db.Direct{Pool: h.q.(db.Pool)},
+		nil, // no mailer: this fixture is about the credential sweep, not the email
 	)
 	if err := withoutSweep.RemoveMember(t.Context(), RemoveMemberInput{
 		AccountID: account.ID, UserID: target, Actor: owner,
