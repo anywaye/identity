@@ -197,6 +197,18 @@ env:
     # environment, and that is the one honest limitation of Kamal's model,
     # recorded in DECISIONS.md.
     - DATABASE_URL
+    # The signup timestamp key, and the one secret on this list that is
+    # REQUIRED rather than feature-gated: identity refuses to boot without it,
+    # so a deploy that does not supply it fails at config.Load naming the
+    # variable. There is no default on this path, deliberately — the compose
+    # file's development default must not travel to a deployed host, and a
+    # production-plausible key committed to a repository would be a forgery
+    # tool for every signup form this service serves. Mint one with
+    #   openssl rand -base64 32 | tr '+/' '-_' | tr -d '='
+    # (base64url without padding, exactly 32 bytes — plain
+    # `openssl rand -base64 32` emits standard base64 with one `=` of padding
+    # and fails the boot with "it is not base64url").
+    - SIGNUP_SIGNING_KEY
     # The courier service credential, and the same fact the compose file's
     # failure message carries: it must be the SAME identity-issued API key
     # courier holds as COURIER_IDENTITY_TOKEN, because identity lets a token
