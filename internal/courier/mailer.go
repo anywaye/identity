@@ -101,9 +101,10 @@ var knownSubjects = map[string]struct{}{
 //
 // # AND WHY `welcome` IS HONEST FOR `verify_email` AND NOT FOR ANYTHING ELSE
 //
-// courier's `NotificationType` is `[welcome, password_reset, team_invitation]`.
+// courier's `NotificationType` is
+// `[welcome, password_reset, team_invitation, account_security, email_change_current, email_change_new]`.
 // There is no `email_verification`, and inventing one is a 422, so the question
-// this table answers is which of courier's THREE messages an unverified account's
+// this table answers is which of courier's SIX messages an unverified account's
 // address confirmation is.
 //
 // TWO of `recovery`'s four messages map and two are refused, and the line is not
@@ -147,14 +148,21 @@ var knownSubjects = map[string]struct{}{
 // one user. That is courier's vocabulary being narrower than identity's, and the
 // fix is a fourth type in courier rather than a workaround here.
 //
-// **THE TWO `email_change` MESSAGES ARE NOT.** There is no courier message about
-// an address change, and the two templates that exist both say something false
-// about one: `password_reset` tells the owner somebody asked to reset their
-// password, and `welcome` says "Welcome aboard" to an account owner being told
-// that a hijacked session is moving their address. The current-address half is
-// the ONLY warning the owner of an account has that somebody is moving its
-// address — a wrong-but-delivered security notice is worse than a loud failure,
-// and this is the loud one.
+// **THE TWO `email_change` MESSAGES ARE NOT — YET.** courier HAS both messages
+// since `20373bf`: `email_change_current` warns the address an account uses
+// today that somebody asked to move it (and carries the confirmation link), and
+// `email_change_new` tells the address an account is moving to where it lived
+// before. identity's `courierTypeFor` does not map onto either yet — that is
+// packet m70b — so until it lands the refusal stands and the flow answers 503.
+//
+// The refusal is still right, and the reason is unchanged: the two nearest
+// courier templates both say something false about an address change —
+// `password_reset` tells the owner somebody asked to reset their password, and
+// `welcome` says "Welcome aboard" to an account owner being told that a hijacked
+// session is moving their address. The current-address half is the ONLY warning
+// the owner of an account has that somebody is moving its address — a
+// wrong-but-delivered security notice is worse than a loud failure, and this is
+// the loud one.
 var courierTypeFor = map[string]string{
 	kindPasswordReset: TypePasswordReset,
 	kindVerifyEmail:   TypeWelcome,
@@ -188,7 +196,7 @@ var courierTypeFor = map[string]string{
 // # IT IS A SECOND TABLE AND NOT A COLUMN OF `courierTypeFor`, and the two are HELD
 // IN STEP
 //
-// `courierTypeFor` answers "which of courier's three messages can express this" and
+// `courierTypeFor` answers "which of courier's six messages can express this" and
 // `linkPurposeFor` answers "what is the token in it for". They are different
 // questions with different answers over time — a courier type is courier's
 // vocabulary, a purpose is `recovery`'s, and the two diverge the moment courier
@@ -521,7 +529,7 @@ func (m *RecoveryMailer) Send(ctx context.Context, message recovery.Message) err
 	if !ok {
 		m.log("refusing a message courier has no type for",
 			"subject", message.Subject,
-			"reason", "courier's NotificationType is [welcome, password_reset, team_invitation]",
+			"reason", "courier's NotificationType is [welcome, password_reset, team_invitation, account_security, email_change_current, email_change_new] and this service's courierTypeFor maps onto neither half yet (packet m70b)",
 		)
 		return fmt.Errorf("%w: %q", ErrUnsupportedMessage, message.Subject)
 	}

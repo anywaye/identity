@@ -55,17 +55,18 @@
 //     the right end state, and it is not available today — see `RecoveryMailer`'s
 //     section on the 401.
 //
-// # WHAT THIS PACKET DELIVERS AND WHAT IT REFUSES
+// # WHAT THIS SERVICE DELIVERS AND WHAT IT REFUSES
 //
-// courier's `NotificationType` is `[welcome, password_reset, team_invitation]`.
+// courier's `NotificationType` is
+// `[welcome, password_reset, team_invitation, account_security, email_change_current, email_change_new]`.
 // identity's `recovery` package renders four messages, and the mapping is drawn at
 // "would courier's own template say the true thing to the person reading it",
 // rather than at "which words are close enough":
 //
-//	password_reset            -> courier's password_reset       DELIVERED
-//	verify_email              -> courier's welcome              DELIVERED
-//	email_change (current)    -> no such courier message        REFUSED
-//	email_change (new)        -> no such courier message        REFUSED
+//	password_reset            -> courier's password_reset        DELIVERED
+//	verify_email              -> courier's welcome               DELIVERED
+//	email_change (current)    -> courier's email_change_current  REFUSED until m70b
+//	email_change (new)        -> courier's email_change_new      REFUSED until m70b
 //
 // `verify_email` maps to `welcome` because courier's own `welcome` template IS a
 // registration's address confirmation — "Welcome aboard. Confirm your address and
@@ -74,12 +75,22 @@
 // `RecoveryMailer` carries the argument in full, including the cost and the one
 // sentence in courier's document that is wrong about its own template.
 //
-// The two refusals are refusals, not translations. Mapping the current-address
-// half of an email change onto courier's `password_reset` would put "Somebody
-// asked to reset the password on your account" into the one message a hijacked
-// session cannot get past, and that message is the ONLY warning the owner of an
-// account has that somebody is moving its address. A wrong-but-delivered security
-// notice is worse than a loud failure.
+// The two refusals are refusals, not translations, and they stand even though
+// courier HAS both messages since `20373bf`: identity's `courierTypeFor` does not
+// map onto either yet — that is packet m70b — so `RecoveryMailer` answers
+// `ErrUnsupportedMessage` and the flow answers 503 until it lands. Mapping the
+// current-address half of an email change onto courier's `password_reset` would
+// put "Somebody asked to reset the password on your account" into the one message
+// a hijacked session cannot get past, and that message is the ONLY warning the
+// owner of an account has that somebody is moving its address. A wrong-but-delivered
+// security notice is worse than a loud failure.
+//
+// `account_security` — courier's notice that a credential ended, branched on a
+// required `reason` — has no row in the table because identity raises no security
+// notice to send as it: no identity flow (password change, session revoke,
+// second-factor change) mails one today. It is a NAMED GAP rather than an
+// oversight: the constant exists, the drift check holds it against courier's
+// document, and the flow that will use it does not exist yet.
 //
 // # WHAT THE RECORDED INTERACTIONS IN THIS PACKET ARE
 //
@@ -150,8 +161,11 @@ const maxResponseBytes = 64 << 10
 // vocabulary is a code fact, and putting it only in the document would make the
 // day courier adds a type a day this client answers `ErrInvalidRequest` for a
 // request that is valid. The cost of the duplication is that it can go stale,
-// which is why `TestEveryTypeThisClientSendsIsOneCourierAccepts` reads courier's
-// `openapi.yaml` and fails when the two stop agreeing.
+// which is why `TestCouriersTypesAgreeWithCouriersDocument` reads courier's
+// `openapi.yaml`, parses the enum out of it, and fails unless the two sets are
+// EQUAL — in both directions, so the day courier grows a type this gate reds and
+// a human re-checks the mapping rather than shipping a client that refuses a
+// request that is valid.
 const (
 	// TypeWelcome is courier's post-registration message, and it is the type
 	// identity sends an address confirmation as. See `RecoveryMailer`'s section on
@@ -159,7 +173,7 @@ const (
 	// confirmation, and it renders `url`.
 	TypeWelcome = "welcome"
 
-	// TypePasswordReset is the one template of courier's three that is about an
+	// TypePasswordReset is the one template of courier's six that is about an
 	// account that already exists rather than about joining it.
 	TypePasswordReset = "password_reset"
 
@@ -168,6 +182,29 @@ const (
 	// the constant exists so the vocabulary is complete and the drift test has
 	// something to compare against.
 	TypeTeamInvitation = "team_invitation"
+
+	// TypeAccountSecurity is courier's security notice: the mail a person is owed
+	// when their credentials end — a password change or an address change, branched
+	// on the required `reason` field. identity sends NOTHING of this type today: no
+	// identity flow raises a security notice (password change, session revoke,
+	// second-factor change all happen without one). The constant exists so the
+	// vocabulary is complete and the drift test has something to compare against —
+	// the same reason `TypeTeamInvitation` exists — and the gap is a named one: a
+	// capability courier has that this service does not use.
+	TypeAccountSecurity = "account_security"
+
+	// TypeEmailChangeCurrent is courier's notice to the address an account uses
+	// today that somebody asked to move it; it carries the confirmation link, so
+	// courier's document requires `url` for it. identity does not deliver it yet —
+	// that is packet m70b, which rewrites `courierTypeFor` — and until then
+	// `RecoveryMailer` refuses the current-address half of an email change.
+	TypeEmailChangeCurrent = "email_change_current"
+
+	// TypeEmailChangeNew is courier's notice to the address an account is moving
+	// to, telling it where the account lived before; courier's document requires
+	// `previous_email` for it. identity does not deliver it yet — that is packet
+	// m70b — and until then `RecoveryMailer` refuses the new-address half.
+	TypeEmailChangeNew = "email_change_new"
 )
 
 // StatusAccepted is the only `data.status` courier will ever send.
@@ -736,10 +773,17 @@ func validate(req MessageRequest) error {
 //
 // Exported because `RecoveryMailer`'s mapping and its refusals both have to know
 // the vocabulary, and because a second place in this package deciding it would be
-// a second list.
+// a second list. It is a SWITCH AND NOT A MAP for the reason `courierTypeFor` is
+// a map and not a switch: the dangerous direction is the silent one. A type that
+// is not a case here is refused by `validate` as "not a type courier sends", so
+// a constant added to the block above and forgotten here is a LIE in the package's
+// own vocabulary — a caller legitimately sending `email_change_current` would be
+// refused locally as invalid. The drift check is what holds this list to
+// courier's document; the constants block is what holds the values.
 func IsType(t string) bool {
 	switch t {
-	case TypeWelcome, TypePasswordReset, TypeTeamInvitation:
+	case TypeWelcome, TypePasswordReset, TypeTeamInvitation,
+		TypeAccountSecurity, TypeEmailChangeCurrent, TypeEmailChangeNew:
 		return true
 	default:
 		return false

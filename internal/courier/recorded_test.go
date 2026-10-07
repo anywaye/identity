@@ -2,9 +2,11 @@ package courier
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -526,29 +528,133 @@ func TestAReplayedSendIsOneSend(t *testing.T) {
 	}
 }
 
-// TestCowersTypesAgreeWithCouriersDocument is the drift check for the one list this
+// TestCouriersTypesAgreeWithCouriersDocument is the drift check for the one list this
 // package duplicates from another repository.
 //
-// It reads courier's `openapi.yaml` if it is on disk beside this checkout, and
-// FAILS when the enum there and the constants here have drifted apart. A test that
-// could not find the file is not a skip: it reports that it could not check, so a
-// green run means the list was verified or somebody said out loud that it was not.
+// It reads courier's `openapi.yaml`, PARSES the `NotificationType` enum out of it,
+// and FAILS unless the document's set and this package's set are EQUAL — in both
+// directions. The direction is the point, and it is set-equality rather than
+// subset on purpose: a subset check (identity's constants ⊆ courier's enum) would
+// let courier grow freely, and the day it grew a type this package had no constant
+// for the gate would stay green — which is exactly how the three-type vocabulary
+// sat here stale after `20373bf`. Set-equality forces the re-check: courier grows
+// a type, this gate reds, and a human decides what the new type is FOR. The
+// reverse direction matters as much: a constant courier's document does not
+// declare is a type this client would send and courier would answer 422.
+//
+// A test that could not find the file is not a skip: it reports that it could not
+// check, so a green run means the list was verified or somebody said out loud that
+// it was not. And a green run SAYS WHICH DOCUMENT IT READ — see findCourierOpenAPI.
 func TestCouriersTypesAgreeWithCouriersDocument(t *testing.T) {
 	document := findCourierOpenAPI(t)
 	raw, err := os.ReadFile(document)
 	if err != nil {
 		t.Fatalf("reading courier's document: %v", err)
 	}
-
-	// courier's enum is a one-line flow sequence. Read it as a substring rather
-	// than parsing YAML: this package has no YAML dependency and adding one for
-	// forty characters of a test is the dependency AGENTS.md refuses.
-	const marker = "enum: [welcome, password_reset, team_invitation]"
-	if !strings.Contains(string(raw), marker) {
-		t.Fatalf("courier's NotificationType enum is no longer %q; this package's "+
-			"Type* constants have drifted and the mapping in RecoveryMailer must be "+
-			"re-checked against it", marker)
+	courierTypes, err := extractNotificationTypes(raw)
+	if err != nil {
+		t.Fatalf("parsing the NotificationType enum out of %s: %v", document, err)
 	}
+
+	identity := make(map[string]struct{}, len(identityTypes))
+	for _, one := range identityTypes {
+		identity[one] = struct{}{}
+	}
+	courier := make(map[string]struct{}, len(courierTypes))
+	for _, one := range courierTypes {
+		courier[one] = struct{}{}
+	}
+
+	for _, one := range courierTypes {
+		if _, declared := identity[one]; !declared {
+			t.Errorf("courier sends %q (read from %s) and this package has no "+
+				"constant for it; add the Type* constant and the IsType case, and "+
+				"re-check whether any flow should send it", one, document)
+		}
+	}
+	for _, one := range identityTypes {
+		if _, sent := courier[one]; !sent {
+			t.Errorf("this package declares %q, which courier's document (read "+
+				"from %s) does not send; the client would send it and courier "+
+				"would answer 422", one, document)
+		}
+	}
+	t.Logf("courier's NotificationType enum in %s equals this package's %d Type* constants",
+		document, len(identityTypes))
+}
+
+// identityTypes is this package's whole vocabulary, enumerated once so the drift
+// check compares courier's enum against the CONSTANTS rather than against a
+// substring of one line. It is a second copy of the Type* block and the type
+// system does not join them: adding a constant and forgetting this list is a
+// drift check that silently under-checks, so the enumeration is a completeness
+// obligation on whoever adds a constant — the same rule AGENTS.md states for a
+// struct literal that configures a check.
+var identityTypes = []string{
+	TypeWelcome,
+	TypePasswordReset,
+	TypeTeamInvitation,
+	TypeAccountSecurity,
+	TypeEmailChangeCurrent,
+	TypeEmailChangeNew,
+}
+
+// extractNotificationTypes parses courier's `NotificationType` enum out of its
+// document and returns its values.
+//
+// It reads the ONE line it needs rather than importing a YAML library: the enum
+// is a one-line flow sequence under the `NotificationType` schema, and this
+// package has no YAML dependency — adding one for forty characters of a test is
+// the dependency AGENTS.md refuses.
+//
+// It refuses to guess. A document with no `NotificationType:` schema, or a schema
+// with no `enum:` under it, or an empty enum, is an ERROR and not an empty list:
+// an empty list compared against this package's constants is a green drift check
+// over nothing, which is the failure mode openapi_reader_test.go is written to
+// prevent.
+func extractNotificationTypes(raw []byte) ([]string, error) {
+	lines := strings.Split(string(raw), "\n")
+	for i, line := range lines {
+		if strings.TrimSpace(line) != "NotificationType:" {
+			continue
+		}
+		// The schema's properties are indented deeper than its name, so the
+		// first `enum:` before the next same-indent key is the vocabulary.
+		indent := len(line) - len(strings.TrimLeft(line, " "))
+		for _, rest := range lines[i+1:] {
+			trimmed := strings.TrimSpace(rest)
+			if trimmed == "" {
+				continue
+			}
+			if len(rest)-len(strings.TrimLeft(rest, " ")) <= indent {
+				break // the next schema; this one declares no enum
+			}
+			if strings.HasPrefix(trimmed, "enum:") {
+				values := enumValues(trimmed)
+				if len(values) == 0 {
+					return nil, errors.New("courier's NotificationType enum is empty")
+				}
+				return values, nil
+			}
+		}
+		return nil, errors.New("courier's NotificationType schema declares no enum")
+	}
+	return nil, errors.New("courier's document has no NotificationType schema")
+}
+
+// enumValues splits a one-line YAML flow sequence — `enum: [a, b, c]` — into its
+// values.
+func enumValues(line string) []string {
+	values := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "enum:"))
+	values = strings.TrimPrefix(values, "[")
+	values = strings.TrimSuffix(values, "]")
+	var out []string
+	for _, one := range strings.Split(values, ",") {
+		if one = strings.TrimSpace(one); one != "" {
+			out = append(out, one)
+		}
+	}
+	return out
 }
 
 // newRecordedServer replays one recorded interaction.
@@ -591,14 +697,28 @@ func assertRecordedAccepted(t *testing.T, got MessageResult, tc recordedCase) {
 	_ = tc
 }
 
-// findCourierOpenAPI locates courier's document relative to this checkout.
+// findCourierOpenAPI locates courier's document, and the ORDER is the point.
 //
-// Identity is a worktree under `cafaye/`, so the sibling repository is two
-// directories up. The test reports rather than skips when it is absent: a green
-// run that checked nothing is exactly the failure mode
-// `openapi_reader_test.go` is written to prevent.
+// The first candidate is the SOURCE checkout — `cafaye/courier` — resolved through
+// git rather than through a relative path. A worktree of identity is not
+// necessarily beside a worktree of courier: from a worktree under `wt/`, the
+// relative path that finds `cafaye/courier` from the source checkout instead
+// finds whatever `courier` directory sits beside THIS worktree — the courier
+// repository's own worktree, which can be on any branch at any commit. A green
+// run that read that file could not say which document it had verified.
+// `git rev-parse --git-common-dir` names the main checkout whatever the
+// worktree's location, and courier is its sibling in `cafaye/`.
+//
+// The positional candidates remain as a fallback for a machine with no git or an
+// unusual layout. Whichever candidate wins, the test NAMES the file it read — in
+// the failure messages and in a t.Logf on success — because a green run that
+// cannot say which document it verified means "a file somewhere had the right
+// enum", and that is not the property this check exists to have.
 func findCourierOpenAPI(t *testing.T) string {
 	t.Helper()
+	if document, ok := sourceCheckoutCourier(); ok {
+		return document
+	}
 	candidates := []string{
 		filepath.Join("..", "..", "courier", "openapi.yaml"),
 		filepath.Join("..", "..", "..", "courier", "openapi.yaml"),
@@ -613,4 +733,30 @@ func findCourierOpenAPI(t *testing.T) string {
 		"vocabulary, and reporting that is better than passing silently.",
 		candidates)
 	return ""
+}
+
+// sourceCheckoutCourier resolves courier's document in the source checkout — the
+// `cafaye/courier` repository, not whatever worktree of it happens to sit beside
+// this one.
+func sourceCheckoutCourier() (string, bool) {
+	out, err := exec.Command("git", "rev-parse", "--git-common-dir").Output()
+	if err != nil {
+		return "", false
+	}
+	common := strings.TrimSpace(string(out))
+	if common == "" {
+		return "", false
+	}
+	// The common dir is the main repository's `.git`, so the main checkout is
+	// its parent — from ANY worktree, at any path. Abs first because git prints
+	// a relative `.git` when the test runs from the main checkout itself.
+	root, err := filepath.Abs(common)
+	if err != nil {
+		return "", false
+	}
+	document := filepath.Join(filepath.Dir(root), "..", "courier", "openapi.yaml")
+	if _, err := os.Stat(document); err != nil {
+		return "", false
+	}
+	return document, true
 }

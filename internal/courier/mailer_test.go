@@ -49,8 +49,9 @@ func resetMessageFor(email, token string) recovery.Message {
 // They exist as builders because the end-to-end file needs to present them to a
 // courier, and because a test that hand-wrote a subject would be testing a string
 // the adapter and `internal/recovery` agree on by accident rather than by
-// contract. Two of the three are deliverable (`password_reset` and `verify_email`)
-// and one pair is refused, which is what the two groups of tests here assert.
+// contract. Of `internal/recovery`'s four messages, two are deliverable
+// (`password_reset` and `verify_email`) and the `email_change` pair is refused,
+// which is what the two groups of tests here assert.
 func verificationMessage(token string) recovery.Message {
 	message := recoveryMessage(kindVerifyEmail, "kaka@example.com",
 		"Confirm the address kaka@example.com for your cafaye account.\n\n"+
@@ -160,10 +161,12 @@ func TestEveryRecoverableMessageReachesCourier(t *testing.T) {
 // assertion, so it is stated as a table over BOTH of `recovery`'s messages courier
 // cannot render rather than as one case.
 //
-// The claim is: identity renders four messages; courier's `NotificationType` is
-// `[welcome, password_reset, team_invitation]`; the two email-change messages
-// describe an event no courier template describes, and therefore must be REFUSED
-// rather than translated onto something that renders.
+// The claim is: identity renders four messages; courier's `NotificationType` has
+// SIX types and has included both `email_change` notices since `20373bf`; this
+// service's `courierTypeFor` maps onto neither of them yet (that is packet m70b),
+// and neither of the templates it could borrow describes an address change
+// truthfully — so the two email-change messages must be REFUSED rather than
+// translated onto something that renders.
 //
 // The two `verify_email` and `password_reset` rows are NOT here, and their absence
 // is the other half of the claim: `TestEveryRecoverableMessageReachesCourier`
