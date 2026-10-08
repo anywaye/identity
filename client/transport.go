@@ -123,6 +123,15 @@ type Transport interface {
 	// will not hand one to a tenant's owner. See DECISIONS.md D14.
 	DisableUser(ctx context.Context, userId openapiTypes.UUID, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	EnableUser(ctx context.Context, userId openapiTypes.UUID, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
+	// The HUMAN staff surface (DECISIONS.md D17): the Parlor console's four
+	// routes, reachable by a signed-in staff member's session only — never by a
+	// scoped api key. A machine client holding a session cookie for a staff user
+	// can call these; a pipeline holding a token cannot, and must use the two
+	// methods above instead.
+	GetOperatorMe(ctx context.Context, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
+	SearchOperatorUsers(ctx context.Context, params *generated.SearchOperatorUsersParams, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
+	StaffDisableUser(ctx context.Context, userId openapiTypes.UUID, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
+	StaffEnableUser(ctx context.Context, userId openapiTypes.UUID, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	RevokeAccountInvitation(ctx context.Context, accountId openapiTypes.UUID, invitationId openapiTypes.UUID, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	RevokeAccountInvitations(ctx context.Context, accountId openapiTypes.UUID, body generated.BulkInvitationRevocation, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	// The social-login round trip is here for completeness of the METHOD SET, which

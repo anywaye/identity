@@ -1872,3 +1872,85 @@ answers nothing either way.
   the reason: mechanism without its Go half breaks redemption the same way).
   When that half lands, this decision is its template and its audit
   (`credential_tables()` already reports this policy's shape) is its check.
+
+## D19: the staff surface is a human session with a staff property, and D14's "no platform-admin role" is revised for it
+
+**Raised** 2026-10-08 by packet `m147-identity-system-admin`, which builds the
+first system-admin console surface — the Parlor operator console — on top of a
+decision that said there is none.
+
+D14's closing line was: "there is still no `platform_admin` role on this
+service and this entry does not create one." That was the right smaller
+invention for a machine operator: a scope on a machine credential. The newer
+request — a human staff surface analogous to Jumpstart Pro's Madmin, gated on
+an authenticated staff user and distinct from account admin — supersedes that
+sentence. This entry records the revised boundary, and D14 is otherwise
+untouched: the machine-key routes, their gate, their audit shape and their
+tests all still hold.
+
+### What changed, stated as what did not
+
+- **There is now a staff property, and it is not a role.** `users.is_staff`
+  (migrations/00030) is a boolean on the person, default false. A role is
+  re-read per account on every request and answers "what may this person do
+  HERE"; staff answers "is this person staff anywhere", and no tenant-admin
+  API may write it. The only writer is `users.Store.SetStaff`, called by the
+  `identity-staff` operator command and by nothing in the HTTP surface.
+- **There is now a human-session operator path, and the machine one is intact.**
+  `GET /v1/operator/me`, `GET /v1/operator/users`,
+  `POST /v1/operator/users/{userID}/disable|enable` are reachable by a
+  signed-in staff session and by nothing else — a scoped api key is 403 on all
+  four, exactly as a session is 403 on D14's two routes. Keep the machine-key
+  endpoints working for automation; the human path is intentionally separate.
+- **Tenant and account roles imply no global authority.** An account admin —
+  owner included — is 403 on the staff surface whatever else they hold, for
+  D14's reason restated: a user is not an account, and these routes name no
+  account to hold a role minimum.
+- **The audit row names the human.** The disable/enable reuse
+  `auth.Service.Disable`/`Enable` — the same transaction — with the staff
+  user's id, a zero key id and the request's trace id.
+  `useraudit.Actor.HumanSession` tells the two apart. D14's "a disable is
+  currently unattributable" gap stays closed in both directions now: the
+  machine rows name a key, the staff rows name a person, and neither names
+  nobody.
+
+### What was rejected, and why
+
+- **A session on the machine routes.** Unchanged from D14: an operator is a
+  deployment fact, and the machine surface stays token-only. The packet adds a
+  second surface rather than widening the first, because widening it would
+  make the audit trail unable to say whether a person or a pipeline acted.
+- **A `role` column on the token, or a scope meaning "staff".** A token
+  carries what it names and a role on it goes stale (AGENTS.md: the join
+  re-reads the role every request for this reason); a staff *scope* would be a
+  machine credential claiming a human property. The property lives on the
+  user, the session carries the row, and the gate reads it off what
+  `Authenticate` already returned.
+- **A public bootstrap.** No `POST /v1/bootstrap`, no default staff account,
+  no grant button in the console. The first grant is
+  `identity-staff grant <email>` with `DATABASE_URL` in hand — an operator
+  decision with the database in front of them, idempotent, and reviewed in the
+  open rather than clicked. An undocumented manual SQL guess would have been
+  the same grant without the normalization, the not-found handling or the
+  test; this packet chose the command instead.
+- **Self-service or tenant-admin writes.** For the reason the column's own
+  comment gives: a grant the subject can perform is a privilege escalation,
+  and a grant a tenant admin can perform lets one tenant mint platform
+  authority.
+- **Impersonation, deletes, billing, broad account browsing.** Named in the
+  packet brief as out of scope and refused here as design: the directory is a
+  bounded substring search returning the minimal projection, and the mutations
+  are the two D14 actions with a different actor — nothing else.
+
+### What is NOT decided here
+
+- **Listing or reading the audit trail from the console.** `user_audit_log`
+  has `Append` and no `List` (its store says why); the console that wants to
+  show "who turned this person off" is a later packet, with its own index
+  reasoning (migrations/00022 names the shape it will take).
+- **Deprovisioning staff sessions on revoke.** Clearing `is_staff` takes
+  effect on the next request — the gate reads the row every time — but live
+  sessions of a de-staffed user are NOT ended by the revoke. A revoke that
+  must also sign the person out is `identity-staff revoke` followed by the
+  disable/enable pair, and whether that composition belongs in one command is
+  the next packet's question.

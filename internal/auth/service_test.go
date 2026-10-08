@@ -189,10 +189,11 @@ func (f *fakeUsers) Search(_ context.Context, _ db.Querier, query string, limit 
 			continue
 		}
 		out = append(out, users.DirectoryEntry{
-			ID:          u.ID,
-			Email:       u.Email,
-			DisplayName: u.DisplayName,
-			Disabled:    u.IsDisabled(),
+			ID:              u.ID,
+			Email:           u.Email,
+			DisplayName:     u.DisplayName,
+			DisabledAt:      u.DisabledAt,
+			EmailVerifiedAt: u.EmailVerifiedAt,
 		})
 		if limit > 0 && len(out) >= limit {
 			break

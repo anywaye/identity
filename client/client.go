@@ -1398,6 +1398,62 @@ func (c *Client) EnableUser(ctx context.Context, userId openapiTypes.UUID) error
 	})
 }
 
+// GetOperatorMe reports the signed-in staff user's own operator status.
+// Corresponds to `GET /v1/operator/me`.
+//
+// **A session credential, not a token one.** This is the human surface
+// (DECISIONS.md D17): it answers the caller's own status to a staff session,
+// and 403 to everybody else — a scoped api key, or a session whose user is not
+// staff — so a pipeline holding a token has no business calling it. `staff` is
+// always true on a 200; the 403 IS the status for everybody else.
+func (c *Client) GetOperatorMe(ctx context.Context) (*generated.OperatorMe, error) {
+	var out generated.OperatorMe
+	err := call(c, "getOperatorMe", func() (*http.Response, error) {
+		return c.transport.GetOperatorMe(ctx)
+	}, &out)
+	return &out, err
+}
+
+// SearchOperatorUsers searches the bounded staff directory. Corresponds to
+// `GET /v1/operator/users`.
+//
+// The query is required and must be at least two characters after trimming;
+// the page size defaults to 25 and is refused over 50. Each entry is the
+// minimal projection — id, email, display name when set, disabled state,
+// creation time — and carries no credential material.
+func (c *Client) SearchOperatorUsers(ctx context.Context, params *generated.SearchOperatorUsersParams) (*generated.StaffDirectory, error) {
+	var out generated.StaffDirectory
+	err := call(c, "searchOperatorUsers", func() (*http.Response, error) {
+		return c.transport.SearchOperatorUsers(ctx, params)
+	}, &out)
+	return &out, err
+}
+
+// StaffDisableUser turns a person's account off from a staff session.
+// Corresponds to `POST /v1/operator/users/{user_id}/disable`.
+//
+// The same transaction as `DisableUser` — sessions ended, access tokens
+// revoked, column stamped, audit row written — with the signed-in staff user
+// as the recorded actor rather than an api key. A machine client must use
+// `DisableUser` instead: a token is refused here.
+func (c *Client) StaffDisableUser(ctx context.Context, userId openapiTypes.UUID) error {
+	return callVoid(ctx, c, "staffDisableUser", func() (*http.Response, error) {
+		return c.transport.StaffDisableUser(ctx, userId)
+	})
+}
+
+// StaffEnableUser lifts a disable from a staff session. Corresponds to
+// `POST /v1/operator/users/{user_id}/enable`.
+//
+// **It restores the column and NOTHING ELSE**, on `EnableUser`'s contract: the
+// sessions the disable ended are gone and the owner signs in again. A machine
+// client must use `EnableUser` instead: a token is refused here.
+func (c *Client) StaffEnableUser(ctx context.Context, userId openapiTypes.UUID) error {
+	return callVoid(ctx, c, "staffEnableUser", func() (*http.Response, error) {
+		return c.transport.StaffEnableUser(ctx, userId)
+	})
+}
+
 // RevokeAccountInvitation withdraws one pending invitation. Corresponds to
 // `DELETE /v1/accounts/{account_id}/admin/invitations/{invitation_id}`.
 //

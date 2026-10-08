@@ -321,6 +321,10 @@ service quietly listening on the wrong port.
 | `POST /v1/accounts/:id/admin/invitation-revocations` | `200 {requested, revoked}` | Revoke up to 50 pending invitations in one transaction, **one** audit record for the lot. `confirm: true` and a non-empty array are both required. **Owner, `account_invitations:write`, scoped api key only.** |
 | `POST /v1/users/:userId/disable` | `204` | **Turn a person's account off**, and end every session it holds in the same transaction. `users:disable`, **scoped api key only**, and **no account anywhere** — an account admin, `owner` included, cannot call this, because no route under `/v1/accounts/…` consults `users:disable`. A browser session is `403`, so is presenting no credential, and so is an account-scoped token with any other scope. `404` for a user id this service never issued, which is deliberate here and the opposite of the anonymous routes below. Repeating a disable is a `204`, not a `409`. |
 | `POST /v1/users/:userId/enable` | `204` | Lift a disable. **Restores the column and nothing else** — the sessions the disable ended are gone and the owner signs in again, and a recovery link they already hold works again because a refused redemption never spent its token. Same credential, same `403`s. |
+| `GET /v1/operator/me` | `200 {user: {id, email, staff}}` | **The signed-in staff user's own operator status**, and nothing about anybody else's. `401` with no usable credential; `403` for a scoped api key and for an authenticated session whose user is not staff — a tenant admin's included, because no account role implies global staff authority. |
+| `GET /v1/operator/users` | `200 {users: [{id, email, display_name?, disabled_at, email_verified_at, created_at}]}` | **The bounded staff directory.** `?query=` is required and must be at least two characters; `?limit=` defaults to 25 and is refused over 50. The timestamps are present as null when never — never omitted. Minimal projection only — no password, API key, recovery, MFA secret or session token data. Same `401`/`403`s as above, and the gate runs before the query is read. |
+| `POST /v1/operator/users/:userId/disable` | `204` | **Turn a person's account off, as a staff human.** The same transaction as the machine route — sessions, access tokens, column, audit row — with the signed-in staff user as the recorded actor and no api key. **Signed-in staff session only**: a machine key is `403`, a non-staff session is `403`, no credential is `401`. `404` for a user id this service never issued. |
+| `POST /v1/operator/users/:userId/enable` | `204` | Lift a disable, as a staff human. **Restores the column and nothing else.** Same credential, same `403`s. |
 | `POST /v1/password-resets` | `202 {"status":"accepted"}` | Mail a single-use link, valid 30 minutes. **The same body for every address** — registered, unregistered, or inside the one-minute cooldown — so it cannot be used to discover who has an account. `503` when the deployment cannot send mail. `429 rate_limited` past `RATE_LIMIT_RECOVERY` per client address. |
 | `POST /v1/password-resets/confirm` | `204` | Set the new password and **revoke every session and every live access token**, in one transaction. Mints no session; sign in again. `404` for anything that is not a live token — never existed, expired, spent, or another flow's. |
 | `POST /v1/email-verifications` | `202 {"status":"accepted"}` | Mail a link proving the address **already on the account**. Registration does not send one. **The same body for every address, including one whose account has already proved it** — the route needs no credential, so a status that differed would publish a list of verified accounts. Ask `GET /v1/email-verification` if you need to know. `429 rate_limited` past `RATE_LIMIT_RECOVERY` per client address. |
@@ -861,6 +865,64 @@ the caller is an operator, and a `404` would send them looking for a user id tha
 is not missing. Its *redemption* does not exist yet — that is the next packet, and
 the answer it must use is named at its definition in
 `internal/recovery/session_link.go`.
+
+#### The staff console is a human surface, and the machine one is untouched
+
+`GET /v1/operator/me`, `GET /v1/operator/users`, and
+`POST /v1/operator/users/:userId/disable|enable` are the Parlor operator
+console's contract: a signed-in **staff** human's session, and nothing else. A
+scoped api key is `403` on all four, exactly as a session is `403` on the
+machine operator routes — the two credentials do not cross, so the
+`user_audit_log` row can always say whether a person or a pipeline acted. A
+staff disable runs the same transaction as a machine one; its audit row names
+the staff user's id and no api key. No account role reaches these routes: staff
+is a property of the user (`users.is_staff`, default false), not of a
+membership, and the whole revision is [DECISIONS.md D17](DECISIONS.md).
+
+Staff is **granted by an operator, never by the service itself**. There is no
+bootstrap route, no default staff account and no grant button: the only writer
+of the column is the `identity-staff` command, which ships in the SAME image
+as the service (`/app/identity-staff`, built beside `/app/service` — never the
+entrypoint) and runs as a one-shot Job with an overridden command:
+
+```yaml
+# One-shot k3s Job (Argo/substrate): the same image the Deployment runs,
+# with the command overridden. No shell, no new service, no HTTP involved.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: identity-staff-grant
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: identity-staff
+          image: "<the same image:tag the Deployment runs>"
+          command: ["/app/identity-staff"]
+          args: ["grant", "kaka@example.com"]
+          envFrom:
+            # The exact existing secret the Deployment reads
+            # (chart `secretName`, default `identity-secrets`), which already
+            # carries the `DATABASE_URL` key the service boots with.
+            - secretRef:
+                name: identity-secrets
+```
+
+The command needs what the service needs and nothing else: `DATABASE_URL`
+with write access to the `users` table, and no HTTP surface at all. Granting
+is idempotent, revoking takes effect on the next request (the gate reads the
+row every time), and an unknown address is an error naming the address rather
+than a row. Locally, the same binary runs from source:
+
+```sh
+DATABASE_URL="postgres://…" go run ./cmd/identity-staff grant kaka@example.com
+DATABASE_URL="postgres://…" go run ./cmd/identity-staff revoke kaka@example.com
+DATABASE_URL="postgres://…" go run ./cmd/identity-staff status kaka@example.com
+```
+
+Keep the existing machine-key operator endpoints working for automation; the
+human path is intentionally separate.
 
 #### The lockout is per-factor
 

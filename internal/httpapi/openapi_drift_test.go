@@ -615,7 +615,18 @@ func TestTheDocumentIsOpenAPI31AndCarriesAVersion(t *testing.T) {
 	// method gets it and every other consumer cannot tell the difference. The
 	// merged document describes sessions, the display name, the deletion and the
 	// signup timestamp, and a consumer pinned at 1.10.0 saw none of the four.
-	const want = "1.12.0"
+	//
+	// 1.13.0 is the human staff surface (`GET /v1/operator/me`,
+	// `GET /v1/operator/users`, `POST /v1/operator/users/{user_id}/disable` and
+	// its `/enable` beside it, packet m147). It is a NON-BREAKING addition and
+	// a GENERATED-SOURCE change at once — four operations and three new
+	// schemas (`OperatorMe`, `StaffDirectory`, `StaffDirectoryEntry`) — so a Go
+	// consumer that names the new methods gets them and every other consumer
+	// cannot tell the difference. No existing operation moved and no existing
+	// response changed. The machine operator surface is untouched, and the
+	// document says on both sides that the two credentials do not cross. See
+	// DECISIONS.md D19.
+	const want = "1.13.0"
 	if doc.InfoVersion != want {
 		t.Errorf("%s declares info.version %q, not %q. core's sync rule is that the /v1 "+
 			"prefix says which contract and this says which build of it, and a non-breaking "+

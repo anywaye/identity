@@ -161,13 +161,20 @@ func staffFrom(ctx context.Context) (users.User, bool) {
 // ---------------------------------------------------------------------------
 
 // operatorMeResponse is the 200 from GET /v1/operator/me: the caller's own
-// operator status, and nothing about anybody else's.
+// operator status under a `user` key, and nothing about anybody else's.
 //
-// AN OBJECT WITH A `staff` FLAG, not a bare boolean: the shape has room for
-// the identity it describes (a client that cannot tell whose status this is
-// cannot render it), and `id` + `email` are what ties the answer to the
-// session that asked.
+// NESTED RATHER THAN FLAT, which is the Parlor contract: the console renders
+// a user, and the status it needs is that user's staff flag beside the id and
+// address it already renders. A flat `{id, email, staff}` would read as three
+// facts about the request; `{user: {…}}` reads as one fact about a person.
 type operatorMeResponse struct {
+	User operatorMeUser `json:"user"`
+}
+
+// operatorMeUser is the user inside the me response. `staff` is always true
+// on a 200 — the gate established it, and a 403 IS the status for everybody
+// else.
+type operatorMeUser struct {
 	ID    string `json:"id"`
 	Email string `json:"email"`
 	Staff bool   `json:"staff"`
@@ -178,14 +185,21 @@ type operatorMeResponse struct {
 // THE FIELDS PARLOR NEEDS AND NOTHING ELSE. There is no password digest, no
 // api key, no recovery token, no MFA secret and no session token here — and it
 // is a dedicated type rather than `users.User` so none of those can reach the
-// body by being added to the domain struct. `disabled` is what the console
-// renders as state; `created_at` is what it sorts by when the query ties.
+// body by being added to the domain struct.
+//
+// THE TIMESTAMPS ARE PRESENT AS NULL, never omitted and never folded into a
+// boolean. `disabled_at` is null for an active account and `email_verified_at`
+// is null for an address nobody has proved; a client can tell "never" from
+// "missing", and `created_at` is what the console sorts by when the query
+// ties. There is deliberately no `omitempty` on either: an omitted key and a
+// null one are two spellings of one answer, and the contract promises one.
 type staffUserEntry struct {
-	ID          string    `json:"id"`
-	Email       string    `json:"email"`
-	DisplayName *string   `json:"display_name,omitempty"`
-	Disabled    bool      `json:"disabled"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID              string     `json:"id"`
+	Email           string     `json:"email"`
+	DisplayName     *string    `json:"display_name,omitempty"`
+	DisabledAt      *time.Time `json:"disabled_at"`
+	EmailVerifiedAt *time.Time `json:"email_verified_at"`
+	CreatedAt       time.Time  `json:"created_at"`
 }
 
 // staffUserListResponse is the 200 from GET /v1/operator/users.
@@ -203,7 +217,7 @@ type staffUserListResponse struct {
 
 // handleOperatorMe reports the current signed-in staff user's operator status.
 //
-//	GET /v1/operator/me  →  200 {id, email, staff: true}
+//	GET /v1/operator/me  →  200 {user: {id, email, staff: true}}
 //
 // The gate has already established staff, so the flag is always true here —
 // and that is the point rather than a tautology: a 200 names the status, a 403
@@ -216,9 +230,11 @@ func (o options) handleOperatorMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, operatorMeResponse{
-		ID:    staff.ID.String(),
-		Email: staff.Email,
-		Staff: true,
+		User: operatorMeUser{
+			ID:    staff.ID.String(),
+			Email: staff.Email,
+			Staff: true,
+		},
 	})
 }
 
@@ -276,11 +292,12 @@ func (o options) handleSearchOperatorUsers(w http.ResponseWriter, r *http.Reques
 	out := make([]staffUserEntry, 0, len(entries))
 	for _, e := range entries {
 		out = append(out, staffUserEntry{
-			ID:          e.ID.String(),
-			Email:       e.Email,
-			DisplayName: e.DisplayName,
-			Disabled:    e.Disabled,
-			CreatedAt:   e.CreatedAt,
+			ID:              e.ID.String(),
+			Email:           e.Email,
+			DisplayName:     e.DisplayName,
+			DisabledAt:      e.DisabledAt,
+			EmailVerifiedAt: e.EmailVerifiedAt,
+			CreatedAt:       e.CreatedAt,
 		})
 	}
 	writeJSON(w, http.StatusOK, staffUserListResponse{Users: out})

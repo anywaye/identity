@@ -420,12 +420,19 @@ func (s *Store) SetStaff(ctx context.Context, q db.Querier, userID id.UUID, staf
 // projection carries no password digest, no API key, no recovery token, no MFA
 // secret and no session token — the fields Parlor needs to render a row and act
 // on it, and nothing a reader could mistake for a credential.
+//
+// THE TIMESTAMPS ARE NULLABLE AND PRESENT, not omitted and not folded into a
+// boolean. `disabled_at` is nil for an active account and `email_verified_at`
+// is nil for an address nobody has proved; the wire carries both keys with null
+// rather than omitting them, so a client can tell "never" from "missing" and a
+// future timestamp cannot arrive unannounced.
 type DirectoryEntry struct {
-	ID          id.UUID
-	Email       string
-	DisplayName *string
-	Disabled    bool
-	CreatedAt   time.Time
+	ID              id.UUID
+	Email           string
+	DisplayName     *string
+	DisabledAt      *time.Time
+	EmailVerifiedAt *time.Time
+	CreatedAt       time.Time
 }
 
 // Search bounds for the staff directory. The handler validates the request; the
@@ -471,7 +478,7 @@ func (s *Store) Search(ctx context.Context, q db.Querier, query string, limit in
 	pattern := "%" + strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(query) + "%"
 
 	const sql = `
-		SELECT id, email, display_name, disabled_at IS NOT NULL, created_at
+		SELECT id, email, display_name, disabled_at, email_verified_at, created_at
 		FROM users
 		WHERE email ILIKE $1 ESCAPE '\' OR display_name ILIKE $1 ESCAPE '\'
 		ORDER BY email ASC
@@ -487,11 +494,9 @@ func (s *Store) Search(ctx context.Context, q db.Querier, query string, limit in
 	out := make([]DirectoryEntry, 0, limit)
 	for rows.Next() {
 		var e DirectoryEntry
-		var disabled bool
-		if err := rows.Scan(&e.ID, &e.Email, &e.DisplayName, &disabled, &e.CreatedAt); err != nil {
+		if err := rows.Scan(&e.ID, &e.Email, &e.DisplayName, &e.DisabledAt, &e.EmailVerifiedAt, &e.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scanning a directory entry: %w", err)
 		}
-		e.Disabled = disabled
 		out = append(out, e)
 	}
 	if err := rows.Err(); err != nil {

@@ -126,7 +126,15 @@ info:
   # service means "locked, retry at" and clients render it as a countdown. A
   # disabled account is not coming back, so a client that treated the 403 as
   # retryable would poll a route whose answer cannot change.
-  version: 1.12.0
+  #
+  # 1.13.0 IS THE HUMAN STAFF SURFACE: four new operations under `/v1/operator/*`
+  # for the Parlor console — own status, directory search, staff disable and
+  # staff enable — plus the `OperatorMe`, `StaffDirectoryEntry` and
+  # `StaffDirectory` schemas. No existing operation moved and no existing
+  # response changed. The machine operator surface (`POST
+  # /v1/users/{user_id}/disable|enable`) is untouched: the two credentials do
+  # not cross, and the document says so on both sides. See DECISIONS.md D17.
+  version: 1.13.0
   summary: Authentication, sessions, multi-factor authentication, account recovery, accounts, tenancy, scoped API tokens, the admin surface, the operator surface and OIDC registrations.
   description: |
     `identity` is the cafaye platform's security boundary: it is what every other
@@ -368,6 +376,13 @@ tags:
       A disable ends **every session the account holds, in the same transaction**
       that writes the column, and re-enabling restores the column and nothing
       else: those sessions are gone and the owner signs in again.
+
+      **The four `/v1/operator/*` operations below are the mirror image: the
+      human staff surface for the Parlor console, reachable by a signed-in staff
+      member's session only — never by a scoped API token.** A machine key is
+      refused there exactly as a session is refused here, so the audit trail can
+      always say whether a person or a pipeline acted. See DECISIONS.md D17,
+      which revises D14's "no platform-admin role" for exactly this surface.
   - name: recovery
     description: |
       The three flows a person can only finish by proving they can read an inbox:
@@ -772,6 +787,295 @@ paths:
                     instance: /v1/users/ab000000-0000-0000-0000-000000000000/enable
                     code: forbidden
                     trace_id: 0af7651916cd43dd8448eb211c80319c
+        '404':
+          description: |
+            No user with that id exists on this deployment — or the id in the path is
+            not one this service issued, which is the same answer on purpose.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /v1/operator/me:
+    get:
+      tags: [operator]
+      operationId: getOperatorMe
+      summary: The signed-in staff user's own operator status
+      description: |
+        Reports the current session's operator status: the caller's own id and
+        address, and whether they are staff, under a `user` key.
+
+        **Staff only, and the 403 IS the answer for everybody else.** An
+        authenticated session whose user is not staff — a tenant admin's
+        included, because no account role implies global staff authority — is
+        refused, and a scoped API token is refused too: this is the human
+        surface, and the machine operator surface is `POST
+        /v1/users/{user_id}/disable`. The response never names another user's
+        status, so there is nothing here to enumerate.
+
+        A cookie and a bearer session token are both accepted, exactly as on
+        `GET /v1/me`. A `cafaye_` API key presented as a bearer token is not a
+        session and is refused with 403, not 401.
+      security:
+        - sessionCookie: []
+        - bearerToken: []
+      responses:
+        '200':
+          description: The caller's own operator status. `staff` is always true here — the gate established it.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperatorMe'
+              examples:
+                default:
+                  value:
+                    user:
+                      id: ab000000-0000-0000-0000-000000000000
+                      email: kaka@example.com
+                      staff: true
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          description: |
+            The credential may not use the staff surface: a scoped API token, or
+            an authenticated session whose user is not marked as staff. The two
+            refusals share a status and are told apart by the `detail`, which is
+            fixed per reason.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                notStaff:
+                  summary: An authenticated session whose user is not staff
+                  value:
+                    type: https://errors.cafaye.com/forbidden
+                    title: Forbidden
+                    status: 403
+                    detail: >-
+                      this route is for platform staff; your account is not
+                      marked as staff. No account role grants this — staff is a
+                      property of the user, not of a membership
+                    instance: /v1/operator/me
+                    code: forbidden
+                    trace_id: 0af7651916cd43dd8448eb211c80319c
+                notASession:
+                  summary: A scoped API token
+                  value:
+                    type: https://errors.cafaye.com/forbidden
+                    title: Forbidden
+                    status: 403
+                    detail: >-
+                      the staff surface is reachable by a signed-in staff
+                      member's session only; a scoped api key may not use it.
+                      The machine operator surface is
+                      POST /v1/users/{user_id}/disable, and the two credentials
+                      do not cross
+                    instance: /v1/operator/me
+                    code: forbidden
+                    trace_id: 0af7651916cd43dd8448eb211c80319c
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /v1/operator/users:
+    get:
+      tags: [operator]
+      operationId: searchOperatorUsers
+      summary: Search the user directory
+      description: |
+        A bounded, minimal user directory search for staff: the users whose
+        email or display name contains the query, ordered by email.
+
+        **The query is required and must be useful.** An empty term — or a
+        one-character one — is a directory dump wearing a query string, and is
+        refused with 422. LIKE metacharacters in the term match themselves
+        rather than becoming wildcards, so a query for `%` does not become the
+        whole table.
+
+        **The page is bounded.** Absent means 25 rows; over 50 is a 422 naming
+        `limit`, never a silent truncation — a client that asked for 500 rows
+        and received 50 has been told a lie about how much directory it has
+        read. An empty directory renders `{"users": []}`, not null.
+
+        Each entry carries the fields Parlor needs to render a row and act on
+        it — id, email, display name when set, disabled and verified
+        timestamps (null when never), creation time —
+        and nothing a reader could mistake for a credential: no password
+        digest, no API key, no recovery token, no MFA secret, no session token.
+
+        Staff only, like every other route on this surface: the gate runs
+        before the query is read, so a term never reaches the directory from
+        outside the trust boundary.
+      security:
+        - sessionCookie: []
+        - bearerToken: []
+      parameters:
+        - name: query
+          in: query
+          required: true
+          description: |
+            The substring to search email and display name for. Trimmed; at
+            least two characters after trimming.
+          schema:
+            type: string
+            minLength: 2
+        - name: limit
+          in: query
+          required: false
+          description: |
+            The page size. Absent means 25; over 50 is refused.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 25
+      responses:
+        '200':
+          description: One bounded page of the directory.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StaffDirectory'
+              examples:
+                default:
+                  value:
+                    users:
+                      - id: ab000000-0000-0000-0000-000000000000
+                        email: kaka@example.com
+                        display_name: Kaka
+                        disabled_at: null
+                        email_verified_at: '2026-09-30T12:00:00Z'
+                        created_at: '2026-10-01T12:00:00Z'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          description: |
+            The credential may not use the staff surface: a scoped API token, or
+            an authenticated session whose user is not marked as staff.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /v1/operator/users/{user_id}/disable:
+    post:
+      tags: [operator]
+      operationId: staffDisableUser
+      summary: Turn a user's account off, as a staff human
+      description: |
+        Stamps `users.disabled_at` and **deletes every session the account
+        holds, in one transaction** — the same transaction the machine operator
+        surface (`POST /v1/users/{user_id}/disable`) runs, through the same use
+        case. What differs is the actor: the audit row names the signed-in
+        staff user's id and no API key, because no token acted.
+
+        **Staff session only.** A scoped API token is 403 here exactly as a
+        session is 403 on the machine surface, so the trail can always say
+        whether a person or a pipeline acted. An authenticated session whose
+        user is not staff is 403 too — a tenant admin's included, because no
+        account role implies global staff authority — and the gate runs before
+        the subject is parsed, so a refusal discloses nothing about whether
+        the named user exists.
+
+        A user id this service never issued answers `404`, safe here on
+        DECISIONS.md D12's terms: behind the staff gate there is no stranger to
+        protect. Disabling an already-disabled account is a `204`, not a `409`.
+      security:
+        - sessionCookie: []
+        - bearerToken: []
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      responses:
+        '204':
+          description: |
+            The account is disabled and every session it held is gone. No body.
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          description: |
+            The credential may not use the staff surface: a scoped API token, or
+            an authenticated session whose user is not marked as staff.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: |
+            No user with that id exists on this deployment — or the id in the path is
+            not one this service issued, which is the same answer on purpose.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /v1/operator/users/{user_id}/enable:
+    post:
+      tags: [operator]
+      operationId: staffEnableUser
+      summary: Lift a disable, as a staff human
+      description: |
+        Clears `users.disabled_at`. **It restores nothing else, and that is the
+        whole of what it promises** — the sessions the disable ended were
+        deleted, and the owner signs in again like anybody else. The audit row
+        names the signed-in staff user, for the reason the disable's does: a
+        re-enable that records nobody leaves a trail saying the person is still
+        disabled.
+
+        The gate, the statuses and the reasons are the disable's, and enabling
+        an account that is not disabled is a `204`, not a `409`, on the same
+        reasoning.
+      security:
+        - sessionCookie: []
+        - bearerToken: []
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      responses:
+        '204':
+          description: |
+            The account is enabled. **No session was restored** — the owner signs in
+            again. No body.
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          description: |
+            The credential may not use the staff surface: a scoped API token, or
+            an authenticated session whose user is not marked as staff.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
         '404':
           description: |
             No user with that id exists on this deployment — or the id in the path is
@@ -6034,6 +6338,94 @@ components:
             the key is omitted from the preferences document, which is the
             same state as a null and means the system theme, the reference's
             own `theme.blank?`. Set or cleared via `PATCH /v1/me`.
+
+    OperatorMe:
+      type: object
+      description: |
+        The caller's own operator status, under a `user` key. `staff` is always
+        true on a 200 — the gate established it, and a 403 IS the status for
+        everybody else. It names nobody but the caller, so there is nothing
+        here to enumerate.
+      additionalProperties: false
+      required: [user]
+      properties:
+        user:
+          type: object
+          additionalProperties: false
+          required: [id, email, staff]
+          properties:
+            id:
+              type: string
+              format: uuid
+              description: The caller's own identifier.
+            email:
+              type: string
+              format: email
+              maxLength: 320
+              description: The caller's own address.
+            staff:
+              type: boolean
+              description: Whether the caller is staff. Always true on this route.
+
+    StaffDirectoryEntry:
+      type: object
+      description: |
+        One row of the staff directory: the fields Parlor needs to render it
+        and act on it. There is no password digest, no API key, no recovery
+        token, no MFA secret and no session token here, and adding one is a
+        contract change.
+
+        The timestamps are **present as null**, never omitted and never folded
+        into a boolean: `disabled_at` is null for an active account and
+        `email_verified_at` is null for an address nobody has proved, so a
+        client can tell "never" from "missing".
+      additionalProperties: false
+      required: [id, email, disabled_at, email_verified_at, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: The user's identifier.
+        email:
+          type: string
+          format: email
+          maxLength: 320
+          description: Always lower case. Registration normalizes before storing.
+        display_name:
+          type: string
+          maxLength: 64
+          description: |
+            What the person is called. Absent when they have not set one — the
+            column is NULL, and the field is omitted rather than null.
+        disabled_at:
+          type: [string, "null"]
+          format: date-time
+          description: |
+            RFC3339 UTC, null when the account was never disabled. Set by a
+            staff or machine operator disable; cleared by a re-enable.
+        email_verified_at:
+          type: [string, "null"]
+          format: date-time
+          description: |
+            RFC3339 UTC, null when nobody has proved the address. Records the
+            FIRST proof and does not move; changing the address clears it.
+        created_at:
+          type: string
+          format: date-time
+          description: When the account was created.
+
+    StaffDirectory:
+      type: object
+      description: |
+        One bounded page of the staff directory. Empty is `{"users": []}`,
+        never null.
+      additionalProperties: false
+      required: [users]
+      properties:
+        users:
+          type: array
+          items:
+            $ref: '#/components/schemas/StaffDirectoryEntry'
 
     RegisterRequest:
       type: object

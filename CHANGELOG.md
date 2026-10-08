@@ -6,6 +6,23 @@ All notable changes to identity are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added (packet m147-identity-system-admin: human staff surface for the Parlor console)
+
+- **Four staff routes under `/v1/operator/*`**, reachable by a signed-in staff
+  session only: `getOperatorMe` (`GET /v1/operator/me` answers
+  `{user: {id, email, staff}}`), `searchOperatorUsers
+  (`GET /v1/operator/users`, bounded substring search returning the minimal
+  projection with `disabled_at`/`email_verified_at` present as null),
+  `staffDisableUser` and `staffEnableUser` (same transaction as the machine
+  operator pair, with the staff human as the recorded actor). A scoped API key
+  is `403` on all four, exactly as a session is `403` on the machine routes.
+  Document version 1.13.0. See [DECISIONS.md](DECISIONS.md) **D19**, which
+  revises D14's "no platform-admin role" for this surface.
+- **`users.is_staff` (migration `00030`)**, default false, writable only by
+  `users.Store.SetStaff` — which the new `identity-staff` operator command
+  (`grant`/`revoke`/`status`, with `DATABASE_URL` in hand) calls and no HTTP
+  route does. No bootstrap route, no default staff account, no grant button.
+
 ### Fixed (packet identity-w104-rlsbydigest: ByDigest is unresolvable under RLS — every API key 401s)
 
 The site-loop walk found that **every freshly minted API key 401s on

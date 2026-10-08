@@ -135,6 +135,10 @@ var auditFamilyPrefixes = []string{
 	// the answer is "nothing" — the pair it hands out is a bearer credential for
 	// one form submission, not a fact about any account.
 	"/v1/signup-timestamp",
+	// The staff surface. All four routes answer a stranger — 401 without a
+	// session, 403 with a machine key or a non-staff one — so each gets a row
+	// answering the question, even though every answer is "nothing".
+	"/v1/operator",
 }
 
 // anonymousFamilyAudit is the table, one row per route.
@@ -412,6 +416,61 @@ func anonymousFamilyAudit() []auditRoute {
 			discloses: "EVERYTHING about a token, and that is what the endpoint is for. Its protection " +
 				"is the credential the caller must present, not the shape of the answer. See " +
 				"TestIntrospectionIsAnOracleByDesignAndGatedOnACredential before changing this row",
+		},
+		{
+			// A row because the `/v1/operator` PREFIX catches this route, not
+			// because a stranger learns anything from it. The staff gate resolves
+			// the session before anything else, so 401 is what the service
+			// answers — and the response names the caller's own status only,
+			// which a stranger has none of.
+			name: "read my operator status", method: http.MethodGet, pattern: "/v1/operator/me",
+			anonymous: http.StatusUnauthorized,
+			discloses: "nothing: 401 without a session, so no status arrives from a stranger. " +
+				"Behind a session the route answers the caller's own status and nothing about " +
+				"anybody else's — which is the property TestOperatorMeReportsTheSignedInStaffUser holds",
+		},
+		{
+			// THE SAME NOTHING FOR THE DIRECTORY, and the query is absent from the
+			// probe on purpose: the gate refuses before the query is read, so a
+			// term never reaches the directory from a stranger and there is no
+			// row to tell apart. A 422 for a missing query would be honest and
+			// would also make the refusal vary by what the stranger sent.
+			name: "search the staff directory", method: http.MethodGet, pattern: "/v1/operator/users",
+			identifier: "query",
+			anonymous:  http.StatusUnauthorized,
+			discloses: "nothing: 401 without a staff session, before the query is read — so a " +
+				"real term, a made-up one and no term at all are the same answer, and no " +
+				"address reaches the directory from outside the trust boundary",
+		},
+		{
+			// The staff disable, restated as a census row rather than pointed at
+			// the machine surface's: the census compares (method, path) keys, so
+			// a row covering "the operator surface" would leave this route
+			// unlisted. It answers 401 rather than the machine route's 403,
+			// because a session IS the right credential kind here — the stranger
+			// holds none of it, and a 403 would send them hunting an authority
+			// problem instead of a login.
+			name: "staff-disable a user", method: http.MethodPost,
+			pattern:   "/v1/operator/users/{userID}/disable",
+			probe:     `{}`,
+			anonymous: http.StatusUnauthorized,
+			discloses: "nothing: 401 without a staff session, and the refusal happens BEFORE the " +
+				"user id in the path is parsed — so this is one answer for a real user id, a " +
+				"made-up one and no id at all, and there is no row to tell apart. Behind the " +
+				"gate the 404 for an id this service never issued is deliberate — see D12",
+		},
+		{
+			// The same row for the other direction, restated rather than pointed
+			// at the one above, for the reason the machine surface's pair gives.
+			name: "staff re-enable a user", method: http.MethodPost,
+			pattern:   "/v1/operator/users/{userID}/enable",
+			probe:     `{}`,
+			anonymous: http.StatusUnauthorized,
+			discloses: "nothing, and it is the same nothing the staff disable discloses: 401 " +
+				"without a staff session, before the path is parsed. There is deliberately no " +
+				"way to learn a user's disabled state from either direction anonymously — the " +
+				"only answer that names it is the login, and it is behind the password " +
+				"(DECISIONS.md D13)",
 		},
 	}
 }

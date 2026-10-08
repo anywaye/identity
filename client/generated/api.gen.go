@@ -1379,6 +1379,23 @@ type OIDCClientGrantTypes string
 // OIDCClientScopes defines model for OIDCClient.Scopes.
 type OIDCClientScopes string
 
+// OperatorMe The caller's own operator status, under a `user` key. `staff` is always
+// true on a 200 — the gate established it, and a 403 IS the status for
+// everybody else. It names nobody but the caller, so there is nothing
+// here to enumerate.
+type OperatorMe struct {
+	User struct {
+		// Email The caller's own address.
+		Email openapi_types.Email `json:"email"`
+
+		// ID The caller's own identifier.
+		ID openapi_types.UUID `json:"id"`
+
+		// Staff Whether the caller is staff. Always true on this route.
+		Staff bool `json:"staff"`
+	} `json:"user"`
+}
+
 // OwnershipTransfer A completed transfer: the account, and **both** memberships at the roles
 // they now hold.
 //
@@ -1810,6 +1827,44 @@ type SocialLinked struct {
 // without a boolean that says the same thing twice.
 type SocialLinkedLinkedProvider string
 
+// StaffDirectory One bounded page of the staff directory. Empty is `{"users": []}`,
+// never null.
+type StaffDirectory struct {
+	Users []StaffDirectoryEntry `json:"users"`
+}
+
+// StaffDirectoryEntry One row of the staff directory: the fields Parlor needs to render it
+// and act on it. There is no password digest, no API key, no recovery
+// token, no MFA secret and no session token here, and adding one is a
+// contract change.
+//
+// The timestamps are **present as null**, never omitted and never folded
+// into a boolean: `disabled_at` is null for an active account and
+// `email_verified_at` is null for an address nobody has proved, so a
+// client can tell "never" from "missing".
+type StaffDirectoryEntry struct {
+	// CreatedAt When the account was created.
+	CreatedAt time.Time `json:"created_at"`
+
+	// DisabledAt RFC3339 UTC, null when the account was never disabled. Set by a
+	// staff or machine operator disable; cleared by a re-enable.
+	DisabledAt *time.Time `json:"disabled_at"`
+
+	// DisplayName What the person is called. Absent when they have not set one — the
+	// column is NULL, and the field is omitted rather than null.
+	DisplayName *string `json:"display_name,omitempty"`
+
+	// Email Always lower case. Registration normalizes before storing.
+	Email openapi_types.Email `json:"email"`
+
+	// EmailVerifiedAt RFC3339 UTC, null when nobody has proved the address. Records the
+	// FIRST proof and does not move; changing the address clears it.
+	EmailVerifiedAt *time.Time `json:"email_verified_at"`
+
+	// ID The user's identifier.
+	ID openapi_types.UUID `json:"id"`
+}
+
 // StartEnrollmentRequest defines model for StartEnrollmentRequest.
 type StartEnrollmentRequest struct {
 	// Code Required **only** when this account already has a credential, where
@@ -2067,6 +2122,16 @@ type UpdateCurrentUserJSONBody struct {
 
 // UpdateCurrentUserJSONBodyTheme defines parameters for UpdateCurrentUser.
 type UpdateCurrentUserJSONBodyTheme string
+
+// SearchOperatorUsersParams defines parameters for SearchOperatorUsers.
+type SearchOperatorUsersParams struct {
+	// Query The substring to search email and display name for. Trimmed; at
+	// least two characters after trimming.
+	Query string `form:"query" json:"query"`
+
+	// Limit The page size. Absent means 25; over 50 is refused.
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+}
 
 // CreateAccountJSONRequestBody defines body for CreateAccount for application/json ContentType.
 type CreateAccountJSONRequestBody = CreateAccountRequest
@@ -4226,6 +4291,94 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/mfa/recovery-codes (the `RegenerateMFARecoveryCodes` operationId).
 	RegenerateMFARecoveryCodes(ctx context.Context, body RegenerateMFARecoveryCodesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetOperatorMe The signed-in staff user's own operator status
+	//
+	// Reports the current session's operator status: the caller's own id and
+	// address, and whether they are staff, under a `user` key.
+	//
+	// **Staff only, and the 403 IS the answer for everybody else.** An
+	// authenticated session whose user is not staff — a tenant admin's
+	// included, because no account role implies global staff authority — is
+	// refused, and a scoped API token is refused too: this is the human
+	// surface, and the machine operator surface is `POST
+	// /v1/users/{user_id}/disable`. The response never names another user's
+	// status, so there is nothing here to enumerate.
+	//
+	// A cookie and a bearer session token are both accepted, exactly as on
+	// `GET /v1/me`. A `cafaye_` API key presented as a bearer token is not a
+	// session and is refused with 403, not 401.
+	//
+	// Corresponds with GET /v1/operator/me (the `GetOperatorMe` operationId).
+	GetOperatorMe(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SearchOperatorUsers Search the user directory
+	//
+	// A bounded, minimal user directory search for staff: the users whose
+	// email or display name contains the query, ordered by email.
+	//
+	// **The query is required and must be useful.** An empty term — or a
+	// one-character one — is a directory dump wearing a query string, and is
+	// refused with 422. LIKE metacharacters in the term match themselves
+	// rather than becoming wildcards, so a query for `%` does not become the
+	// whole table.
+	//
+	// **The page is bounded.** Absent means 25 rows; over 50 is a 422 naming
+	// `limit`, never a silent truncation — a client that asked for 500 rows
+	// and received 50 has been told a lie about how much directory it has
+	// read. An empty directory renders `{"users": []}`, not null.
+	//
+	// Each entry carries the fields Parlor needs to render a row and act on
+	// it — id, email, display name when set, disabled and verified
+	// timestamps (null when never), creation time —
+	// and nothing a reader could mistake for a credential: no password
+	// digest, no API key, no recovery token, no MFA secret, no session token.
+	//
+	// Staff only, like every other route on this surface: the gate runs
+	// before the query is read, so a term never reaches the directory from
+	// outside the trust boundary.
+	//
+	// Corresponds with GET /v1/operator/users (the `SearchOperatorUsers` operationId).
+	SearchOperatorUsers(ctx context.Context, params *SearchOperatorUsersParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// StaffDisableUser Turn a user's account off, as a staff human
+	//
+	// Stamps `users.disabled_at` and **deletes every session the account
+	// holds, in one transaction** — the same transaction the machine operator
+	// surface (`POST /v1/users/{user_id}/disable`) runs, through the same use
+	// case. What differs is the actor: the audit row names the signed-in
+	// staff user's id and no API key, because no token acted.
+	//
+	// **Staff session only.** A scoped API token is 403 here exactly as a
+	// session is 403 on the machine surface, so the trail can always say
+	// whether a person or a pipeline acted. An authenticated session whose
+	// user is not staff is 403 too — a tenant admin's included, because no
+	// account role implies global staff authority — and the gate runs before
+	// the subject is parsed, so a refusal discloses nothing about whether
+	// the named user exists.
+	//
+	// A user id this service never issued answers `404`, safe here on
+	// DECISIONS.md D12's terms: behind the staff gate there is no stranger to
+	// protect. Disabling an already-disabled account is a `204`, not a `409`.
+	//
+	// Corresponds with POST /v1/operator/users/{user_id}/disable (the `StaffDisableUser` operationId).
+	StaffDisableUser(ctx context.Context, userID UserID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// StaffEnableUser Lift a disable, as a staff human
+	//
+	// Clears `users.disabled_at`. **It restores nothing else, and that is the
+	// whole of what it promises** — the sessions the disable ended were
+	// deleted, and the owner signs in again like anybody else. The audit row
+	// names the signed-in staff user, for the reason the disable's does: a
+	// re-enable that records nobody leaves a trail saying the person is still
+	// disabled.
+	//
+	// The gate, the statuses and the reasons are the disable's, and enabling
+	// an account that is not disabled is a `204`, not a `409`, on the same
+	// reasoning.
+	//
+	// Corresponds with POST /v1/operator/users/{user_id}/enable (the `StaffEnableUser` operationId).
+	StaffEnableUser(ctx context.Context, userID UserID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RequestPasswordResetWithBody Ask for a password-reset link
 	//
@@ -7679,6 +7832,134 @@ func (c *Client) RegenerateMFARecoveryCodes(ctx context.Context, body Regenerate
 	return c.Client.Do(req)
 }
 
+// GetOperatorMe The signed-in staff user's own operator status
+//
+// Reports the current session's operator status: the caller's own id and
+// address, and whether they are staff, under a `user` key.
+//
+// **Staff only, and the 403 IS the answer for everybody else.** An
+// authenticated session whose user is not staff — a tenant admin's
+// included, because no account role implies global staff authority — is
+// refused, and a scoped API token is refused too: this is the human
+// surface, and the machine operator surface is `POST
+// /v1/users/{user_id}/disable`. The response never names another user's
+// status, so there is nothing here to enumerate.
+//
+// A cookie and a bearer session token are both accepted, exactly as on
+// `GET /v1/me`. A `cafaye_` API key presented as a bearer token is not a
+// session and is refused with 403, not 401.
+//
+// Corresponds with GET /v1/operator/me (the `GetOperatorMe` operationId).
+func (c *Client) GetOperatorMe(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetOperatorMeRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SearchOperatorUsers Search the user directory
+//
+// A bounded, minimal user directory search for staff: the users whose
+// email or display name contains the query, ordered by email.
+//
+// **The query is required and must be useful.** An empty term — or a
+// one-character one — is a directory dump wearing a query string, and is
+// refused with 422. LIKE metacharacters in the term match themselves
+// rather than becoming wildcards, so a query for `%` does not become the
+// whole table.
+//
+// **The page is bounded.** Absent means 25 rows; over 50 is a 422 naming
+// `limit`, never a silent truncation — a client that asked for 500 rows
+// and received 50 has been told a lie about how much directory it has
+// read. An empty directory renders `{"users": []}`, not null.
+//
+// Each entry carries the fields Parlor needs to render a row and act on
+// it — id, email, display name when set, disabled and verified
+// timestamps (null when never), creation time —
+// and nothing a reader could mistake for a credential: no password
+// digest, no API key, no recovery token, no MFA secret, no session token.
+//
+// Staff only, like every other route on this surface: the gate runs
+// before the query is read, so a term never reaches the directory from
+// outside the trust boundary.
+//
+// Corresponds with GET /v1/operator/users (the `SearchOperatorUsers` operationId).
+func (c *Client) SearchOperatorUsers(ctx context.Context, params *SearchOperatorUsersParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSearchOperatorUsersRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// StaffDisableUser Turn a user's account off, as a staff human
+//
+// Stamps `users.disabled_at` and **deletes every session the account
+// holds, in one transaction** — the same transaction the machine operator
+// surface (`POST /v1/users/{user_id}/disable`) runs, through the same use
+// case. What differs is the actor: the audit row names the signed-in
+// staff user's id and no API key, because no token acted.
+//
+// **Staff session only.** A scoped API token is 403 here exactly as a
+// session is 403 on the machine surface, so the trail can always say
+// whether a person or a pipeline acted. An authenticated session whose
+// user is not staff is 403 too — a tenant admin's included, because no
+// account role implies global staff authority — and the gate runs before
+// the subject is parsed, so a refusal discloses nothing about whether
+// the named user exists.
+//
+// A user id this service never issued answers `404`, safe here on
+// DECISIONS.md D12's terms: behind the staff gate there is no stranger to
+// protect. Disabling an already-disabled account is a `204`, not a `409`.
+//
+// Corresponds with POST /v1/operator/users/{user_id}/disable (the `StaffDisableUser` operationId).
+func (c *Client) StaffDisableUser(ctx context.Context, userID UserID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewStaffDisableUserRequest(c.Server, userID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// StaffEnableUser Lift a disable, as a staff human
+//
+// Clears `users.disabled_at`. **It restores nothing else, and that is the
+// whole of what it promises** — the sessions the disable ended were
+// deleted, and the owner signs in again like anybody else. The audit row
+// names the signed-in staff user, for the reason the disable's does: a
+// re-enable that records nobody leaves a trail saying the person is still
+// disabled.
+//
+// The gate, the statuses and the reasons are the disable's, and enabling
+// an account that is not disabled is a `204`, not a `409`, on the same
+// reasoning.
+//
+// Corresponds with POST /v1/operator/users/{user_id}/enable (the `StaffEnableUser` operationId).
+func (c *Client) StaffEnableUser(ctx context.Context, userID UserID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewStaffEnableUserRequest(c.Server, userID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // RequestPasswordResetWithBody Ask for a password-reset link
 //
 // Mails a single-use link to the account's registered address, valid for 30
@@ -10409,6 +10690,163 @@ func NewRegenerateMFARecoveryCodesRequestWithBody(server string, contentType str
 	return req, nil
 }
 
+// NewGetOperatorMeRequest constructs an http.Request for the GetOperatorMe method
+func NewGetOperatorMeRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/operator/me")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewSearchOperatorUsersRequest constructs an http.Request for the SearchOperatorUsers method
+func NewSearchOperatorUsersRequest(server string, params *SearchOperatorUsersParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/operator/users")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "query", params.Query, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewStaffDisableUserRequest constructs an http.Request for the StaffDisableUser method
+func NewStaffDisableUserRequest(server string, userID UserID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "user_id", userID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/operator/users/%s/disable", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewStaffEnableUserRequest constructs an http.Request for the StaffEnableUser method
+func NewStaffEnableUserRequest(server string, userID UserID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "user_id", userID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/operator/users/%s/enable", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewRequestPasswordResetRequest calls the generic RequestPasswordReset builder with application/json body
 func NewRequestPasswordResetRequest(server string, body RequestPasswordResetJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -12892,6 +13330,102 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/mfa/recovery-codes (the `RegenerateMFARecoveryCodes` operationId).
 	RegenerateMFARecoveryCodesWithResponse(ctx context.Context, body RegenerateMFARecoveryCodesJSONRequestBody, reqEditors ...RequestEditorFn) (*RegenerateMFARecoveryCodesResponse, error)
+
+	// GetOperatorMeWithResponse The signed-in staff user's own operator status
+	//
+	// Reports the current session's operator status: the caller's own id and
+	// address, and whether they are staff, under a `user` key.
+	//
+	// **Staff only, and the 403 IS the answer for everybody else.** An
+	// authenticated session whose user is not staff — a tenant admin's
+	// included, because no account role implies global staff authority — is
+	// refused, and a scoped API token is refused too: this is the human
+	// surface, and the machine operator surface is `POST
+	// /v1/users/{user_id}/disable`. The response never names another user's
+	// status, so there is nothing here to enumerate.
+	//
+	// A cookie and a bearer session token are both accepted, exactly as on
+	// `GET /v1/me`. A `cafaye_` API key presented as a bearer token is not a
+	// session and is refused with 403, not 401.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/operator/me (the `GetOperatorMe` operationId).
+	GetOperatorMeWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetOperatorMeResponse, error)
+
+	// SearchOperatorUsersWithResponse Search the user directory
+	//
+	// A bounded, minimal user directory search for staff: the users whose
+	// email or display name contains the query, ordered by email.
+	//
+	// **The query is required and must be useful.** An empty term — or a
+	// one-character one — is a directory dump wearing a query string, and is
+	// refused with 422. LIKE metacharacters in the term match themselves
+	// rather than becoming wildcards, so a query for `%` does not become the
+	// whole table.
+	//
+	// **The page is bounded.** Absent means 25 rows; over 50 is a 422 naming
+	// `limit`, never a silent truncation — a client that asked for 500 rows
+	// and received 50 has been told a lie about how much directory it has
+	// read. An empty directory renders `{"users": []}`, not null.
+	//
+	// Each entry carries the fields Parlor needs to render a row and act on
+	// it — id, email, display name when set, disabled and verified
+	// timestamps (null when never), creation time —
+	// and nothing a reader could mistake for a credential: no password
+	// digest, no API key, no recovery token, no MFA secret, no session token.
+	//
+	// Staff only, like every other route on this surface: the gate runs
+	// before the query is read, so a term never reaches the directory from
+	// outside the trust boundary.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/operator/users (the `SearchOperatorUsers` operationId).
+	SearchOperatorUsersWithResponse(ctx context.Context, params *SearchOperatorUsersParams, reqEditors ...RequestEditorFn) (*SearchOperatorUsersResponse, error)
+
+	// StaffDisableUserWithResponse Turn a user's account off, as a staff human
+	//
+	// Stamps `users.disabled_at` and **deletes every session the account
+	// holds, in one transaction** — the same transaction the machine operator
+	// surface (`POST /v1/users/{user_id}/disable`) runs, through the same use
+	// case. What differs is the actor: the audit row names the signed-in
+	// staff user's id and no API key, because no token acted.
+	//
+	// **Staff session only.** A scoped API token is 403 here exactly as a
+	// session is 403 on the machine surface, so the trail can always say
+	// whether a person or a pipeline acted. An authenticated session whose
+	// user is not staff is 403 too — a tenant admin's included, because no
+	// account role implies global staff authority — and the gate runs before
+	// the subject is parsed, so a refusal discloses nothing about whether
+	// the named user exists.
+	//
+	// A user id this service never issued answers `404`, safe here on
+	// DECISIONS.md D12's terms: behind the staff gate there is no stranger to
+	// protect. Disabling an already-disabled account is a `204`, not a `409`.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/operator/users/{user_id}/disable (the `StaffDisableUser` operationId).
+	StaffDisableUserWithResponse(ctx context.Context, userID UserID, reqEditors ...RequestEditorFn) (*StaffDisableUserResponse, error)
+
+	// StaffEnableUserWithResponse Lift a disable, as a staff human
+	//
+	// Clears `users.disabled_at`. **It restores nothing else, and that is the
+	// whole of what it promises** — the sessions the disable ended were
+	// deleted, and the owner signs in again like anybody else. The audit row
+	// names the signed-in staff user, for the reason the disable's does: a
+	// re-enable that records nobody leaves a trail saying the person is still
+	// disabled.
+	//
+	// The gate, the statuses and the reasons are the disable's, and enabling
+	// an account that is not disabled is a `204`, not a `409`, on the same
+	// reasoning.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/operator/users/{user_id}/enable (the `StaffEnableUser` operationId).
+	StaffEnableUserWithResponse(ctx context.Context, userID UserID, reqEditors ...RequestEditorFn) (*StaffEnableUserResponse, error)
 
 	// RequestPasswordResetWithBodyWithResponse Ask for a password-reset link
 	//
@@ -18389,6 +18923,380 @@ func (r RegenerateMFARecoveryCodesResponse) ContentType() string {
 	return ""
 }
 
+// GetOperatorMeResponse200Headers the declared response headers of an HTTP 200 response for GetOperatorMe
+type GetOperatorMeResponse200Headers struct {
+	XTraceID string
+}
+
+// GetOperatorMeResponse401Headers the declared response headers of an HTTP 401 response for GetOperatorMe
+type GetOperatorMeResponse401Headers struct {
+	XTraceID string
+}
+
+// GetOperatorMeResponse403Headers the declared response headers of an HTTP 403 response for GetOperatorMe
+type GetOperatorMeResponse403Headers struct {
+	XTraceID string
+}
+
+// GetOperatorMeResponse500Headers the declared response headers of an HTTP 500 response for GetOperatorMe
+type GetOperatorMeResponse500Headers struct {
+	XTraceID string
+}
+
+type GetOperatorMeResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *OperatorMe
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthenticated
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Problem
+	// ApplicationProblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationProblemJSON500 *InternalError
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *GetOperatorMeResponse200Headers
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *GetOperatorMeResponse401Headers
+	// Headers403 the parsed response headers for an HTTP 403 response
+	Headers403 *GetOperatorMeResponse403Headers
+	// Headers500 the parsed response headers for an HTTP 500 response
+	Headers500 *GetOperatorMeResponse500Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetOperatorMeResponse) GetJSON200() *OperatorMe {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r GetOperatorMeResponse) GetApplicationProblemJSON401() *Unauthenticated {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r GetOperatorMeResponse) GetApplicationProblemJSON403() *Problem {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r GetOperatorMeResponse) GetApplicationProblemJSON500() *InternalError {
+	return r.ApplicationProblemJSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetOperatorMeResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetOperatorMeResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetOperatorMeResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetOperatorMeResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// SearchOperatorUsersResponse200Headers the declared response headers of an HTTP 200 response for SearchOperatorUsers
+type SearchOperatorUsersResponse200Headers struct {
+	XTraceID string
+}
+
+// SearchOperatorUsersResponse401Headers the declared response headers of an HTTP 401 response for SearchOperatorUsers
+type SearchOperatorUsersResponse401Headers struct {
+	XTraceID string
+}
+
+// SearchOperatorUsersResponse403Headers the declared response headers of an HTTP 403 response for SearchOperatorUsers
+type SearchOperatorUsersResponse403Headers struct {
+	XTraceID string
+}
+
+// SearchOperatorUsersResponse422Headers the declared response headers of an HTTP 422 response for SearchOperatorUsers
+type SearchOperatorUsersResponse422Headers struct {
+	XTraceID string
+}
+
+// SearchOperatorUsersResponse500Headers the declared response headers of an HTTP 500 response for SearchOperatorUsers
+type SearchOperatorUsersResponse500Headers struct {
+	XTraceID string
+}
+
+type SearchOperatorUsersResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *StaffDirectory
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthenticated
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Problem
+	// ApplicationProblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationProblemJSON422 *ValidationFailed
+	// ApplicationProblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationProblemJSON500 *InternalError
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *SearchOperatorUsersResponse200Headers
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *SearchOperatorUsersResponse401Headers
+	// Headers403 the parsed response headers for an HTTP 403 response
+	Headers403 *SearchOperatorUsersResponse403Headers
+	// Headers422 the parsed response headers for an HTTP 422 response
+	Headers422 *SearchOperatorUsersResponse422Headers
+	// Headers500 the parsed response headers for an HTTP 500 response
+	Headers500 *SearchOperatorUsersResponse500Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r SearchOperatorUsersResponse) GetJSON200() *StaffDirectory {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r SearchOperatorUsersResponse) GetApplicationProblemJSON401() *Unauthenticated {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r SearchOperatorUsersResponse) GetApplicationProblemJSON403() *Problem {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r SearchOperatorUsersResponse) GetApplicationProblemJSON422() *ValidationFailed {
+	return r.ApplicationProblemJSON422
+}
+
+// GetApplicationProblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r SearchOperatorUsersResponse) GetApplicationProblemJSON500() *InternalError {
+	return r.ApplicationProblemJSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r SearchOperatorUsersResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SearchOperatorUsersResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SearchOperatorUsersResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SearchOperatorUsersResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// StaffDisableUserResponse401Headers the declared response headers of an HTTP 401 response for StaffDisableUser
+type StaffDisableUserResponse401Headers struct {
+	XTraceID string
+}
+
+// StaffDisableUserResponse403Headers the declared response headers of an HTTP 403 response for StaffDisableUser
+type StaffDisableUserResponse403Headers struct {
+	XTraceID string
+}
+
+// StaffDisableUserResponse404Headers the declared response headers of an HTTP 404 response for StaffDisableUser
+type StaffDisableUserResponse404Headers struct {
+	XTraceID string
+}
+
+// StaffDisableUserResponse500Headers the declared response headers of an HTTP 500 response for StaffDisableUser
+type StaffDisableUserResponse500Headers struct {
+	XTraceID string
+}
+
+type StaffDisableUserResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthenticated
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Problem
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *Problem
+	// ApplicationProblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationProblemJSON500 *InternalError
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *StaffDisableUserResponse401Headers
+	// Headers403 the parsed response headers for an HTTP 403 response
+	Headers403 *StaffDisableUserResponse403Headers
+	// Headers404 the parsed response headers for an HTTP 404 response
+	Headers404 *StaffDisableUserResponse404Headers
+	// Headers500 the parsed response headers for an HTTP 500 response
+	Headers500 *StaffDisableUserResponse500Headers
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r StaffDisableUserResponse) GetApplicationProblemJSON401() *Unauthenticated {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r StaffDisableUserResponse) GetApplicationProblemJSON403() *Problem {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r StaffDisableUserResponse) GetApplicationProblemJSON404() *Problem {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r StaffDisableUserResponse) GetApplicationProblemJSON500() *InternalError {
+	return r.ApplicationProblemJSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r StaffDisableUserResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r StaffDisableUserResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r StaffDisableUserResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r StaffDisableUserResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// StaffEnableUserResponse401Headers the declared response headers of an HTTP 401 response for StaffEnableUser
+type StaffEnableUserResponse401Headers struct {
+	XTraceID string
+}
+
+// StaffEnableUserResponse403Headers the declared response headers of an HTTP 403 response for StaffEnableUser
+type StaffEnableUserResponse403Headers struct {
+	XTraceID string
+}
+
+// StaffEnableUserResponse404Headers the declared response headers of an HTTP 404 response for StaffEnableUser
+type StaffEnableUserResponse404Headers struct {
+	XTraceID string
+}
+
+// StaffEnableUserResponse500Headers the declared response headers of an HTTP 500 response for StaffEnableUser
+type StaffEnableUserResponse500Headers struct {
+	XTraceID string
+}
+
+type StaffEnableUserResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthenticated
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Problem
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *Problem
+	// ApplicationProblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationProblemJSON500 *InternalError
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *StaffEnableUserResponse401Headers
+	// Headers403 the parsed response headers for an HTTP 403 response
+	Headers403 *StaffEnableUserResponse403Headers
+	// Headers404 the parsed response headers for an HTTP 404 response
+	Headers404 *StaffEnableUserResponse404Headers
+	// Headers500 the parsed response headers for an HTTP 500 response
+	Headers500 *StaffEnableUserResponse500Headers
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r StaffEnableUserResponse) GetApplicationProblemJSON401() *Unauthenticated {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r StaffEnableUserResponse) GetApplicationProblemJSON403() *Problem {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r StaffEnableUserResponse) GetApplicationProblemJSON404() *Problem {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r StaffEnableUserResponse) GetApplicationProblemJSON500() *InternalError {
+	return r.ApplicationProblemJSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r StaffEnableUserResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r StaffEnableUserResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r StaffEnableUserResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r StaffEnableUserResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // RequestPasswordResetResponse202Headers the declared response headers of an HTTP 202 response for RequestPasswordReset
 type RequestPasswordResetResponse202Headers struct {
 	XTraceID string
@@ -22168,6 +23076,126 @@ func (c *ClientWithResponses) RegenerateMFARecoveryCodesWithResponse(ctx context
 		return nil, err
 	}
 	return ParseRegenerateMFARecoveryCodesResponse(rsp)
+}
+
+// GetOperatorMeWithResponse The signed-in staff user's own operator status
+//
+// Reports the current session's operator status: the caller's own id and
+// address, and whether they are staff, under a `user` key.
+//
+// **Staff only, and the 403 IS the answer for everybody else.** An
+// authenticated session whose user is not staff — a tenant admin's
+// included, because no account role implies global staff authority — is
+// refused, and a scoped API token is refused too: this is the human
+// surface, and the machine operator surface is `POST
+// /v1/users/{user_id}/disable`. The response never names another user's
+// status, so there is nothing here to enumerate.
+//
+// A cookie and a bearer session token are both accepted, exactly as on
+// `GET /v1/me`. A `cafaye_` API key presented as a bearer token is not a
+// session and is refused with 403, not 401.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/operator/me (the `GetOperatorMe` operationId).
+func (c *ClientWithResponses) GetOperatorMeWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetOperatorMeResponse, error) {
+	rsp, err := c.GetOperatorMe(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetOperatorMeResponse(rsp)
+}
+
+// SearchOperatorUsersWithResponse Search the user directory
+//
+// A bounded, minimal user directory search for staff: the users whose
+// email or display name contains the query, ordered by email.
+//
+// **The query is required and must be useful.** An empty term — or a
+// one-character one — is a directory dump wearing a query string, and is
+// refused with 422. LIKE metacharacters in the term match themselves
+// rather than becoming wildcards, so a query for `%` does not become the
+// whole table.
+//
+// **The page is bounded.** Absent means 25 rows; over 50 is a 422 naming
+// `limit`, never a silent truncation — a client that asked for 500 rows
+// and received 50 has been told a lie about how much directory it has
+// read. An empty directory renders `{"users": []}`, not null.
+//
+// Each entry carries the fields Parlor needs to render a row and act on
+// it — id, email, display name when set, disabled and verified
+// timestamps (null when never), creation time —
+// and nothing a reader could mistake for a credential: no password
+// digest, no API key, no recovery token, no MFA secret, no session token.
+//
+// Staff only, like every other route on this surface: the gate runs
+// before the query is read, so a term never reaches the directory from
+// outside the trust boundary.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/operator/users (the `SearchOperatorUsers` operationId).
+func (c *ClientWithResponses) SearchOperatorUsersWithResponse(ctx context.Context, params *SearchOperatorUsersParams, reqEditors ...RequestEditorFn) (*SearchOperatorUsersResponse, error) {
+	rsp, err := c.SearchOperatorUsers(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSearchOperatorUsersResponse(rsp)
+}
+
+// StaffDisableUserWithResponse Turn a user's account off, as a staff human
+//
+// Stamps `users.disabled_at` and **deletes every session the account
+// holds, in one transaction** — the same transaction the machine operator
+// surface (`POST /v1/users/{user_id}/disable`) runs, through the same use
+// case. What differs is the actor: the audit row names the signed-in
+// staff user's id and no API key, because no token acted.
+//
+// **Staff session only.** A scoped API token is 403 here exactly as a
+// session is 403 on the machine surface, so the trail can always say
+// whether a person or a pipeline acted. An authenticated session whose
+// user is not staff is 403 too — a tenant admin's included, because no
+// account role implies global staff authority — and the gate runs before
+// the subject is parsed, so a refusal discloses nothing about whether
+// the named user exists.
+//
+// A user id this service never issued answers `404`, safe here on
+// DECISIONS.md D12's terms: behind the staff gate there is no stranger to
+// protect. Disabling an already-disabled account is a `204`, not a `409`.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/operator/users/{user_id}/disable (the `StaffDisableUser` operationId).
+func (c *ClientWithResponses) StaffDisableUserWithResponse(ctx context.Context, userID UserID, reqEditors ...RequestEditorFn) (*StaffDisableUserResponse, error) {
+	rsp, err := c.StaffDisableUser(ctx, userID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseStaffDisableUserResponse(rsp)
+}
+
+// StaffEnableUserWithResponse Lift a disable, as a staff human
+//
+// Clears `users.disabled_at`. **It restores nothing else, and that is the
+// whole of what it promises** — the sessions the disable ended were
+// deleted, and the owner signs in again like anybody else. The audit row
+// names the signed-in staff user, for the reason the disable's does: a
+// re-enable that records nobody leaves a trail saying the person is still
+// disabled.
+//
+// The gate, the statuses and the reasons are the disable's, and enabling
+// an account that is not disabled is a `204`, not a `409`, on the same
+// reasoning.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/operator/users/{user_id}/enable (the `StaffEnableUser` operationId).
+func (c *ClientWithResponses) StaffEnableUserWithResponse(ctx context.Context, userID UserID, reqEditors ...RequestEditorFn) (*StaffEnableUserResponse, error) {
+	rsp, err := c.StaffEnableUser(ctx, userID, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseStaffEnableUserResponse(rsp)
 }
 
 // RequestPasswordResetWithBodyWithResponse Ask for a password-reset link
@@ -28063,6 +29091,389 @@ func ParseRegenerateMFARecoveryCodesResponse(rsp *http.Response) (*RegenerateMFA
 		response.Headers423 = &headers
 	case rsp.StatusCode == 500:
 		var headers RegenerateMFARecoveryCodesResponse500Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers500 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetOperatorMeResponse parses an HTTP response from a GetOperatorMeWithResponse call
+func ParseGetOperatorMeResponse(rsp *http.Response) (*GetOperatorMeResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetOperatorMeResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest OperatorMe
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthenticated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON500 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers GetOperatorMeResponse200Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 401:
+		var headers GetOperatorMeResponse401Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers401 = &headers
+	case rsp.StatusCode == 403:
+		var headers GetOperatorMeResponse403Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers403 = &headers
+	case rsp.StatusCode == 500:
+		var headers GetOperatorMeResponse500Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers500 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseSearchOperatorUsersResponse parses an HTTP response from a SearchOperatorUsersWithResponse call
+func ParseSearchOperatorUsersResponse(rsp *http.Response) (*SearchOperatorUsersResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SearchOperatorUsersResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest StaffDirectory
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthenticated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ValidationFailed
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON500 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers SearchOperatorUsersResponse200Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 401:
+		var headers SearchOperatorUsersResponse401Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers401 = &headers
+	case rsp.StatusCode == 403:
+		var headers SearchOperatorUsersResponse403Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers403 = &headers
+	case rsp.StatusCode == 422:
+		var headers SearchOperatorUsersResponse422Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers422 = &headers
+	case rsp.StatusCode == 500:
+		var headers SearchOperatorUsersResponse500Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers500 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseStaffDisableUserResponse parses an HTTP response from a StaffDisableUserWithResponse call
+func ParseStaffDisableUserResponse(rsp *http.Response) (*StaffDisableUserResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &StaffDisableUserResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthenticated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON500 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers StaffDisableUserResponse401Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers401 = &headers
+	case rsp.StatusCode == 403:
+		var headers StaffDisableUserResponse403Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers403 = &headers
+	case rsp.StatusCode == 404:
+		var headers StaffDisableUserResponse404Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers404 = &headers
+	case rsp.StatusCode == 500:
+		var headers StaffDisableUserResponse500Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers500 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseStaffEnableUserResponse parses an HTTP response from a StaffEnableUserWithResponse call
+func ParseStaffEnableUserResponse(rsp *http.Response) (*StaffEnableUserResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &StaffEnableUserResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthenticated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON500 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers StaffEnableUserResponse401Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers401 = &headers
+	case rsp.StatusCode == 403:
+		var headers StaffEnableUserResponse403Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers403 = &headers
+	case rsp.StatusCode == 404:
+		var headers StaffEnableUserResponse404Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers404 = &headers
+	case rsp.StatusCode == 500:
+		var headers StaffEnableUserResponse500Headers
 		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {

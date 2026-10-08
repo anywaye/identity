@@ -91,34 +91,49 @@ func TestOperatorMeReportsTheSignedInStaffUser(t *testing.T) {
 	}
 
 	var body struct {
-		ID    string `json:"id"`
-		Email string `json:"email"`
-		Staff bool   `json:"staff"`
+		User struct {
+			ID    string `json:"id"`
+			Email string `json:"email"`
+			Staff bool   `json:"staff"`
+		} `json:"user"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decoding the me response: %v; body: %s", err, rec.Body)
 	}
-	if body.ID != f.staff.ID.String() {
-		t.Errorf("id = %q, want the caller's own %s", body.ID, f.staff.ID)
+	if body.User.ID != f.staff.ID.String() {
+		t.Errorf("user.id = %q, want the caller's own %s", body.User.ID, f.staff.ID)
 	}
-	if body.Email != f.staff.Email {
-		t.Errorf("email = %q, want the caller's own %s", body.Email, f.staff.Email)
+	if body.User.Email != f.staff.Email {
+		t.Errorf("user.email = %q, want the caller's own %s", body.User.Email, f.staff.Email)
 	}
-	if !body.Staff {
-		t.Error("staff = false for a staff caller: the route reports the caller's status and the gate already established it")
+	if !body.User.Staff {
+		t.Error("user.staff = false for a staff caller: the route reports the caller's status and the gate already established it")
 	}
 
-	// The shape is stable: exactly these fields, so a client can rely on it
-	// and a future field cannot arrive unannounced.
+	// The shape is stable and nested: exactly one top-level `user` key, and
+	// exactly the three documented keys inside it — so a client can rely on
+	// it and a future field cannot arrive unannounced.
 	var raw map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
 		t.Fatalf("re-decoding the me response: %v", err)
 	}
-	for key := range raw {
+	if len(raw) != 1 {
+		t.Errorf("the me response has %d top-level keys, want exactly `user`: %s", len(raw), rec.Body)
+	}
+	inner, ok := raw["user"].(map[string]any)
+	if !ok {
+		t.Fatalf("the me response has no `user` object: %s", rec.Body)
+	}
+	for key := range inner {
 		switch key {
 		case "id", "email", "staff":
 		default:
-			t.Errorf("the me response carries %q, which no document declares", key)
+			t.Errorf("the me user carries %q, which no document declares", key)
+		}
+	}
+	for _, key := range []string{"id", "email", "staff"} {
+		if _, present := inner[key]; !present {
+			t.Errorf("the me user omits %q, which the document promises", key)
 		}
 	}
 }
@@ -221,9 +236,11 @@ func TestTheStaffDirectorySearchReturnsTheMinimalProjection(t *testing.T) {
 	f := newStaffFixture(t, true)
 	when := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
 	name := "Kaka"
+	disabledAt := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
+	verifiedAt := time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
 	f.auth.searchResults = []users.DirectoryEntry{
-		{ID: id.MustNew(), Email: "kaka@example.com", DisplayName: &name, Disabled: false, CreatedAt: when},
-		{ID: id.MustNew(), Email: "kaka.osei@example.com", Disabled: true, CreatedAt: when},
+		{ID: id.MustNew(), Email: "kaka@example.com", DisplayName: &name, EmailVerifiedAt: &verifiedAt, CreatedAt: when},
+		{ID: id.MustNew(), Email: "kaka.osei@example.com", DisabledAt: &disabledAt, CreatedAt: when},
 	}
 
 	rec := sendStaff(t, f.handler, http.MethodGet, "/v1/operator/users?query=kaka", f.session)
@@ -254,10 +271,10 @@ func TestTheStaffDirectorySearchReturnsTheMinimalProjection(t *testing.T) {
 
 	// Every entry carries the documented fields, and the response carries
 	// nothing a reader could mistake for a credential.
-	allowed := map[string]bool{"id": true, "email": true, "display_name": true, "disabled": true, "created_at": true}
+	allowed := map[string]bool{"id": true, "email": true, "display_name": true, "disabled_at": true, "email_verified_at": true, "created_at": true}
 	forbidden := []string{
 		"password_digest", "password", "token", "api_key", "recovery",
-		"mfa", "totp", "secret", "digest", "session", "challenge",
+		"mfa", "totp", "secret", "digest", "session", "challenge", "disabled",
 	}
 	serialised := rec.Body.String()
 	for _, field := range forbidden {
@@ -271,11 +288,30 @@ func TestTheStaffDirectorySearchReturnsTheMinimalProjection(t *testing.T) {
 				t.Errorf("entry %d carries %q, which no document declares", i, key)
 			}
 		}
-		for _, key := range []string{"id", "email", "disabled", "created_at"} {
+		// The timestamps are PRESENT, never omitted: a fresh account's nulls
+		// are keys with null values, which is how a client tells "never"
+		// from "missing".
+		for _, key := range []string{"id", "email", "disabled_at", "email_verified_at", "created_at"} {
 			if _, present := entry[key]; !present {
 				t.Errorf("entry %d omits %q, which the document promises", i, key)
 			}
 		}
+	}
+
+	// The values: the verified entry's timestamp renders, the others are null.
+	// Entry 0 verified its address and was never disabled; entry 1 is disabled
+	// and never verified.
+	if got := body.Users[0]["email_verified_at"]; got == nil {
+		t.Errorf("entry 0's email_verified_at is null, want %s", verifiedAt.Format(time.RFC3339))
+	}
+	if body.Users[0]["disabled_at"] != nil {
+		t.Errorf("entry 0's disabled_at = %v, want null for an active account", body.Users[0]["disabled_at"])
+	}
+	if body.Users[1]["email_verified_at"] != nil {
+		t.Errorf("entry 1's email_verified_at = %v, want null for an unproved address", body.Users[1]["email_verified_at"])
+	}
+	if got := body.Users[1]["disabled_at"]; got == nil {
+		t.Errorf("entry 1's disabled_at is null, want %s", disabledAt.Format(time.RFC3339))
 	}
 
 	// An empty directory is `[]` and not `null`.

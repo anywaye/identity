@@ -26,10 +26,19 @@ RUN go mod download
 COPY . .
 ARG SERVICE_NAME=identity
 RUN go build -trimpath -ldflags="-s -w" -o /out/service ./cmd/${SERVICE_NAME}
+# The staff operator command ships in the SAME image, as a second static
+# binary. It is never the server: ENTRYPOINT below stays /app/service, and a
+# deployment runs it as a one-shot Job with an overridden command (see the
+# staff section of README.md). Building it here rather than in a second image
+# means the grant tool and the service are always the same build — a staff
+# column written by a binary from another commit is a schema the service has
+# not reviewed.
+RUN go build -trimpath -ldflags="-s -w" -o /out/identity-staff ./cmd/identity-staff
 
 FROM gcr.io/distroless/static-debian12:nonroot AS runtime
 WORKDIR /app
 COPY --from=build /out/service /app/service
+COPY --from=build /out/identity-staff /app/identity-staff
 USER nonroot:nonroot
 EXPOSE 8080
 # The service is stateless: the connection pool is opened lazily and closed on
