@@ -555,6 +555,40 @@ func TestTheNamedSecurityTestsAreEnough(t *testing.T) {
 	}
 }
 
+// TestTheTreeWalkSeesThroughACheckoutSymlink is the regression test for the
+// m117 gate failure: under a symlinked checkout testNamesInTree walked an
+// unresolved root, visited exactly one entry, and reported every named security
+// test missing — while every other helper in this file kept passing, because a
+// direct read follows a symlink and only the walk does not.
+//
+// Both halves matter. A root that still carries a symlink is the defect, and a
+// walk that finds nothing is its symptom: asserting only the symptom would pass
+// on an empty tree for the wrong reason, and asserting only the path would pass
+// while the walk stayed blind some other way. The witness name is a test in
+// this very file, so the walk proving it exists proves it reached at least this
+// package.
+func TestTheTreeWalkSeesThroughACheckoutSymlink(t *testing.T) {
+	root := repoRoot(t)
+	resolved, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatalf("resolving symlinks in repository root %s: %v", root, err)
+	}
+	if resolved != root {
+		t.Errorf("repoRoot is %s, which still carries a symlink (resolves to %s).\n"+
+			"filepath.WalkDir never follows one, so the tree walk sees a single entry and stops.",
+			root, resolved)
+	}
+
+	defined := testNamesInTree(t)
+	if len(defined) == 0 {
+		t.Fatal("the tree walk found no test functions at all; it is walking the wrong tree, not an empty one")
+	}
+	if !defined["TestTheNamedSecurityTestsExist"] {
+		t.Error("the tree walk did not find TestTheNamedSecurityTestsExist, which is defined in this package.\n" +
+			"A walk that cannot see its own package cannot see the security tests either.")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
@@ -793,6 +827,14 @@ func testNamesInTree(t *testing.T) map[string]bool {
 // repoRoot comes from this file's own path and not from the working directory:
 // `go test` sets the working directory to the package, and a test that depends on
 // where it was invoked from passes for the wrong reason somewhere.
+//
+// The symlinks are resolved, and that is load-bearing rather than tidiness: a
+// checkout reached through a symlink (a worktree alias, a mapped path) embeds
+// that symlinked prefix in runtime.Caller's file path, and direct reads follow it
+// without complaint — but filepath.WalkDir never follows a symlink, not even the
+// root itself. An unresolved root makes the walk visit exactly one entry and
+// stop, so testNamesInTree returns an empty map and every named test reads as
+// missing. Resolve once here and every helper walks the real tree.
 func repoRoot(t *testing.T) string {
 	t.Helper()
 
@@ -800,5 +842,10 @@ func repoRoot(t *testing.T) string {
 	if !ok {
 		t.Fatal("runtime.Caller(0) failed, so the repository root cannot be found")
 	}
-	return filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", ".."))
+	root := filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", ".."))
+	resolved, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatalf("resolving symlinks in repository root %s: %v", root, err)
+	}
+	return resolved
 }
