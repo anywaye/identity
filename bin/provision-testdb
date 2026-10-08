@@ -228,6 +228,30 @@ done
 app_role="${owner}_app"
 [[ "$app_role" =~ ^[a-z_][a-z0-9_]*$ ]] || fail "refusing to provision: derived role '$app_role' is not a safe identifier"
 
+# THE SUPERUSER/BYPASSRLS REFUSAL — BEFORE ANY MUTATION. A role with rolsuper or
+# rolbypassrls bypasses row-level security even when FORCE is set, so a boundary
+# that is correct in the catalog (relrowsecurity=t, relforcerowsecurity=t) still
+# reads every row for that role. psql's postgres:17-alpine with
+# POSTGRES_USER=identity makes identity that role — the bootstrap superuser — and
+# the gate's manager did exactly that for identity_gate_m147_clean, fresh volume,
+# migrations green, tenancy red with extra owner rows and the append-only trigger
+# instead of the RLS zero-row denial. kit's shared cluster (kit-postgres:17)
+# provisions identity as NOSUPERUSER NOBYPASSRLS, and local brew postgres does too;
+# both are what the suite expects. A skipped CREATE ROLE (role already exists)
+# does not fix a superuser, and a bootstrap superuser cannot be demoted even by a
+# second superuser, so the refusal is the honest answer here. See m156.
+# This check is before CREATE ROLE, CREATE DATABASE, migrations, or GRANT: the
+# m156 position was after all of them and had already provisioned a disposable
+# DB before failing. See m158.
+if [ "$("$psql_bin" "$admin_dsn" -X -q -w -tAc "select rolsuper from pg_roles where rolname = '$owner'")" = "t" ] || \
+   [ "$("$psql_bin" "$admin_dsn" -X -q -w -tAc "select rolbypassrls from pg_roles where rolname = '$owner'")" = "t" ]; then
+  fail "role $owner is superuser or BYPASSRLS, which bypasses row-level security even with FORCE. Recreate the cluster without POSTGRES_USER=$owner (use kit's kit-postgres image, or plain postgres without that variable, so $owner is NOSUPERUSER NOBYPASSRLS); the bootstrap superuser cannot be demoted and a new volume with the same variable reproduces the same failure."
+fi
+if [ "$("$psql_bin" "$admin_dsn" -X -q -w -tAc "select rolsuper from pg_roles where rolname = '$app_role'")" = "t" ] || \
+   [ "$("$psql_bin" "$admin_dsn" -X -q -w -tAc "select rolbypassrls from pg_roles where rolname = '$app_role'")" = "t" ]; then
+  fail "role $app_role is superuser or BYPASSRLS, which bypasses row-level security. Recreate it as NOSUPERUSER NOBYPASSRLS."
+fi
+
 role_exists() {
   "$psql_bin" "$admin_dsn" -X -q -w -tAc "select 1 from pg_roles where rolname = '$1'"
 }
@@ -257,26 +281,5 @@ log "applying migrations to $dbname"
 
 log "granting $app_role to $owner"
 "$psql_bin" "$admin_dsn" -X -q -w --set ON_ERROR_STOP=1 -c "GRANT $app_role TO $owner"
-
-# THE SUPERUSER/BYPASSRLS REFUSAL. A role with rolsuper or rolbypassrls bypasses
-# row-level security even when FORCE is set, so a boundary that is correct in the
-# catalog (relrowsecurity=t, relforcerowsecurity=t) still reads every row for that
-# role. psql's postgres:17-alpine with POSTGRES_USER=identity makes identity that
-# role — the bootstrap superuser — and the gate's manager did exactly that for
-# identity_gate_m147_clean, fresh volume, migrations green, tenancy red with extra
-# owner rows and the append-only trigger instead of the RLS zero-row denial.
-# kit's shared cluster (kit-postgres:17) provisions identity as NOSUPERUSER
-# NOBYPASSRLS, and local brew postgres does too; both are what the suite expects.
-# A skipped CREATE ROLE (role already exists) does not fix a superuser, and a
-# bootstrap superuser cannot be demoted even by a second superuser, so the
-# refusal is the honest answer here. See m156.
-if [ "$("$psql_bin" "$admin_dsn" -X -q -w -tAc "select rolsuper from pg_roles where rolname = '$owner'")" = "t" ] || \
-   [ "$("$psql_bin" "$admin_dsn" -X -q -w -tAc "select rolbypassrls from pg_roles where rolname = '$owner'")" = "t" ]; then
-  fail "role $owner is superuser or BYPASSRLS, which bypasses row-level security even with FORCE. Recreate the cluster without POSTGRES_USER=$owner (use kit's kit-postgres image, or plain postgres without that variable, so $owner is NOSUPERUSER NOBYPASSRLS); the bootstrap superuser cannot be demoted and a new volume with the same variable reproduces the same failure."
-fi
-if [ "$("$psql_bin" "$admin_dsn" -X -q -w -tAc "select rolsuper from pg_roles where rolname = '$app_role'")" = "t" ] || \
-   [ "$("$psql_bin" "$admin_dsn" -X -q -w -tAc "select rolbypassrls from pg_roles where rolname = '$app_role'")" = "t" ]; then
-  fail "role $app_role is superuser or BYPASSRLS, which bypasses row-level security. Recreate it as NOSUPERUSER NOBYPASSRLS."
-fi
 
 log "provisioned $dbname (owner $owner, app role $app_role)"
