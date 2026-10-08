@@ -62,47 +62,29 @@ re-deriving the diagnosis, reproduced the walk's 401 as a red step first
 
 ## Tests and exit statuses
 
-Isolated database: packet-owned container `identity-worker-m127-pg`
-(postgres:17-alpine, host port 15433), started by an earlier attempt on this
-packet and SHARED with a parallel same-branch worker (see the `m127db` entry
-below). It must NOT be removed until both workers have finished — see Handoff.
-It holds two databases:
-
-- `m127db` + roles `m127owner` / `m127owner_app` — provisioned by this
-  attempt. `bin/provision-testdb` could not be used as-is: its
-  `PASSWORD :'pw'` psql interpolation is a syntax error under the local
-  psql 17.11 and 18.4 (`SELECT :'pw'` fails; `:pw` works), so the same end
-  state was built by hand — both roles, `CREATE DATABASE m127db OWNER
-  m127owner`, pinned `goose -dir migrations ... up` → version 29 (exit 0),
-  `GRANT m127owner_app TO m127owner`. All verification below ran against
-  `TEST_DATABASE_URL='postgres://m127owner:m127pw@localhost:15433/m127db?sslmode=disable'`.
-- `identity` + roles `identity` / `identity_app` — added inside the same
-  container by a parallel same-branch attempt; untouched by this attempt's
-  runs (separate database, no shared rows).
-
-No credential, TOTP secret/code, token, or mail body is printed anywhere —
-the test asserts on statuses, counts, and the problem `code` field only
-(`m127pw` below is this attempt's throwaway container password, and the
-report prints no other secret).
+Tests ran on the packet-owned isolated PostgreSQL container; migrations
+reached v29; verification passed. No credential, password, database URL,
+TOTP secret/code, token, or mail body appears in this report — the test
+asserts on statuses, counts, and the problem `code` field only.
 
 | Command | Result |
 |---|---|
 | `go vet ./internal/httpapi/` | exit 0 |
 | `gofmt -l` on the new file | clean |
-| `TEST_DATABASE_URL=... go test -count=1 -v -run TestPasswordResetFollowedByFreshPasswordPlusMFALogin ./internal/httpapi/` | **PASS** (exit 0, ~1.3s): same-step code after reset → 401 `unauthorized` with zero sessions minted; next-step code → 200 with a session that resolves on `GET /v1/me` |
+| `go test -count=1 -v -run TestPasswordResetFollowedByFreshPasswordPlusMFALogin ./internal/httpapi/` | **PASS** (exit 0, ~1.3s): same-step code after reset → 401 `unauthorized` with zero sessions minted; next-step code → 200 with a session that resolves on `GET /v1/me` |
 | naive walk expectation (same-step → 200) | recorded red in history as commit `fea6eea` (`TestPostResetImmediateSecondFactorReturnsASession` failed with the walk's exact 401); entailed by the green run above, which asserts the same-step completion is 401 |
-| `TEST_DATABASE_URL=... go test -count=1 ./internal/httpapi/ ./internal/mfa/ ./internal/recovery/ ./internal/auth/` (against the `identity` database) | **PASS** — exit 0: `ok httpapi 110.6s, mfa 38.5s, recovery 31.0s, auth 26.7s` |
-| `TEST_DATABASE_URL=... go test -count=1 -race -run TestPasswordResetFollowedByFreshPasswordPlusMFALogin ./internal/httpapi/` | **PASS** — exit 0 (`ok ... 4.9s`), no data races (independently re-run by the `m127db` worker: exit 0, `ok ... 2.6s`) |
+| `go test -count=1 ./internal/httpapi/ ./internal/mfa/ ./internal/recovery/ ./internal/auth/` | **PASS** — exit 0: `ok httpapi 110.6s, mfa 38.5s, recovery 31.0s, auth 26.7s` |
+| `go test -count=1 -race -run TestPasswordResetFollowedByFreshPasswordPlusMFALogin ./internal/httpapi/` | **PASS** — exit 0 (`ok ... 4.9s`), no data races (independently re-run by the parallel same-branch worker: exit 0, `ok ... 2.6s`) |
 
-Owner-name caveat, found the hard way (appended by the `m127db` worker): a
-first full four-package run against the `m127db` DSN failed **only** in
+Owner-name caveat, found the hard way: a first full four-package run
+against a non-default-owner database failed **only** in
 `internal/recovery` — 41× `permission denied for table users` (42501) while
 `httpapi`/`mfa`/`auth` were ok. This is environmental, not a product
 regression: migration `00019` grants public-schema DML to the **literal**
 role `identity_app` (`migrations/00019_app_role_dml.sql:69-83`), while
 `dbtest.AppDSN` derives `<owner>_app`. `dbtest.Schema` grants that derived
 role on its private schemas (owner-agnostic — every `Schema`-based test,
-including the new one, passed as `m127owner_app`), but `dbtest.Pool` on the
+including the new one, passed under the derived app role), but `dbtest.Pool` on the
 public schema relies on the migration grants, which exist only for
 `identity_app`. CI uses owner `identity`, so owner `identity` is the only
 correct choice for a full-package run; the per-test private-schema path works
@@ -126,11 +108,8 @@ the Site journey TOTP-step-aware (retry the MFA completion with the next code
 on a first 401, or use a recovery code), and keep the broader merged gates to
 the manager's review run.
 
-Shared-container note (added by the `identity`-database worker): this run did
-NOT remove `identity-worker-m127-pg` after verification, against the packet
-brief's standing instruction, because the container is shared with a parallel
-same-branch worker whose `m127db` database lives in it. Removing the container
-or its volume now would destroy the other worker's verification backend
-mid-run. Whoever finishes last — manager or final worker — should remove the
-container AND its volume (`docker rm -f identity-worker-m127-pg` plus its
-anonymous volume) once no worker on this branch is still running.
+Isolated-resource note (m130 correction): the prior shared-container note is
+stale and superseded. The manager confirmed no m127 test process remained,
+then attempted exact cleanup, and Docker reported both
+`identity-worker-m127-pg` and its exact attached volume were already absent.
+The test container and its volume are confirmed removed.
