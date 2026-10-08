@@ -42,6 +42,9 @@ type fakeUsers struct {
 	recordErr error
 	// cleared counts ClearFailures calls.
 	cleared int
+	// searchErr is returned by Search, to exercise a failure of the staff
+	// directory read.
+	searchErr error
 	// creates counts Create calls.
 	creates int
 }
@@ -167,6 +170,38 @@ func (f *fakeUsers) ClearFailures(_ context.Context, _ db.Querier, userID id.UUI
 	f.byID[userID] = u
 	f.byEmail[u.Email] = u
 	return nil
+}
+
+// Search matches on email and display name like the store does, substring and
+// case-insensitive, so a unit test asserting "the use case passed the query
+// through" can do it without a database. The bounds are the store's, not this
+// fake's: limit handling is asserted against the real query in the integration
+// suite, and a fake that reimplemented the clamp would be a second place for
+// the two to disagree.
+func (f *fakeUsers) Search(_ context.Context, _ db.Querier, query string, limit int) ([]users.DirectoryEntry, error) {
+	if f.searchErr != nil {
+		return nil, f.searchErr
+	}
+	lowered := strings.ToLower(query)
+	var out []users.DirectoryEntry
+	for _, u := range f.byID {
+		if !strings.Contains(strings.ToLower(u.Email), lowered) {
+			continue
+		}
+		out = append(out, users.DirectoryEntry{
+			ID:          u.ID,
+			Email:       u.Email,
+			DisplayName: u.DisplayName,
+			Disabled:    u.IsDisabled(),
+		})
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+	}
+	if out == nil {
+		out = []users.DirectoryEntry{}
+	}
+	return out, nil
 }
 
 // fakeSessions records what was minted and hands the tokens back.

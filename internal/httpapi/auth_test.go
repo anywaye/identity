@@ -106,6 +106,13 @@ type fakeAuth struct {
 	// that could disagree about which entry they belong to.
 	disableInputs []auth.DisableInput
 	enableInputs  []auth.EnableInput
+	// searched records the staff directory queries, searchResults is what they
+	// return, and searchErr is the refusal. Separate from the operator surface's
+	// disable/enable pair because the directory is a read, not a mutation, and
+	// a test mapping its bounds has no reason to set the other's.
+	searched      []searchCall
+	searchResults []users.DirectoryEntry
+	searchErr     error
 	// disabled and enabled are the user ids the operator surface asked about, in
 	// order, kept because most existing assertions are about the subject and reading
 	// a subject out of a struct is a worse way to say it.
@@ -272,6 +279,29 @@ func (f *fakeAuth) UpdateTheme(_ context.Context, userID id.UUID, theme *string)
 	f.updatedThemeFor = append(f.updatedThemeFor, userID)
 	f.updatedTheme = theme
 	return f.updateThemeErr
+}
+
+// SearchUsers records what the staff directory was asked for and returns a
+// programmable result, on the same terms as every other method on this
+// double: what is under test at the router is the staff gate, the query
+// validation and the response projection, and the query itself is
+// internal/auth's (and internal/users') to hold against a real database.
+func (f *fakeAuth) SearchUsers(_ context.Context, query string, limit int) ([]users.DirectoryEntry, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.searched = append(f.searched, searchCall{query: query, limit: limit})
+	if f.searchErr != nil {
+		return nil, f.searchErr
+	}
+	return f.searchResults, nil
+}
+
+// searchCall is one recorded SearchUsers: the term beside the bound, so a test
+// asserting one call's query and limit wants them as one fact rather than as
+// two parallel slices.
+type searchCall struct {
+	query string
+	limit int
 }
 
 // post sends a JSON body and returns the recorder.
@@ -1766,5 +1796,11 @@ func (panickingAuth) UpdateDisplayName(context.Context, id.UUID, *string) error 
 	panic("handler exploded")
 }
 func (panickingAuth) UpdateTheme(context.Context, id.UUID, *string) error {
+	panic("handler exploded")
+}
+
+// The staff directory read, on the same terms: EVERY method blows up, so a
+// missing one would narrow the claim this double makes.
+func (panickingAuth) SearchUsers(context.Context, string, int) ([]users.DirectoryEntry, error) {
 	panic("handler exploded")
 }

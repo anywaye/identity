@@ -97,6 +97,13 @@ type UserStore interface {
 	// UpdateTheme is here for the reason UpdateName is: it is the second column
 	// the profile screen owns, and the same boundary applies.
 	UpdateTheme(ctx context.Context, q db.Querier, userID id.UUID, theme *string) error
+	// Search is the staff directory's read over the users table: a bounded
+	// substring match on email and display name returning the minimal
+	// projection, and nothing a reader could mistake for a credential. It is on
+	// this interface because this package owns the session's user and the staff
+	// surface resolves its callers through it — a second path to the table
+	// would be a second thing to keep in step with the first.
+	Search(ctx context.Context, q db.Querier, query string, limit int) ([]users.DirectoryEntry, error)
 }
 
 // SessionStore is the part of sessions.Store that login, logout and resolution
@@ -1203,6 +1210,23 @@ func (s *Service) Authenticate(ctx context.Context, token string) (users.User, e
 	}
 
 	return user, nil
+}
+
+// SearchUsers is the staff directory's read: a bounded substring match over
+// email and display name.
+//
+// IT AUTHORIZES NOTHING, and that is stated so the caller cannot forget it.
+// The staff gate is the route's (`requireStaffSession`): this method answers
+// whoever reaches it, and a handler that called it before the gate would serve
+// the deployment's addresses to anybody. The query bounds live in
+// `users.Store.Search`; what lives here is the seam the HTTP layer programs
+// against.
+func (s *Service) SearchUsers(ctx context.Context, query string, limit int) ([]users.DirectoryEntry, error) {
+	entries, err := s.users.Search(ctx, s.read.Queryer(), query, limit)
+	if err != nil {
+		return nil, fmt.Errorf("searching users: %w", err)
+	}
+	return entries, nil
 }
 
 // UpdateDisplayName sets the caller's display name, or clears it.

@@ -87,26 +87,49 @@ const maxTraceIDLength = 64
 // from admin.Actor, and for its reason: this reaches a table an operator reads
 // during an incident, and an api key's VALUE must never reach it. The row id is what
 // the operator needs anyway, because that is the id they revoke by.
+//
+// A ZERO KEY ID IS A HUMAN SESSION, and that sentence is new in D17. The machine
+// surface (D14) is token-only, so every row it wrote named a key; the staff
+// surface is session-only, so its rows name the signed-in staff user and no key.
+// The column stays NOT NULL — the nil uuid is a value, not an absence — and
+// `HumanSession` is how a reader tells the two apart. `validate` still requires
+// the user and the trace id on every row: a record that names nobody, or that
+// cannot be joined to its request's log line, is refused whichever surface
+// wrote it. The per-surface gates keep the stronger promise: `operatorActorFrom`
+// (machine) 500s on a zero key, because a token call without one is a wiring
+// fault rather than a request.
 type Actor struct {
-	// UserID is the human the token was minted for.
+	// UserID is the human on the other side: the token's holder on the machine
+	// surface, the signed-in staff user on the staff surface.
 	UserID id.UUID
 	// KeyID is WHICH token. "Somebody" is not an answer an incident review can use.
 	//
-	// REQUIRED, and the reason is that this surface is machine-credential-only: a
-	// session is refused on the operator routes before they get here (D14), so every
-	// event in this table was recorded by a token. An event with no key id is an
-	// event nobody can attribute to a credential.
+	// REQUIRED ON THE MACHINE SURFACE, and the gate enforces it there: that
+	// surface is reachable only by a token, so every event in it was recorded by
+	// one and an event with no key id is an event nobody can attribute to a
+	// credential. ZERO ON THE STAFF SURFACE, where no token acted: a human
+	// session has no row id to name, and inventing one would be a lie the table
+	// then has to be trusted about. See `HumanSession`.
 	KeyID id.UUID
 	// TraceID joins the audit row to the request's log line. Never a token, and the
 	// reason is the same one: a trace id is safe to print in both places.
 	TraceID string
 }
 
+// HumanSession reports whether this action was performed by a signed-in staff
+// human rather than by a machine credential.
+//
+// It is a method rather than a comparison against the nil uuid at every call
+// site because the two answers callers want are "was this a person" and "was
+// this a token", and a caller that forgets the second has made a claim about a
+// credential nobody presented.
+func (a Actor) HumanSession() bool { return a.KeyID.IsZero() }
+
 func (a Actor) validate() error {
-	if a.UserID.IsZero() || a.KeyID.IsZero() {
+	if a.UserID.IsZero() {
 		// A zero actor means the row would name nobody, and a record that names
 		// nobody is a record of an action with no responsible party.
-		return errors.New("an operator action must name both the user and the api key that performed it")
+		return errors.New("an operator action must name the user that performed it")
 	}
 	if a.TraceID == "" {
 		return errors.New("an operator action must carry the request's trace id")

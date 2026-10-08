@@ -287,11 +287,13 @@ func TestTheClosedSetIsARefusalNotASchemaCheck(t *testing.T) {
 // TestTheActorIdsAreBothRequired is the NOT NULL pair, and the reason is that there is
 // no user to attribute this to on the other side: the caller is a machine credential.
 //
-// A zero actor means the row names nobody, and a record that names nobody is a record
-// of an action with no responsible party — which for an audit trail is not a degraded
-// row, it is a useless one. These refusals happen in Go before any statement runs, so
-// this file proves the refusal AND that no row was left behind.
-func TestTheActorIdsAreBothRequired(t *testing.T) {
+// A row must name WHO acted and carry the trace that joins it to the request's
+// log line — whichever surface wrote it. The key id is NOT required: a zero key
+// id is a human session's action (DECISIONS.md D17), and `HumanSession` is how a
+// reader tells it from a token's. These refusals happen in Go before any
+// statement runs, so this file proves the refusal AND that no row was left
+// behind.
+func TestTheActorUserAndTraceAreRequired(t *testing.T) {
 	store, pool := newTestStore(t)
 	tableExists(t, pool)
 	ctx := t.Context()
@@ -300,17 +302,17 @@ func TestTheActorIdsAreBothRequired(t *testing.T) {
 		name  string
 		actor Actor
 	}{
-		{"no key id", Actor{UserID: id.MustNew(), TraceID: "trace-no-key"}},
 		{"no user id", Actor{KeyID: id.MustNew(), TraceID: "trace-no-user"}},
 		{"neither", Actor{TraceID: "trace-neither"}},
+		{"no trace id", Actor{UserID: id.MustNew(), KeyID: id.MustNew()}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			e := testEntry(t)
 			e.Actor = tt.actor
 			if _, err := store.Append(ctx, pool, e); err == nil {
-				t.Error("Append accepted an actor that names no credential, so the row would " +
-					"record an action nobody can be held responsible for")
+				t.Error("Append accepted an actor that names nobody or carries no trace, so the row would " +
+					"record an action nobody can be held responsible for or joined to a request")
 			}
 		})
 	}
@@ -322,6 +324,38 @@ func TestTheActorIdsAreBothRequired(t *testing.T) {
 	if count != 0 {
 		t.Errorf("the table holds %d rows after three refused appends, want 0 — a refusal that "+
 			"leaves a row behind is not a refusal", count)
+	}
+}
+
+// A zero key id is a human session's action, not a refusal.
+//
+// D14's rule was "every row names a key", because the only surface was
+// token-only. D17 adds the staff surface, which is session-only: its rows name
+// the signed-in staff user and no key, and refusing them here would make the
+// staff disable/reenable unwritable. The per-surface gates keep the stronger
+// promise — `operatorActorFrom` (machine) still 500s on a zero key — so this
+// acceptance cannot launder a token call into an unattributed row.
+func TestAZeroKeyIdIsAHumanSessionRow(t *testing.T) {
+	store, pool := newTestStore(t)
+	tableExists(t, pool)
+	ctx := t.Context()
+
+	staff := id.MustNew()
+	e := testEntry(t)
+	e.Actor = Actor{UserID: staff, TraceID: "trace-human-session"}
+
+	rec, err := store.Append(ctx, pool, e)
+	if err != nil {
+		t.Fatalf("Append refused a human-session actor: %v", err)
+	}
+	if !rec.ActorKeyID.IsZero() {
+		t.Errorf("the row's actor key id = %s, want the nil uuid: no token acted", rec.ActorKeyID)
+	}
+	if rec.ActorUserID != staff {
+		t.Errorf("the row's actor user id = %s, want the staff user %s", rec.ActorUserID, staff)
+	}
+	if rec.TraceID != "trace-human-session" {
+		t.Errorf("the row's trace id = %q, want the request's", rec.TraceID)
 	}
 }
 

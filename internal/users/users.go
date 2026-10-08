@@ -123,8 +123,19 @@ type User struct {
 	// the positive statement "nobody has decided this", and a second way to say
 	// "active" is a second thing to disagree with this one.
 	DisabledAt *time.Time
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+	// IsStaff marks a platform operator: a human who may use the staff surface
+	// (`/v1/operator/*`).
+	//
+	// IT IS NOT A ROLE, and the difference is the whole of DECISIONS.md D17. A
+	// role is re-read per account on every request and answers "what may this
+	// person do HERE"; this answers "is this person staff anywhere", and no
+	// tenant-admin API may write it — the only writer is `Store.SetStaff`, which
+	// the `identity-staff` operator command calls and no HTTP route does. False
+	// on every row until an operator grants it (migrations/00030), and a session
+	// carries it because `Authenticate` returns the row.
+	IsStaff   bool
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // DisabledError is a credential refused because the account was turned off by a

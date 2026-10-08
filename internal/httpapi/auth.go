@@ -96,6 +96,12 @@ type Auth interface {
 	Disable(ctx context.Context, in auth.DisableInput) error
 	Enable(ctx context.Context, in auth.EnableInput) error
 
+	// SearchUsers is the staff directory's bounded read over the users table.
+	// It authorizes nothing — the staff gate is the route's — so a handler
+	// must never call it before the gate has run. See auth.Service.SearchUsers
+	// for the seam's contract.
+	SearchUsers(ctx context.Context, query string, limit int) ([]users.DirectoryEntry, error)
+
 	// UpdateDisplayName is the write half of /v1/me, and it is on this interface
 	// for the reason Disable and Enable are: the handler resolves the caller
 	// through Authenticate and then writes the one column the profile screen
@@ -384,6 +390,14 @@ func (o options) registerRoutes(r chiRouter) {
 	// not already have, and it has its own registrar for the same reason every other
 	// surface does: a name a reader can go looking for.
 	o.registerOperatorRoutes(r)
+
+	// And the staff surface: a signed-in STAFF human's session reads its own
+	// status, searches the directory, and turns an account off and back on. It
+	// hangs off `auth` for the same reason the operator surface does — the
+	// disable/enable are `auth.Service`'s transaction and the directory read is
+	// its query — and the credential gate is the mirror image: sessions only,
+	// staff only, no token. See staff.go and DECISIONS.md D17.
+	o.registerStaffRoutes(r)
 }
 
 // chiRouter is the slice of *chi.Mux these routes need. Naming it keeps the

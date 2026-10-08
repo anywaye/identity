@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -38,7 +39,7 @@ func NewStore(pool db.Pool) *Store { return &Store{pool: pool} }
 // userColumns is the select list, in the order scan expects. One constant, so a
 // column added here cannot be forgotten in one query and present in another.
 const userColumns = `id, email, display_name, preferences, password_digest, failed_login_attempts, locked_until, ` +
-	`email_verified_at, disabled_at, created_at, updated_at`
+	`email_verified_at, disabled_at, is_staff, created_at, updated_at`
 
 // Create inserts a user and returns the stored row.
 //
@@ -54,7 +55,7 @@ func (s *Store) Create(ctx context.Context, q db.Querier, p CreateParams) (User,
 	var u User
 	err := q.QueryRow(ctx, query, p.Email, p.PasswordDigest).Scan(
 		&u.ID, &u.Email, &u.DisplayName, &u.Preferences, &u.PasswordDigest, &u.FailedLoginAttempts, &u.LockedUntil,
-		&u.EmailVerifiedAt, &u.DisabledAt, &u.CreatedAt, &u.UpdatedAt,
+		&u.EmailVerifiedAt, &u.DisabledAt, &u.IsStaff, &u.CreatedAt, &u.UpdatedAt,
 	)
 	if err != nil {
 		if isEmailTaken(err) {
@@ -383,6 +384,122 @@ func (s *Store) Enable(ctx context.Context, q db.Querier, userID id.UUID) error 
 	return nil
 }
 
+// SetStaff grants or revokes the staff property.
+//
+// # THE ONLY WRITER, AND NOTHING IN THE HTTP SURFACE CALLS IT
+//
+// No route, no use case and no registration path reaches this method: the only
+// caller is the `identity-staff` operator command, which an operator runs with
+// the database URL in hand. A grant reachable by the subject themselves would be
+// a privilege escalation, and a grant reachable through a tenant-admin API would
+// let one tenant mint platform authority — so the method lives on the store
+// (the table's surface) rather than behind a use case anybody could mount.
+//
+// It takes the value rather than toggling, so re-applying a state from a script
+// is not a mistake: setting what is already set is a success.
+func (s *Store) SetStaff(ctx context.Context, q db.Querier, userID id.UUID, staff bool) error {
+	const query = `
+		UPDATE users
+		SET is_staff = $2, updated_at = now()
+		WHERE id = $1`
+
+	tag, err := q.Exec(ctx, query, userID, staff)
+	if err != nil {
+		return fmt.Errorf("setting a user's staff property: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// DirectoryEntry is the staff directory's minimal projection of a user.
+//
+// IT IS A DEDICATED TYPE RATHER THAN User, for the reason userResponse is not
+// users.User: a digest cannot reach a response body by being added to one. This
+// projection carries no password digest, no API key, no recovery token, no MFA
+// secret and no session token — the fields Parlor needs to render a row and act
+// on it, and nothing a reader could mistake for a credential.
+type DirectoryEntry struct {
+	ID          id.UUID
+	Email       string
+	DisplayName *string
+	Disabled    bool
+	CreatedAt   time.Time
+}
+
+// Search bounds for the staff directory. The handler validates the request; the
+// store clamps defensively, so a caller that forgot is bounded rather than
+// open-ended.
+const (
+	// MinSearchLength is the shortest useful search term. A one-character query
+	// matches a large fraction of every deployment's addresses, which is a
+	// directory dump wearing a query string — and a bounded one is still a dump
+	// the caller did not have to think about.
+	MinSearchLength = 2
+	// DefaultSearchLimit is the page size when the caller names none.
+	DefaultSearchLimit = 25
+	// MaxSearchLimit is the ceiling. Over it is a refusal, never a silent
+	// truncation: a client that asked for 500 rows and received 50 has been
+	// told a lie about how much directory it has read.
+	MaxSearchLimit = 50
+)
+
+// Search returns the users whose email or display name contains query,
+// ordered by email, bounded by limit.
+//
+// THE MATCH IS A SUBSTRING, not a prefix: an operator looking for "kaka" finds
+// "kaka@example.com" wherever the address carries it. LIKE metacharacters in
+// the term are escaped, so a query for "%" matches a literal percent rather
+// than the whole table — without the escape the search box is a wildcard box,
+// and the shortest path to "everybody" is one character the handler already
+// refused to require.
+//
+// limit is clamped into [1, MaxSearchLimit] here as well as validated at the
+// handler, because a store that trusted its callers would hand an unbounded
+// query to the table the day somebody added one.
+func (s *Store) Search(ctx context.Context, q db.Querier, query string, limit int) ([]DirectoryEntry, error) {
+	if limit < 1 {
+		limit = DefaultSearchLimit
+	}
+	if limit > MaxSearchLimit {
+		limit = MaxSearchLimit
+	}
+
+	// Escape before wrapping: the term is text, and `%` and `_` in it must match
+	// themselves rather than become wildcards.
+	pattern := "%" + strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(query) + "%"
+
+	const sql = `
+		SELECT id, email, display_name, disabled_at IS NOT NULL, created_at
+		FROM users
+		WHERE email ILIKE $1 ESCAPE '\' OR display_name ILIKE $1 ESCAPE '\'
+		ORDER BY email ASC
+		LIMIT $2`
+
+	rows, err := q.Query(ctx, sql, pattern, limit)
+	if err != nil {
+		return nil, fmt.Errorf("searching users: %w", err)
+	}
+	defer rows.Close()
+
+	// Non-nil, so an empty directory renders `[]` and not `null`.
+	out := make([]DirectoryEntry, 0, limit)
+	for rows.Next() {
+		var e DirectoryEntry
+		var disabled bool
+		if err := rows.Scan(&e.ID, &e.Email, &e.DisplayName, &disabled, &e.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scanning a directory entry: %w", err)
+		}
+		e.Disabled = disabled
+		out = append(out, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("searching users: %w", err)
+	}
+	return out, nil
+}
+
 // MarkEmailVerified records that somebody proved they can read the address on
 // this row.
 //
@@ -418,7 +535,7 @@ func scanOne(row interface{ Scan(...any) error }) (User, error) {
 	var u User
 
 	err := row.Scan(&u.ID, &u.Email, &u.DisplayName, &u.Preferences, &u.PasswordDigest, &u.FailedLoginAttempts, &u.LockedUntil,
-		&u.EmailVerifiedAt, &u.DisabledAt, &u.CreatedAt, &u.UpdatedAt)
+		&u.EmailVerifiedAt, &u.DisabledAt, &u.IsStaff, &u.CreatedAt, &u.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return User{}, ErrNotFound
 	}
