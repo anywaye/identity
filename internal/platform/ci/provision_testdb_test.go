@@ -202,6 +202,115 @@ func TestProvisionTestDBOldFormIsRejectedAndTheNewFormDeliversAVariable(t *testi
 	}
 }
 
+// TestProvisionTestDBUnsafeRoleRefusalIsBeforeAnySideEffect holds the m158
+// ordering: a superuser/BYPASSRLS owner or app role must be refused before
+// any side effect — CREATE ROLE, CREATE DATABASE, migrations, or GRANT — not
+// after them. Running the refusal after provisioning mints a disposable DB and
+// runs migrations before failing, which is the defect this test prevents. The
+// check must therefore sit after the admin connection is resolved/verified and
+// before the first mutation, preserving the actionable error text m156 added.
+func TestProvisionTestDBUnsafeRoleRefusalIsBeforeAnySideEffect(t *testing.T) {
+	source := provisionTestDBSource(t)
+
+	// The refusal queries: the two SELECTs that decide the unsafe-role failure.
+	// The admin verification also mentions rolsuper/rolbypassrls; only the
+	// per-role refusal SELECTs count here.
+	ownerRefusal := "select rolsuper from pg_roles where rolname = '$owner'"
+	appRefusal := "select rolsuper from pg_roles where rolname = '$app_role'"
+
+	ownerIdx := strings.Index(source, ownerRefusal)
+	appIdx := strings.Index(source, appRefusal)
+	if ownerIdx == -1 {
+		t.Fatalf("bin/provision-testdb has no owner superuser/BYPASSRLS refusal query %q", ownerRefusal)
+	}
+	if appIdx == -1 {
+		t.Fatalf("bin/provision-testdb has no app-role superuser/BYPASSRLS refusal query %q", appRefusal)
+	}
+	firstRefusal := ownerIdx
+	if appIdx < firstRefusal {
+		firstRefusal = appIdx
+	}
+	lastRefusal := ownerIdx
+	if appIdx > lastRefusal {
+		lastRefusal = appIdx
+	}
+
+	// Side effects that must NOT have happened before the refusal.
+	sideEffects := []string{
+		"CREATE ROLE $owner",
+		"CREATE ROLE $app_role",
+		"CREATE DATABASE $dbname",
+		`"$goose_bin" -dir "$ROOT/migrations" postgres "$dsn" up`,
+		"GRANT $app_role TO $owner",
+	}
+	firstSideEffect := -1
+	var firstSideEffectName string
+	for _, needle := range sideEffects {
+		idx := strings.Index(source, needle)
+		if idx == -1 {
+			t.Fatalf("bin/provision-testdb no longer contains side effect %q; expected provisioning steps are missing", needle)
+		}
+		if firstSideEffect == -1 || idx < firstSideEffect {
+			firstSideEffect = idx
+			firstSideEffectName = needle
+		}
+	}
+
+	if firstRefusal > firstSideEffect {
+		t.Errorf("unsafe-role refusal appears AFTER the first side effect.\n"+
+			"First refusal at byte %d (%q at %d, %q at %d), first side effect %q at byte %d.\n"+
+			"The refusal must be the earliest check after the admin connection is verified, before any CREATE ROLE / CREATE DATABASE / migration / GRANT — otherwise a run against an unsafe cluster provisions a disposable DB before failing.",
+			firstRefusal, ownerRefusal, ownerIdx, appRefusal, appIdx, firstSideEffectName, firstSideEffect)
+	}
+
+	// Both refusals must be before ANY side effect, not just the first one.
+	// Otherwise one of the two roles could still be refused after mutations.
+	if lastRefusal > firstSideEffect {
+		t.Errorf("one unsafe-role refusal appears after the first side effect (last refusal at %d, first side effect %q at %d).\n"+
+			"Both owner and app-role checks must precede every mutation.", lastRefusal, firstSideEffectName, firstSideEffect)
+	}
+
+	// No refusal may remain after the GRANT — that would be the late position
+	// m156 left and m158 moves. A duplicate (early + late) would still satisfy
+	// the first-refusal test while keeping the post-mutation cost.
+	grantNeedle := "GRANT $app_role TO $owner"
+	grantIdx := strings.Index(source, grantNeedle)
+	if grantIdx == -1 {
+		t.Fatalf("cannot locate %q to bound the late-check region", grantNeedle)
+	}
+	afterGrant := source[grantIdx:]
+	if strings.Contains(afterGrant, "rolsuper") || strings.Contains(afterGrant, "rolbypassrls") {
+		t.Error("bin/provision-testdb still checks rolsuper/rolbypassrls after GRANT. " +
+			"The refusal was moved to before any side effect; a trailing check is the post-mutation cost m158 removes.")
+	}
+
+	// Preserve the actionable error text m156 added. Moving the check early
+	// must not lose the remediation the operator reads.
+	for _, want := range []string{
+		"is superuser or BYPASSRLS, which bypasses row-level security even with FORCE",
+		"Recreate the cluster without POSTGRES_USER=",
+		"bootstrap superuser cannot be demoted",
+		"is superuser or BYPASSRLS, which bypasses row-level security",
+		"Recreate it as NOSUPERUSER NOBYPASSRLS",
+	} {
+		if !strings.Contains(source, want) {
+			t.Errorf("bin/provision-testdb no longer contains actionable error text %q — the early refusal must preserve m156's message", want)
+		}
+	}
+
+	// The refusal must sit after the admin connection is resolved/verified, not
+	// at the top of the file. The verification is the `select rolsuper or
+	// (rolcreaterole and rolcreatedb)` probe.
+	verifiedProbe := "rolsuper or (rolcreaterole and rolcreatedb)"
+	verifiedIdx := strings.Index(source, verifiedProbe)
+	if verifiedIdx == -1 {
+		t.Fatalf("cannot locate admin verification probe %q; the script's structure has changed", verifiedProbe)
+	}
+	if firstRefusal < verifiedIdx {
+		t.Error("unsafe-role refusal appears BEFORE the admin connection is verified; it must be after the admin DSN is resolved/verified and before any mutation")
+	}
+}
+
 // TestProvisionTestDBIsValidBash parses the script without executing it, so a
 // quoting slip in the corrected pipe fails here rather than at 3am in the gate.
 func TestProvisionTestDBIsValidBash(t *testing.T) {
