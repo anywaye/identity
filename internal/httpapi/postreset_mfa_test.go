@@ -1,31 +1,8 @@
 package httpapi
 
-// THE PASSWORD-RESET-THEN-FRESH-MFA-LOGIN WALK (m127).
-//
-// The local A-to-Z acceptance run found a real failure: after a password
-// reset, sign-in with the new password correctly answers 202 with a fresh MFA
-// challenge, but submitting a freshly generated TOTP code against that
-// challenge answers 401 instead of 200.
-//
-// This file replays that walk at the narrowest realistic layer — the real
-// router, the real auth/recovery/MFA use cases, the real SQL over a private
-// schema — and holds BOTH halves of the answer:
-//
-//   - a code from a TOTP step this credential has already spent is refused
-//     (401), even across a password reset. That is the replay guard doing its
-//     job, not the reset breaking the login: "freshly generated" and "a fresh
-//     step" are different claims inside one 30-second window.
-//   - advancing past the spent step and presenting the next code finishes the
-//     login (200) with a session that resolves.
-//
-// The corrected journey assumption is therefore "wait for the next code", and
-// the fixture advances the fake clock exactly the way signInWithFactor does
-// rather than reusing a value the service has already seen.
-
 import (
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -45,17 +22,27 @@ import (
 	"github.com/cafaye/identity/internal/users"
 )
 
-// postresetMFAFixture is the whole walk over ONE private schema: the real auth
-// service with the real second factor, the real recovery service delivering
-// into a captured mailer, and the real MFA management surface for enrollment.
-type postresetMFAFixture struct {
+// PACKET m127 — RED STEP.
+//
+// The merged site-stack walk reports: after a password reset, signing in with
+// the new password answers 202 with a fresh MFA challenge, but completing that
+// challenge with a freshly generated TOTP code answers 401 instead of 200.
+//
+// This test replays the walk's exact expectation at the narrowest realistic
+// layer — the real router, the real auth/recovery/MFA use cases and the real
+// SQL over a private schema — with NO clock movement between the two MFA
+// completions, exactly as a fast end-to-end walk behaves. It asserts the walk's
+// expected 200, so a failure here IS the walk's failure, reproduced
+// deterministically against a parked clock.
+type postResetMFAFixture struct {
 	handler http.Handler
 	pool    *pgxpool.Pool
 	clk     *clock.Fake
+	second  *mfa.Service
 	mailer  *captureMailer
 }
 
-func newPostresetMFAFixture(t *testing.T) *postresetMFAFixture {
+func newPostResetMFAFixture(t *testing.T) *postResetMFAFixture {
 	t.Helper()
 
 	pool := dbtest.Schema(t)
@@ -78,7 +65,7 @@ func newPostresetMFAFixture(t *testing.T) *postresetMFAFixture {
 		useraudit.NewStore(pool),
 		cheap,
 		clk,
-		24*time.Hour,
+		recovery.RedeemedSessionTTL,
 		false,
 	)
 
@@ -96,7 +83,7 @@ func newPostresetMFAFixture(t *testing.T) *postresetMFAFixture {
 		second,
 	)
 
-	return &postresetMFAFixture{
+	return &postResetMFAFixture{
 		handler: New(nil,
 			WithAuth(authSvc),
 			WithMFA(second),
@@ -105,22 +92,15 @@ func newPostresetMFAFixture(t *testing.T) *postresetMFAFixture {
 		),
 		pool:   pool,
 		clk:    clk,
+		second: second,
 		mailer: mailer,
 	}
 }
 
-// register creates an account and returns its address.
-func (f *postresetMFAFixture) register(t *testing.T) string {
-	t.Helper()
-
-	email := dbtest.UniqueEmail(t)
-	registerThrough(t, f.handler, email)
-	return email
-}
-
-// loginChallenge is POST /v1/session expecting the MFA branch: 202 plus a
-// challenge, and no session behind it.
-func (f *postresetMFAFixture) loginChallenge(t *testing.T, email, password string) challengeResponse {
+// loginWithFactor completes a password+MFA login over HTTP and returns the
+// session token, using whatever code the enrolled secret produces AT THE
+// CURRENT CLOCK INSTANT — i.e. what a walk's "freshly generated code" is.
+func (f *postResetMFAFixture) loginWithFactor(t *testing.T, email, password string, secret string) (challenge string, session string, challengeStatus, sessionStatus int) {
 	t.Helper()
 
 	rec := post(t, f.handler, "/v1/session", `{"email":"`+email+`","password":"`+password+`"}`)
@@ -129,61 +109,43 @@ func (f *postresetMFAFixture) loginChallenge(t *testing.T, email, password strin
 	}
 	var body challengeResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatalf("the 202 body is not JSON: %v\n%s", err, rec.Body)
+		t.Fatalf("the 202 body is not JSON: %v", err)
 	}
-	if body.Challenge == "" {
-		t.Fatal("the 202 body carries no challenge token")
+
+	code, err := mfa.Code(secret, f.clk.Now())
+	if err != nil {
+		t.Fatalf("mfa.Code: %v", err)
 	}
-	return body
+	finished := post(t, f.handler, "/v1/session/mfa",
+		`{"challenge":"`+body.Challenge+`","code":"`+code+`"}`)
+	var sess sessionResponse
+	if finished.Code == http.StatusOK {
+		if err := json.Unmarshal(finished.Body.Bytes(), &sess); err != nil {
+			t.Fatalf("the 200 body is not JSON: %v", err)
+		}
+	}
+	return body.Challenge, sess.Token, rec.Code, finished.Code
 }
 
-// finishMFA is POST /v1/session/mfa with the challenge in the body, as an API
-// client sends it.
-func (f *postresetMFAFixture) finishMFA(t *testing.T, challenge, code string) *httptest.ResponseRecorder {
-	t.Helper()
+const postResetMFANewPassword = "a different horse battery staple"
 
-	return post(t, f.handler, "/v1/session/mfa", `{"challenge":"`+challenge+`","code":"`+code+`"}`)
-}
+func TestPostResetImmediateSecondFactorReturnsASession(t *testing.T) {
+	f := newPostResetMFAFixture(t)
+	email := dbtest.UniqueEmail(t)
 
-// me resolves a session token through GET /v1/me.
-func (f *postresetMFAFixture) me(t *testing.T, token string) *httptest.ResponseRecorder {
-	t.Helper()
-
-	return sendWith(t, f.handler, http.MethodGet, "/v1/me", token, "", "")
-}
-
-// liveSessions counts every live session row behind an address.
-func (f *postresetMFAFixture) liveSessions(t *testing.T, email string) int {
-	t.Helper()
-
-	var n int
-	if err := f.pool.QueryRow(t.Context(),
-		`SELECT count(*) FROM sessions s JOIN users u ON u.id = s.user_id WHERE u.email = $1`,
-		email).Scan(&n); err != nil {
-		t.Fatalf("counting sessions: %v", err)
+	// Signup and first signin: no second factor yet.
+	registerThrough(t, f.handler, email)
+	login := post(t, f.handler, "/v1/session", `{"email":"`+email+`","password":"`+validPassword+`"}`)
+	if login.Code != http.StatusOK {
+		t.Fatalf("POST /v1/session = %d, want 200; body: %s", login.Code, login.Body)
 	}
-	return n
-}
-
-// TestPasswordResetFollowedByFreshPasswordPlusMFALogin is the m127 walk.
-func TestPasswordResetFollowedByFreshPasswordPlusMFALogin(t *testing.T) {
-	f := newPostresetMFAFixture(t)
-	email := f.register(t)
-
-	const newPassword = "a completely new password"
-
-	// Sign in once, so there is a pre-reset session to kill later.
-	first := post(t, f.handler, "/v1/session", `{"email":"`+email+`","password":"`+validPassword+`"}`)
-	if first.Code != http.StatusOK {
-		t.Fatalf("POST /v1/session = %d, want 200; body: %s", first.Code, first.Body)
-	}
-	var firstSession sessionResponse
-	if err := json.Unmarshal(first.Body.Bytes(), &firstSession); err != nil {
-		t.Fatalf("the login body is not JSON: %v\n%s", err, first.Body)
+	var first sessionResponse
+	if err := json.Unmarshal(login.Body.Bytes(), &first); err != nil {
+		t.Fatalf("the login body is not JSON: %v", err)
 	}
 
-	// Enroll and confirm a second factor over HTTP, as the walk does.
-	created := sendWith(t, f.handler, http.MethodPost, "/v1/mfa/enrollments", firstSession.Token, "", `{}`)
+	// TOTP enrollment and confirmation.
+	created := sendWith(t, f.handler, http.MethodPost, "/v1/mfa/enrollments", first.Token, "", `{}`)
 	if created.Code != http.StatusCreated {
 		t.Fatalf("POST /v1/mfa/enrollments = %d, want 201; body: %s", created.Code, created.Body)
 	}
@@ -192,80 +154,50 @@ func TestPasswordResetFollowedByFreshPasswordPlusMFALogin(t *testing.T) {
 		Secret       string `json:"secret"`
 	}
 	if err := json.Unmarshal(created.Body.Bytes(), &started); err != nil {
-		t.Fatalf("the enrollment body is not JSON: %v\n%s", err, created.Body)
+		t.Fatalf("the enrollment body is not JSON: %v", err)
+	}
+	enrollCode, err := mfa.Code(started.Secret, f.clk.Now())
+	if err != nil {
+		t.Fatalf("mfa.Code: %v", err)
 	}
 	confirmed := sendWith(t, f.handler, http.MethodPost,
-		"/v1/mfa/enrollments/"+started.EnrollmentID+"/confirm", firstSession.Token, "",
-		`{"code":"`+mustTOTPCode(t, started.Secret, f.clk.Now())+`"}`)
+		"/v1/mfa/enrollments/"+started.EnrollmentID+"/confirm", first.Token, "",
+		`{"code":"`+enrollCode+`"}`)
 	if confirmed.Code != http.StatusOK {
 		t.Fatalf("confirm = %d, want 200; body: %s", confirmed.Code, confirmed.Body)
 	}
 
-	// The initial MFA challenge completion: this spends the current TOTP step
-	// against the credential, which is the fact the rest of the test turns on.
-	initial := f.loginChallenge(t, email, validPassword)
-	spentCode := mustTOTPCode(t, started.Secret, f.clk.Now())
-	finished := f.finishMFA(t, initial.Challenge, spentCode)
-	if finished.Code != http.StatusOK {
-		t.Fatalf("POST /v1/session/mfa = %d, want 200; body: %s", finished.Code, finished.Body)
-	}
-	var preReset sessionResponse
-	if err := json.Unmarshal(finished.Body.Bytes(), &preReset); err != nil {
-		t.Fatalf("the MFA completion body is not JSON: %v\n%s", err, finished.Body)
+	// Initial MFA challenge completion, as the walk does.
+	_, oldSession, _, mfaStatus := f.loginWithFactor(t, email, validPassword, started.Secret)
+	if mfaStatus != http.StatusOK {
+		t.Fatalf("initial POST /v1/session/mfa = %d, want 200", mfaStatus)
 	}
 
-	// Reset the password through the two anonymous routes, as the walk does.
-	if rec := post(t, f.handler, "/v1/password-resets", `{"email":"`+email+`"}`); rec.Code != http.StatusAccepted {
-		t.Fatalf("POST /v1/password-resets = %d, want 202; body: %s", rec.Code, rec.Body)
+	// Reset mail and redeem with a new password.
+	requested := post(t, f.handler, "/v1/password-resets", `{"email":"`+email+`"}`)
+	if requested.Code != http.StatusAccepted {
+		t.Fatalf("POST /v1/password-resets = %d, want 202; body: %s", requested.Code, requested.Body)
 	}
-	redeemed := sendWith(t, f.handler, http.MethodPost, "/v1/password-resets/confirm", "",
-		"", `{"token":"`+tokenIn(t, f.mailer.last(t))+`","password":"`+newPassword+`"}`)
+	redeemed := sendWith(t, f.handler, http.MethodPost, "/v1/password-resets/confirm", "", "",
+		`{"token":"`+tokenIn(t, f.mailer.last(t))+`","password":"`+postResetMFANewPassword+`"}`)
 	if redeemed.Code != http.StatusNoContent {
 		t.Fatalf("POST /v1/password-resets/confirm = %d, want 204; body: %s", redeemed.Code, redeemed.Body)
 	}
 
-	// The pre-reset session is dead: the reset invalidates old sessions.
-	if got := f.liveSessions(t, email); got != 0 {
-		t.Fatalf("%d sessions survived a password reset, want 0", got)
-	}
-	if me := f.me(t, preReset.Token); me.Code != http.StatusUnauthorized {
-		t.Fatalf("GET /v1/me with the pre-reset token = %d, want 401; body: %s", me.Code, me.Body)
+	// The pre-reset session is dead: the reset's documented promise.
+	me := sendWith(t, f.handler, http.MethodGet, "/v1/me", oldSession, "", "")
+	if me.Code != http.StatusUnauthorized {
+		t.Fatalf("GET /v1/me with the pre-reset session = %d, want 401; body: %s", me.Code, me.Body)
 	}
 
-	// Sign in with the NEW password, immediately — the same TOTP step is
-	// still current, exactly as in the walk that reported the failure.
-	fresh := f.loginChallenge(t, email, newPassword)
-
-	// The code the authenticator shows NOW is the value the initial login
-	// already spent. It is refused, and it must be: a spent step is a spent
-	// step, and a password reset is not a second-factor reset.
-	replay := f.finishMFA(t, fresh.Challenge, mustTOTPCode(t, started.Secret, f.clk.Now()))
-	if replay.Code != http.StatusUnauthorized {
-		t.Fatalf("POST /v1/session/mfa with the spent step = %d, want 401; body: %s", replay.Code, replay.Body)
+	// Sign in with the NEW password: 202 with a fresh challenge, as the walk saw.
+	_, _, challengeStatus, sessionStatus := f.loginWithFactor(t, email, postResetMFANewPassword, started.Secret)
+	if challengeStatus != http.StatusAccepted {
+		t.Fatalf("POST /v1/session after reset = %d, want 202", challengeStatus)
 	}
-	if got := decodeProblem(t, replay).Code; got != CodeUnauthorized {
-		t.Errorf("the replay's problem code = %q, want %q", got, CodeUnauthorized)
-	}
-	if got := f.liveSessions(t, email); got != 0 {
-		t.Errorf("%d sessions after a refused second factor, want 0", got)
-	}
-
-	// The corrected journey: wait for the next code. A fresh step against the
-	// fresh challenge finishes the login, and the session resolves.
-	f.clk.Advance(mfa.Period + time.Second)
-	after := f.loginChallenge(t, email, newPassword)
-	ok := f.finishMFA(t, after.Challenge, mustTOTPCode(t, started.Secret, f.clk.Now()))
-	if ok.Code != http.StatusOK {
-		t.Fatalf("POST /v1/session/mfa with the next step = %d, want 200; body: %s", ok.Code, ok.Body)
-	}
-	var postReset sessionResponse
-	if err := json.Unmarshal(ok.Body.Bytes(), &postReset); err != nil {
-		t.Fatalf("the MFA completion body is not JSON: %v\n%s", err, ok.Body)
-	}
-	if postReset.Token == "" {
-		t.Fatal("the 200 body carries no session token")
-	}
-	if me := f.me(t, postReset.Token); me.Code != http.StatusOK {
-		t.Errorf("GET /v1/me with the post-reset MFA session = %d, want 200; body: %s", me.Code, me.Body)
+	// THE WALK'S EXPECTATION: a freshly generated code against the fresh
+	// challenge mints a session.
+	if sessionStatus != http.StatusOK {
+		t.Fatalf("POST /v1/session/mfa after reset = %d, want 200: the merged walk stops here", sessionStatus)
 	}
 }
