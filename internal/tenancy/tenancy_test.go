@@ -191,6 +191,28 @@ func TestTenancyAccountIsolation(t *testing.T) {
 func TestTenancyIdentityOwnsItsFiveTables(t *testing.T) {
 	ctx, conn := connect(t)
 
+	t.Run("the owner and app roles are not superuser or BYPASSRLS", func(t *testing.T) {
+		// A role with rolsuper or rolbypassrls bypasses row-level security even
+		// when FORCE is set, so the catalog can read t/t while the owner still
+		// reads every row. The gate postgres that used POSTGRES_USER=identity on
+		// postgres:17-alpine made identity the bootstrap superuser; fresh volume,
+		// migrations green, tenancy red with extra owner rows and the append-only
+		// trigger instead of the RLS denial — m156. kit's cluster and brew postgres
+		// provision identity as NOSUPERUSER NOBYPASSRLS.
+		for _, role := range []string{"identity", "identity_app"} {
+			var super, bypass bool
+			if err := conn.QueryRow(ctx, `select rolsuper, rolbypassrls from pg_roles where rolname = $1`, role).Scan(&super, &bypass); err != nil {
+				t.Fatalf("reading pg_roles for %s: %v", role, err)
+			}
+			if super {
+				t.Errorf("role %s is superuser, which bypasses row-level security even with FORCE. Recreate the cluster without POSTGRES_USER=%s (use kit's kit-postgres image, or plain postgres without that variable)", role, role)
+			}
+			if bypass {
+				t.Errorf("role %s has BYPASSRLS, which bypasses row-level security even with FORCE. Recreate it as NOBYPASSRLS", role)
+			}
+		}
+	})
+
 	t.Run("every declared table is enabled and FORCED", func(t *testing.T) {
 		for _, table := range identityTables {
 			enabled, forced, acctIndex, policies := protectedCatalogRow(t, ctx, conn, table)
