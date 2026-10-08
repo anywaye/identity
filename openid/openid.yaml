@@ -188,8 +188,7 @@ info:
     url: https://github.com/cafaye/identity
     email: identity@cafaye.com
   license:
-    name: MIT
-    url: https://opensource.org/license/mit
+    name: Proprietary - All rights reserved. See LICENSE in the cafaye/identity repository.
 
 servers:
   - url: https://identity.cafaye.com
