@@ -75,3 +75,17 @@ incremental commit on top of it.
 - D19 notes two open items: console read of `user_audit_log` (needs a `List` +
   index per 00022's plan) and ending live sessions on staff revoke.
 - Scratch Postgres left running on port 55433 (`$TMPDIR/pg-m147`); disposable.
+
+## Correction commit (m147b, comment-only)
+
+- `0251c70` — "m147b: staff decision cross-references point to D19, not D17".
+  The staff ADR landed as D19 (D17 already governs the `created_at` clock);
+  three staff sentences still named D17 and now name D19. Changed files only:
+  `README.md` staff-console section, `internal/httpapi/staff.go` package
+  comment, `migrations/00030_user_is_staff.sql` header comment (one line each,
+  no behavior/document/migration change).
+- Checks: `git diff --check` → clean (exit 0); exact `rg` over the three
+  files → `D17` matches: none; `D19` matches: one per file
+  (`README.md:880`, `staff.go:25`, `00030_user_is_staff.sql:8`). Remaining
+  `D14` hits in those files are the machine-routes decision, untouched by
+  design. No build, unit suite, Docker, or prime run (comment-only repair).
