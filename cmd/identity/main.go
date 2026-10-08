@@ -939,7 +939,13 @@ func buildRecovery(
 // "where does this link point". And config.Load has already refused to boot when
 // the variable is unset or broken, so a deployment that reaches this function
 // with a mail path has a template courier will accept.
-func buildInvitationMailer(cfg config.Config, logger *slog.Logger) (*courier.InvitationMailer, error) {
+// THE RETURN TYPE IS accounts.InvitationMailer, AND THAT IS WHAT MAKES THE NIL
+// ABOVE AN UNTYPED ONE. A nil *courier.InvitationMailer stored in the
+// interface NewService takes compares non-nil, so Invite's `s.mailer != nil`
+// guard passes and SendInvitation runs on a nil receiver — the 2026-10-08
+// panic on a stack with no mail path. The same shape buildSocial's return
+// already has, for the same guard in WithSocial.
+func buildInvitationMailer(cfg config.Config, logger *slog.Logger) (accounts.InvitationMailer, error) {
 	if !cfg.CourierEnabled() {
 		return nil, nil
 	}
