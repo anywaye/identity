@@ -92,7 +92,22 @@ report prints no other secret).
 | `TEST_DATABASE_URL=... go test -count=1 -v -run TestPasswordResetFollowedByFreshPasswordPlusMFALogin ./internal/httpapi/` | **PASS** (exit 0, ~1.3s): same-step code after reset → 401 `unauthorized` with zero sessions minted; next-step code → 200 with a session that resolves on `GET /v1/me` |
 | naive walk expectation (same-step → 200) | recorded red in history as commit `fea6eea` (`TestPostResetImmediateSecondFactorReturnsASession` failed with the walk's exact 401); entailed by the green run above, which asserts the same-step completion is 401 |
 | `TEST_DATABASE_URL=... go test -count=1 ./internal/httpapi/ ./internal/mfa/ ./internal/recovery/ ./internal/auth/` (against the `identity` database) | **PASS** — exit 0: `ok httpapi 110.6s, mfa 38.5s, recovery 31.0s, auth 26.7s` |
-| `TEST_DATABASE_URL=... go test -count=1 -race -run TestPasswordResetFollowedByFreshPasswordPlusMFALogin ./internal/httpapi/` | **PASS** — exit 0 (`ok ... 4.9s`), no data races |
+| `TEST_DATABASE_URL=... go test -count=1 -race -run TestPasswordResetFollowedByFreshPasswordPlusMFALogin ./internal/httpapi/` | **PASS** — exit 0 (`ok ... 4.9s`), no data races (independently re-run by the `m127db` worker: exit 0, `ok ... 2.6s`) |
+
+Owner-name caveat, found the hard way (appended by the `m127db` worker): a
+first full four-package run against the `m127db` DSN failed **only** in
+`internal/recovery` — 41× `permission denied for table users` (42501) while
+`httpapi`/`mfa`/`auth` were ok. This is environmental, not a product
+regression: migration `00019` grants public-schema DML to the **literal**
+role `identity_app` (`migrations/00019_app_role_dml.sql:69-83`), while
+`dbtest.AppDSN` derives `<owner>_app`. `dbtest.Schema` grants that derived
+role on its private schemas (owner-agnostic — every `Schema`-based test,
+including the new one, passed as `m127owner_app`), but `dbtest.Pool` on the
+public schema relies on the migration grants, which exist only for
+`identity_app`. CI uses owner `identity`, so owner `identity` is the only
+correct choice for a full-package run; the per-test private-schema path works
+under any owner. No code was changed for this; the failing run was repeated
+against the `identity` database and is included in the all-green row above.
 
 ## Limitation
 
