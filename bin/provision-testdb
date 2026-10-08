@@ -44,7 +44,12 @@
 # anything is created.
 #
 # THE PASSWORD travels as a psql variable (:'pw'), never interpolated into
-# SQL, so a password containing a quote cannot break the statement. Role and
+# SQL, so a password containing a quote cannot break the statement. The
+# variable MUST be consumed from standard input (a pipe or heredoc), never
+# from `psql -c`: psql performs :'var' interpolation on the input it scans
+# (interactive, -f, stdin) and sends `-c` straight to the server, so a `-c`
+# string carrying :'pw' arrives uninterpolated and the server answers
+# `ERROR: syntax error at or near ":"`. Role and
 # database names ARE interpolated, so they are validated against a safe
 # identifier pattern rather than trusted — the DSN is caller-controlled text.
 set -euo pipefail
@@ -229,14 +234,16 @@ role_exists() {
 
 if [ "$(role_exists "$owner")" != "1" ]; then
   log "creating role $owner"
-  "$psql_bin" "$admin_dsn" -X -q -w --set ON_ERROR_STOP=1 -v pw="$password" \
-    -c "CREATE ROLE $owner LOGIN PASSWORD :'pw'"
+  # Via stdin, not -c: psql does not interpolate :'pw' in a -c string.
+  printf '%s\n' "CREATE ROLE $owner LOGIN PASSWORD :'pw'" | \
+    "$psql_bin" "$admin_dsn" -X -q -w --set ON_ERROR_STOP=1 -v pw="$password"
 fi
 
 if [ "$(role_exists "$app_role")" != "1" ]; then
   log "creating role $app_role"
-  "$psql_bin" "$admin_dsn" -X -q -w --set ON_ERROR_STOP=1 -v pw="$password" \
-    -c "CREATE ROLE $app_role LOGIN PASSWORD :'pw'"
+  # Via stdin, not -c: psql does not interpolate :'pw' in a -c string.
+  printf '%s\n' "CREATE ROLE $app_role LOGIN PASSWORD :'pw'" | \
+    "$psql_bin" "$admin_dsn" -X -q -w --set ON_ERROR_STOP=1 -v pw="$password"
 fi
 
 if [ "$("$psql_bin" "$admin_dsn" -X -q -w -tAc "select 1 from pg_database where datname = '$dbname'")" != "1" ]; then
