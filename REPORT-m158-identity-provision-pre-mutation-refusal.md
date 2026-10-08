@@ -64,7 +64,7 @@ No disposable databases were created by this packet's script changes (the verifi
 ## Commits in this packet
 
 * `b3e089c` — `m158 Q1: red regression — unsafe-role refusal must precede any side effect` (failing test, no script change)
-* (next) — `m158: refuse superuser/BYPASSRLS before any provision side effect` (script reordered + report)
+* `7c3b01e` — `m158: refuse superuser/BYPASSRLS before any provision side effect` (script reordered + report)
 
 Worktree: `/Users/kaka/Code/any/moon/cafaye/identity-worker-system-admin`
 Branch: `m147-identity-system-admin`
