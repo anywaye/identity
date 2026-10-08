@@ -5,7 +5,7 @@
 -- directory, status and disable/enable routes). It is deliberately NOT a role,
 -- NOT a scope and NOT an account membership: a role is re-read per account on
 -- every request and a scope is a capability on a machine credential, while this
--- is a property of the person that a session carries. DECISIONS.md D17 is the
+-- is a property of the person that a session carries. DECISIONS.md D19 is the
 -- entry that revises D14's "no platform-admin role" for it; this file is the
 -- column that entry stands on.
 --

@@ -877,7 +877,7 @@ machine operator routes — the two credentials do not cross, so the
 staff disable runs the same transaction as a machine one; its audit row names
 the staff user's id and no api key. No account role reaches these routes: staff
 is a property of the user (`users.is_staff`, default false), not of a
-membership, and the whole revision is [DECISIONS.md D17](DECISIONS.md).
+membership, and the whole revision is [DECISIONS.md D19](DECISIONS.md).
 
 Staff is **granted by an operator, never by the service itself**. There is no
 bootstrap route, no default staff account and no grant button: the only writer

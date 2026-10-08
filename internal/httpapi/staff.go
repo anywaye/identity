@@ -22,7 +22,7 @@ package httpapi
 // It is not the admin surface either, for D14's reason restated: a user is not
 // an account. These routes name no account, consult no role, and grant no
 // tenant admin anything — an account admin, owner included, is 403 here
-// whatever else they hold. DECISIONS.md D17 revises D14 for this surface and is
+// whatever else they hold. DECISIONS.md D19 revises D14 for this surface and is
 // the entry that owns the argument; this comment owns the mechanics.
 //
 // # THE STAFF PROPERTY, SAID ONCE
