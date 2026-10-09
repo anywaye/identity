@@ -92,19 +92,40 @@ func (e AccountRole) Valid() bool {
 
 // Defines values for AgentStatus.
 const (
-	Claimed   AgentStatus = "claimed"
-	Disabled  AgentStatus = "disabled"
-	Unclaimed AgentStatus = "unclaimed"
+	AgentStatusClaimed   AgentStatus = "claimed"
+	AgentStatusDisabled  AgentStatus = "disabled"
+	AgentStatusUnclaimed AgentStatus = "unclaimed"
 )
 
 // Valid indicates whether the value is a known member of the AgentStatus enum.
 func (e AgentStatus) Valid() bool {
 	switch e {
-	case Claimed:
+	case AgentStatusClaimed:
 		return true
-	case Disabled:
+	case AgentStatusDisabled:
 		return true
-	case Unclaimed:
+	case AgentStatusUnclaimed:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AgentSummaryStatus.
+const (
+	AgentSummaryStatusClaimed   AgentSummaryStatus = "claimed"
+	AgentSummaryStatusDisabled  AgentSummaryStatus = "disabled"
+	AgentSummaryStatusUnclaimed AgentSummaryStatus = "unclaimed"
+)
+
+// Valid indicates whether the value is a known member of the AgentSummaryStatus enum.
+func (e AgentSummaryStatus) Valid() bool {
+	switch e {
+	case AgentSummaryStatusClaimed:
+		return true
+	case AgentSummaryStatusDisabled:
+		return true
+	case AgentSummaryStatusUnclaimed:
 		return true
 	default:
 		return false
@@ -746,6 +767,62 @@ type Agent struct {
 // database.
 type AgentStatus string
 
+// AgentClaim The claim link, rendered once. `url` is the absolute address a human opens;
+// the link is 256 bits of `cafaye_`-prefixed entropy whose SHA-256 is the
+// only part stored.
+type AgentClaim struct {
+	ExpiresAt time.Time `json:"expires_at"`
+	URL       string    `json:"url"`
+}
+
+// AgentRegistrationResult The 201 from `POST /v1/agents`, in the shape `caf agent register` consumes:
+// the principal at `unclaimed`, the bootstrap token, and the claim URL. The
+// two secrets (`api_key.token` and `claim.url`) appear here and nowhere else.
+type AgentRegistrationResult struct {
+	// Agent The principal as a response renders it. No claim digest and never a
+	// token: a projection so a domain field cannot reach a body by being added.
+	Agent AgentSummary `json:"agent"`
+
+	// APIKey A freshly-minted bearer credential, and the ONLY shape with `token` on it.
+	// Shown once at mint/rotate; there is no column holding the plaintext, so no
+	// endpoint can print it again.
+	APIKey IssuedAgentToken `json:"api_key"`
+
+	// Claim The claim link, rendered once. `url` is the absolute address a human opens;
+	// the link is 256 bits of `cafaye_`-prefixed entropy whose SHA-256 is the
+	// only part stored.
+	Claim AgentClaim `json:"claim"`
+}
+
+// AgentSummary The principal as a response renders it. No claim digest and never a
+// token: a projection so a domain field cannot reach a body by being added.
+type AgentSummary struct {
+	ID   openapi_types.UUID `json:"id"`
+	Name string             `json:"name"`
+
+	// Status Always `unclaimed` on registration. `claimed` once a human approves;
+	// `disabled` when the owning account turns it off.
+	Status   AgentSummaryStatus `json:"status"`
+	Username string             `json:"username"`
+}
+
+// AgentSummaryStatus Always `unclaimed` on registration. `claimed` once a human approves;
+// `disabled` when the owning account turns it off.
+type AgentSummaryStatus string
+
+// AgentToken A bearer credential as the agent's management surface sees it: no token,
+// no digest. `last_used_at` is omitted when the credential has never been
+// used, and `revoked_at`/`revoke_reason` are present only on a withdrawn one.
+type AgentToken struct {
+	CreatedAt    time.Time          `json:"created_at"`
+	ExpiresAt    time.Time          `json:"expires_at"`
+	ID           openapi_types.UUID `json:"id"`
+	LastUsedAt   *time.Time         `json:"last_used_at,omitempty"`
+	Name         string             `json:"name"`
+	RevokeReason *string            `json:"revoke_reason,omitempty"`
+	RevokedAt    *time.Time         `json:"revoked_at,omitempty"`
+}
+
 // AuditLogEntry One admin action.
 //
 // **There is no field here that could hold a credential, and that is
@@ -1199,6 +1276,20 @@ type IssuedAPIKey struct {
 	UserID openapi_types.UUID `json:"user_id"`
 }
 
+// IssuedAgentToken A freshly-minted bearer credential, and the ONLY shape with `token` on it.
+// Shown once at mint/rotate; there is no column holding the plaintext, so no
+// endpoint can print it again.
+type IssuedAgentToken struct {
+	ExpiresAt time.Time          `json:"expires_at"`
+	ID        openapi_types.UUID `json:"id"`
+	Name      string             `json:"name"`
+
+	// Token The credential: `cafaye_` followed by base64url random bytes. Shown
+	// exactly once, here. Never in a cookie — a credential in a cookie is
+	// one a browser silently attaches to a request its holder did not intend.
+	Token string `json:"token"`
+}
+
 // IssuedInvitation A pending invitation, and — **on creation only** — the token that redeems
 // it.
 //
@@ -1386,6 +1477,21 @@ type MintAPIKeyRequest struct {
 	// `accounts:read` runs for a week and fails on the write it was written
 	// to do.
 	Scopes []APIKeyScope `json:"scopes"`
+}
+
+// MintAgentTokenRequest **There is no `agent_id`.** The bearer token that authenticated the
+// request already names the agent, and a body field would let a caller mint
+// for a principal it is not. The credential inherits the caller's agent.
+type MintAgentTokenRequest struct {
+	// ExpiresIn **Seconds from now**, the same name and shape RFC 6749's token response
+	// uses. Omit it for the 90-day default. `0` and negative values are 422:
+	// a permanent credential is not something this build offers, and the
+	// ceiling is 365 days.
+	ExpiresIn *int64 `json:"expires_in,omitempty"`
+
+	// Name Labels the credential, unique among the agent's LIVE tokens. Revoking
+	// or rotating frees the name for reuse.
+	Name string `json:"name"`
 }
 
 // MintSessionLinkRequest **The subject, and only the subject.** There is no `account_id`, no redirect,
@@ -1678,6 +1784,47 @@ type RedeemSessionLinkRequest struct {
 	Token string `json:"token"`
 }
 
+// RefreshAgentClaimResponse The 200 from `POST /v1/agents/claim-link/refresh`: the agent (still
+// `unclaimed`) and its new claim link. No token — a refresh never mints a
+// bearer credential.
+type RefreshAgentClaimResponse struct {
+	// Agent The principal as a response renders it. No claim digest and never a
+	// token: a projection so a domain field cannot reach a body by being added.
+	Agent AgentSummary `json:"agent"`
+
+	// Claim The claim link, rendered once. `url` is the absolute address a human opens;
+	// the link is 256 bits of `cafaye_`-prefixed entropy whose SHA-256 is the
+	// only part stored.
+	Claim AgentClaim `json:"claim"`
+}
+
+// RegisterAgentRequest The body of `POST /v1/agents`. `name` is required and `username` is
+// optional, and the asymmetry is the design: the name is what the claim
+// screen shows a human; the handle is machine bookkeeping the service can
+// generate and retry, so it is optional and never refused for a collision —
+// only for a malformed shape, or for a deliberately-supplied handle that
+// survived every retry. An unknown field is a 422.
+type RegisterAgentRequest struct {
+	// Device The agent's own free-form description of itself (hostname, OS, model,
+	// version — the set of keys is not fixed by this contract). Written
+	// whole and rendered on the claim screen; never parsed by a route and
+	// never filtered on.
+	Device *map[string]interface{} `json:"device,omitempty"`
+
+	// Name The display label a human reads on the claim screen, typed by whoever
+	// registered the agent. Not unique — two agents called "Noel" are two
+	// principals.
+	Name string `json:"name"`
+
+	// Username The globally-unique handle: lower-case letters, digits and single
+	// dashes, not starting or ending with a dash. Omit it and one is
+	// generated from `name`. A collision on a GENERATED handle is retried
+	// under the hood and never surfaces; a malformed one — or a
+	// deliberately-supplied one that survives the retry budget — is a 422
+	// naming this field. This is not a way to probe which handles exist.
+	Username *string `json:"username,omitempty"`
+}
+
 // RegisterOIDCClientRequest defines model for RegisterOIDCClientRequest.
 type RegisterOIDCClientRequest struct {
 	GrantTypes   []RegisterOIDCClientRequestGrantTypes `json:"grant_types"`
@@ -1782,6 +1929,21 @@ type RenameAccountRequest struct {
 // nothing else.
 type RevokeAPIKeyRequest struct {
 	Reason *string `json:"reason,omitempty"`
+}
+
+// RevokeAgentTokenRequest An optional body. The empty body is a revoke with no reason.
+type RevokeAgentTokenRequest struct {
+	// Reason Free text the agent may supply for its own audit trail. Stored on the
+	// credential row, not in the platform event.
+	Reason *string `json:"reason,omitempty"`
+}
+
+// RotateAgentTokenRequest An optional body. The name is inherited from the credential being rotated,
+// which is why rotation carries no `name`.
+type RotateAgentTokenRequest struct {
+	// ExpiresIn **Seconds from now** for the NEW credential. Omit it for the 90-day
+	// default; the lifetime restarts on rotation.
+	ExpiresIn *int64 `json:"expires_in,omitempty"`
 }
 
 // Session defines model for Session.
@@ -2138,6 +2300,11 @@ type MalformedBody = Problem
 // its own error body.
 type NotFound = Problem
 
+// RateLimited The cafaye error envelope: RFC 9457 plus core's `code` and `trace_id`.
+// Every non-2xx response from this service is this shape. No service invents
+// its own error body.
+type RateLimited = Problem
+
 // Unauthenticated The cafaye error envelope: RFC 9457 plus core's `code` and `trace_id`.
 // Every non-2xx response from this service is this shape. No service invents
 // its own error body.
@@ -2247,6 +2414,18 @@ type RegisterOIDCClientJSONRequestBody = RegisterOIDCClientRequest
 
 // TransferAccountOwnershipJSONRequestBody defines body for TransferAccountOwnership for application/json ContentType.
 type TransferAccountOwnershipJSONRequestBody = TransferOwnershipRequest
+
+// RegisterAgentJSONRequestBody defines body for RegisterAgent for application/json ContentType.
+type RegisterAgentJSONRequestBody = RegisterAgentRequest
+
+// MintAgentTokenJSONRequestBody defines body for MintAgentToken for application/json ContentType.
+type MintAgentTokenJSONRequestBody = MintAgentTokenRequest
+
+// RevokeAgentTokenJSONRequestBody defines body for RevokeAgentToken for application/json ContentType.
+type RevokeAgentTokenJSONRequestBody = RevokeAgentTokenRequest
+
+// RotateAgentTokenJSONRequestBody defines body for RotateAgentToken for application/json ContentType.
+type RotateAgentTokenJSONRequestBody = RotateAgentTokenRequest
 
 // RequestEmailChangeJSONRequestBody defines body for RequestEmailChange for application/json ContentType.
 type RequestEmailChangeJSONRequestBody = RecoveryEmailRequest
@@ -3627,6 +3806,259 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/accounts/{account_id}/ownership-transfers (the `TransferAccountOwnership` operationId).
 	TransferAccountOwnership(ctx context.Context, accountID AccountID, body TransferAccountOwnershipJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RegisterAgentWithBody Register an unclaimed agent
+	//
+	// The step-① endpoint of the agent flow: an unauthenticated caller registers
+	// itself and comes away with an **unclaimed** agent, a bootstrap bearer
+	// token and a **claim URL** for a human to open. This is what `caf agent
+	// register` calls.
+	//
+	// **Public and unauthenticated, and rate-limited** on the same terms
+	// `POST /v1/users` is — the key is the client and the route, never an
+	// attempted account (there is no account), so the 429 is identical for
+	// everybody and discloses nothing.
+	//
+	// **The response carries two secrets, each exactly once.** `api_key.token`
+	// is the bootstrap bearer credential and `claim.url` is the 256-bit link a
+	// human opens to claim the agent. Neither is stored: the row holds a SHA-256
+	// digest of each, and no endpoint anywhere re-reads either. A caller that
+	// loses the token rotates or re-mints; a caller that loses the claim link
+	// refreshes it (`POST /v1/agents/claim-link/refresh`) while the agent is
+	// still unclaimed.
+	//
+	// **`name` is required, `username` is optional.** The name is what the claim
+	// screen shows a human. The username is the globally-unique handle; omit it
+	// and one is generated from the name, and a generated collision is retried
+	// under the hood so it never surfaces as "taken". A username you DO supply
+	// is validated against the handle shape, and only a deliberate one that
+	// survives the retry budget comes back as a 422 naming `username` — this
+	// endpoint is not a way to probe which handles exist.
+	//
+	// **`agent.status` is always `unclaimed`.** Registration grants no authority
+	// and binds to no account; a human claims it, which is a separate, signed-in
+	// step (D4). An agent can never claim itself.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/agents (the `RegisterAgent` operationId).
+	RegisterAgentWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RegisterAgent Register an unclaimed agent
+	//
+	// The step-① endpoint of the agent flow: an unauthenticated caller registers
+	// itself and comes away with an **unclaimed** agent, a bootstrap bearer
+	// token and a **claim URL** for a human to open. This is what `caf agent
+	// register` calls.
+	//
+	// **Public and unauthenticated, and rate-limited** on the same terms
+	// `POST /v1/users` is — the key is the client and the route, never an
+	// attempted account (there is no account), so the 429 is identical for
+	// everybody and discloses nothing.
+	//
+	// **The response carries two secrets, each exactly once.** `api_key.token`
+	// is the bootstrap bearer credential and `claim.url` is the 256-bit link a
+	// human opens to claim the agent. Neither is stored: the row holds a SHA-256
+	// digest of each, and no endpoint anywhere re-reads either. A caller that
+	// loses the token rotates or re-mints; a caller that loses the claim link
+	// refreshes it (`POST /v1/agents/claim-link/refresh`) while the agent is
+	// still unclaimed.
+	//
+	// **`name` is required, `username` is optional.** The name is what the claim
+	// screen shows a human. The username is the globally-unique handle; omit it
+	// and one is generated from the name, and a generated collision is retried
+	// under the hood so it never surfaces as "taken". A username you DO supply
+	// is validated against the handle shape, and only a deliberate one that
+	// survives the retry budget comes back as a 422 naming `username` — this
+	// endpoint is not a way to probe which handles exist.
+	//
+	// **`agent.status` is always `unclaimed`.** Registration grants no authority
+	// and binds to no account; a human claims it, which is a separate, signed-in
+	// step (D4). An agent can never claim itself.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/agents (the `RegisterAgent` operationId).
+	RegisterAgent(ctx context.Context, body RegisterAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RefreshAgentClaimLink Reissue an agent's claim link without claiming it
+	//
+	// Hands the calling agent a **fresh claim URL** and changes nothing else —
+	// the agent stays unclaimed, keeps its id, name and every token it holds.
+	//
+	// **Authenticated with the agent's own bearer token**, which resolves
+	// through the agent table and not the account api-keys table even though
+	// both begin `cafaye_`: an agent may refresh its own link precisely because
+	// the credential it presents names a principal, and a principal that has
+	// lost its link is the one thing this route exists to save. A token that
+	// does not resolve — wrong, revoked, expired, or belonging to a disabled
+	// principal — is the same 401 any unknown credential gets.
+	//
+	// **A refresh against a CLAIMED agent is a 404**, not a new link: the status
+	// guard refuses it, so "give me a new link" can never act as "claim me", and
+	// the account that owns the agent manages its access through the account
+	// surface instead. This is the whole of why refresh and claim are two verbs.
+	//
+	// **The Idempotency-Key correlates, it does not cache.** It rides on the
+	// refresh event so a client's retried burst reads as one intent in the audit
+	// trail; every call still mints a NEW link (the previous one is spent by the
+	// refresh that replaces it), which is the deliberate behaviour — a replayed
+	// retry must not resurrect a link that has already been replaced.
+	//
+	// Corresponds with POST /v1/agents/claim-link/refresh (the `RefreshAgentClaimLink` operationId).
+	RefreshAgentClaimLink(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListAgentTokens List the agent's bearer tokens
+	//
+	// Every credential the calling agent holds, newest first, **revoked ones
+	// included** — the same "was this withdrawn, or was it always broken?"
+	// support question `GET /v1/accounts/{account_id}/api-keys` answers by
+	// keeping the row.
+	//
+	// **No token and no digest in the body.** There is no column holding the
+	// plaintext, so there is nothing to leak; and the digest is of no use to a
+	// client, so echoing it would put the row's most sensitive value in a log
+	// for no gain. Tokens are distinguished by `name` and `id` and never by a
+	// piece of themselves. An agent with none answers `[]` and not `null`.
+	//
+	// Corresponds with GET /v1/agents/tokens (the `ListAgentTokens` operationId).
+	ListAgentTokens(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// MintAgentTokenWithBody Mint a bearer token the agent holds
+	//
+	// Mints a named bearer credential for the calling agent, in the same shape
+	// `POST /v1/accounts/{account_id}/api-keys` renders its mint: an opaque
+	// `cafaye_` token, SHA-256 at rest, revocable and expiring, with `token`
+	// returned here and nowhere else.
+	//
+	// **Authenticated with the agent's own bearer token**, and the credential it
+	// mints belongs to that same principal — a request carries no `agent_id`,
+	// because the token that authenticated it already names the agent and a body
+	// field would let a caller mint for a principal it is not. "Scoped" here
+	// means *held by one principal and revocable on it*; the per-capability scope
+	// vocabulary for an agent token arrives with the routes it will gate, so a
+	// token minted now does not yet gate any business route, only its own
+	// management surface.
+	//
+	// **One live token per name.** A second live token answering to `name` is a
+	// 409; rotate or revoke the old one first.
+	//
+	// **`expires_in` is SECONDS from now**, the same name RFC 6749 uses. Omit it
+	// for the default; `0`, a negative value or a value over the ceiling (365
+	// days) is a 422, never "never expires".
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/agents/tokens (the `MintAgentToken` operationId).
+	MintAgentTokenWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// MintAgentToken Mint a bearer token the agent holds
+	//
+	// Mints a named bearer credential for the calling agent, in the same shape
+	// `POST /v1/accounts/{account_id}/api-keys` renders its mint: an opaque
+	// `cafaye_` token, SHA-256 at rest, revocable and expiring, with `token`
+	// returned here and nowhere else.
+	//
+	// **Authenticated with the agent's own bearer token**, and the credential it
+	// mints belongs to that same principal — a request carries no `agent_id`,
+	// because the token that authenticated it already names the agent and a body
+	// field would let a caller mint for a principal it is not. "Scoped" here
+	// means *held by one principal and revocable on it*; the per-capability scope
+	// vocabulary for an agent token arrives with the routes it will gate, so a
+	// token minted now does not yet gate any business route, only its own
+	// management surface.
+	//
+	// **One live token per name.** A second live token answering to `name` is a
+	// 409; rotate or revoke the old one first.
+	//
+	// **`expires_in` is SECONDS from now**, the same name RFC 6749 uses. Omit it
+	// for the default; `0`, a negative value or a value over the ceiling (365
+	// days) is a 422, never "never expires".
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/agents/tokens (the `MintAgentToken` operationId).
+	MintAgentToken(ctx context.Context, body MintAgentTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RevokeAgentTokenWithBody Revoke one of the agent's bearer tokens
+	//
+	// Withdraws one of the calling agent's credentials. The row is **kept**, not
+	// deleted, so a later list can still say *withdrawn* rather than *never
+	// existed* — the same reason `DELETE /v1/accounts/{account_id}/api-keys/{key_id}`
+	// keeps its row. A second attempt on an already-revoked credential is a
+	// 409, so a client that clicked twice is not told a second revocation
+	// succeeded.
+	//
+	// An id that is not this agent's is the same 404 as one that does not exist:
+	// the caller established the agent from its own credential, and a query that
+	// named the agent again simply refuses a token that belongs to somebody
+	// else. `{token_id}` in the path is never read before the credential gate
+	// runs, so an anonymous request is a 401 and never a 404 that confirms the
+	// id's shape.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with DELETE /v1/agents/tokens/{token_id} (the `RevokeAgentToken` operationId).
+	RevokeAgentTokenWithBody(ctx context.Context, tokenID openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RevokeAgentToken Revoke one of the agent's bearer tokens
+	//
+	// Withdraws one of the calling agent's credentials. The row is **kept**, not
+	// deleted, so a later list can still say *withdrawn* rather than *never
+	// existed* — the same reason `DELETE /v1/accounts/{account_id}/api-keys/{key_id}`
+	// keeps its row. A second attempt on an already-revoked credential is a
+	// 409, so a client that clicked twice is not told a second revocation
+	// succeeded.
+	//
+	// An id that is not this agent's is the same 404 as one that does not exist:
+	// the caller established the agent from its own credential, and a query that
+	// named the agent again simply refuses a token that belongs to somebody
+	// else. `{token_id}` in the path is never read before the credential gate
+	// runs, so an anonymous request is a 401 and never a 404 that confirms the
+	// id's shape.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with DELETE /v1/agents/tokens/{token_id} (the `RevokeAgentToken` operationId).
+	RevokeAgentToken(ctx context.Context, tokenID openapi_types.UUID, body RevokeAgentTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RotateAgentTokenWithBody Rotate one of the agent's bearer tokens in place
+	//
+	// Withdraws a credential and mints a new one of the **same name** in one
+	// call, so there is no instant with no credential under that name and no
+	// two-round-trip window in which a client can end up with none. The new
+	// token's lifetime is fresh (`expires_in`, or the default); the name is
+	// inherited from the one being rotated, which is why rotation needs no `name`
+	// in the body.
+	//
+	// The revocation of the old and the mint of the new are one transaction:
+	// either the new token is handed back or the old one keeps working, never
+	// neither. This is the same ergonomic as revoke-then-re-mint, without the
+	// window.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/agents/tokens/{token_id}/rotate (the `RotateAgentToken` operationId).
+	RotateAgentTokenWithBody(ctx context.Context, tokenID openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RotateAgentToken Rotate one of the agent's bearer tokens in place
+	//
+	// Withdraws a credential and mints a new one of the **same name** in one
+	// call, so there is no instant with no credential under that name and no
+	// two-round-trip window in which a client can end up with none. The new
+	// token's lifetime is fresh (`expires_in`, or the default); the name is
+	// inherited from the one being rotated, which is why rotation needs no `name`
+	// in the body.
+	//
+	// The revocation of the old and the mint of the new are one transaction:
+	// either the new token is handed back or the old one keeps working, never
+	// neither. This is the same ergonomic as revoke-then-re-mint, without the
+	// window.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/agents/tokens/{token_id}/rotate (the `RotateAgentToken` operationId).
+	RotateAgentToken(ctx context.Context, tokenID openapi_types.UUID, body RotateAgentTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// StartSocialLogin Begin a social sign-in
 	//
@@ -7020,6 +7452,359 @@ func (c *Client) TransferAccountOwnership(ctx context.Context, accountID Account
 	return c.Client.Do(req)
 }
 
+// RegisterAgentWithBody Register an unclaimed agent
+//
+// The step-① endpoint of the agent flow: an unauthenticated caller registers
+// itself and comes away with an **unclaimed** agent, a bootstrap bearer
+// token and a **claim URL** for a human to open. This is what `caf agent
+// register` calls.
+//
+// **Public and unauthenticated, and rate-limited** on the same terms
+// `POST /v1/users` is — the key is the client and the route, never an
+// attempted account (there is no account), so the 429 is identical for
+// everybody and discloses nothing.
+//
+// **The response carries two secrets, each exactly once.** `api_key.token`
+// is the bootstrap bearer credential and `claim.url` is the 256-bit link a
+// human opens to claim the agent. Neither is stored: the row holds a SHA-256
+// digest of each, and no endpoint anywhere re-reads either. A caller that
+// loses the token rotates or re-mints; a caller that loses the claim link
+// refreshes it (`POST /v1/agents/claim-link/refresh`) while the agent is
+// still unclaimed.
+//
+// **`name` is required, `username` is optional.** The name is what the claim
+// screen shows a human. The username is the globally-unique handle; omit it
+// and one is generated from the name, and a generated collision is retried
+// under the hood so it never surfaces as "taken". A username you DO supply
+// is validated against the handle shape, and only a deliberate one that
+// survives the retry budget comes back as a 422 naming `username` — this
+// endpoint is not a way to probe which handles exist.
+//
+// **`agent.status` is always `unclaimed`.** Registration grants no authority
+// and binds to no account; a human claims it, which is a separate, signed-in
+// step (D4). An agent can never claim itself.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/agents (the `RegisterAgent` operationId).
+func (c *Client) RegisterAgentWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRegisterAgentRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RegisterAgent Register an unclaimed agent
+//
+// The step-① endpoint of the agent flow: an unauthenticated caller registers
+// itself and comes away with an **unclaimed** agent, a bootstrap bearer
+// token and a **claim URL** for a human to open. This is what `caf agent
+// register` calls.
+//
+// **Public and unauthenticated, and rate-limited** on the same terms
+// `POST /v1/users` is — the key is the client and the route, never an
+// attempted account (there is no account), so the 429 is identical for
+// everybody and discloses nothing.
+//
+// **The response carries two secrets, each exactly once.** `api_key.token`
+// is the bootstrap bearer credential and `claim.url` is the 256-bit link a
+// human opens to claim the agent. Neither is stored: the row holds a SHA-256
+// digest of each, and no endpoint anywhere re-reads either. A caller that
+// loses the token rotates or re-mints; a caller that loses the claim link
+// refreshes it (`POST /v1/agents/claim-link/refresh`) while the agent is
+// still unclaimed.
+//
+// **`name` is required, `username` is optional.** The name is what the claim
+// screen shows a human. The username is the globally-unique handle; omit it
+// and one is generated from the name, and a generated collision is retried
+// under the hood so it never surfaces as "taken". A username you DO supply
+// is validated against the handle shape, and only a deliberate one that
+// survives the retry budget comes back as a 422 naming `username` — this
+// endpoint is not a way to probe which handles exist.
+//
+// **`agent.status` is always `unclaimed`.** Registration grants no authority
+// and binds to no account; a human claims it, which is a separate, signed-in
+// step (D4). An agent can never claim itself.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/agents (the `RegisterAgent` operationId).
+func (c *Client) RegisterAgent(ctx context.Context, body RegisterAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRegisterAgentRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RefreshAgentClaimLink Reissue an agent's claim link without claiming it
+//
+// Hands the calling agent a **fresh claim URL** and changes nothing else —
+// the agent stays unclaimed, keeps its id, name and every token it holds.
+//
+// **Authenticated with the agent's own bearer token**, which resolves
+// through the agent table and not the account api-keys table even though
+// both begin `cafaye_`: an agent may refresh its own link precisely because
+// the credential it presents names a principal, and a principal that has
+// lost its link is the one thing this route exists to save. A token that
+// does not resolve — wrong, revoked, expired, or belonging to a disabled
+// principal — is the same 401 any unknown credential gets.
+//
+// **A refresh against a CLAIMED agent is a 404**, not a new link: the status
+// guard refuses it, so "give me a new link" can never act as "claim me", and
+// the account that owns the agent manages its access through the account
+// surface instead. This is the whole of why refresh and claim are two verbs.
+//
+// **The Idempotency-Key correlates, it does not cache.** It rides on the
+// refresh event so a client's retried burst reads as one intent in the audit
+// trail; every call still mints a NEW link (the previous one is spent by the
+// refresh that replaces it), which is the deliberate behaviour — a replayed
+// retry must not resurrect a link that has already been replaced.
+//
+// Corresponds with POST /v1/agents/claim-link/refresh (the `RefreshAgentClaimLink` operationId).
+func (c *Client) RefreshAgentClaimLink(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRefreshAgentClaimLinkRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListAgentTokens List the agent's bearer tokens
+//
+// Every credential the calling agent holds, newest first, **revoked ones
+// included** — the same "was this withdrawn, or was it always broken?"
+// support question `GET /v1/accounts/{account_id}/api-keys` answers by
+// keeping the row.
+//
+// **No token and no digest in the body.** There is no column holding the
+// plaintext, so there is nothing to leak; and the digest is of no use to a
+// client, so echoing it would put the row's most sensitive value in a log
+// for no gain. Tokens are distinguished by `name` and `id` and never by a
+// piece of themselves. An agent with none answers `[]` and not `null`.
+//
+// Corresponds with GET /v1/agents/tokens (the `ListAgentTokens` operationId).
+func (c *Client) ListAgentTokens(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListAgentTokensRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// MintAgentTokenWithBody Mint a bearer token the agent holds
+//
+// Mints a named bearer credential for the calling agent, in the same shape
+// `POST /v1/accounts/{account_id}/api-keys` renders its mint: an opaque
+// `cafaye_` token, SHA-256 at rest, revocable and expiring, with `token`
+// returned here and nowhere else.
+//
+// **Authenticated with the agent's own bearer token**, and the credential it
+// mints belongs to that same principal — a request carries no `agent_id`,
+// because the token that authenticated it already names the agent and a body
+// field would let a caller mint for a principal it is not. "Scoped" here
+// means *held by one principal and revocable on it*; the per-capability scope
+// vocabulary for an agent token arrives with the routes it will gate, so a
+// token minted now does not yet gate any business route, only its own
+// management surface.
+//
+// **One live token per name.** A second live token answering to `name` is a
+// 409; rotate or revoke the old one first.
+//
+// **`expires_in` is SECONDS from now**, the same name RFC 6749 uses. Omit it
+// for the default; `0`, a negative value or a value over the ceiling (365
+// days) is a 422, never "never expires".
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/agents/tokens (the `MintAgentToken` operationId).
+func (c *Client) MintAgentTokenWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewMintAgentTokenRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// MintAgentToken Mint a bearer token the agent holds
+//
+// Mints a named bearer credential for the calling agent, in the same shape
+// `POST /v1/accounts/{account_id}/api-keys` renders its mint: an opaque
+// `cafaye_` token, SHA-256 at rest, revocable and expiring, with `token`
+// returned here and nowhere else.
+//
+// **Authenticated with the agent's own bearer token**, and the credential it
+// mints belongs to that same principal — a request carries no `agent_id`,
+// because the token that authenticated it already names the agent and a body
+// field would let a caller mint for a principal it is not. "Scoped" here
+// means *held by one principal and revocable on it*; the per-capability scope
+// vocabulary for an agent token arrives with the routes it will gate, so a
+// token minted now does not yet gate any business route, only its own
+// management surface.
+//
+// **One live token per name.** A second live token answering to `name` is a
+// 409; rotate or revoke the old one first.
+//
+// **`expires_in` is SECONDS from now**, the same name RFC 6749 uses. Omit it
+// for the default; `0`, a negative value or a value over the ceiling (365
+// days) is a 422, never "never expires".
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/agents/tokens (the `MintAgentToken` operationId).
+func (c *Client) MintAgentToken(ctx context.Context, body MintAgentTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewMintAgentTokenRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RevokeAgentTokenWithBody Revoke one of the agent's bearer tokens
+//
+// Withdraws one of the calling agent's credentials. The row is **kept**, not
+// deleted, so a later list can still say *withdrawn* rather than *never
+// existed* — the same reason `DELETE /v1/accounts/{account_id}/api-keys/{key_id}`
+// keeps its row. A second attempt on an already-revoked credential is a
+// 409, so a client that clicked twice is not told a second revocation
+// succeeded.
+//
+// An id that is not this agent's is the same 404 as one that does not exist:
+// the caller established the agent from its own credential, and a query that
+// named the agent again simply refuses a token that belongs to somebody
+// else. `{token_id}` in the path is never read before the credential gate
+// runs, so an anonymous request is a 401 and never a 404 that confirms the
+// id's shape.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with DELETE /v1/agents/tokens/{token_id} (the `RevokeAgentToken` operationId).
+func (c *Client) RevokeAgentTokenWithBody(ctx context.Context, tokenID openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRevokeAgentTokenRequestWithBody(c.Server, tokenID, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RevokeAgentToken Revoke one of the agent's bearer tokens
+//
+// Withdraws one of the calling agent's credentials. The row is **kept**, not
+// deleted, so a later list can still say *withdrawn* rather than *never
+// existed* — the same reason `DELETE /v1/accounts/{account_id}/api-keys/{key_id}`
+// keeps its row. A second attempt on an already-revoked credential is a
+// 409, so a client that clicked twice is not told a second revocation
+// succeeded.
+//
+// An id that is not this agent's is the same 404 as one that does not exist:
+// the caller established the agent from its own credential, and a query that
+// named the agent again simply refuses a token that belongs to somebody
+// else. `{token_id}` in the path is never read before the credential gate
+// runs, so an anonymous request is a 401 and never a 404 that confirms the
+// id's shape.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with DELETE /v1/agents/tokens/{token_id} (the `RevokeAgentToken` operationId).
+func (c *Client) RevokeAgentToken(ctx context.Context, tokenID openapi_types.UUID, body RevokeAgentTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRevokeAgentTokenRequest(c.Server, tokenID, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RotateAgentTokenWithBody Rotate one of the agent's bearer tokens in place
+//
+// Withdraws a credential and mints a new one of the **same name** in one
+// call, so there is no instant with no credential under that name and no
+// two-round-trip window in which a client can end up with none. The new
+// token's lifetime is fresh (`expires_in`, or the default); the name is
+// inherited from the one being rotated, which is why rotation needs no `name`
+// in the body.
+//
+// The revocation of the old and the mint of the new are one transaction:
+// either the new token is handed back or the old one keeps working, never
+// neither. This is the same ergonomic as revoke-then-re-mint, without the
+// window.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/agents/tokens/{token_id}/rotate (the `RotateAgentToken` operationId).
+func (c *Client) RotateAgentTokenWithBody(ctx context.Context, tokenID openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRotateAgentTokenRequestWithBody(c.Server, tokenID, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RotateAgentToken Rotate one of the agent's bearer tokens in place
+//
+// Withdraws a credential and mints a new one of the **same name** in one
+// call, so there is no instant with no credential under that name and no
+// two-round-trip window in which a client can end up with none. The new
+// token's lifetime is fresh (`expires_in`, or the default); the name is
+// inherited from the one being rotated, which is why rotation needs no `name`
+// in the body.
+//
+// The revocation of the old and the mint of the new are one transaction:
+// either the new token is handed back or the old one keeps working, never
+// neither. This is the same ergonomic as revoke-then-re-mint, without the
+// window.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/agents/tokens/{token_id}/rotate (the `RotateAgentToken` operationId).
+func (c *Client) RotateAgentToken(ctx context.Context, tokenID openapi_types.UUID, body RotateAgentTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRotateAgentTokenRequest(c.Server, tokenID, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // StartSocialLogin Begin a social sign-in
 //
 // Sends the browser to the named provider's authorization endpoint with a
@@ -10399,6 +11184,234 @@ func NewTransferAccountOwnershipRequestWithBody(server string, accountID Account
 	return req, nil
 }
 
+// NewRegisterAgentRequest calls the generic RegisterAgent builder with application/json body
+func NewRegisterAgentRequest(server string, body RegisterAgentJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRegisterAgentRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewRegisterAgentRequestWithBody constructs an http.Request for the RegisterAgent method, with any body, and a specified content type
+func NewRegisterAgentRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRefreshAgentClaimLinkRequest constructs an http.Request for the RefreshAgentClaimLink method
+func NewRefreshAgentClaimLinkRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/claim-link/refresh")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewListAgentTokensRequest constructs an http.Request for the ListAgentTokens method
+func NewListAgentTokensRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/tokens")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewMintAgentTokenRequest calls the generic MintAgentToken builder with application/json body
+func NewMintAgentTokenRequest(server string, body MintAgentTokenJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewMintAgentTokenRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewMintAgentTokenRequestWithBody constructs an http.Request for the MintAgentToken method, with any body, and a specified content type
+func NewMintAgentTokenRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/tokens")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRevokeAgentTokenRequest calls the generic RevokeAgentToken builder with application/json body
+func NewRevokeAgentTokenRequest(server string, tokenID openapi_types.UUID, body RevokeAgentTokenJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRevokeAgentTokenRequestWithBody(server, tokenID, "application/json", bodyReader)
+}
+
+// NewRevokeAgentTokenRequestWithBody constructs an http.Request for the RevokeAgentToken method, with any body, and a specified content type
+func NewRevokeAgentTokenRequestWithBody(server string, tokenID openapi_types.UUID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "token_id", tokenID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/tokens/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRotateAgentTokenRequest calls the generic RotateAgentToken builder with application/json body
+func NewRotateAgentTokenRequest(server string, tokenID openapi_types.UUID, body RotateAgentTokenJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRotateAgentTokenRequestWithBody(server, tokenID, "application/json", bodyReader)
+}
+
+// NewRotateAgentTokenRequestWithBody constructs an http.Request for the RotateAgentToken method, with any body, and a specified content type
+func NewRotateAgentTokenRequestWithBody(server string, tokenID openapi_types.UUID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "token_id", tokenID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/tokens/%s/rotate", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewStartSocialLoginRequest constructs an http.Request for the StartSocialLogin method
 func NewStartSocialLoginRequest(server string, provider StartSocialLoginParamsProvider) (*http.Request, error) {
 	var err error
@@ -12985,6 +13998,263 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/accounts/{account_id}/ownership-transfers (the `TransferAccountOwnership` operationId).
 	TransferAccountOwnershipWithResponse(ctx context.Context, accountID AccountID, body TransferAccountOwnershipJSONRequestBody, reqEditors ...RequestEditorFn) (*TransferAccountOwnershipResponse, error)
+
+	// RegisterAgentWithBodyWithResponse Register an unclaimed agent
+	//
+	// The step-① endpoint of the agent flow: an unauthenticated caller registers
+	// itself and comes away with an **unclaimed** agent, a bootstrap bearer
+	// token and a **claim URL** for a human to open. This is what `caf agent
+	// register` calls.
+	//
+	// **Public and unauthenticated, and rate-limited** on the same terms
+	// `POST /v1/users` is — the key is the client and the route, never an
+	// attempted account (there is no account), so the 429 is identical for
+	// everybody and discloses nothing.
+	//
+	// **The response carries two secrets, each exactly once.** `api_key.token`
+	// is the bootstrap bearer credential and `claim.url` is the 256-bit link a
+	// human opens to claim the agent. Neither is stored: the row holds a SHA-256
+	// digest of each, and no endpoint anywhere re-reads either. A caller that
+	// loses the token rotates or re-mints; a caller that loses the claim link
+	// refreshes it (`POST /v1/agents/claim-link/refresh`) while the agent is
+	// still unclaimed.
+	//
+	// **`name` is required, `username` is optional.** The name is what the claim
+	// screen shows a human. The username is the globally-unique handle; omit it
+	// and one is generated from the name, and a generated collision is retried
+	// under the hood so it never surfaces as "taken". A username you DO supply
+	// is validated against the handle shape, and only a deliberate one that
+	// survives the retry budget comes back as a 422 naming `username` — this
+	// endpoint is not a way to probe which handles exist.
+	//
+	// **`agent.status` is always `unclaimed`.** Registration grants no authority
+	// and binds to no account; a human claims it, which is a separate, signed-in
+	// step (D4). An agent can never claim itself.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents (the `RegisterAgent` operationId).
+	RegisterAgentWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RegisterAgentResponse, error)
+
+	// RegisterAgentWithResponse Register an unclaimed agent
+	//
+	// The step-① endpoint of the agent flow: an unauthenticated caller registers
+	// itself and comes away with an **unclaimed** agent, a bootstrap bearer
+	// token and a **claim URL** for a human to open. This is what `caf agent
+	// register` calls.
+	//
+	// **Public and unauthenticated, and rate-limited** on the same terms
+	// `POST /v1/users` is — the key is the client and the route, never an
+	// attempted account (there is no account), so the 429 is identical for
+	// everybody and discloses nothing.
+	//
+	// **The response carries two secrets, each exactly once.** `api_key.token`
+	// is the bootstrap bearer credential and `claim.url` is the 256-bit link a
+	// human opens to claim the agent. Neither is stored: the row holds a SHA-256
+	// digest of each, and no endpoint anywhere re-reads either. A caller that
+	// loses the token rotates or re-mints; a caller that loses the claim link
+	// refreshes it (`POST /v1/agents/claim-link/refresh`) while the agent is
+	// still unclaimed.
+	//
+	// **`name` is required, `username` is optional.** The name is what the claim
+	// screen shows a human. The username is the globally-unique handle; omit it
+	// and one is generated from the name, and a generated collision is retried
+	// under the hood so it never surfaces as "taken". A username you DO supply
+	// is validated against the handle shape, and only a deliberate one that
+	// survives the retry budget comes back as a 422 naming `username` — this
+	// endpoint is not a way to probe which handles exist.
+	//
+	// **`agent.status` is always `unclaimed`.** Registration grants no authority
+	// and binds to no account; a human claims it, which is a separate, signed-in
+	// step (D4). An agent can never claim itself.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents (the `RegisterAgent` operationId).
+	RegisterAgentWithResponse(ctx context.Context, body RegisterAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*RegisterAgentResponse, error)
+
+	// RefreshAgentClaimLinkWithResponse Reissue an agent's claim link without claiming it
+	//
+	// Hands the calling agent a **fresh claim URL** and changes nothing else —
+	// the agent stays unclaimed, keeps its id, name and every token it holds.
+	//
+	// **Authenticated with the agent's own bearer token**, which resolves
+	// through the agent table and not the account api-keys table even though
+	// both begin `cafaye_`: an agent may refresh its own link precisely because
+	// the credential it presents names a principal, and a principal that has
+	// lost its link is the one thing this route exists to save. A token that
+	// does not resolve — wrong, revoked, expired, or belonging to a disabled
+	// principal — is the same 401 any unknown credential gets.
+	//
+	// **A refresh against a CLAIMED agent is a 404**, not a new link: the status
+	// guard refuses it, so "give me a new link" can never act as "claim me", and
+	// the account that owns the agent manages its access through the account
+	// surface instead. This is the whole of why refresh and claim are two verbs.
+	//
+	// **The Idempotency-Key correlates, it does not cache.** It rides on the
+	// refresh event so a client's retried burst reads as one intent in the audit
+	// trail; every call still mints a NEW link (the previous one is spent by the
+	// refresh that replaces it), which is the deliberate behaviour — a replayed
+	// retry must not resurrect a link that has already been replaced.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/claim-link/refresh (the `RefreshAgentClaimLink` operationId).
+	RefreshAgentClaimLinkWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*RefreshAgentClaimLinkResponse, error)
+
+	// ListAgentTokensWithResponse List the agent's bearer tokens
+	//
+	// Every credential the calling agent holds, newest first, **revoked ones
+	// included** — the same "was this withdrawn, or was it always broken?"
+	// support question `GET /v1/accounts/{account_id}/api-keys` answers by
+	// keeping the row.
+	//
+	// **No token and no digest in the body.** There is no column holding the
+	// plaintext, so there is nothing to leak; and the digest is of no use to a
+	// client, so echoing it would put the row's most sensitive value in a log
+	// for no gain. Tokens are distinguished by `name` and `id` and never by a
+	// piece of themselves. An agent with none answers `[]` and not `null`.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/tokens (the `ListAgentTokens` operationId).
+	ListAgentTokensWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListAgentTokensResponse, error)
+
+	// MintAgentTokenWithBodyWithResponse Mint a bearer token the agent holds
+	//
+	// Mints a named bearer credential for the calling agent, in the same shape
+	// `POST /v1/accounts/{account_id}/api-keys` renders its mint: an opaque
+	// `cafaye_` token, SHA-256 at rest, revocable and expiring, with `token`
+	// returned here and nowhere else.
+	//
+	// **Authenticated with the agent's own bearer token**, and the credential it
+	// mints belongs to that same principal — a request carries no `agent_id`,
+	// because the token that authenticated it already names the agent and a body
+	// field would let a caller mint for a principal it is not. "Scoped" here
+	// means *held by one principal and revocable on it*; the per-capability scope
+	// vocabulary for an agent token arrives with the routes it will gate, so a
+	// token minted now does not yet gate any business route, only its own
+	// management surface.
+	//
+	// **One live token per name.** A second live token answering to `name` is a
+	// 409; rotate or revoke the old one first.
+	//
+	// **`expires_in` is SECONDS from now**, the same name RFC 6749 uses. Omit it
+	// for the default; `0`, a negative value or a value over the ceiling (365
+	// days) is a 422, never "never expires".
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/tokens (the `MintAgentToken` operationId).
+	MintAgentTokenWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MintAgentTokenResponse, error)
+
+	// MintAgentTokenWithResponse Mint a bearer token the agent holds
+	//
+	// Mints a named bearer credential for the calling agent, in the same shape
+	// `POST /v1/accounts/{account_id}/api-keys` renders its mint: an opaque
+	// `cafaye_` token, SHA-256 at rest, revocable and expiring, with `token`
+	// returned here and nowhere else.
+	//
+	// **Authenticated with the agent's own bearer token**, and the credential it
+	// mints belongs to that same principal — a request carries no `agent_id`,
+	// because the token that authenticated it already names the agent and a body
+	// field would let a caller mint for a principal it is not. "Scoped" here
+	// means *held by one principal and revocable on it*; the per-capability scope
+	// vocabulary for an agent token arrives with the routes it will gate, so a
+	// token minted now does not yet gate any business route, only its own
+	// management surface.
+	//
+	// **One live token per name.** A second live token answering to `name` is a
+	// 409; rotate or revoke the old one first.
+	//
+	// **`expires_in` is SECONDS from now**, the same name RFC 6749 uses. Omit it
+	// for the default; `0`, a negative value or a value over the ceiling (365
+	// days) is a 422, never "never expires".
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/tokens (the `MintAgentToken` operationId).
+	MintAgentTokenWithResponse(ctx context.Context, body MintAgentTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*MintAgentTokenResponse, error)
+
+	// RevokeAgentTokenWithBodyWithResponse Revoke one of the agent's bearer tokens
+	//
+	// Withdraws one of the calling agent's credentials. The row is **kept**, not
+	// deleted, so a later list can still say *withdrawn* rather than *never
+	// existed* — the same reason `DELETE /v1/accounts/{account_id}/api-keys/{key_id}`
+	// keeps its row. A second attempt on an already-revoked credential is a
+	// 409, so a client that clicked twice is not told a second revocation
+	// succeeded.
+	//
+	// An id that is not this agent's is the same 404 as one that does not exist:
+	// the caller established the agent from its own credential, and a query that
+	// named the agent again simply refuses a token that belongs to somebody
+	// else. `{token_id}` in the path is never read before the credential gate
+	// runs, so an anonymous request is a 401 and never a 404 that confirms the
+	// id's shape.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/agents/tokens/{token_id} (the `RevokeAgentToken` operationId).
+	RevokeAgentTokenWithBodyWithResponse(ctx context.Context, tokenID openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RevokeAgentTokenResponse, error)
+
+	// RevokeAgentTokenWithResponse Revoke one of the agent's bearer tokens
+	//
+	// Withdraws one of the calling agent's credentials. The row is **kept**, not
+	// deleted, so a later list can still say *withdrawn* rather than *never
+	// existed* — the same reason `DELETE /v1/accounts/{account_id}/api-keys/{key_id}`
+	// keeps its row. A second attempt on an already-revoked credential is a
+	// 409, so a client that clicked twice is not told a second revocation
+	// succeeded.
+	//
+	// An id that is not this agent's is the same 404 as one that does not exist:
+	// the caller established the agent from its own credential, and a query that
+	// named the agent again simply refuses a token that belongs to somebody
+	// else. `{token_id}` in the path is never read before the credential gate
+	// runs, so an anonymous request is a 401 and never a 404 that confirms the
+	// id's shape.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/agents/tokens/{token_id} (the `RevokeAgentToken` operationId).
+	RevokeAgentTokenWithResponse(ctx context.Context, tokenID openapi_types.UUID, body RevokeAgentTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*RevokeAgentTokenResponse, error)
+
+	// RotateAgentTokenWithBodyWithResponse Rotate one of the agent's bearer tokens in place
+	//
+	// Withdraws a credential and mints a new one of the **same name** in one
+	// call, so there is no instant with no credential under that name and no
+	// two-round-trip window in which a client can end up with none. The new
+	// token's lifetime is fresh (`expires_in`, or the default); the name is
+	// inherited from the one being rotated, which is why rotation needs no `name`
+	// in the body.
+	//
+	// The revocation of the old and the mint of the new are one transaction:
+	// either the new token is handed back or the old one keeps working, never
+	// neither. This is the same ergonomic as revoke-then-re-mint, without the
+	// window.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/tokens/{token_id}/rotate (the `RotateAgentToken` operationId).
+	RotateAgentTokenWithBodyWithResponse(ctx context.Context, tokenID openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RotateAgentTokenResponse, error)
+
+	// RotateAgentTokenWithResponse Rotate one of the agent's bearer tokens in place
+	//
+	// Withdraws a credential and mints a new one of the **same name** in one
+	// call, so there is no instant with no credential under that name and no
+	// two-round-trip window in which a client can end up with none. The new
+	// token's lifetime is fresh (`expires_in`, or the default); the name is
+	// inherited from the one being rotated, which is why rotation needs no `name`
+	// in the body.
+	//
+	// The revocation of the old and the mint of the new are one transaction:
+	// either the new token is handed back or the old one keeps working, never
+	// neither. This is the same ergonomic as revoke-then-re-mint, without the
+	// window.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/tokens/{token_id}/rotate (the `RotateAgentToken` operationId).
+	RotateAgentTokenWithResponse(ctx context.Context, tokenID openapi_types.UUID, body RotateAgentTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*RotateAgentTokenResponse, error)
 
 	// StartSocialLoginWithResponse Begin a social sign-in
 	//
@@ -17524,6 +18794,645 @@ func (r TransferAccountOwnershipResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r TransferAccountOwnershipResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// RegisterAgentResponse201Headers the declared response headers of an HTTP 201 response for RegisterAgent
+type RegisterAgentResponse201Headers struct {
+	XTraceID string
+}
+
+// RegisterAgentResponse400Headers the declared response headers of an HTTP 400 response for RegisterAgent
+type RegisterAgentResponse400Headers struct {
+	XTraceID string
+}
+
+// RegisterAgentResponse413Headers the declared response headers of an HTTP 413 response for RegisterAgent
+type RegisterAgentResponse413Headers struct {
+	XTraceID string
+}
+
+// RegisterAgentResponse422Headers the declared response headers of an HTTP 422 response for RegisterAgent
+type RegisterAgentResponse422Headers struct {
+	XTraceID string
+}
+
+// RegisterAgentResponse429Headers the declared response headers of an HTTP 429 response for RegisterAgent
+type RegisterAgentResponse429Headers struct {
+	RetryAfter *int
+	XTraceID   string
+}
+
+// RegisterAgentResponse500Headers the declared response headers of an HTTP 500 response for RegisterAgent
+type RegisterAgentResponse500Headers struct {
+	XTraceID string
+}
+
+// RegisterAgentResponse503Headers the declared response headers of an HTTP 503 response for RegisterAgent
+type RegisterAgentResponse503Headers struct {
+	XTraceID string
+}
+
+type RegisterAgentResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *AgentRegistrationResult
+	// ApplicationProblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationProblemJSON400 *MalformedBody
+	// ApplicationProblemJSON413 the response for an HTTP 413 `application/problem+json` response
+	ApplicationProblemJSON413 *BodyTooLarge
+	// ApplicationProblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationProblemJSON422 *ValidationFailed
+	// ApplicationProblemJSON429 the response for an HTTP 429 `application/problem+json` response
+	ApplicationProblemJSON429 *RateLimited
+	// ApplicationProblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationProblemJSON500 *InternalError
+	// ApplicationProblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationProblemJSON503 *Problem
+	// Headers201 the parsed response headers for an HTTP 201 response
+	Headers201 *RegisterAgentResponse201Headers
+	// Headers400 the parsed response headers for an HTTP 400 response
+	Headers400 *RegisterAgentResponse400Headers
+	// Headers413 the parsed response headers for an HTTP 413 response
+	Headers413 *RegisterAgentResponse413Headers
+	// Headers422 the parsed response headers for an HTTP 422 response
+	Headers422 *RegisterAgentResponse422Headers
+	// Headers429 the parsed response headers for an HTTP 429 response
+	Headers429 *RegisterAgentResponse429Headers
+	// Headers500 the parsed response headers for an HTTP 500 response
+	Headers500 *RegisterAgentResponse500Headers
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *RegisterAgentResponse503Headers
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r RegisterAgentResponse) GetJSON201() *AgentRegistrationResult {
+	return r.JSON201
+}
+
+// GetApplicationProblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r RegisterAgentResponse) GetApplicationProblemJSON400() *MalformedBody {
+	return r.ApplicationProblemJSON400
+}
+
+// GetApplicationProblemJSON413 returns the response for an HTTP 413 `application/problem+json` response
+func (r RegisterAgentResponse) GetApplicationProblemJSON413() *BodyTooLarge {
+	return r.ApplicationProblemJSON413
+}
+
+// GetApplicationProblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r RegisterAgentResponse) GetApplicationProblemJSON422() *ValidationFailed {
+	return r.ApplicationProblemJSON422
+}
+
+// GetApplicationProblemJSON429 returns the response for an HTTP 429 `application/problem+json` response
+func (r RegisterAgentResponse) GetApplicationProblemJSON429() *RateLimited {
+	return r.ApplicationProblemJSON429
+}
+
+// GetApplicationProblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r RegisterAgentResponse) GetApplicationProblemJSON500() *InternalError {
+	return r.ApplicationProblemJSON500
+}
+
+// GetApplicationProblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r RegisterAgentResponse) GetApplicationProblemJSON503() *Problem {
+	return r.ApplicationProblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r RegisterAgentResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RegisterAgentResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RegisterAgentResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RegisterAgentResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// RefreshAgentClaimLinkResponse200Headers the declared response headers of an HTTP 200 response for RefreshAgentClaimLink
+type RefreshAgentClaimLinkResponse200Headers struct {
+	XTraceID string
+}
+
+// RefreshAgentClaimLinkResponse401Headers the declared response headers of an HTTP 401 response for RefreshAgentClaimLink
+type RefreshAgentClaimLinkResponse401Headers struct {
+	XTraceID string
+}
+
+// RefreshAgentClaimLinkResponse404Headers the declared response headers of an HTTP 404 response for RefreshAgentClaimLink
+type RefreshAgentClaimLinkResponse404Headers struct {
+	XTraceID string
+}
+
+// RefreshAgentClaimLinkResponse500Headers the declared response headers of an HTTP 500 response for RefreshAgentClaimLink
+type RefreshAgentClaimLinkResponse500Headers struct {
+	XTraceID string
+}
+
+// RefreshAgentClaimLinkResponse503Headers the declared response headers of an HTTP 503 response for RefreshAgentClaimLink
+type RefreshAgentClaimLinkResponse503Headers struct {
+	XTraceID string
+}
+
+type RefreshAgentClaimLinkResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *RefreshAgentClaimResponse
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthenticated
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *Problem
+	// ApplicationProblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationProblemJSON500 *InternalError
+	// ApplicationProblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationProblemJSON503 *Problem
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *RefreshAgentClaimLinkResponse200Headers
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *RefreshAgentClaimLinkResponse401Headers
+	// Headers404 the parsed response headers for an HTTP 404 response
+	Headers404 *RefreshAgentClaimLinkResponse404Headers
+	// Headers500 the parsed response headers for an HTTP 500 response
+	Headers500 *RefreshAgentClaimLinkResponse500Headers
+	// Headers503 the parsed response headers for an HTTP 503 response
+	Headers503 *RefreshAgentClaimLinkResponse503Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r RefreshAgentClaimLinkResponse) GetJSON200() *RefreshAgentClaimResponse {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r RefreshAgentClaimLinkResponse) GetApplicationProblemJSON401() *Unauthenticated {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r RefreshAgentClaimLinkResponse) GetApplicationProblemJSON404() *Problem {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r RefreshAgentClaimLinkResponse) GetApplicationProblemJSON500() *InternalError {
+	return r.ApplicationProblemJSON500
+}
+
+// GetApplicationProblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r RefreshAgentClaimLinkResponse) GetApplicationProblemJSON503() *Problem {
+	return r.ApplicationProblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r RefreshAgentClaimLinkResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RefreshAgentClaimLinkResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RefreshAgentClaimLinkResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RefreshAgentClaimLinkResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ListAgentTokensResponse200Headers the declared response headers of an HTTP 200 response for ListAgentTokens
+type ListAgentTokensResponse200Headers struct {
+	XTraceID string
+}
+
+// ListAgentTokensResponse401Headers the declared response headers of an HTTP 401 response for ListAgentTokens
+type ListAgentTokensResponse401Headers struct {
+	XTraceID string
+}
+
+// ListAgentTokensResponse500Headers the declared response headers of an HTTP 500 response for ListAgentTokens
+type ListAgentTokensResponse500Headers struct {
+	XTraceID string
+}
+
+type ListAgentTokensResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *[]AgentToken
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthenticated
+	// ApplicationProblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationProblemJSON500 *InternalError
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *ListAgentTokensResponse200Headers
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ListAgentTokensResponse401Headers
+	// Headers500 the parsed response headers for an HTTP 500 response
+	Headers500 *ListAgentTokensResponse500Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListAgentTokensResponse) GetJSON200() *[]AgentToken {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ListAgentTokensResponse) GetApplicationProblemJSON401() *Unauthenticated {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r ListAgentTokensResponse) GetApplicationProblemJSON500() *InternalError {
+	return r.ApplicationProblemJSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ListAgentTokensResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListAgentTokensResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListAgentTokensResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListAgentTokensResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// MintAgentTokenResponse201Headers the declared response headers of an HTTP 201 response for MintAgentToken
+type MintAgentTokenResponse201Headers struct {
+	XTraceID string
+}
+
+// MintAgentTokenResponse401Headers the declared response headers of an HTTP 401 response for MintAgentToken
+type MintAgentTokenResponse401Headers struct {
+	XTraceID string
+}
+
+// MintAgentTokenResponse409Headers the declared response headers of an HTTP 409 response for MintAgentToken
+type MintAgentTokenResponse409Headers struct {
+	XTraceID string
+}
+
+// MintAgentTokenResponse413Headers the declared response headers of an HTTP 413 response for MintAgentToken
+type MintAgentTokenResponse413Headers struct {
+	XTraceID string
+}
+
+// MintAgentTokenResponse422Headers the declared response headers of an HTTP 422 response for MintAgentToken
+type MintAgentTokenResponse422Headers struct {
+	XTraceID string
+}
+
+// MintAgentTokenResponse500Headers the declared response headers of an HTTP 500 response for MintAgentToken
+type MintAgentTokenResponse500Headers struct {
+	XTraceID string
+}
+
+type MintAgentTokenResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *IssuedAgentToken
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthenticated
+	// ApplicationProblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationProblemJSON409 *Problem
+	// ApplicationProblemJSON413 the response for an HTTP 413 `application/problem+json` response
+	ApplicationProblemJSON413 *BodyTooLarge
+	// ApplicationProblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationProblemJSON422 *ValidationFailed
+	// ApplicationProblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationProblemJSON500 *InternalError
+	// Headers201 the parsed response headers for an HTTP 201 response
+	Headers201 *MintAgentTokenResponse201Headers
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *MintAgentTokenResponse401Headers
+	// Headers409 the parsed response headers for an HTTP 409 response
+	Headers409 *MintAgentTokenResponse409Headers
+	// Headers413 the parsed response headers for an HTTP 413 response
+	Headers413 *MintAgentTokenResponse413Headers
+	// Headers422 the parsed response headers for an HTTP 422 response
+	Headers422 *MintAgentTokenResponse422Headers
+	// Headers500 the parsed response headers for an HTTP 500 response
+	Headers500 *MintAgentTokenResponse500Headers
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r MintAgentTokenResponse) GetJSON201() *IssuedAgentToken {
+	return r.JSON201
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r MintAgentTokenResponse) GetApplicationProblemJSON401() *Unauthenticated {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r MintAgentTokenResponse) GetApplicationProblemJSON409() *Problem {
+	return r.ApplicationProblemJSON409
+}
+
+// GetApplicationProblemJSON413 returns the response for an HTTP 413 `application/problem+json` response
+func (r MintAgentTokenResponse) GetApplicationProblemJSON413() *BodyTooLarge {
+	return r.ApplicationProblemJSON413
+}
+
+// GetApplicationProblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r MintAgentTokenResponse) GetApplicationProblemJSON422() *ValidationFailed {
+	return r.ApplicationProblemJSON422
+}
+
+// GetApplicationProblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r MintAgentTokenResponse) GetApplicationProblemJSON500() *InternalError {
+	return r.ApplicationProblemJSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r MintAgentTokenResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r MintAgentTokenResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r MintAgentTokenResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r MintAgentTokenResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// RevokeAgentTokenResponse401Headers the declared response headers of an HTTP 401 response for RevokeAgentToken
+type RevokeAgentTokenResponse401Headers struct {
+	XTraceID string
+}
+
+// RevokeAgentTokenResponse404Headers the declared response headers of an HTTP 404 response for RevokeAgentToken
+type RevokeAgentTokenResponse404Headers struct {
+	XTraceID string
+}
+
+// RevokeAgentTokenResponse409Headers the declared response headers of an HTTP 409 response for RevokeAgentToken
+type RevokeAgentTokenResponse409Headers struct {
+	XTraceID string
+}
+
+// RevokeAgentTokenResponse500Headers the declared response headers of an HTTP 500 response for RevokeAgentToken
+type RevokeAgentTokenResponse500Headers struct {
+	XTraceID string
+}
+
+type RevokeAgentTokenResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthenticated
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *Problem
+	// ApplicationProblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationProblemJSON409 *Problem
+	// ApplicationProblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationProblemJSON500 *InternalError
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *RevokeAgentTokenResponse401Headers
+	// Headers404 the parsed response headers for an HTTP 404 response
+	Headers404 *RevokeAgentTokenResponse404Headers
+	// Headers409 the parsed response headers for an HTTP 409 response
+	Headers409 *RevokeAgentTokenResponse409Headers
+	// Headers500 the parsed response headers for an HTTP 500 response
+	Headers500 *RevokeAgentTokenResponse500Headers
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r RevokeAgentTokenResponse) GetApplicationProblemJSON401() *Unauthenticated {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r RevokeAgentTokenResponse) GetApplicationProblemJSON404() *Problem {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r RevokeAgentTokenResponse) GetApplicationProblemJSON409() *Problem {
+	return r.ApplicationProblemJSON409
+}
+
+// GetApplicationProblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r RevokeAgentTokenResponse) GetApplicationProblemJSON500() *InternalError {
+	return r.ApplicationProblemJSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r RevokeAgentTokenResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RevokeAgentTokenResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RevokeAgentTokenResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RevokeAgentTokenResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// RotateAgentTokenResponse201Headers the declared response headers of an HTTP 201 response for RotateAgentToken
+type RotateAgentTokenResponse201Headers struct {
+	XTraceID string
+}
+
+// RotateAgentTokenResponse401Headers the declared response headers of an HTTP 401 response for RotateAgentToken
+type RotateAgentTokenResponse401Headers struct {
+	XTraceID string
+}
+
+// RotateAgentTokenResponse404Headers the declared response headers of an HTTP 404 response for RotateAgentToken
+type RotateAgentTokenResponse404Headers struct {
+	XTraceID string
+}
+
+// RotateAgentTokenResponse409Headers the declared response headers of an HTTP 409 response for RotateAgentToken
+type RotateAgentTokenResponse409Headers struct {
+	XTraceID string
+}
+
+// RotateAgentTokenResponse422Headers the declared response headers of an HTTP 422 response for RotateAgentToken
+type RotateAgentTokenResponse422Headers struct {
+	XTraceID string
+}
+
+// RotateAgentTokenResponse500Headers the declared response headers of an HTTP 500 response for RotateAgentToken
+type RotateAgentTokenResponse500Headers struct {
+	XTraceID string
+}
+
+type RotateAgentTokenResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *IssuedAgentToken
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthenticated
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *Problem
+	// ApplicationProblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationProblemJSON409 *Problem
+	// ApplicationProblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationProblemJSON422 *ValidationFailed
+	// ApplicationProblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationProblemJSON500 *InternalError
+	// Headers201 the parsed response headers for an HTTP 201 response
+	Headers201 *RotateAgentTokenResponse201Headers
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *RotateAgentTokenResponse401Headers
+	// Headers404 the parsed response headers for an HTTP 404 response
+	Headers404 *RotateAgentTokenResponse404Headers
+	// Headers409 the parsed response headers for an HTTP 409 response
+	Headers409 *RotateAgentTokenResponse409Headers
+	// Headers422 the parsed response headers for an HTTP 422 response
+	Headers422 *RotateAgentTokenResponse422Headers
+	// Headers500 the parsed response headers for an HTTP 500 response
+	Headers500 *RotateAgentTokenResponse500Headers
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r RotateAgentTokenResponse) GetJSON201() *IssuedAgentToken {
+	return r.JSON201
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r RotateAgentTokenResponse) GetApplicationProblemJSON401() *Unauthenticated {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r RotateAgentTokenResponse) GetApplicationProblemJSON404() *Problem {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r RotateAgentTokenResponse) GetApplicationProblemJSON409() *Problem {
+	return r.ApplicationProblemJSON409
+}
+
+// GetApplicationProblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r RotateAgentTokenResponse) GetApplicationProblemJSON422() *ValidationFailed {
+	return r.ApplicationProblemJSON422
+}
+
+// GetApplicationProblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r RotateAgentTokenResponse) GetApplicationProblemJSON500() *InternalError {
+	return r.ApplicationProblemJSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r RotateAgentTokenResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RotateAgentTokenResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RotateAgentTokenResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RotateAgentTokenResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -22843,6 +24752,323 @@ func (c *ClientWithResponses) TransferAccountOwnershipWithResponse(ctx context.C
 	return ParseTransferAccountOwnershipResponse(rsp)
 }
 
+// RegisterAgentWithBodyWithResponse Register an unclaimed agent
+//
+// The step-① endpoint of the agent flow: an unauthenticated caller registers
+// itself and comes away with an **unclaimed** agent, a bootstrap bearer
+// token and a **claim URL** for a human to open. This is what `caf agent
+// register` calls.
+//
+// **Public and unauthenticated, and rate-limited** on the same terms
+// `POST /v1/users` is — the key is the client and the route, never an
+// attempted account (there is no account), so the 429 is identical for
+// everybody and discloses nothing.
+//
+// **The response carries two secrets, each exactly once.** `api_key.token`
+// is the bootstrap bearer credential and `claim.url` is the 256-bit link a
+// human opens to claim the agent. Neither is stored: the row holds a SHA-256
+// digest of each, and no endpoint anywhere re-reads either. A caller that
+// loses the token rotates or re-mints; a caller that loses the claim link
+// refreshes it (`POST /v1/agents/claim-link/refresh`) while the agent is
+// still unclaimed.
+//
+// **`name` is required, `username` is optional.** The name is what the claim
+// screen shows a human. The username is the globally-unique handle; omit it
+// and one is generated from the name, and a generated collision is retried
+// under the hood so it never surfaces as "taken". A username you DO supply
+// is validated against the handle shape, and only a deliberate one that
+// survives the retry budget comes back as a 422 naming `username` — this
+// endpoint is not a way to probe which handles exist.
+//
+// **`agent.status` is always `unclaimed`.** Registration grants no authority
+// and binds to no account; a human claims it, which is a separate, signed-in
+// step (D4). An agent can never claim itself.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents (the `RegisterAgent` operationId).
+func (c *ClientWithResponses) RegisterAgentWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RegisterAgentResponse, error) {
+	rsp, err := c.RegisterAgentWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRegisterAgentResponse(rsp)
+}
+
+// RegisterAgentWithResponse Register an unclaimed agent
+//
+// The step-① endpoint of the agent flow: an unauthenticated caller registers
+// itself and comes away with an **unclaimed** agent, a bootstrap bearer
+// token and a **claim URL** for a human to open. This is what `caf agent
+// register` calls.
+//
+// **Public and unauthenticated, and rate-limited** on the same terms
+// `POST /v1/users` is — the key is the client and the route, never an
+// attempted account (there is no account), so the 429 is identical for
+// everybody and discloses nothing.
+//
+// **The response carries two secrets, each exactly once.** `api_key.token`
+// is the bootstrap bearer credential and `claim.url` is the 256-bit link a
+// human opens to claim the agent. Neither is stored: the row holds a SHA-256
+// digest of each, and no endpoint anywhere re-reads either. A caller that
+// loses the token rotates or re-mints; a caller that loses the claim link
+// refreshes it (`POST /v1/agents/claim-link/refresh`) while the agent is
+// still unclaimed.
+//
+// **`name` is required, `username` is optional.** The name is what the claim
+// screen shows a human. The username is the globally-unique handle; omit it
+// and one is generated from the name, and a generated collision is retried
+// under the hood so it never surfaces as "taken". A username you DO supply
+// is validated against the handle shape, and only a deliberate one that
+// survives the retry budget comes back as a 422 naming `username` — this
+// endpoint is not a way to probe which handles exist.
+//
+// **`agent.status` is always `unclaimed`.** Registration grants no authority
+// and binds to no account; a human claims it, which is a separate, signed-in
+// step (D4). An agent can never claim itself.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents (the `RegisterAgent` operationId).
+func (c *ClientWithResponses) RegisterAgentWithResponse(ctx context.Context, body RegisterAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*RegisterAgentResponse, error) {
+	rsp, err := c.RegisterAgent(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRegisterAgentResponse(rsp)
+}
+
+// RefreshAgentClaimLinkWithResponse Reissue an agent's claim link without claiming it
+//
+// Hands the calling agent a **fresh claim URL** and changes nothing else —
+// the agent stays unclaimed, keeps its id, name and every token it holds.
+//
+// **Authenticated with the agent's own bearer token**, which resolves
+// through the agent table and not the account api-keys table even though
+// both begin `cafaye_`: an agent may refresh its own link precisely because
+// the credential it presents names a principal, and a principal that has
+// lost its link is the one thing this route exists to save. A token that
+// does not resolve — wrong, revoked, expired, or belonging to a disabled
+// principal — is the same 401 any unknown credential gets.
+//
+// **A refresh against a CLAIMED agent is a 404**, not a new link: the status
+// guard refuses it, so "give me a new link" can never act as "claim me", and
+// the account that owns the agent manages its access through the account
+// surface instead. This is the whole of why refresh and claim are two verbs.
+//
+// **The Idempotency-Key correlates, it does not cache.** It rides on the
+// refresh event so a client's retried burst reads as one intent in the audit
+// trail; every call still mints a NEW link (the previous one is spent by the
+// refresh that replaces it), which is the deliberate behaviour — a replayed
+// retry must not resurrect a link that has already been replaced.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/claim-link/refresh (the `RefreshAgentClaimLink` operationId).
+func (c *ClientWithResponses) RefreshAgentClaimLinkWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*RefreshAgentClaimLinkResponse, error) {
+	rsp, err := c.RefreshAgentClaimLink(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRefreshAgentClaimLinkResponse(rsp)
+}
+
+// ListAgentTokensWithResponse List the agent's bearer tokens
+//
+// Every credential the calling agent holds, newest first, **revoked ones
+// included** — the same "was this withdrawn, or was it always broken?"
+// support question `GET /v1/accounts/{account_id}/api-keys` answers by
+// keeping the row.
+//
+// **No token and no digest in the body.** There is no column holding the
+// plaintext, so there is nothing to leak; and the digest is of no use to a
+// client, so echoing it would put the row's most sensitive value in a log
+// for no gain. Tokens are distinguished by `name` and `id` and never by a
+// piece of themselves. An agent with none answers `[]` and not `null`.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/tokens (the `ListAgentTokens` operationId).
+func (c *ClientWithResponses) ListAgentTokensWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListAgentTokensResponse, error) {
+	rsp, err := c.ListAgentTokens(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListAgentTokensResponse(rsp)
+}
+
+// MintAgentTokenWithBodyWithResponse Mint a bearer token the agent holds
+//
+// Mints a named bearer credential for the calling agent, in the same shape
+// `POST /v1/accounts/{account_id}/api-keys` renders its mint: an opaque
+// `cafaye_` token, SHA-256 at rest, revocable and expiring, with `token`
+// returned here and nowhere else.
+//
+// **Authenticated with the agent's own bearer token**, and the credential it
+// mints belongs to that same principal — a request carries no `agent_id`,
+// because the token that authenticated it already names the agent and a body
+// field would let a caller mint for a principal it is not. "Scoped" here
+// means *held by one principal and revocable on it*; the per-capability scope
+// vocabulary for an agent token arrives with the routes it will gate, so a
+// token minted now does not yet gate any business route, only its own
+// management surface.
+//
+// **One live token per name.** A second live token answering to `name` is a
+// 409; rotate or revoke the old one first.
+//
+// **`expires_in` is SECONDS from now**, the same name RFC 6749 uses. Omit it
+// for the default; `0`, a negative value or a value over the ceiling (365
+// days) is a 422, never "never expires".
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/tokens (the `MintAgentToken` operationId).
+func (c *ClientWithResponses) MintAgentTokenWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MintAgentTokenResponse, error) {
+	rsp, err := c.MintAgentTokenWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseMintAgentTokenResponse(rsp)
+}
+
+// MintAgentTokenWithResponse Mint a bearer token the agent holds
+//
+// Mints a named bearer credential for the calling agent, in the same shape
+// `POST /v1/accounts/{account_id}/api-keys` renders its mint: an opaque
+// `cafaye_` token, SHA-256 at rest, revocable and expiring, with `token`
+// returned here and nowhere else.
+//
+// **Authenticated with the agent's own bearer token**, and the credential it
+// mints belongs to that same principal — a request carries no `agent_id`,
+// because the token that authenticated it already names the agent and a body
+// field would let a caller mint for a principal it is not. "Scoped" here
+// means *held by one principal and revocable on it*; the per-capability scope
+// vocabulary for an agent token arrives with the routes it will gate, so a
+// token minted now does not yet gate any business route, only its own
+// management surface.
+//
+// **One live token per name.** A second live token answering to `name` is a
+// 409; rotate or revoke the old one first.
+//
+// **`expires_in` is SECONDS from now**, the same name RFC 6749 uses. Omit it
+// for the default; `0`, a negative value or a value over the ceiling (365
+// days) is a 422, never "never expires".
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/tokens (the `MintAgentToken` operationId).
+func (c *ClientWithResponses) MintAgentTokenWithResponse(ctx context.Context, body MintAgentTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*MintAgentTokenResponse, error) {
+	rsp, err := c.MintAgentToken(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseMintAgentTokenResponse(rsp)
+}
+
+// RevokeAgentTokenWithBodyWithResponse Revoke one of the agent's bearer tokens
+//
+// Withdraws one of the calling agent's credentials. The row is **kept**, not
+// deleted, so a later list can still say *withdrawn* rather than *never
+// existed* — the same reason `DELETE /v1/accounts/{account_id}/api-keys/{key_id}`
+// keeps its row. A second attempt on an already-revoked credential is a
+// 409, so a client that clicked twice is not told a second revocation
+// succeeded.
+//
+// An id that is not this agent's is the same 404 as one that does not exist:
+// the caller established the agent from its own credential, and a query that
+// named the agent again simply refuses a token that belongs to somebody
+// else. `{token_id}` in the path is never read before the credential gate
+// runs, so an anonymous request is a 401 and never a 404 that confirms the
+// id's shape.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/agents/tokens/{token_id} (the `RevokeAgentToken` operationId).
+func (c *ClientWithResponses) RevokeAgentTokenWithBodyWithResponse(ctx context.Context, tokenID openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RevokeAgentTokenResponse, error) {
+	rsp, err := c.RevokeAgentTokenWithBody(ctx, tokenID, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRevokeAgentTokenResponse(rsp)
+}
+
+// RevokeAgentTokenWithResponse Revoke one of the agent's bearer tokens
+//
+// Withdraws one of the calling agent's credentials. The row is **kept**, not
+// deleted, so a later list can still say *withdrawn* rather than *never
+// existed* — the same reason `DELETE /v1/accounts/{account_id}/api-keys/{key_id}`
+// keeps its row. A second attempt on an already-revoked credential is a
+// 409, so a client that clicked twice is not told a second revocation
+// succeeded.
+//
+// An id that is not this agent's is the same 404 as one that does not exist:
+// the caller established the agent from its own credential, and a query that
+// named the agent again simply refuses a token that belongs to somebody
+// else. `{token_id}` in the path is never read before the credential gate
+// runs, so an anonymous request is a 401 and never a 404 that confirms the
+// id's shape.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/agents/tokens/{token_id} (the `RevokeAgentToken` operationId).
+func (c *ClientWithResponses) RevokeAgentTokenWithResponse(ctx context.Context, tokenID openapi_types.UUID, body RevokeAgentTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*RevokeAgentTokenResponse, error) {
+	rsp, err := c.RevokeAgentToken(ctx, tokenID, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRevokeAgentTokenResponse(rsp)
+}
+
+// RotateAgentTokenWithBodyWithResponse Rotate one of the agent's bearer tokens in place
+//
+// Withdraws a credential and mints a new one of the **same name** in one
+// call, so there is no instant with no credential under that name and no
+// two-round-trip window in which a client can end up with none. The new
+// token's lifetime is fresh (`expires_in`, or the default); the name is
+// inherited from the one being rotated, which is why rotation needs no `name`
+// in the body.
+//
+// The revocation of the old and the mint of the new are one transaction:
+// either the new token is handed back or the old one keeps working, never
+// neither. This is the same ergonomic as revoke-then-re-mint, without the
+// window.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/tokens/{token_id}/rotate (the `RotateAgentToken` operationId).
+func (c *ClientWithResponses) RotateAgentTokenWithBodyWithResponse(ctx context.Context, tokenID openapi_types.UUID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RotateAgentTokenResponse, error) {
+	rsp, err := c.RotateAgentTokenWithBody(ctx, tokenID, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRotateAgentTokenResponse(rsp)
+}
+
+// RotateAgentTokenWithResponse Rotate one of the agent's bearer tokens in place
+//
+// Withdraws a credential and mints a new one of the **same name** in one
+// call, so there is no instant with no credential under that name and no
+// two-round-trip window in which a client can end up with none. The new
+// token's lifetime is fresh (`expires_in`, or the default); the name is
+// inherited from the one being rotated, which is why rotation needs no `name`
+// in the body.
+//
+// The revocation of the old and the mint of the new are one transaction:
+// either the new token is handed back or the old one keeps working, never
+// neither. This is the same ergonomic as revoke-then-re-mint, without the
+// window.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/tokens/{token_id}/rotate (the `RotateAgentToken` operationId).
+func (c *ClientWithResponses) RotateAgentTokenWithResponse(ctx context.Context, tokenID openapi_types.UUID, body RotateAgentTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*RotateAgentTokenResponse, error) {
+	rsp, err := c.RotateAgentToken(ctx, tokenID, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRotateAgentTokenResponse(rsp)
+}
+
 // StartSocialLoginWithResponse Begin a social sign-in
 //
 // Sends the browser to the named provider's authorization endpoint with a
@@ -27838,6 +30064,675 @@ func ParseTransferAccountOwnershipResponse(rsp *http.Response) (*TransferAccount
 		response.Headers422 = &headers
 	case rsp.StatusCode == 500:
 		var headers TransferAccountOwnershipResponse500Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers500 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseRegisterAgentResponse parses an HTTP response from a RegisterAgentWithResponse call
+func ParseRegisterAgentResponse(rsp *http.Response) (*RegisterAgentResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RegisterAgentResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest AgentRegistrationResult
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest MalformedBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest BodyTooLarge
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ValidationFailed
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest RateLimited
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 201:
+		var headers RegisterAgentResponse201Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers201 = &headers
+	case rsp.StatusCode == 400:
+		var headers RegisterAgentResponse400Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers400 = &headers
+	case rsp.StatusCode == 413:
+		var headers RegisterAgentResponse413Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers413 = &headers
+	case rsp.StatusCode == 422:
+		var headers RegisterAgentResponse422Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers422 = &headers
+	case rsp.StatusCode == 429:
+		var headers RegisterAgentResponse429Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers429 = &headers
+	case rsp.StatusCode == 500:
+		var headers RegisterAgentResponse500Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers500 = &headers
+	case rsp.StatusCode == 503:
+		var headers RegisterAgentResponse503Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers503 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseRefreshAgentClaimLinkResponse parses an HTTP response from a RefreshAgentClaimLinkWithResponse call
+func ParseRefreshAgentClaimLinkResponse(rsp *http.Response) (*RefreshAgentClaimLinkResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RefreshAgentClaimLinkResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest RefreshAgentClaimResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthenticated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers RefreshAgentClaimLinkResponse200Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 401:
+		var headers RefreshAgentClaimLinkResponse401Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers401 = &headers
+	case rsp.StatusCode == 404:
+		var headers RefreshAgentClaimLinkResponse404Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers404 = &headers
+	case rsp.StatusCode == 500:
+		var headers RefreshAgentClaimLinkResponse500Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers500 = &headers
+	case rsp.StatusCode == 503:
+		var headers RefreshAgentClaimLinkResponse503Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers503 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseListAgentTokensResponse parses an HTTP response from a ListAgentTokensWithResponse call
+func ParseListAgentTokensResponse(rsp *http.Response) (*ListAgentTokensResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListAgentTokensResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []AgentToken
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthenticated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON500 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers ListAgentTokensResponse200Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 401:
+		var headers ListAgentTokensResponse401Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers401 = &headers
+	case rsp.StatusCode == 500:
+		var headers ListAgentTokensResponse500Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers500 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseMintAgentTokenResponse parses an HTTP response from a MintAgentTokenWithResponse call
+func ParseMintAgentTokenResponse(rsp *http.Response) (*MintAgentTokenResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &MintAgentTokenResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest IssuedAgentToken
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthenticated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest BodyTooLarge
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ValidationFailed
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON500 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 201:
+		var headers MintAgentTokenResponse201Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers201 = &headers
+	case rsp.StatusCode == 401:
+		var headers MintAgentTokenResponse401Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers401 = &headers
+	case rsp.StatusCode == 409:
+		var headers MintAgentTokenResponse409Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers409 = &headers
+	case rsp.StatusCode == 413:
+		var headers MintAgentTokenResponse413Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers413 = &headers
+	case rsp.StatusCode == 422:
+		var headers MintAgentTokenResponse422Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers422 = &headers
+	case rsp.StatusCode == 500:
+		var headers MintAgentTokenResponse500Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers500 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseRevokeAgentTokenResponse parses an HTTP response from a RevokeAgentTokenWithResponse call
+func ParseRevokeAgentTokenResponse(rsp *http.Response) (*RevokeAgentTokenResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RevokeAgentTokenResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthenticated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON500 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers RevokeAgentTokenResponse401Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers401 = &headers
+	case rsp.StatusCode == 404:
+		var headers RevokeAgentTokenResponse404Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers404 = &headers
+	case rsp.StatusCode == 409:
+		var headers RevokeAgentTokenResponse409Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers409 = &headers
+	case rsp.StatusCode == 500:
+		var headers RevokeAgentTokenResponse500Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers500 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseRotateAgentTokenResponse parses an HTTP response from a RotateAgentTokenWithResponse call
+func ParseRotateAgentTokenResponse(rsp *http.Response) (*RotateAgentTokenResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RotateAgentTokenResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest IssuedAgentToken
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthenticated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ValidationFailed
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON500 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 201:
+		var headers RotateAgentTokenResponse201Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers201 = &headers
+	case rsp.StatusCode == 401:
+		var headers RotateAgentTokenResponse401Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers401 = &headers
+	case rsp.StatusCode == 404:
+		var headers RotateAgentTokenResponse404Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers404 = &headers
+	case rsp.StatusCode == 409:
+		var headers RotateAgentTokenResponse409Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers409 = &headers
+	case rsp.StatusCode == 422:
+		var headers RotateAgentTokenResponse422Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers422 = &headers
+	case rsp.StatusCode == 500:
+		var headers RotateAgentTokenResponse500Headers
 		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {

@@ -3916,7 +3916,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/RegisterAgentResponse'
+                $ref: '#/components/schemas/AgentRegistrationResult'
               example:
                 agent:
                   id: ab000000-0000-0000-0000-0000000000a1
@@ -6777,7 +6777,7 @@ components:
             whole and rendered on the claim screen; never parsed by a route and
             never filtered on.
 
-    RegisterAgentResponse:
+    AgentRegistrationResult:
       type: object
       description: |
         The 201 from `POST /v1/agents`, in the shape `caf agent register` consumes:

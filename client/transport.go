@@ -35,7 +35,7 @@ package client
 // regeneration gate's blast radius visible instead of spread across twenty call
 // sites.
 //
-// The forty-two methods below are the document's forty-two `operationId`s, in
+// The forty-eight methods below are the document's forty-eight `operationId`s, in
 // the document's order, with the generated parameter types. The compile-time
 // assertion at the bottom is what proves the generated `*generated.Client` still
 // satisfies it, so a mismatch is a build failure rather than a runtime surprise.
@@ -154,6 +154,22 @@ type Transport interface {
 	// where somebody will actually read it.
 	StartSocialLogin(ctx context.Context, provider generated.StartSocialLoginParamsProvider, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	CompleteSocialLogin(ctx context.Context, provider generated.CompleteSocialLoginParamsProvider, params *generated.CompleteSocialLoginParams, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
+	// The agent surface's public and self-service halves (the account-scoped claim
+	// is `ClaimAgent` above). None of these takes an account id: registration is
+	// anonymous, and the rest authenticate with the agent's OWN bearer token, so
+	// the principal they act on is the one the credential resolves to — never one a
+	// path parameter could name.
+	//
+	// RegisterAgent is public and unauthenticated; a caller with no credential
+	// reaches it, which is the whole of what agent self-registration means (D4).
+	// The other five need the agent token attached by newTransport, so a wrapper
+	// caller holds one on `Client` before it can call them.
+	RegisterAgent(ctx context.Context, body generated.RegisterAgentJSONRequestBody, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
+	RefreshAgentClaimLink(ctx context.Context, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
+	MintAgentToken(ctx context.Context, body generated.MintAgentTokenJSONRequestBody, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
+	ListAgentTokens(ctx context.Context, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
+	RevokeAgentToken(ctx context.Context, tokenID openapiTypes.UUID, body generated.RevokeAgentTokenJSONRequestBody, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
+	RotateAgentToken(ctx context.Context, tokenID openapiTypes.UUID, body generated.RotateAgentTokenJSONRequestBody, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 }
 
 // The proof that the generated client still satisfies the interface above.
