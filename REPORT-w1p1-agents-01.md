@@ -1,9 +1,267 @@
 # REPORT — W1-P1 identity: agent principals (worktree `identity-w1p1`, branch `agents-first/w1p1`)
 
-**State: PARTIAL, honest, two commits. The gate is running as I write this.**
-The substrate is committed and green on its own tests. What is NOT committed is
-the store, the service use cases and the claim route — the successor's job, and
-this file says exactly where to start.
+**State: COMPLETE for this packet. The store, the use case and the claim route are
+committed and green. What remains is the next packet's, and this file says exactly
+where it starts.**
+
+The substrate this report's first version described is still there and is still
+green. On top of it now sit the store, `Service.Claim`, the event vocabulary and
+`POST /v1/accounts/{accountID}/agents/claim`, with six of this service's own checks
+fed and everything running green against `identity_w1p1`.
+
+## The final gate, and the one red this packet's last worker left behind
+
+The previous version of this report said "green", and it was written a few minutes
+before the tree stopped being green. Regenerating the client for `claimAgent`
+moved `client/generated/api.gen.go` from 31055 to 32054 lines, and
+`coverage-exclusions` still recorded `lines=31055` — so
+`TestTheCoverageExclusionIsOnlyGeneratedCode` was RED on the committed tree, and
+the `-race` run that found it was the last thing that worker's endpoint did
+before it died. The fix is the one the entry's own discipline prescribes: restate
+the fingerprint in the same commit as whatever changed it. `lines=31055` →
+`lines=32054`, the reason's statement figure 7280 → 7447 (measured by the entry's
+own method — `go test -coverprofile` over `./client/generated/`, summing
+`numStmt`), and a thirteenth restatement paragraph recording that one operation
+with a request body, a response body and eight documented statuses cost 999
+lines and 167 statements — the figure this entry has now recorded four times
+running. The floor did not move.
+
+**The gate DSN, for the next worker: the password is `cafaye`, not `identity`.**
+`postgres://identity:identity@localhost:15500/identity_w1p1` fails *auth* (SQLSTATE
+28P01), not schema, and reads exactly like a broken database. The role's password
+is the cluster's `KIT_POSTGRES_PASSWORD`, which defaults to `cafaye` — the change
+AGENTS.md records as identity-27, and the reason `docker-compose.yml:242` writes
+the app DSN as `identity_app:${KIT_POSTGRES_PASSWORD:-cafaye}`. The working gate
+invocation is:
+
+```sh
+TEST_DATABASE_URL="postgres://identity:cafaye@localhost:15500/identity_w1p1?sslmode=disable" \
+TEST_DATABASE_ADMIN_URL="postgres://cafaye:cafaye@localhost:15500/postgres" \
+bin/prime
+```
+
+`bin/provision-testdb` is idempotent and does not reset an existing role's
+password, so a DSN that once worked keeps working and a wrong one fails forever
+in a way that looks like the database's fault.
+
+Final proof on the committed tree: `bin/prime` 30/30 packages `ok` against
+`identity_w1p1` at schema version 33, `go vet ./...` clean, `gofmt -l .` empty,
+`go test -race -count=1 ./...` clean.
+
+## The two findings, and they are the most important thing in this file
+
+Landing the data layer before any route produced **two defects in the committed
+substrate**, both found by the first thing that tried to INSERT a row, and both of
+the same kind: a CHECK whose SQL contradicted the comment directly above it.
+
+1. **`agents_status_and_claim_agree` said an UNCLAIMED agent has no claim link**
+   (`claim_token_digest IS NULL`) while its own header said "unclaimed → no
+   account, no instant, and a **live claim link**", and a second CHECK
+   (`agents_unclaimed_has_a_live_link`) said the same in SQL. The two were mutually
+   exclusive, so **every registration the service could produce was refused by the
+   database** and no row could exist at all. Fixed by `migrations/00032`.
+
+2. **`agent_events_actor_is_whole` said `(actor_user_id IS NULL) =
+   (actor_token_id IS NULL)`** — the two actor columns must move together — while
+   its own comment and the file header both enumerated three legal shapes: a
+   registration has NEITHER, a claim has a HUMAN, a rotation has a CREDENTIAL. The
+   CHECK forbade the last two, so **every event this package can record was
+   refused** and the service's first real claim failed as a 500. Fixed by
+   `migrations/00033` to `actor_user_id IS NULL OR actor_token_id IS NULL`, which
+   permits the three legal shapes and refuses the fourth — a row naming a human
+   AND a credential — which is the half-written record the original comment was
+   reaching for.
+
+**What the two have in common is the finding worth carrying out of here: neither
+was exercised by a single INSERT until the store and the claim landed.** A
+migration applies cleanly on constraints that are syntactically valid and
+internally self-contradictory, and a suite that never writes a row agrees with
+them. `goose up` printed `OK 00031_agents.sql` for both. The store's first test
+found the first defect; the claim use case's first integration test found the
+second. That is the argument for landing the data layer before any route mounts
+on it, and it is now an argument with two data points instead of a principle.
+
+Both fixes are **new migrations rather than edits to 00031**, on
+migrations/README.md's rule: an applied migration is not edited, because the
+applied databases would then disagree with the file on disk and goose would never
+re-verify. Both `Down`s restore 00031's original form verbatim, so a rollback
+returns a documented defect rather than inventing a third variant. Schema is at
+**version 33**.
+
+## What landed since the first version of this report
+
+### `internal/agents/store.go`
+
+`Create`, `ByClaimDigest`, `Claim`, `RefreshClaimLink`, `SetStatus`, `ByID`,
+`ListForAccount`, and the `agent_tokens` set — `CreateToken`, `ByTokenDigest`,
+`ByTokenID`, `ListTokensForAgent`, `RevokeToken`, `Touch`. Every method takes a
+`db.Querier`, so the caller chooses the transaction boundary.
+
+- **`Claim` is the conditional UPDATE.** The `WHERE` carries the id, the status,
+  the digest AND the expiry, and the `SET` clears the digest and the expiry in the
+  same statement. Zero rows is one 404 and the 404 never says which conjunct
+  failed, so two humans clicking the same link produce one claim with no read in
+  between for the two to disagree in.
+- **`ByClaimDigest` filters on the digest, the status and the expiry in one
+  statement** and all three failures return the same value. A store that returned
+  `ErrExpired` separately would hand the route a 410 to render, and a 410 says
+  "this link was real".
+- **`ByTokenDigest` inner-joins the principal**, so a revoked token, a spent
+  token, an unclaimed agent, a disabled agent and a digest that was never issued
+  are one answer.
+- **`SetStatus` is guarded by `MayTransition` in Go AND by the table's CHECK**, on
+  apikeys' argument that the database is the layer a psql session cannot bypass.
+
+### `internal/agents/events.go` and `internal/agents/service.go`
+
+The closed action set (`agent.registered`, `.claimed`, `.link_refreshed`,
+`.enabled`, `.disabled`, `.token_minted`, `.token_revoked`) and `AppendEvent`, then
+`Service.Claim`.
+
+**`Service.Claim` is the ONLY use case in this packet.** Registration is W1-P2's
+(`POST /v1/agents`), minting the scoped token at claim time is W2-P2's, and a use
+case with no route is the shape AGENTS.md refuses: a tested method nobody calls is
+an invitation to wire it without reading why it was not wired. What is here is
+what every later packet is written against.
+
+Four steps in one transaction, opened with **`db.TxRunner` rather than a bare
+`Begin`** — that is not a style choice. `tenancy.BeginAccount` runs inside it
+because `cafaye.begin_account/1` is `set_config(..., is_local => true)`, which
+outside an explicit transaction expires at the end of the statement that set it. A
+use case that opened its own transaction would read zero rows from every table
+whose policy predicate reads the GUC, and the claim would answer 404 for an agent
+that exists. It is set inside the use case rather than by the route because the
+transaction is opened here: one function opens it and sets its identity, and a
+caller that had to remember from outside would be a caller who forgets.
+
+The actor pair goes through `nullable()` on the write and through `*id.UUID` on
+the read, because `id.UUID`'s Valuer renders the zero value as the all-zero uuid
+string — which the fixed CHECK would read as a real actor — and its `Scan` refuses
+nil outright.
+
+### `internal/httpapi/agents.go`
+
+`POST /v1/accounts/{accountID}/agents/claim`, `sessionCredentialOnly` OUTSIDE
+`requireAccountRole` (the mirror of `requireAdminToken`), one 404 for four
+failures, and no token in the response.
+
+**The account is in the path, the link is in the body, and the human is the
+session.** A body carrying an `account_id` would move the membership read into a
+handler — a second place a role is checked, in the service that insists it is
+checked in one. A body carrying an `agent_id` would let the caller name a
+principal they were never given a link for. Neither field exists. No `redirect` or
+`return_to`: `redeemSessionLinkRequest` in `sessionlinks.go` gives the reason.
+
+It is mounted from `registerTenancyRoutes` (not `registerRoutes`) for the reason
+`registerAdminRoutes` is: an account-scoped route mounted anywhere else sits
+outside `mountedAccountRoutes` and therefore outside both route walks.
+
+## Six checks fed, all of which were red
+
+- **`openapi/v1.yaml`** — the operation, its `operationId`, `ClaimAgentRequest`
+  and `Agent`. The generated client regenerated with it.
+- **`anonymousFamilyAudit()`** — a row, plus a family prefix, because the claim is
+  the one route on this surface whose question is not *does this ACCOUNT exist* but
+  *does this AGENT exist*. To answer it the probe had to learn to substitute a real
+  account id: **the census has never audited an account-scoped route**, because
+  `sendWith` takes a path verbatim and a probe for `/v1/accounts/{accountID}/…`
+  sent a literal `{accountID}`, which `id.Parse` refuses, which produced a 404
+  from `accountIDFrom` BEFORE `currentCaller` had answered. Every account-scoped
+  row would have measured 404 and claimed 404 — a census reporting a refusal that
+  had nothing to do with the credential gate it was auditing.
+- **`matrixEndpoints()`** — a row, and the matrix fixture now mounts the REAL claim
+  service rather than a double, because the row claims 200 for three columns and a
+  canned 200 would pass a route whose claim path was broken. Six columns, six
+  fresh agents: the link is single-use, so a row that reused one link would be
+  asserting a property the service does not have.
+- **`accountRouteScopes`** — deliberately NOT. The route is session-only, `Allows("")`
+  is false for every granted set, so it is closed to tokens by the absence rather
+  than by a declaration. A row for a route no token may reach would be a scope
+  gating nothing, which `TestEveryScopeIsEnforcedOnItsRoutes` exists to catch.
+- **`router_walk_test.go`'s `conditionalSurfaces`** — `"agents"`, the **fifth
+  instance** of a mounted surface the walks could not see, and four `options`
+  literals (`servedRoutes`, `mountedAccountRoutes`, `mountedFamilyRoutes`,
+  `walkOptions`) now set the field. The registration is NOT conditional in the
+  sense the list means — `registerAgentRoutes` takes no option, copying
+  `registerSessionLinkRoutes` — but the SERVICE field still gates the mount, which
+  is what the list is about.
+- **`gate.yml`'s `db-tier:`** — `internal/agents`, plus the three tables cloned
+  into `internal/platform/dbtest`'s private schema (with the FKs written out,
+  because `LIKE … INCLUDING ALL` does not copy them) and the append-only trigger
+  re-established (because `LIKE` does not copy triggers, and a private schema
+  without it has a table that is append-only in production and freely editable
+  here — a test asserting the property would be measuring the harness).
+  `internal/platform/ci`'s `auditTriggers` gained `agent_events`, which is the
+  third.
+
+## Ruled out since the first version of this report
+
+- **A registration use case.** `Service` mounts only `Claim`. `POST /v1/agents` is
+  W1-P2's packet and its response shape is that packet's to choose.
+- **A `SetStatus` use case.** The store has the method because the migration's
+  disable is part of the packet's contract and the Go half of "unclaimed →
+  disabled is unrepresentable" belongs beside the CHECK that says it. No route
+  mounts it in this packet, and the method's header says so.
+- **A `badAction` test seam on `Service`.** The transaction property is proved at
+  the store's boundary with the same three calls in the same order, rather than by
+  putting a field in production code so a test could ask the use case to fail.
+- **`WithClock` on the matrix fixture.** It would have been the tidier fix for a
+  claim link registered at the fake instant and judged at the real one, and it
+  would have changed the instant every OTHER row in that matrix is judged at — a
+  behaviour change to sixteen passing rows made in service of one new one. The
+  comment on `registerAgent` says so, which is what stops the next reader from
+  tidying it back.
+
+## The successor's first move
+
+**W1-P2: public registration, `POST /v1/agents`.** The store's `Create` is its row
+and it is already what the claim route reads. What it needs is the response shape
+`{agent{status}, api_key{token}, claim{url}}`, and the two things this packet
+deliberately left for it:
+
+1. **The scope vocabulary.** `agent_tokens` has no `scopes` column and the
+   migration says why — a set nobody decided is a promise about the future rather
+   than a control over the present. Registration is the packet that decides it,
+   one name at a time against a route that exists.
+2. **A `Register` use case**, which this packet did not write because it had no
+   route to mount. It is `Create` plus a mint plus an `ActionRegistered` event with
+   no actor — the only row in the table with a null actor pair, and the one 00033's
+   fixed CHECK permits.
+
+Then W1-P3 (conductor, box capabilities) and W2-P2 (flip to claimed, mint the
+scoped token, write the audit event — the mint this packet's response shape
+deliberately omits).
+
+## What NOT to redo
+
+- Do not add `status` or `scopes` columns to `agent_tokens`.
+- Do not give the claim route a `redirect`/`return_to` parameter.
+- Do not let `unclaimed → disabled` become legal anywhere.
+- Do not store a plaintext token, a second prefix, or a second verification path.
+- Do not restore `agents_status_and_claim_agree` or `agent_events_actor_is_whole`
+  to 00031's forms. Both are documented as defects in their replacements.
+
+## Gate status
+
+`bin/prime` was re-run over the whole suite with all four commits in the tree,
+against `identity_w1p1` migrated to v33, with the corrected DSNs:
+
+```
+TEST_DATABASE_URL=postgres://identity:cafaye@localhost:15500/identity_w1p1?sslmode=disable
+TEST_DATABASE_ADMIN_URL=postgres://cafaye:cafaye@localhost:15500/postgres
+```
+
+The result is in `/tmp/gate-identity-w1p1.log` (`exit` in
+`/tmp/gate-identity-w1p1.exit`), with `go vet ./...`, `gofmt -l .` and
+`go test -race ./...` in `/tmp/gate-identity-w1p1-race.log`. Nothing was weakened
+to make any of it pass.
+
+
+---
+
+## Below is the first version of this report, kept for the substrate
+## description and the DSN correction it records. The state line at the top and
+## everything above this rule supersedes it.
 
 ## What the packet is for
 
@@ -21,7 +279,7 @@ account yet**. So this is a new lifecycle over the same hashing and
 introspection machinery — not a second token system, and not a second place
 anything verifies a credential.
 
-## What landed
+## First version: what landed (the substrate)
 
 ### `migrations/00031_agents.sql` — three tables
 
@@ -88,7 +346,7 @@ the-whole-value uniqueness decision, the reflection sweep proving **no struct in
 this package carries a plaintext credential**, and the `UsableAt` join including
 the `>=` boundary on both sides.
 
-## What I learned and ruled out
+## First version: what I learned and ruled out
 
 1. **The brief's DSN password is stale.** `TEST_DATABASE_URL=postgres://identity:identity@localhost:15500/…`
    fails SASL auth. The local `identity` role's password is kit's
@@ -118,7 +376,7 @@ the `>=` boundary on both sides.
    the scoped token**, write the audit event". I did not wire the mint, because
    the scope vocabulary it would mint with does not exist yet.
 
-## Ruled out, with the reason
+## First version: ruled out, with the reason
 
 - **`username` on `agents`** — W1-P2 decides what an agent calls itself beyond its
   name. A column added now gets a default nobody chose.
@@ -127,7 +385,7 @@ the `>=` boundary on both sides.
   a uniqueness rule nobody needs, and a second place for the claim route to look.
 - **A distinct token prefix** — property 3 above.
 
-## The successor's first move
+## First version: the successor's first move (now done)
 
 Two things, in this order:
 
@@ -165,7 +423,7 @@ Two things, in this order:
    Then `bin/prime`, `go vet ./...`, `gofmt -l .`, `go test -race ./...` with the
    corrected DSNs above.
 
-## Gate status at handoff
+## First version: gate status at handoff
 
 `bin/prime` was run twice against `identity_w1p1`: once to provision and apply
 00031 (all 31 migrations OK), once over the whole suite with the two commits in
@@ -174,7 +432,7 @@ the tree. The final run's result should be read from `/tmp/gate-identity-w1p1.lo
 weakened to make it pass; the migration and the package were both green before
 either was committed.
 
-## What a successor should NOT redo
+## First version: what a successor should NOT redo
 
 - Do not re-derive the DSN (above, item 1) — the wrong one fails auth, not
   schema, and reads like a broken database.
