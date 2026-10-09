@@ -206,10 +206,23 @@ type NewAgent struct {
 // retries before this, so the only way to see it is a caller supplying a handle
 // that was taken across the retry budget — which the HTTP layer answers without
 // ever having rendered the handle as "taken" on an answer an attacker can read.
+//
+// AN EMPTY USERNAME IS WRITTEN AS NULL, not as the empty string, because the
+// column is nullable and `”` is not a legal handle for the shape CHECK — the
+// distinction between "no handle" and "an empty handle" is database fact here
+// rather than something every caller has to remember to encode. A registration
+// through the service always generates a handle before it reaches this method, so
+// the NULL path is a caller that constructs NewAgent directly (a test, a repair
+// script) and not the production registration.
 func (s *Store) Create(ctx context.Context, q db.Querier, n NewAgent) (Agent, error) {
 	device, err := marshalDevice(n.Device)
 	if err != nil {
 		return Agent{}, err
+	}
+
+	var username any
+	if n.Username != "" {
+		username = n.Username
 	}
 
 	const query = `
@@ -218,7 +231,7 @@ func (s *Store) Create(ctx context.Context, q db.Querier, n NewAgent) (Agent, er
 		RETURNING ` + agentColumns
 
 	out, err := scanAgent(q.QueryRow(ctx, query,
-		n.Name, n.Username, device, n.ClaimDigest, n.ClaimLinkExpiresAt, n.CreatedAt))
+		n.Name, username, device, n.ClaimDigest, n.ClaimLinkExpiresAt, n.CreatedAt))
 	if err != nil {
 		if errors.Is(err, errNoRows) {
 			return Agent{}, ErrNotFound
@@ -816,14 +829,26 @@ type rowScanner interface {
 }
 
 func scanAgent(row rowScanner) (Agent, error) {
-	var a Agent
-	err := row.Scan(&a.ID, &a.Name, &a.Username, &a.Status, &a.ClaimTokenDigest, &a.ClaimLinkExpiresAt,
+	var (
+		a        Agent
+		username *string
+	)
+	err := row.Scan(&a.ID, &a.Name, &username, &a.Status, &a.ClaimTokenDigest, &a.ClaimLinkExpiresAt,
 		&a.ClaimedByAccountID, &a.ClaimedAt, &a.Device, &a.CreatedAt, &a.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, errNoRows) {
 			return Agent{}, errNoRows
 		}
 		return Agent{}, fmt.Errorf("agents: scanning a principal: %w", err)
+	}
+	// A NULL username folds to the empty string rather than refusing the scan,
+	// the same shape scanEvent gives a registration's null actor. The column is
+	// nullable (a writer that constructs NewAgent directly — W1-P1's store tests, a
+	// repair script — may omit the handle), and "no handle" and "a handle" are
+	// distinguished by the empty string here because a registration through the
+	// service always generates one and never reaches the NULL case.
+	if username != nil {
+		a.Username = *username
 	}
 	return a, nil
 }

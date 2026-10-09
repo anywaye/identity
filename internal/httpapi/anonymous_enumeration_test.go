@@ -150,6 +150,14 @@ var auditFamilyPrefixes = []string{
 	// presents and the link names a principal rather than an account. So the
 	// prefix names the sub-resource and the row answers the real question.
 	"/v1/accounts/{accountID}/agents",
+	// The agent PUBLIC and SELF-SERVICE surface. The prefix is deliberately NOT
+	// `/v1/accounts/…`, because none of these routes is account-scoped: an
+	// unclaimed agent has no account. Registration is anonymous; the refresh and
+	// the token lifecycle authenticate with the agent's OWN bearer credential, so
+	// a stranger gets the same 401 a wrong token gets and no identifier arrives.
+	// The account-scoped CLAIM stays under its own prefix above, because it is the
+	// one agent route with a real identifier question ("does this AGENT exist").
+	"/v1/agents",
 }
 
 // anonymousFamilyAudit is the table, one row per route.
@@ -519,6 +527,77 @@ func anonymousFamilyAudit() []auditRoute {
 				"way to learn a user's disabled state from either direction anonymously — the " +
 				"only answer that names it is the login, and it is behind the password " +
 				"(DECISIONS.md D13)",
+		},
+		{
+			// REGISTRATION is the one PUBLIC route on the agent surface, and the
+			// question this file asks — "can the response tell 'this account exists'
+			// from 'it does not'?" — has the answer "there is no account". An agent
+			// registers itself UNCLAIMED (D4): the response carries a new principal,
+			// a token and a claim URL, and nothing in it is a fact about any
+			// pre-existing row. Even the USERNAME, the one field a caller can choose,
+			// never discloses occupancy: a collision on a generated handle is retried
+			// under the hood, and a supplied handle that survives the retry budget
+			// comes back a 422 naming `username` — which tells the caller their own
+			// input collided, never which handles are worth trying. There is no route
+			// anywhere that answers "is this handle taken".
+			//
+			// The probe is a minimal valid body so the walk reaches the handler
+			// rather than a 400 about a malformed probe.
+			name: "register an agent", method: http.MethodPost, pattern: "/v1/agents",
+			identifier: "username (optional; a collision is never disclosed)",
+			probe:      `{"name":"census probe"}`,
+			anonymous:  http.StatusCreated,
+			discloses: "nothing about any account, because there is no account in this flow. " +
+				"A 201 with a new unclaimed principal, a token and a claim URL is a product " +
+				"of the request and not a fact about any row that predates it. The username " +
+				"never answers 'is that handle taken' — see TestAgentRegistrationNeverSaysAUsernameIsTaken",
+		},
+		{
+			// REFRESH, and the self-service TOKEN routes, are all 401 for a
+			// stranger: they demand the agent's own bearer credential, and the
+			// agentCredentialOnly gate resolves it before any handler runs. So no
+			// identifier — no agent id, no token id, no claim link — arrives from
+			// anywhere but the credential itself, and a wrong one is the same 401 an
+			// empty one gets. The token id in the path of the revoke/rotate routes
+			// is never parsed before that gate, so it cannot be probed either.
+			name: "refresh an agent's claim link", method: http.MethodPost,
+			pattern:   "/v1/agents/claim-link/refresh",
+			probe:     `{}`,
+			anonymous: http.StatusUnauthorized,
+			discloses: "nothing: 401 without the agent's own bearer credential, so a foreign " +
+				"claim link or token id never reaches the use case and there is no principal a " +
+				"stranger can point the route at. Behind the credential, refreshing a CLAIMED " +
+				"agent is a 404 — the refresh refuses to act as a claim (D4)",
+		},
+		{
+			name: "mint an agent token", method: http.MethodPost, pattern: "/v1/agents/tokens",
+			probe:     `{"name":"census"}`,
+			anonymous: http.StatusUnauthorized,
+			discloses: "nothing: 401 without the agent's own bearer credential. The token minted " +
+				"belongs to the principal that credential resolves to, which a stranger is not",
+		},
+		{
+			name: "list an agent's tokens", method: http.MethodGet, pattern: "/v1/agents/tokens",
+			anonymous: http.StatusUnauthorized,
+			discloses: "nothing: 401 without the agent's own bearer credential, so no token and " +
+				"no agent id arrives from a stranger",
+		},
+		{
+			name: "revoke an agent token", method: http.MethodDelete,
+			pattern:   "/v1/agents/tokens/{tokenID}",
+			anonymous: http.StatusUnauthorized,
+			discloses: "nothing: 401 without the agent's own bearer credential, and the gate " +
+				"answers BEFORE the token id in the path is parsed — so a real id, a made-up " +
+				"one and no id at all are the same 401, and there is no row to tell apart",
+		},
+		{
+			name: "rotate an agent token", method: http.MethodPost,
+			pattern:   "/v1/agents/tokens/{tokenID}/rotate",
+			probe:     `{}`,
+			anonymous: http.StatusUnauthorized,
+			discloses: "nothing: 401 without the agent's own bearer credential, before the token " +
+				"id in the path is read. Rotating a revoked credential behind the gate is a 409, " +
+				"never a fresh credential for a spent one",
 		},
 	}
 }

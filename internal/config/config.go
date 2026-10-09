@@ -174,6 +174,18 @@ type Config struct {
 	// share no release train.
 	OIDCLoginUIURL string
 
+	// AgentClaimUIURL is where a HUMAN opens the claim link a registered agent is
+	// handed (the `/agents/claim/[token]` screen on the website). It is the agent
+	// flow's mirror of OIDCLoginUIURL and for the same structural reason: identity
+	// renders no HTML, the screen is another repository's, and a registration that
+	// produced no URL would mint a principal nobody can finish claiming. It is read
+	// into the agents service (WithClaimUI) and the registration route refuses with
+	// 503 rather than minting an unclaimable agent when it is empty. Validated with
+	// the same shape rules as the login UI, and it is required only for the agent
+	// registration surface rather than at boot, so a deployment that has not turned
+	// agents on is not a startup failure. See agents.ClaimUIBaseEnvVar.
+	AgentClaimUIURL string
+
 	// MFAEncryptionKeyValue is the raw key a TOTP secret is sealed under, decoded
 	// from MFA_ENCRYPTION_KEY. Empty means "this deployment has no second factor",
 	// which is a supported state and reduces the surface rather than failing.
@@ -366,6 +378,13 @@ type RateLimit struct {
 	// for both because they are the same shape — an address in, a message
 	// out — and a deployment that mails one mails the other.
 	Recovery int
+	// AgentRegister bounds POST /v1/agents, the unauthenticated self-registration
+	// a fresh agent calls once per lifetime. It is tighter than Signup by default
+	// (5 against 10) because each registration mints a bearer token and a claim
+	// link rather than a bare user row, so a spent request is worth more to an
+	// abuser and worth less to a legitimate agent — nobody registers an agent on a
+	// loop. One window shared with the rest of the surface, as every limit here is.
+	AgentRegister int
 }
 
 // The social-login environment variables, named in one place.
@@ -477,6 +496,7 @@ const (
 	RateLimitSignupVar          = "RATE_LIMIT_SIGNUP"
 	RateLimitSigninVar          = "RATE_LIMIT_SIGNIN"
 	RateLimitSignupTimestampVar = "RATE_LIMIT_SIGNUP_TIMESTAMP"
+	RateLimitAgentRegisterVar   = "RATE_LIMIT_AGENT_REGISTER"
 	RateLimitRecoveryVar        = "RATE_LIMIT_RECOVERY"
 
 	// RequireEmailVerificationVar gates sign-in on a proved address. It is a
@@ -810,6 +830,14 @@ func Load(lookup Lookup) (Config, error) {
 		return Config{}, err
 	}
 
+	// The agent claim screen base. Read unconditionally (absent is the supported
+	// state — a deployment that has not turned agents on — never a default), and
+	// validated when present so a typo is a startup failure rather than a
+	// registration that 503s its first real agent.
+	if err := cfg.loadAgentClaimUI(lookup); err != nil {
+		return Config{}, err
+	}
+
 	// THE SIGN-IN VERIFICATION GATE, parsed here rather than in a loader of its
 	// own because it is one variable and one line of logic, and a function for
 	// either would be a second place to look for a fact about the auth surface.
@@ -1124,6 +1152,7 @@ const (
 	defaultRateLimitSignin          = 20
 	defaultRateLimitSignupTimestamp = 30
 	defaultRateLimitRecovery        = 5
+	defaultRateLimitAgentRegister   = 5
 )
 
 // loadRateLimit reads and validates the request-rate limit block.
@@ -1145,6 +1174,7 @@ func (c *Config) loadRateLimit(lookup Lookup) error {
 		Signin:          defaultRateLimitSignin,
 		SignupTimestamp: defaultRateLimitSignupTimestamp,
 		Recovery:        defaultRateLimitRecovery,
+		AgentRegister:   defaultRateLimitAgentRegister,
 	}
 
 	if err := c.loadRateLimitDuration(lookup, RateLimitWindowVar, &c.RateLimit.Window); err != nil {
@@ -1159,7 +1189,63 @@ func (c *Config) loadRateLimit(lookup Lookup) error {
 	if err := c.loadRateLimitCount(lookup, RateLimitSignupTimestampVar, &c.RateLimit.SignupTimestamp); err != nil {
 		return err
 	}
+	if err := c.loadRateLimitCount(lookup, RateLimitAgentRegisterVar, &c.RateLimit.AgentRegister); err != nil {
+		return err
+	}
 	return c.loadRateLimitCount(lookup, RateLimitRecoveryVar, &c.RateLimit.Recovery)
+}
+
+// AgentClaimUIURLVar is the variable naming the claim screen base.
+const AgentClaimUIURLVar = "AGENT_CLAIM_UI_URL"
+
+// ErrInvalidAgentClaimUI means the claim screen base is present and is not an
+// address a browser can be sent to with a 256-bit link on it.
+var ErrInvalidAgentClaimUI = errors.New("invalid AGENT_CLAIM_UI_URL")
+
+// loadAgentClaimUI reads and validates the claim screen base.
+//
+// OPTIONAL RATHER THAN REQUIRED AT BOOT, and that is the difference from
+// OIDCLoginUIURL: the claim screen belongs to the agent surface, which a
+// deployment may not have turned on, and failing every boot over a feature nobody
+// enabled would be the over-reach OIDC's own comment warns about. What is NOT
+// optional is VALIDATION: a base that is present and unusable (a bad scheme, a
+// query, a fragment, a userinfo) is refused here, so the failure is a startup
+// error an operator reads rather than a 503 a user hits.
+//
+// THE SHAPE RULES ARE OIDC's, restated because they are the same class of
+// redirect target: http/https, a host, and NO query (a preserved query would put a
+// string this service did not write beside a claim link), NO fragment (never sent
+// to a server) and NO userinfo (the host would not be the host it resolves to).
+// See internal/oidc.ValidateLoginUIURL for the argument in full.
+func (c *Config) loadAgentClaimUI(lookup Lookup) error {
+	raw := strings.TrimSpace(lookupValue(lookup, AgentClaimUIURLVar))
+	c.AgentClaimUIURL = raw
+	if raw == "" {
+		return nil
+	}
+
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("%w: it is not a URL: %v", ErrInvalidAgentClaimUI, err)
+	}
+	if parsed.Scheme != "https" && parsed.Scheme != "http" {
+		return fmt.Errorf("%w: its scheme is %q, want http or https", ErrInvalidAgentClaimUI, parsed.Scheme)
+	}
+	if parsed.Host == "" {
+		return fmt.Errorf("%w: it has no host, so there is nowhere to open a claim link", ErrInvalidAgentClaimUI)
+	}
+	if parsed.RawQuery != "" {
+		return fmt.Errorf("%w: it carries a query (%q); the claim link path is appended to a clean "+
+			"base, and a configured query would travel in every claim URL. Put a path, not a query, in the base",
+			ErrInvalidAgentClaimUI, parsed.RawQuery)
+	}
+	if parsed.Fragment != "" {
+		return fmt.Errorf("%w: it carries a fragment, which is not sent to a server", ErrInvalidAgentClaimUI)
+	}
+	if parsed.User != nil {
+		return fmt.Errorf("%w: it has a userinfo section, so the host in it is not the host it resolves to", ErrInvalidAgentClaimUI)
+	}
+	return nil
 }
 
 // loadRateLimitDuration reads a duration variable, defaulting when absent.

@@ -189,13 +189,15 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (Registered, e
 				agent = created
 				break
 			}
-			if errors.Is(createErr, ErrUsernameTaken) && (!wantsOwn || attempt < maxRegisterAttempts-1) {
-				// A generated handle always retries; a supplied one retries too,
-				// because the caller may have had no way to know — but only up to
-				// the budget, after which the 422 is honest.
-				if wantsOwn && attempt >= maxRegisterAttempts-1 {
-					return fmt.Errorf("%w", ErrUsernameTaken)
-				}
+			// ONLY A GENERATED HANDLE RETRIES. A caller who supplied a specific
+			// username asked for THAT handle, and silently swapping in a generated
+			// one would register them as a principal they did not name — the
+			// surprise the CLI's own client-side retry avoided by never retrying a
+			// supplied username. So a supplied collision falls straight through to
+			// ErrUsernameTaken, and the route renders it as a 422 naming `username`.
+			// A generated collision retries up to the budget and then also gives up
+			// (a 31-bit suffix meeting another, which does not happen).
+			if errors.Is(createErr, ErrUsernameTaken) && !wantsOwn && attempt < maxRegisterAttempts-1 {
 				candidate = appendSuffix(GenerateUsernameBase(name))
 				continue
 			}

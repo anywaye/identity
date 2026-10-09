@@ -443,6 +443,27 @@ tags:
       `email_verified`; an unverified address is a suggestion, not a claim about
       identity, and one that reached a `users.email` lookup would be an account
       takeover with a login page in front of it.
+  - name: agents
+    description: |
+      **The agent principal** — an identity that exists before anybody owns it.
+      Registration is public and unauthenticated; the claim-link refresh and the
+      bearer-token lifecycle are authenticated with the agent's OWN `cafaye_`
+      credential (the same prefix an account api key uses, resolved against the
+      agent table rather than the api-keys table); and the binding of a principal
+      to a human account — the claim — is under the account surface,
+      `POST /v1/accounts/{account_id}/agents/claim`, because it is a signed-in act
+      on a specific account.
+
+      **Why they are separate is D4:** an agent registers itself unclaimed and
+      grants itself nothing; a human approves out of band and the claim binds it.
+      Registration returns a token and a claim URL, each printed exactly once and
+      each stored only as a SHA-256, so a registration that crosses a log line
+      leaks a credential that is already dead at the source.
+
+      **No route here carries an account id except the claim.** An unclaimed agent
+       has none, and the self-service routes act on the principal the presented
+      bearer token names — never on one a path parameter could point at, so no
+      caller can reach a token that is not their own.
   - name: probes
     description: Liveness and readiness. Consumed by orchestrators, not by clients.
 
@@ -3821,6 +3842,446 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  # ===========================================================================
+  # THE AGENT PRINCIPAL, PUBLIC — registration, claim-link refresh, and the
+  # bearer-token lifecycle. The account-scoped claim lives above, under
+  # /v1/accounts/{account_id}/agents/claim, because it binds a principal to an
+  # account; none of the four below knows an account. Registration is anonymous;
+  # the other three authenticate with the agent's OWN bearer credential (the same
+  # `cafaye_` token `POST /v1/accounts/{account_id}/api-keys` mints, held by a
+  # principal rather than an account), and the principal it resolves to is in the
+  # token, never in the path — so no caller can point a route at a token that is
+  # not their own.
+  # ===========================================================================
+  /v1/agents:
+    post:
+      tags: [agents]
+      operationId: registerAgent
+      summary: Register an unclaimed agent
+      description: |
+        The step-① endpoint of the agent flow: an unauthenticated caller registers
+        itself and comes away with an **unclaimed** agent, a bootstrap bearer
+        token and a **claim URL** for a human to open. This is what `caf agent
+        register` calls.
+
+        **Public and unauthenticated, and rate-limited** on the same terms
+        `POST /v1/users` is — the key is the client and the route, never an
+        attempted account (there is no account), so the 429 is identical for
+        everybody and discloses nothing.
+
+        **The response carries two secrets, each exactly once.** `api_key.token`
+        is the bootstrap bearer credential and `claim.url` is the 256-bit link a
+        human opens to claim the agent. Neither is stored: the row holds a SHA-256
+        digest of each, and no endpoint anywhere re-reads either. A caller that
+        loses the token rotates or re-mints; a caller that loses the claim link
+        refreshes it (`POST /v1/agents/claim-link/refresh`) while the agent is
+        still unclaimed.
+
+        **`name` is required, `username` is optional.** The name is what the claim
+        screen shows a human. The username is the globally-unique handle; omit it
+        and one is generated from the name, and a generated collision is retried
+        under the hood so it never surfaces as "taken". A username you DO supply
+        is validated against the handle shape, and only a deliberate one that
+        survives the retry budget comes back as a 422 naming `username` — this
+        endpoint is not a way to probe which handles exist.
+
+        **`agent.status` is always `unclaimed`.** Registration grants no authority
+        and binds to no account; a human claims it, which is a separate, signed-in
+        step (D4). An agent can never claim itself.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterAgentRequest'
+            examples:
+              default:
+                summary: register with a display name only
+                value:
+                  name: Noel
+              withAHandle:
+                summary: register with a specific username
+                value:
+                  name: Noel
+                  username: noel
+      responses:
+        '201':
+          description: |
+            The unclaimed agent, its bootstrap token and its claim link. The
+            status is `unclaimed`.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegisterAgentResponse'
+              example:
+                agent:
+                  id: ab000000-0000-0000-0000-0000000000a1
+                  name: Noel
+                  username: noel-7k3m2q
+                  status: unclaimed
+                api_key:
+                  id: ab000000-0000-0000-0000-0000000000b1
+                  name: bootstrap
+                  expires_at: '2027-01-08T12:00:00Z'
+                  token: cafaye_Zq3vK7mXpR2tY8wB4cN6dF0gH1jK5lM9oP3qS7uV2wX4yZ8
+                claim:
+                  url: https://cafaye.com/agents/claim/cafaye_9bTf2NpQ7wRk4mXy6vLj1
+                  expires_at: '2026-10-10T12:00:00Z'
+        '400':
+          $ref: '#/components/responses/MalformedBody'
+        '413':
+          $ref: '#/components/responses/BodyTooLarge'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          description: |
+            No claim screen is configured (`AGENT_CLAIM_UI_URL` unset), so this
+            deployment cannot mint a link a human could open. Refused rather than
+            minted: an agent registered without a claim URL is an agent nobody can
+            ever finish claiming.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
+  /v1/agents/claim-link/refresh:
+    post:
+      tags: [agents]
+      operationId: refreshAgentClaimLink
+      summary: Reissue an agent's claim link without claiming it
+      description: |
+        Hands the calling agent a **fresh claim URL** and changes nothing else —
+        the agent stays unclaimed, keeps its id, name and every token it holds.
+
+        **Authenticated with the agent's own bearer token**, which resolves
+        through the agent table and not the account api-keys table even though
+        both begin `cafaye_`: an agent may refresh its own link precisely because
+        the credential it presents names a principal, and a principal that has
+        lost its link is the one thing this route exists to save. A token that
+        does not resolve — wrong, revoked, expired, or belonging to a disabled
+        principal — is the same 401 any unknown credential gets.
+
+        **A refresh against a CLAIMED agent is a 404**, not a new link: the status
+        guard refuses it, so "give me a new link" can never act as "claim me", and
+        the account that owns the agent manages its access through the account
+        surface instead. This is the whole of why refresh and claim are two verbs.
+
+        **The Idempotency-Key correlates, it does not cache.** It rides on the
+        refresh event so a client's retried burst reads as one intent in the audit
+        trail; every call still mints a NEW link (the previous one is spent by the
+        refresh that replaces it), which is the deliberate behaviour — a replayed
+        retry must not resurrect a link that has already been replaced.
+      security:
+        - bearerToken: []
+      responses:
+        '200':
+          description: The agent (still unclaimed) and its new claim link.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RefreshAgentClaimResponse'
+              example:
+                agent:
+                  id: ab000000-0000-0000-0000-0000000000a1
+                  name: Noel
+                  username: noel-7k3m2q
+                  status: unclaimed
+                claim:
+                  url: https://cafaye.com/agents/claim/cafaye_3hRk9wTq2pLm6xVy4nBj7
+                  expires_at: '2026-10-10T12:00:00Z'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '404':
+          description: |
+            The agent is already claimed (or was never this token's), so there is
+            no unclaimed link to refresh.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          description: No claim screen is configured (`AGENT_CLAIM_UI_URL` unset).
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
+  /v1/agents/tokens:
+    post:
+      tags: [agents]
+      operationId: mintAgentToken
+      summary: Mint a bearer token the agent holds
+      description: |
+        Mints a named bearer credential for the calling agent, in the same shape
+        `POST /v1/accounts/{account_id}/api-keys` renders its mint: an opaque
+        `cafaye_` token, SHA-256 at rest, revocable and expiring, with `token`
+        returned here and nowhere else.
+
+        **Authenticated with the agent's own bearer token**, and the credential it
+        mints belongs to that same principal — a request carries no `agent_id`,
+        because the token that authenticated it already names the agent and a body
+        field would let a caller mint for a principal it is not. "Scoped" here
+        means *held by one principal and revocable on it*; the per-capability scope
+        vocabulary for an agent token arrives with the routes it will gate, so a
+        token minted now does not yet gate any business route, only its own
+        management surface.
+
+        **One live token per name.** A second live token answering to `name` is a
+        409; rotate or revoke the old one first.
+
+        **`expires_in` is SECONDS from now**, the same name RFC 6749 uses. Omit it
+        for the default; `0`, a negative value or a value over the ceiling (365
+        days) is a 422, never "never expires".
+      security:
+        - bearerToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MintAgentTokenRequest'
+            examples:
+              default:
+                summary: a named token at the default lifetime
+                value:
+                  name: deploy
+              withALifetime:
+                summary: a short-lived token
+                value:
+                  name: ci
+                  expires_in: 3600
+      responses:
+        '201':
+          description: The credential and its secret. `token` appears only here.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IssuedAgentToken'
+              example:
+                id: ab000000-0000-0000-0000-0000000000b2
+                name: deploy
+                expires_at: '2027-01-08T12:00:00Z'
+                token: cafaye_4pLm9wTq2hRk6xVy3nBj7dF0gH1jK5lM9oP3qS7uV2wX4yZ8aB
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '409':
+          description: An active agent token with that name already exists.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '413':
+          $ref: '#/components/responses/BodyTooLarge'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    get:
+      tags: [agents]
+      operationId: listAgentTokens
+      summary: List the agent's bearer tokens
+      description: |
+        Every credential the calling agent holds, newest first, **revoked ones
+        included** — the same "was this withdrawn, or was it always broken?"
+        support question `GET /v1/accounts/{account_id}/api-keys` answers by
+        keeping the row.
+
+        **No token and no digest in the body.** There is no column holding the
+        plaintext, so there is nothing to leak; and the digest is of no use to a
+        client, so echoing it would put the row's most sensitive value in a log
+        for no gain. Tokens are distinguished by `name` and `id` and never by a
+        piece of themselves. An agent with none answers `[]` and not `null`.
+      security:
+        - bearerToken: []
+      responses:
+        '200':
+          description: The agent's credentials.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AgentToken'
+              example:
+                - id: ab000000-0000-0000-0000-0000000000b1
+                  name: bootstrap
+                  expires_at: '2027-01-08T12:00:00Z'
+                  created_at: '2026-10-01T12:00:00Z'
+                  last_used_at: '2026-10-02T09:14:00Z'
+                - id: ab000000-0000-0000-0000-0000000000b3
+                  name: old
+                  expires_at: '2026-11-01T12:00:00Z'
+                  created_at: '2026-10-01T12:05:00Z'
+                  revoked_at: '2026-10-02T09:00:00Z'
+                  revoke_reason: rotated
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /v1/agents/tokens/{token_id}:
+    parameters:
+      - name: token_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    delete:
+      tags: [agents]
+      operationId: revokeAgentToken
+      summary: Revoke one of the agent's bearer tokens
+      description: |
+        Withdraws one of the calling agent's credentials. The row is **kept**, not
+        deleted, so a later list can still say *withdrawn* rather than *never
+        existed* — the same reason `DELETE /v1/accounts/{account_id}/api-keys/{key_id}`
+        keeps its row. A second attempt on an already-revoked credential is a
+        409, so a client that clicked twice is not told a second revocation
+        succeeded.
+
+        An id that is not this agent's is the same 404 as one that does not exist:
+        the caller established the agent from its own credential, and a query that
+        named the agent again simply refuses a token that belongs to somebody
+        else. `{token_id}` in the path is never read before the credential gate
+        runs, so an anonymous request is a 401 and never a 404 that confirms the
+        id's shape.
+      security:
+        - bearerToken: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RevokeAgentTokenRequest'
+      responses:
+        '204':
+          description: The credential was withdrawn.
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '404':
+          description: No token matches that id for this agent.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          description: The credential is already revoked.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /v1/agents/tokens/{token_id}/rotate:
+    parameters:
+      - name: token_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      tags: [agents]
+      operationId: rotateAgentToken
+      summary: Rotate one of the agent's bearer tokens in place
+      description: |
+        Withdraws a credential and mints a new one of the **same name** in one
+        call, so there is no instant with no credential under that name and no
+        two-round-trip window in which a client can end up with none. The new
+        token's lifetime is fresh (`expires_in`, or the default); the name is
+        inherited from the one being rotated, which is why rotation needs no `name`
+        in the body.
+
+        The revocation of the old and the mint of the new are one transaction:
+        either the new token is handed back or the old one keeps working, never
+        neither. This is the same ergonomic as revoke-then-re-mint, without the
+        window.
+      security:
+        - bearerToken: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RotateAgentTokenRequest'
+      responses:
+        '201':
+          description: The replacement credential and its secret. `token` appears only here.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IssuedAgentToken'
+              example:
+                id: ab000000-0000-0000-0000-0000000000b4
+                name: deploy
+                expires_at: '2027-01-08T12:00:00Z'
+                token: cafaye_8wXy2dF0gH1jK5lM9oP3qS7uV2wX4yZ8aBcDeFgHjKmNpQrStUv
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '404':
+          description: No token matches that id for this agent.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          description: The credential is already revoked and cannot be rotated.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
   /v1/accounts/{account_id}/oidc-clients:
     parameters:
       - $ref: '#/components/parameters/AccountId'
@@ -6276,6 +6737,215 @@ components:
             a permanent credential is not something this build offers, and the
             ceiling is 365 days.
 
+    RegisterAgentRequest:
+      type: object
+      description: |
+        The body of `POST /v1/agents`. `name` is required and `username` is
+        optional, and the asymmetry is the design: the name is what the claim
+        screen shows a human; the handle is machine bookkeeping the service can
+        generate and retry, so it is optional and never refused for a collision —
+        only for a malformed shape, or for a deliberately-supplied handle that
+        survived every retry. An unknown field is a 422.
+      required: [name]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+          description: |
+            The display label a human reads on the claim screen, typed by whoever
+            registered the agent. Not unique — two agents called "Noel" are two
+            principals.
+        username:
+          type: string
+          minLength: 3
+          maxLength: 39
+          pattern: '^[a-z0-9][a-z0-9-]*[a-z0-9]$'
+          description: |
+            The globally-unique handle: lower-case letters, digits and single
+            dashes, not starting or ending with a dash. Omit it and one is
+            generated from `name`. A collision on a GENERATED handle is retried
+            under the hood and never surfaces; a malformed one — or a
+            deliberately-supplied one that survives the retry budget — is a 422
+            naming this field. This is not a way to probe which handles exist.
+        device:
+          type: object
+          description: |
+            The agent's own free-form description of itself (hostname, OS, model,
+            version — the set of keys is not fixed by this contract). Written
+            whole and rendered on the claim screen; never parsed by a route and
+            never filtered on.
+
+    RegisterAgentResponse:
+      type: object
+      description: |
+        The 201 from `POST /v1/agents`, in the shape `caf agent register` consumes:
+        the principal at `unclaimed`, the bootstrap token, and the claim URL. The
+        two secrets (`api_key.token` and `claim.url`) appear here and nowhere else.
+      required: [agent, api_key, claim]
+      properties:
+        agent:
+          $ref: '#/components/schemas/AgentSummary'
+        api_key:
+          $ref: '#/components/schemas/IssuedAgentToken'
+        claim:
+          $ref: '#/components/schemas/AgentClaim'
+
+    RefreshAgentClaimResponse:
+      type: object
+      description: |
+        The 200 from `POST /v1/agents/claim-link/refresh`: the agent (still
+        `unclaimed`) and its new claim link. No token — a refresh never mints a
+        bearer credential.
+      required: [agent, claim]
+      properties:
+        agent:
+          $ref: '#/components/schemas/AgentSummary'
+        claim:
+          $ref: '#/components/schemas/AgentClaim'
+
+    AgentSummary:
+      type: object
+      description: |
+        The principal as a response renders it. No claim digest and never a
+        token: a projection so a domain field cannot reach a body by being added.
+      required: [id, name, username, status]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        username:
+          type: string
+        status:
+          type: string
+          enum: [unclaimed, claimed, disabled]
+          description: |
+            Always `unclaimed` on registration. `claimed` once a human approves;
+            `disabled` when the owning account turns it off.
+
+    AgentClaim:
+      type: object
+      description: |
+        The claim link, rendered once. `url` is the absolute address a human opens;
+        the link is 256 bits of `cafaye_`-prefixed entropy whose SHA-256 is the
+        only part stored.
+      required: [url, expires_at]
+      properties:
+        url:
+          type: string
+          format: uri
+        expires_at:
+          type: string
+          format: date-time
+
+    AgentToken:
+      type: object
+      description: |
+        A bearer credential as the agent's management surface sees it: no token,
+        no digest. `last_used_at` is omitted when the credential has never been
+        used, and `revoked_at`/`revoke_reason` are present only on a withdrawn one.
+      required: [id, name, expires_at, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        last_used_at:
+          type: string
+          format: date-time
+        revoked_at:
+          type: string
+          format: date-time
+        revoke_reason:
+          type: string
+
+    IssuedAgentToken:
+      type: object
+      description: |
+        A freshly-minted bearer credential, and the ONLY shape with `token` on it.
+        Shown once at mint/rotate; there is no column holding the plaintext, so no
+        endpoint can print it again.
+      required: [id, name, expires_at, token]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+        token:
+          type: string
+          description: |
+            The credential: `cafaye_` followed by base64url random bytes. Shown
+            exactly once, here. Never in a cookie — a credential in a cookie is
+            one a browser silently attaches to a request its holder did not intend.
+
+    MintAgentTokenRequest:
+      type: object
+      description: |
+        **There is no `agent_id`.** The bearer token that authenticated the
+        request already names the agent, and a body field would let a caller mint
+        for a principal it is not. The credential inherits the caller's agent.
+      required: [name]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 80
+          description: |
+            Labels the credential, unique among the agent's LIVE tokens. Revoking
+            or rotating frees the name for reuse.
+        expires_in:
+          type: integer
+          format: int64
+          minimum: 1
+          description: |
+            **Seconds from now**, the same name and shape RFC 6749's token response
+            uses. Omit it for the 90-day default. `0` and negative values are 422:
+            a permanent credential is not something this build offers, and the
+            ceiling is 365 days.
+
+    RevokeAgentTokenRequest:
+      type: object
+      description: |
+        An optional body. The empty body is a revoke with no reason.
+      additionalProperties: false
+      properties:
+        reason:
+          type: string
+          maxLength: 500
+          description: |
+            Free text the agent may supply for its own audit trail. Stored on the
+            credential row, not in the platform event.
+
+    RotateAgentTokenRequest:
+      type: object
+      description: |
+        An optional body. The name is inherited from the credential being rotated,
+        which is why rotation carries no `name`.
+      additionalProperties: false
+      properties:
+        expires_in:
+          type: integer
+          format: int64
+          minimum: 1
+          description: |
+            **Seconds from now** for the NEW credential. Omit it for the 90-day
+            default; the lifetime restarts on rotation.
+
     MintSessionLinkRequest:
       type: object
       description: |
@@ -7552,6 +8222,35 @@ components:
           description: The dependencies probed, comma separated, or `none`. Present on `/readyz` only.
 
   responses:
+    RateLimited:
+      description: |
+        Too many requests from this client on this route: one answer, and it is
+        keyed on the client's source address and the route PATTERN — never on an
+        attempted account, agent or address — so the 429 is byte-identical whether
+        or not the thing being attempted exists. See `internal/httpapi/ratelimit.go`
+        for why the refusal comes AFTER the handler runs, and
+        `TestRateLimitingDoesNotBecomeAnEnumerationOracle` for the proof it is not
+        an oracle.
+      headers:
+        X-Trace-Id:
+          $ref: '#/components/headers/TraceId'
+        Retry-After:
+          description: Seconds remaining in the client's window, when the limiter knows it.
+          schema:
+            type: integer
+            minimum: 0
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: https://errors.cafaye.com/rate_limited
+            title: Too many requests
+            status: 429
+            detail: too many requests; slow down and try again later
+            instance: /v1/agents
+            code: rate_limited
+            trace_id: 0af7651916cd43dd8448eb211c80319c
     MailUnavailable:
       description: |
         This deployment has no mail delivery path, so it cannot send that link.

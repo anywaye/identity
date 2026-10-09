@@ -175,6 +175,29 @@ func (s *Service) IssueToken(ctx context.Context, in TokenInput) (IssuedToken, e
 	return IssuedToken{Token: token, Plaintext: value}, nil
 }
 
+// ListTokens returns the credentials an agent holds, newest first, revoked ones
+// included — the same "withdrawn, or always broken?" support question apikeys'
+// List answers by keeping the row. A read, not a mutation, and scoped by the agent
+// id the caller resolved rather than any path parameter.
+func (s *Service) ListTokens(ctx context.Context, agentID id.UUID) ([]Token, error) {
+	if agentID.IsZero() {
+		return []Token{}, nil
+	}
+	var out []Token
+	err := db.TxRunner{Pool: s.pool}.Do(ctx, func(ctx context.Context, tx db.Querier) error {
+		listed, err := s.store.ListTokensForAgent(ctx, tx, agentID)
+		if err != nil {
+			return err
+		}
+		out = listed
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // RevokeToken withdraws a named credential of an agent.
 //
 // SCOPED BY agent AS WELL AS id, on apikeys' argument: the caller has established
