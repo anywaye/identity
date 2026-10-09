@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"time"
 
 	"github.com/cafaye/identity/internal/agents"
 	"github.com/cafaye/identity/internal/platform/id"
@@ -27,6 +28,16 @@ type fakeAgents struct {
 	// err is returned on the next call, and nil is the default so the happy path
 	// needs no setup.
 	err error
+
+	// The W1-P2 fields, same err pattern per method so a test can drive a
+	// refusal, plus an optional authenticated owner and list result.
+	regErr     error
+	refreshErr error
+	authErr    error
+	tokenErr   error
+	listErr    error
+	owner      *agents.Owner
+	tokens     []agents.Token
 }
 
 func newFakeAgents() *fakeAgents { return &fakeAgents{} }
@@ -69,3 +80,136 @@ func (f *fakeAgents) lastCall() agents.ClaimInput {
 
 // count is how many times Claim was called.
 func (f *fakeAgents) count() int { return len(f.calls) }
+
+// --- the W1-P2 surface ------------------------------------------------
+//
+// These make the fake satisfy the whole Agents interface, which is what lets the
+// router walks (servedRoutes, mountedFamilyRoutes, walkOptions) MOUNT the
+// registration and token routes and therefore require their document entries and
+// enumeration-audit rows. Their behaviour is deliberately thin: the use cases have
+// their own tables in internal/agents, and this double's only obligation here is
+// that the surface is WIRED, not that it is correct.
+//
+// regErr is queued for the next Register, mirroring Claim's err, so a test can
+// drive the mapper's refusal arms.
+
+// Register mints a stand-in registration. It records nothing the assertion reads;
+// it exists so the route it mounts answers something shaped like production's.
+func (f *fakeAgents) Register(_ context.Context, in agents.RegisterInput) (agents.Registered, error) {
+	if f.regErr != nil {
+		return agents.Registered{}, f.regErr
+	}
+	now := in.Now
+	name := in.Name
+	if name == "" {
+		name = "agent"
+	}
+	return agents.Registered{
+		Agent: agents.Agent{
+			ID:       id.MustNew(),
+			Name:     name,
+			Username: in.Username,
+			Status:   agents.StatusUnclaimed,
+		},
+		Token: agents.Token{
+			ID:        id.MustNew(),
+			Name:      "bootstrap",
+			CreatedAt: now,
+			ExpiresAt: now.Add(time.Hour),
+		},
+		TokenPlaintext:     agents.Prefix + "fake-registration-token",
+		ClaimURL:           "https://cafaye.example/agents/claim/fake",
+		ClaimLinkExpiresAt: now.Add(time.Hour),
+	}, nil
+}
+
+// RefreshClaimLink hands back a fresh link without claiming, matching production's
+// refreshed shape.
+func (f *fakeAgents) RefreshClaimLink(_ context.Context, in agents.RefreshClaimInput) (agents.RefreshedClaim, error) {
+	if f.refreshErr != nil {
+		return agents.RefreshedClaim{}, f.refreshErr
+	}
+	return agents.RefreshedClaim{
+		Agent: agents.Agent{
+			ID:     id.MustNew(),
+			Name:   "Noel",
+			Status: agents.StatusUnclaimed,
+		},
+		ClaimURL:           "https://cafaye.example/agents/claim/fake-refresh",
+		ClaimLinkExpiresAt: in.Now.Add(time.Hour),
+	}, nil
+}
+
+// Authenticate resolves the bearer credential to an owner. With an authenticated
+// owner configured it returns it; otherwise it hands back an unclaimed principal,
+// which is what a freshly-registered agent's token resolves to.
+func (f *fakeAgents) Authenticate(_ context.Context, _ string, _ time.Time) (agents.Owner, error) {
+	if f.authErr != nil {
+		return agents.Owner{}, f.authErr
+	}
+	if f.owner != nil {
+		return *f.owner, nil
+	}
+	agentID := id.MustNew()
+	return agents.Owner{
+		Agent:   agents.Agent{ID: agentID, Name: "Noel", Status: agents.StatusUnclaimed},
+		Token:   agents.Token{ID: id.MustNew(), AgentID: agentID, Name: "bootstrap"},
+		ActorID: id.MustNew(),
+	}, nil
+}
+
+// IssueToken mints a stand-in credential.
+func (f *fakeAgents) IssueToken(_ context.Context, in agents.TokenInput) (agents.IssuedToken, error) {
+	if f.tokenErr != nil {
+		return agents.IssuedToken{}, f.tokenErr
+	}
+	return agents.IssuedToken{
+		Token: agents.Token{
+			ID:        id.MustNew(),
+			AgentID:   in.Agent,
+			Name:      in.Name,
+			CreatedAt: in.Now,
+			ExpiresAt: in.Now.Add(time.Hour),
+		},
+		Plaintext: agents.Prefix + "fake-agent-token",
+	}, nil
+}
+
+// ListTokens returns whatever the test queued.
+func (f *fakeAgents) ListTokens(_ context.Context, _ id.UUID) ([]agents.Token, error) {
+	return f.tokens, f.listErr
+}
+
+// RevokeToken returns the passed row on success.
+func (f *fakeAgents) RevokeToken(_ context.Context, _, tokenID id.UUID, _ string, _ string, _ time.Time) (agents.Token, error) {
+	if f.tokenErr != nil {
+		return agents.Token{}, f.tokenErr
+	}
+	return agents.Token{ID: tokenID, Name: "bootstrap"}, nil
+}
+
+// RotateToken mints a stand-in replacement.
+func (f *fakeAgents) RotateToken(_ context.Context, agentID, tokenID id.UUID, _ *time.Duration, _ string, now time.Time) (agents.IssuedToken, error) {
+	if f.tokenErr != nil {
+		return agents.IssuedToken{}, f.tokenErr
+	}
+	return agents.IssuedToken{
+		Token: agents.Token{
+			ID:        id.MustNew(),
+			AgentID:   agentID,
+			Name:      "bootstrap",
+			CreatedAt: now,
+			ExpiresAt: now.Add(time.Hour),
+		},
+		Plaintext: agents.Prefix + "fake-rotated-token",
+	}, nil
+}
+
+// failRegister queues an error for the next Register call.
+func (f *fakeAgents) failRegister(err error) { f.regErr = err }
+
+// failRefresh queues an error for the next RefreshClaimLink call.
+func (f *fakeAgents) failRefresh(err error) { f.refreshErr = err }
+
+// failAuth queues an error for the next Authenticate call.
+func (f *fakeAgents) failAuth(err error) { f.authErr = err }

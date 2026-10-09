@@ -28,11 +28,20 @@ import (
 type Service struct {
 	store *Store
 	pool  db.Pool
+	// claimUI is the absolute base the claim screen lives at, configured per
+	// deployment (AGENT_CLAIM_UI_URL) and never a default. Registration and the
+	// refresh both need it to render a claim URL; empty means both refuse rather
+	// than mint an unclaimable agent. See WithClaimUI.
+	claimUI string
 }
 
-// NewService returns a Service backed by pool.
-func NewService(pool db.Pool) *Service {
-	return &Service{store: NewStore(pool), pool: pool}
+// NewService returns a Service backed by pool, configured by opts.
+func NewService(pool db.Pool, opts ...ServiceOpt) *Service {
+	s := &Service{store: NewStore(pool), pool: pool}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // ClaimInput is what a claim needs, and every field is a decision about who

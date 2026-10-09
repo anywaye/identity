@@ -47,6 +47,26 @@ var errNoRows = pgx.ErrNoRows
 // rather than entropy.
 const ClaimLinkTTL = 24 * time.Hour
 
+// DefaultTokenTTL is how long an agent bearer token lives unless a caller asks
+// for a different lifetime.
+//
+// FAR LONGER THAN A SESSION AND BOUNDED, because of what an agent does with
+// it: the token goes straight to the OS keyring and is re-presented on every
+// request for the life of the agent, which may be months. It is NOT permanent —
+// the column's CHECK makes that true — and it is not short either, because a
+// credential the agent has to re-fetch every hour is a credential that ends up
+// in a transcript, which is invariant 1. Ninety days is the balance: long enough
+// that rotation is a deliberate act, short enough that a leaked token dies.
+//
+// This is a W1-P2 decision the migrations header deferred ("the scope vocabulary
+// for an agent token is W1-P2's to declare"); the lifetime is declared here, and
+// a caller may ask for less through the create route's expires_in.
+const DefaultTokenTTL = 90 * 24 * time.Hour
+
+// maxTokenLifetime caps a requested lifetime so a caller cannot mint an
+// effectively-permanent token by asking for a huge duration.
+const maxTokenLifetime = 365 * 24 * time.Hour
+
 // TokenTouchWindow is how stale `agent_tokens.last_used_at` may get before a
 // resolution writes it again.
 //
@@ -106,11 +126,27 @@ var (
 	// row id rather than returned bare, because a bare sentinel on a route that
 	// renders 404 for everything is a distinction nobody asked for.
 	ErrAlreadyRevoked = errors.New("agent token is already revoked")
+
+	// ErrUsernameTaken means the globally-unique handle a registration asked for
+	// is already held by another principal (migration 00034).
+	//
+	// Distinct from ErrNotFound and ErrNameTaken because the caller SUPPLIED this
+	// value and a 422 needs a field to name. The registration service generates
+	// its own handle and retries on this before it ever returns, so the only way
+	// a HANDLER sees it is a caller who chose a handle deliberately and lost the
+	// retry budget — and the answer there names `username` rather than pretending
+	// the request was unparseable.
+	ErrUsernameTaken = errors.New("that username is already registered")
 )
 
 // agentColumns is the select list, in the order scanAgent expects. One constant,
 // so a column added here cannot be present in one query and forgotten in another.
-const agentColumns = `id, name, status, claim_token_digest, claim_link_expires_at, ` +
+//
+// `username` sits right after `name` (migration 00034), and scanAgent reads it in
+// the same position: the column and the scan are one thing, and a reorder that
+// moved one without the other is a runtime scan error rather than a compile one —
+// which is why the constant exists.
+const agentColumns = `id, name, username, status, claim_token_digest, claim_link_expires_at, ` +
 	`claimed_by_account_id, claimed_at, device, created_at, updated_at`
 
 // tokenColumns is the same for agent_tokens.
@@ -143,6 +179,11 @@ type NewAgent struct {
 	// Name is what the human sees on the claim screen. 1..120 characters, which
 	// is the table's CHECK and not this store's opinion.
 	Name string
+	// Username is the globally-unique handle (migration 00034). The service
+	// normalises and, on a collision, retries with a fresh one before this ever
+	// reaches the store; the store just writes what it is given and turns a
+	// surviving collision into ErrUsernameTaken.
+	Username string
 	// Device is the agent's own description of itself, written whole as a
 	// document. The set of keys is a code fact (migrations/00027's argument), so
 	// this is a map and not four columns.
@@ -160,22 +201,45 @@ type NewAgent struct {
 }
 
 // Create inserts an unclaimed principal and its first claim link.
+//
+// ErrUsernameTaken is what a surviving username collision becomes. The service
+// retries before this, so the only way to see it is a caller supplying a handle
+// that was taken across the retry budget — which the HTTP layer answers without
+// ever having rendered the handle as "taken" on an answer an attacker can read.
+//
+// AN EMPTY USERNAME IS WRITTEN AS NULL, not as the empty string, because the
+// column is nullable and `”` is not a legal handle for the shape CHECK — the
+// distinction between "no handle" and "an empty handle" is database fact here
+// rather than something every caller has to remember to encode. A registration
+// through the service always generates a handle before it reaches this method, so
+// the NULL path is a caller that constructs NewAgent directly (a test, a repair
+// script) and not the production registration.
 func (s *Store) Create(ctx context.Context, q db.Querier, n NewAgent) (Agent, error) {
 	device, err := marshalDevice(n.Device)
 	if err != nil {
 		return Agent{}, err
 	}
 
+	var username any
+	if n.Username != "" {
+		username = n.Username
+	}
+
 	const query = `
-		INSERT INTO agents (name, device, claim_token_digest, claim_link_expires_at, created_at, updated_at)
-		VALUES ($1, $2::jsonb, $3, $4, $5, $5)
+		INSERT INTO agents (name, username, device, claim_token_digest, claim_link_expires_at, created_at, updated_at)
+		VALUES ($1, $2, $3::jsonb, $4, $5, $6, $6)
 		RETURNING ` + agentColumns
 
 	out, err := scanAgent(q.QueryRow(ctx, query,
-		n.Name, device, n.ClaimDigest, n.ClaimLinkExpiresAt, n.CreatedAt))
+		n.Name, username, device, n.ClaimDigest, n.ClaimLinkExpiresAt, n.CreatedAt))
 	if err != nil {
 		if errors.Is(err, errNoRows) {
 			return Agent{}, ErrNotFound
+		}
+		if isUniqueViolation(err) {
+			// The one caller-reachable unique violation on this table is the
+			// handle (00034); the claim digest's is a 256-bit bug, not a request.
+			return Agent{}, ErrUsernameTaken
 		}
 		return Agent{}, fmt.Errorf("agents: registering a principal: %w", err)
 	}
@@ -561,6 +625,71 @@ func (s *Store) ByTokenDigest(ctx context.Context, q db.Querier, digest string, 
 	return out, nil
 }
 
+// OwnerByTokenDigest resolves a presented credential to its token and the
+// principal it belongs to, for the AGENT'S OWN management surface — the routes an
+// agent reaches to refresh its claim link and to create/rotate/revoke its own
+// bearer tokens.
+//
+// THE DIFFERENCE FROM ByTokenDigest IS ONE MISSING FILTER, and it is the whole
+// reason this is a separate method rather than a boolean on the other. ByTokenDigest
+// requires `a.status = 'claimed'`, because it answers "may this credential act on
+// the platform" and a principal nobody has claimed may not. This method answers
+// "which principal is this, and what tokens does it hold" — a question a caller
+// must be able to ask while it is UNCLAIMED, because the first thing a freshly
+// registered agent does with its bootstrap token is ask that, and an agent whose
+// link expired needs it to mint a fresh one. Requiring claimed here would strand
+// exactly the agents the refresh route exists to save.
+//
+// What it STILL filters on is the pair that says something about the credential
+// itself rather than about the principal's place in the world:
+//
+//	the digest miss       never existed
+//	revoked_at IS NULL    withdrawn
+//	expires_at > now      spent
+//
+// A DISABLED principal is refused by the use cases that consult the status, not
+// here: the resolution is "who is this", and whether they may act is the next
+// question. The three that cannot be told apart from a stranger's guess produce
+// ErrNotFound exactly as they do on ByTokenDigest, and that is the property both
+// share — the read a stranger can perform tells them nothing beyond "this value
+// does not resolve".
+//
+// RETURNING THE STATUS is what lets the caller apply the right rule without a
+// second query: Resolved carries AgentStatus, and UsableAt/refresh check it from
+// there.
+func (s *Store) OwnerByTokenDigest(ctx context.Context, q db.Querier, digest string, now time.Time) (Resolved, error) {
+	if digest == "" {
+		return Resolved{}, ErrNotFound
+	}
+
+	var query = `
+		SELECT ` + prefixed("t", tokenColumns) + `, a.status
+		FROM agent_tokens t
+		JOIN agents a ON a.id = t.agent_id
+		WHERE t.token_digest = $1
+		  AND t.revoked_at IS NULL
+		  AND t.expires_at > $2`
+
+	var (
+		out    Resolved
+		status string
+	)
+	err := q.QueryRow(ctx, query, digest, now).Scan(
+		&out.ID, &out.AgentID, &out.Name, &out.TokenDigest,
+		&out.CreatedAt, &out.ExpiresAt, &out.LastUsedAt, &out.RevokedAt, &out.RevokedReason,
+		&status,
+	)
+	if errors.Is(err, errNoRows) {
+		return Resolved{}, ErrNotFound
+	}
+	if err != nil {
+		return Resolved{}, fmt.Errorf("agents: resolving an owner's credential: %w", err)
+	}
+
+	out.AgentStatus = status
+	return out, nil
+}
+
 // ByTokenID loads a credential by its row id, revoked or not.
 //
 // The opposite filter from ByTokenDigest on purpose: this is the management
@@ -700,14 +829,26 @@ type rowScanner interface {
 }
 
 func scanAgent(row rowScanner) (Agent, error) {
-	var a Agent
-	err := row.Scan(&a.ID, &a.Name, &a.Status, &a.ClaimTokenDigest, &a.ClaimLinkExpiresAt,
+	var (
+		a        Agent
+		username *string
+	)
+	err := row.Scan(&a.ID, &a.Name, &username, &a.Status, &a.ClaimTokenDigest, &a.ClaimLinkExpiresAt,
 		&a.ClaimedByAccountID, &a.ClaimedAt, &a.Device, &a.CreatedAt, &a.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, errNoRows) {
 			return Agent{}, errNoRows
 		}
 		return Agent{}, fmt.Errorf("agents: scanning a principal: %w", err)
+	}
+	// A NULL username folds to the empty string rather than refusing the scan,
+	// the same shape scanEvent gives a registration's null actor. The column is
+	// nullable (a writer that constructs NewAgent directly — W1-P1's store tests, a
+	// repair script — may omit the handle), and "no handle" and "a handle" are
+	// distinguished by the empty string here because a registration through the
+	// service always generates one and never reaches the NULL case.
+	if username != nil {
+		a.Username = *username
 	}
 	return a, nil
 }

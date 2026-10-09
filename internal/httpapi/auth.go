@@ -342,6 +342,13 @@ func (o options) registerRoutes(r chiRouter) {
 		o.registerTenancyRoutes(r)
 	}
 
+	// THE AGENT SURFACE'S PUBLIC AND SELF-SERVICE HALVES. Registration (anonymous,
+	// rate-limited) and the bearer-token lifecycle / claim-link refresh (agent
+	// credential, no account in the path) mount here, beside every other public
+	// route, because none of them is account-scoped — the account-scoped claim is
+	// registerTenancyRoutes' and stays there. See registerAgentPublicRoutes.
+	o.registerAgentPublicRoutes(r)
+
 	// The MFA management surface needs a key, which is why it is a separate Option
 	// from the challenge route above: absent without one, and absent rather than
 	// present-and-500.

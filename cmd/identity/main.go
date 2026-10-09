@@ -297,6 +297,11 @@ func newApp(ctx context.Context, cfg config.Config, logger *slog.Logger) (*app, 
 		"/v1/signup-timestamp":    {Max: cfg.RateLimit.SignupTimestamp, Window: cfg.RateLimit.Window},
 		"/v1/password-resets":     {Max: cfg.RateLimit.Recovery, Window: cfg.RateLimit.Window},
 		"/v1/email-verifications": {Max: cfg.RateLimit.Recovery, Window: cfg.RateLimit.Window},
+		// Agent self-registration: unauthenticated, and each call mints a bearer
+		// token AND a claim link, so it has its own (tighter) bound rather than
+		// borrowing Signup's. Keyed on the client and the route, like every other
+		// row here, so the 429 names nobody.
+		"/v1/agents": {Max: cfg.RateLimit.AgentRegister, Window: cfg.RateLimit.Window},
 	})))
 
 	// ONE HASHER FOR THE WHOLE PROCESS, and it is built here rather than inside
@@ -337,8 +342,11 @@ func newApp(ctx context.Context, cfg config.Config, logger *slog.Logger) (*app, 
 			// the recovery surface is: a claim is a capability this service has,
 			// and a 404 on it would tell a product identity has never heard of
 			// agents. The caller delivers the claim link themselves, so there is
-			// no mailer to be unavailable.
-			httpapi.WithAgents(agents.NewService(pool)),
+			// no mailer to be unavailable. WithClaimUI points registration's claim
+			// URLs at the configured screen (AGENT_CLAIM_UI_URL); an empty base
+			// leaves the route answering 503 rather than minting an unclaimable
+			// agent, which is the fail-closed direction.
+			httpapi.WithAgents(agents.NewService(pool, agents.WithClaimUI(cfg.AgentClaimUIURL))),
 			// The login's second step rides on WithAuth, because auth.Service is what
 			// mints the session behind it. Only the MANAGEMENT routes are conditional,
 			// and only on a usable key: such a process must not be able to enroll a

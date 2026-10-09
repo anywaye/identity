@@ -199,6 +199,7 @@ func TestLoad(t *testing.T) {
 					Signin:          defaultRateLimitSignin,
 					SignupTimestamp: defaultRateLimitSignupTimestamp,
 					Recovery:        defaultRateLimitRecovery,
+					AgentRegister:   defaultRateLimitAgentRegister,
 				}
 			}
 
@@ -484,6 +485,7 @@ func TestRateLimitBlockDefaultsAndOverrides(t *testing.T) {
 				Signin:          20,
 				SignupTimestamp: 30,
 				Recovery:        5,
+				AgentRegister:   5,
 			},
 		},
 		{
@@ -495,6 +497,7 @@ func TestRateLimitBlockDefaultsAndOverrides(t *testing.T) {
 				Signin:          20,
 				SignupTimestamp: 30,
 				Recovery:        5,
+				AgentRegister:   5,
 			},
 		},
 		{
@@ -503,6 +506,7 @@ func TestRateLimitBlockDefaultsAndOverrides(t *testing.T) {
 				"RATE_LIMIT_SIGNUP":           "50",
 				"RATE_LIMIT_SIGNIN":           "100",
 				"RATE_LIMIT_SIGNUP_TIMESTAMP": "200",
+				"RATE_LIMIT_AGENT_REGISTER":   "40",
 				"RATE_LIMIT_RECOVERY":         "25",
 			},
 			want: RateLimit{
@@ -511,6 +515,7 @@ func TestRateLimitBlockDefaultsAndOverrides(t *testing.T) {
 				Signin:          100,
 				SignupTimestamp: 200,
 				Recovery:        25,
+				AgentRegister:   40,
 			},
 		},
 		{
@@ -524,6 +529,7 @@ func TestRateLimitBlockDefaultsAndOverrides(t *testing.T) {
 				Signin:          20,
 				SignupTimestamp: 30,
 				Recovery:        1,
+				AgentRegister:   5,
 			},
 		},
 	}

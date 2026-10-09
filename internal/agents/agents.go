@@ -221,9 +221,17 @@ func NewToken() (token, digest string, err error) {
 // ClaimedByAccountID is nil while unclaimed and non-nil from the claim onwards,
 // including through a disable — the table's CHECK says so, so this struct does
 // not have to.
+//
+// Username is the HANDLE a registration chose for itself (migration 00034),
+// globally unique and lower-case. It is distinct from Name on purpose: Name is
+// the display label a human reads and it is NOT unique; Username is the handle
+// that must resolve to exactly one principal. It is set at registration and
+// never changes — a handle that moved would break every link already issued, the
+// same argument account slug makes — so there is no writer for it after Create.
 type Agent struct {
 	ID                 id.UUID
 	Name               string
+	Username           string
 	Status             string
 	ClaimTokenDigest   *string
 	ClaimLinkExpiresAt *time.Time

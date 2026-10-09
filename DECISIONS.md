@@ -1954,3 +1954,63 @@ tests all still hold.
   must also sign the person out is `identity-staff revoke` followed by the
   disable/enable pair, and whether that composition belongs in one command is
   the next packet's question.
+
+## D20: the agent handle is globally unique, registration never says "taken", and the claim screen base is configured per deployment
+
+**Raised** 2026-10-09 by packet `W1-P2`, the public agent registration and
+scoped-token lifecycle that `caf agent register` calls. Three decisions the
+packet had to make for `internal/agents` and `POST /v1/agents`, none of them
+settled by W1-P1 — 00031's "WHAT IS NOT HERE" listed `username` by name and
+said this packet would decide it.
+
+### The handle is GLOBALLY unique, and that is the retry's whole point
+
+- **A per-account unique handle was refused because it cannot fire on the rows
+  that need it.** An UNCLAIMED agent has no account, so `UNIQUE (account_id,
+  username)` with NULL accounts would collide on nothing (Postgres keeps NULLs
+  distinct) and "auto-generate with retry on conflict" would be arithmetic that
+  can never conflict. A global `UNIQUE (lower(username))` (migration 00034) is
+  the bound a generated handle runs into and the reason a retry mints a new
+  suffix. The display NAME stays non-unique, exactly as 00031 argued: two
+  agents called "Noel" are two principals.
+- **Registration never answers "is this handle taken", so it is not an
+  enumeration oracle.** A generated collision is retried inside one request; a
+  caller-supplied handle that collides is refused with a 422 naming
+  `username` — which tells the caller their own input collided, never which
+  handles are worth trying. There is no route anywhere that answers the
+  probe. `TestRegisterRetriesOnAUsernameCollisionWithoutDisclosingIt` and
+  `TestTheRegistrationRetriesAUsernameCollisionWithoutSayingTaken` hold the two
+  halves.
+- **A supplied handle is never silently swapped for a generated one.** The
+  prior-art CLI retried generated usernames client-side and never a supplied
+  one; the service copies that rule, so a caller who asked for `noel` and lost
+  it is told, not re-registered as `noel-7k3m2q`.
+
+### The claim screen base is configured, optional, and validated — D10 restated for the agent flow
+
+- **`AGENT_CLAIM_UI_URL` is the agent mirror of `OIDC_LOGIN_UI_URL`.** Identity
+  renders no HTML (D10), so the claim screen lives at another origin and this
+  base is the seam a registration builds its claim URL from
+  (`<base>/agents/claim/<link>`). It is validated with loginui's shape rules
+  (http/https, a host, no query/fragment/userinfo) but — unlike the login UI —
+  it is **optional**, because the agent surface is one a deployment may not have
+  turned on and failing every boot over a disabled feature is the overreach
+  `loadOIDC`'s own comment warns about.
+- **An empty base refuses registration with 503, never mints an unclaimable
+  agent.** A deployment that has not configured the screen is refused at the
+  first registration rather than left with a real user's agent that nobody can
+  finish claiming. The refresh route refuses the same way.
+
+### "Scoped token" means revocable-on-a-principal, not a scope array — yet
+
+- **Migration 00031 left `scopes` off `agent_tokens` by name** and said W1-P2
+  would declare the vocabulary "one name at a time against a route that exists".
+  The routes an agent token would gate — box enrollment, conductor
+  capabilities — do not exist yet (W1-P3/W2), so there is no vocabulary to fill
+  a column with, and inventing one now would be a promise about the future
+  rather than a control over the present. The token create/show/rotate/revoke
+  set in this packet manages the CREDENTIAL LIFECYCLE over the same SHA-256
+  storage W1-P1 landed; "scoped" is honest about its current reach — held by
+  one principal and revocable on it, resolved through the agent table rather
+  than api_keys. The scope column and its enforcement arrive with the first
+  route an agent token would gate.
