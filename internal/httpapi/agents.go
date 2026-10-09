@@ -4,9 +4,11 @@ package httpapi
 // GATE THAT CLOSES THEM TO A PRINCIPAL NOBODY HAS CLAIMED.
 //
 //	POST /v1/accounts/{accountID}/agents/claim  {token}  →  200 {agent, token}
+//	GET  /v1/agents/claim/{token}                the PREVIEW the claim screen renders
 //	POST /v1/agents                              public registration (W1-P2)
 //	POST /v1/agents/claim-link/refresh           the ONE thing an unclaimed agent may do
 //	POST /v1/agents/tokens …                     the self-service token lifecycle
+//	GET  /v1/agents/home                         who this agent is (`caf agent whoami`)
 //
 // THE ACCOUNT-SCOPED CLAIM is W1-P1's route, and since W2-P2 it also mints the
 // bearer credential the agent presents from then on — see `Claim` in
@@ -80,6 +82,12 @@ import (
 // for the walk to read a smaller service than the one that runs.
 type Agents interface {
 	Claim(ctx context.Context, in agents.ClaimInput) (agents.Claimed, error)
+
+	// PreviewClaim resolves a live claim link to the unclaimed agent it names,
+	// for the claim screen's first frame. It is a READ: no claim, no credential,
+	// no event row — see internal/agents' preview.go for why it is a separate
+	// method rather than a flag on Claim, which mints.
+	PreviewClaim(ctx context.Context, in agents.PreviewInput) (agents.ClaimPreview, error)
 
 	// Register mints an unclaimed principal, its bootstrap token and its first
 	// claim link. Public and unauthenticated: the caller has no credential, which
@@ -307,6 +315,133 @@ func (o options) writeAgentClaimError(w http.ResponseWriter, r *http.Request, er
 	}
 }
 
+// ---------------------------------------------------------------------------
+// the claim preview — the read the claim screen makes before anybody approves
+// ---------------------------------------------------------------------------
+
+// agentClaimPreviewResponse is the 200 from GET /v1/agents/claim/{token}, and it
+// is the shape the website's claim screen renders: `AgentClaim` in
+// website/src/lib/identity.ts, consumed by `useAgentClaimPreview` and the screen
+// at src/app/agents/claim/[token]. Every field name here is a field that screen
+// reads, and the seven are the whole of it.
+//
+// THE FIELDS ARE FLAT BECAUSE THE SCREEN READS THEM FLAT. `created_at` and
+// `claim_expires_at` are rendered as instants on the screen ("Registered",
+// "Link works until") and `device` is iterated into a fact list, so a nested
+// wrapper would be a body the client's own reader would not find.
+//
+// WHAT IS NOT HERE, and each absence is a decision:
+//
+//   - no `claimed_at` and no `claimed_by_account_id`. An UNCLAIMED link's agent
+//     has neither, and a field that is always null is a field a client starts to
+//     read as a signal.
+//   - no `claim_token_digest`. The digest is not the credential — the client
+//     already holds that in the URL it is looking at — and a response that echoed
+//     a digest would be teaching clients to compare one.
+//   - no token, no session, no scope. A preview mints nothing and claims
+//     nothing, and a body that carried a credential would be the second half of
+//     that bug.
+type agentClaimPreviewResponse struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Username string `json:"username"`
+	Status   string `json:"status"`
+	// CreatedAt is when the agent registered, and it is the ONE instant about
+	// the agent the screen shows. RFC 3339 for the reason claimAgentResponse
+	// gives: no location surprises in the JSON.
+	CreatedAt string `json:"created_at"`
+	// Device is the agent's own self-description, written whole at registration
+	// as a JSON object with no schema behind it. It is passed through rather than
+	// projected because the keys are the agent's own vocabulary and this service
+	// does not know them; the website's reader keeps the string values and skips
+	// the rest, so a non-string value produces a shorter fact list rather than a
+	// wrong one. A nil map renders as {} and not null, because "the agent told us
+	// nothing about itself" is a fact an empty document says.
+	Device map[string]any `json:"device"`
+	// ClaimExpiresAt is when the LINK stops working, and it is a fact about the
+	// link rather than about the agent. It is here so the screen can say "Link
+	// works until", and it is here rather than on the agent for the reason
+	// ClaimPreview keeps it beside one. When it passes, the same collapsed 404
+	// arrives — so there is nothing to count down to, and nothing in this field
+	// that names which of the four reasons a dead link is dead.
+	ClaimExpiresAt string `json:"claim_expires_at"`
+}
+
+// handleAgentClaimPreview renders the claim screen's first frame.
+//
+//	GET /v1/agents/claim/{token}  →  200 {id, name, username, status, created_at, device, claim_expires_at}
+//	→  404 the link is wrong, expired, or spent — one answer for all of them
+//
+// # IT IS ANONYMOUS, AND THAT IS NOT AN OVERSIGHT
+//
+// The claim link is the credential. The screen a human opens before they have
+// signed in has to say whose agent it is, and there is no other bearer value in
+// that request to identify them with. This is the same arrangement an invitation
+// redemption has, and the same bound: 200 for a link that is live and unclaimed,
+// one 404 for everything else.
+//
+// # IT DOES NOT CLAIM AND IT DOES NOT MINT
+//
+// The use case is a read — `PreviewClaim` has no access to the credential
+// machinery at all — so the worst this handler can do is tell somebody about an
+// agent whose own registration they already hold a 256-bit secret for. The proof
+// is behavioural rather than a comment: the integration test claims a live link
+// AFTER the preview has read it and asserts the link still works, which is the
+// only statement that a preview cannot be spending anything.
+func (o options) handleAgentClaimPreview(w http.ResponseWriter, r *http.Request) {
+	preview, err := o.agents.PreviewClaim(r.Context(), agents.PreviewInput{
+		Token:   chi.URLParam(r, agentClaimTokenParam),
+		TraceID: traceIDFrom(r.Context()),
+		Now:     o.clk.Now(),
+	})
+	if err != nil {
+		o.writeAgentClaimError(w, r, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, agentClaimPreviewResponse{
+		ID:       preview.Agent.ID.String(),
+		Name:     preview.Agent.Name,
+		Username: preview.Agent.Username,
+		Status:   preview.Agent.Status,
+		// A registration always stamps created_at, and the statement is the
+		// table's rather than this handler's. Rendered from the row rather than
+		// from the request's clock: "when did this agent register" is a fact
+		// about the row, and a response that answered it with `now` would be one
+		// that changes every time the screen reloads.
+		CreatedAt: preview.Agent.CreatedAt.UTC().Format(time.RFC3339),
+		// The nil map is normalised here rather than passed through, because a
+		// JSON null is a different answer from an empty document to a client
+		// that iterates it.
+		Device:         normaliseDevice(preview.Agent.Device),
+		ClaimExpiresAt: preview.ClaimLinkExpiresAt.UTC().Format(time.RFC3339),
+	})
+}
+
+// normaliseDevice renders the device document for the wire: nil becomes {}.
+//
+// An empty map is what the store writes for an agent that described itself with
+// nothing, so nil reaching this function means a row written before that
+// normalisation or by a repair script. Rendering it as null would be the only
+// case where the two disagree.
+func normaliseDevice(device map[string]any) map[string]any {
+	if device == nil {
+		return map[string]any{}
+	}
+	return device
+}
+
+// agentClaimTokenParam is the chi URL parameter naming the claim link.
+//
+// IT IS A CREDENTIAL AND NOT AN IDENTIFIER, and the name says so: the path
+// segment is a 256-bit secret this service issued, not a row id anybody could
+// enumerate. Nothing parses it — the use case digests it and the store looks up
+// the digest — so a malformed segment is simply a digest that matches nothing,
+// which is one 404 and not a 422. A 422 for a short token and a 404 for a long
+// one would be a length oracle for a credential, which is the exact thing the
+// route exists not to be.
+const agentClaimTokenParam = "token"
+
 // ===========================================================================
 // W1-P2: the public registration, the claim-link refresh, and the bearer-token
 // lifecycle. The account-scoped claim above is W1-P1's; everything below is the
@@ -345,6 +480,29 @@ func (o options) registerAgentPublicRoutes(r chiRouter) {
 	// and decides afterwards, so a burst still pays the mint cost before being
 	// refused, which is the bound this repository picked over a timing oracle.
 	r.Post("/v1/agents", o.rateLimit("/v1/agents", o.handleRegisterAgent))
+
+	// THE CLAIM PREVIEW. ANONYMOUS — the claim link IS the credential, exactly as
+	// an invitation token is — and it answers the claim screen's first frame
+	// before a human has signed in, so there is no session to gate it with.
+	//
+	// IT IS RATE-LIMITED ON THE SAME TERMS THE REGISTRATION IS, and the reason is
+	// specific to this route rather than inherited: it is the one unauthenticated
+	// path that spends a database read per request. The claim screen loads it
+	// once; a scanner loads it as often as it likes, and an unbounded anonymous
+	// read is how an endpoint nobody authenticated becomes the one that finds the
+	// database. The key is the client and the route, never a token, so the 429 is
+	// identical for everybody and discloses nothing about the link.
+	r.Get("/v1/agents/claim/{token}",
+		o.rateLimit("/v1/agents/claim/{token}", o.handleAgentClaimPreview))
+
+	// THE HOME. Who this credential is, answered to the agent itself. It is
+	// `agentCredentialOnly` and NOT `agentClaimedOnly`, and that is the whole
+	// reason it is its own route rather than a field on the token lifecycle: `caf
+	// agent whoami` is the verb an agent that registered itself runs to find out
+	// whether anybody has claimed it yet, and a 403 there would answer "you are
+	// not claimed" by refusing to say who you are at all. The status is the
+	// answer, and an unclaimed principal is entitled to hear it about itself.
+	r.Get("/v1/agents/home", o.agentCredentialOnly(o.handleAgentHome))
 
 	// THE REFRESH AND THE TOKENS are the SELF-SERVICE surface: agentCredentialOnly
 	// resolves the presented bearer credential to its principal, so each handler
@@ -749,6 +907,107 @@ func (o options) handleRefreshAgentClaimLink(w http.ResponseWriter, r *http.Requ
 type refreshAgentClaimResponse struct {
 	Agent agentSummary `json:"agent"`
 	Claim agentClaim   `json:"claim"`
+}
+
+// ---------------------------------------------------------------------------
+// the home — who this credential is, answered to the agent itself
+// ---------------------------------------------------------------------------
+
+// agentHomeResponse is the 200 from GET /v1/agents/home, and it is the shape `caf
+// agent whoami` reads.
+//
+// THE SHAPE IS FLAT AND `status` IS AT THE TOP LEVEL, and that is a constraint
+// from the client rather than a preference: caf's `Home` is a
+// `map[string]any` whose one typed read is `home["status"]`
+// (caf/internal/agent/store.go, in `WhoAmI`), where the remote answer's word
+// overrides the CLI's local cache. A body that nested the agent under an
+// `agent` key would leave that read answering "no status" and the CLI would keep
+// whatever stale value it had cached — which is the exact defect the comment
+// beside that read says it is avoiding. Everything else on this type is what the
+// brief names: the agent's identity, its status, and the account that claimed it.
+//
+// WHAT IS NOT HERE, and the omissions are the point of a "who am I" route:
+//
+//   - no token and no digest. The credential presented is already the caller's,
+//     and a route that re-rendered one would be a second copy of a secret this
+//     repository insists crosses a boundary once.
+//   - no event trail, no `last_used_at`, no credential list. The token lifecycle
+//     answers those to the same credential; `home` is the one-line answer.
+//   - nothing about the ACCOUNT beyond its row id. Not its name, not its
+//     members, not its slug: an agent knows which account claimed it and does
+//     not get to read that account through this route. The id is what the claim
+//     wrote and what the agent's own link resolved to.
+type agentHomeResponse struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Username string `json:"username"`
+	// Status is the lifecycle word the CLI switches on: unclaimed, claimed or
+	// disabled. It is the server's own answer, which is what makes `whoami` a
+	// proof that the token works rather than a cache read.
+	Status string `json:"status"`
+	// Claimed is whether a human account has ever bound this principal, and it
+	// is a bool rather than a null id because "was this claimed" is the ownership
+	// question. A DISABLED AGENT IS CLAIMED — Agent.IsClaimed says so and this
+	// field is that method rendered — so a disabled principal answers true here
+	// and `unclaimed` is false only for an agent nobody has bound.
+	Claimed bool `json:"claimed"`
+	// ClaimedByAccountID is nil while unclaimed and set from the claim onwards,
+	// rendered as a string id when present and omitted otherwise. A pointer
+	// rather than "" because "" is not a uuid and a client parsing one gets an
+	// error rather than "no account".
+	ClaimedByAccountID *string `json:"claimed_by_account_id,omitempty"`
+	// ClaimedAt is when the binding happened, omitted while unclaimed.
+	ClaimedAt *string `json:"claimed_at,omitempty"`
+}
+
+// handleAgentHome answers who the presented credential is.
+//
+//	GET /v1/agents/home  (agent bearer)  →  200 {id, name, username, status, claimed, claimed_by_account_id?}
+//	→  401 the credential does not resolve
+//
+// # WHY IT IS NOT `agentClaimedOnly`
+//
+// `caf agent whoami` is the verb an agent runs to find out whether anybody has
+// claimed it. Gating the route behind RequireClaimed would answer "you are not
+// claimed" by refusing to name the caller at all — a 403 that says nothing about
+// who asked. So the gate is `agentCredentialOnly`, the same one the claim-link
+// refresh uses, and the STATUS is the answer. An unclaimed principal is entitled
+// to hear about itself; what it is not entitled to do anything (`agentClaimedOnly`,
+// D4) is a separate question asked on separate routes.
+//
+// # WHY IT NEEDS NO SERVICE CALL
+//
+// `agentCredentialOnly` already resolved the credential through
+// `Authenticate`, which re-reads the principal row. A second lookup would be a
+// second thing to get stale, and a "who am I" that disagrees with the credential
+// that asked is worse than one that reads the row the gate just read. So the
+// handler renders the owner the gate placed on the context, exactly as
+// `handleRefreshAgentClaimLink` does.
+func (o options) handleAgentHome(w http.ResponseWriter, r *http.Request) {
+	owner, ok := agentFrom(r.Context())
+	if !ok {
+		// Unreachable: agentCredentialOnly places the owner before this runs.
+		unauthorized(w, r)
+		return
+	}
+
+	out := agentHomeResponse{
+		ID:       owner.Agent.ID.String(),
+		Name:     owner.Agent.Name,
+		Username: owner.Agent.Username,
+		Status:   owner.Agent.Status,
+		Claimed:  owner.Agent.IsClaimed(),
+	}
+	if owner.Agent.ClaimedByAccountID != nil {
+		account := owner.Agent.ClaimedByAccountID.String()
+		out.ClaimedByAccountID = &account
+	}
+	if owner.Agent.ClaimedAt != nil {
+		at := owner.Agent.ClaimedAt.UTC().Format(time.RFC3339)
+		out.ClaimedAt = &at
+	}
+
+	writeJSON(w, http.StatusOK, out)
 }
 
 // ---------------------------------------------------------------------------

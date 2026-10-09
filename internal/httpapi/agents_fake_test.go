@@ -38,6 +38,11 @@ type fakeAgents struct {
 	listErr    error
 	owner      *agents.Owner
 	tokens     []agents.Token
+
+	// The claim preview's queued error and results, same pattern as the token
+	// lifecycle's, so a test can drive the collapsed 404 and the 200 shape.
+	previewErr error
+	previews   []agents.ClaimPreview
 }
 
 func newFakeAgents() *fakeAgents { return &fakeAgents{} }
@@ -80,6 +85,37 @@ func (f *fakeAgents) lastCall() agents.ClaimInput {
 
 // count is how many times Claim was called.
 func (f *fakeAgents) count() int { return len(f.calls) }
+
+// --- the claim preview ------------------------------------------------
+
+// PreviewClaim resolves a presented claim link to an unclaimed agent.
+//
+// THE DEFAULT IS ErrNotFound AND THAT IS THE FAITHFUL DEFAULT, not a shortcut.
+// Production resolves a claim link through the store's own ByClaimDigest, which
+// filters the digest, the status AND the expiry in one statement, so a link
+// nobody set up does not resolve — every time. A double that answered a happy
+// path for any segment would be a double that made the route's collapsed 404
+// unreachable, and the census's own probe (`TestEveryAuditedRouteStillAnswersWhatItsRowSays`,
+// which asks for a link it did not create) would then be answered 200 and the
+// audit row would have to be rewritten to describe a lie. So: a link a test
+// queues resolves, and anything else is one 404, exactly as on the claim route.
+func (f *fakeAgents) PreviewClaim(_ context.Context, in agents.PreviewInput) (agents.ClaimPreview, error) {
+	if f.previewErr != nil {
+		return agents.ClaimPreview{}, f.previewErr
+	}
+	if len(f.previews) > 0 {
+		out := f.previews[0]
+		f.previews = f.previews[1:]
+		return out, nil
+	}
+	return agents.ClaimPreview{}, agents.ErrNotFound
+}
+
+// queuePreview queues the resolved claim a PreviewClaim call will return.
+func (f *fakeAgents) queuePreview(p agents.ClaimPreview) { f.previews = append(f.previews, p) }
+
+// failPreview queues an error for the next PreviewClaim call.
+func (f *fakeAgents) failPreview(err error) { f.previewErr = err }
 
 // --- the W1-P2 surface ------------------------------------------------
 //

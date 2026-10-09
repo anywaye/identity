@@ -3971,6 +3971,185 @@ paths:
               schema:
                 $ref: '#/components/schemas/Problem'
 
+  # THE CLAIM PREVIEW — the read a claim screen makes BEFORE anybody approves.
+  #
+  # It is anonymous, and that is not an oversight: the link in the path IS the
+  # credential, exactly as an invitation token is, and the screen a human opens
+  # before they have signed in still has to say whose agent it is. There is no
+  # other bearer value in that request to identify them with.
+  #
+  # IT READS AND IT DOES NOTHING. No claim, no credential, no event row — see
+  # AgentClaimPreview for the seven fields and what each one costs.
+  #
+  # THE 404 IS ONE SHAPE AND SAYS NOTHING: the same collapse the claim route
+  # makes, because the read is the store's own ByClaimDigest and it filters the
+  # digest, the status AND the expiry in one statement. A wrong token, an expired
+  # link, an already-claimed agent and an agent that never existed are one
+  # answer, so a guessed link says nothing about which agent it might have been.
+  # No 410 (which would say the link was real), no 409 (which would say the agent
+  # is taken).
+  /v1/agents/claim/{token}:
+    get:
+      tags: [agents]
+      operationId: getAgentClaimPreview
+      summary: Preview what an agent claim link is for
+      description: |
+        The step-② read: **the agent's name, when it registered, and the device
+        document it described itself with** — the first frame of the claim screen,
+        rendered before a human has signed in. This is what
+        `getAgentClaim` in the website's `src/lib/identity.ts` calls.
+
+        **Anonymous and unauthenticated, and rate-limited** on the same terms
+        `POST /v1/agents` is. The claim link in the path is the credential: it is
+        256 bits of `cafaye_`-prefixed entropy whose SHA-256 is the only part
+        stored, and guessing it is not a search anybody can run — which is what
+        makes the one bit a 200 discloses affordable. The limiter's key is the
+        client and the route and never a token, so a 429 is identical for
+        everybody and discloses nothing about the link.
+
+        **A preview does not claim and does not mint.** The use case is a read
+        with no access to the credential machinery at all, so the worst this
+        route can do is describe an agent whose own registration the caller
+        already holds a 256-bit secret for. Nothing is written — no
+        `agent_events` row either, because a preview is a page load and not an
+        act.
+
+        **A live link is the ONLY thing that answers 200.** A wrong token, an
+        expired link, an already-claimed agent and an agent that was never issued
+        are one `404 not_found` with one sentence, and the sentence does not say
+        which: the underlying read filters the digest, the status and the expiry
+        together, exactly as the claim that follows does. There is no 410 and no
+        409, and the response does not vary with time in a way a caller could
+        measure.
+
+        **The token in the path is a credential and not an identifier.** Nothing
+        parses it, so a malformed segment is simply a digest that matches
+        nothing — one 404, never a 422. A 422 for a short token and a 404 for a
+        long one would be a length oracle for a credential.
+      security: []
+      responses:
+        '200':
+          description: |
+            The unclaimed agent the link names, and when the link stops working.
+            `device` is the agent's own free-form document and carries no schema:
+            the keys are its vocabulary, and a value that is not a string is
+            rendered by the client as an absent fact rather than as a guess.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentClaimPreview'
+              example:
+                id: ab000000-0000-0000-0000-0000000000a1
+                name: Noel
+                username: noel-7k3m2q
+                status: unclaimed
+                created_at: '2026-10-09T12:00:00Z'
+                device:
+                  host: noels-macbook
+                  os: darwin
+                  arch: arm64
+                claim_expires_at: '2026-10-10T12:00:00Z'
+        '404':
+          description: |
+            One answer for a wrong token, an expired link, an already-claimed
+            agent and an agent that was never issued. `not_found`, one sentence,
+            and nothing in it names which.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              example:
+                type: https://cafaye.com/problems/not-found
+                title: Not Found
+                status: 404
+                detail: no agent matches that claim link
+                code: not_found
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # THE HOME — who the presented credential is, answered to the agent itself.
+  #
+  # `caf agent whoami` calls it. It is the agent-surface mirror of `GET /v1/me`,
+  # and it is the ONE route on the surface that is gated by `agentCredentialOnly`
+  # rather than `agentClaimedOnly` on purpose: an agent that registered itself
+  # runs whoami to find out whether anybody has claimed it, and a 403 there
+  # would answer "you are not claimed" by refusing to say who is asking.
+  /v1/agents/home:
+    get:
+      tags: [agents]
+      operationId: getAgentHome
+      summary: Who this agent credential is
+      description: |
+        **The `caf agent whoami` read**, and the proof that a credential works:
+        the answer is the server's own word about the principal the bearer token
+        resolved to, read fresh rather than served out of the client's cache.
+
+        **Authenticated with the agent's own bearer token** — the same `cafaye_`
+        value the registration or the claim minted, resolving against the agent
+        table and not the account api-keys table. A token that does not resolve —
+        wrong, revoked, expired, or belonging to a disabled principal — is the
+        same 401 an unknown credential gets, and there is no path parameter a
+        stranger could point at anybody else's agent.
+
+        **Open to an UNCLAIMED principal, and that is the whole point.** The
+        response carries `claimed: false` and no account, which is the answer
+        `caf agent whoami` exists to read. D4 keeps an unclaimed agent from
+        *acting* — the routes that act are behind `agentClaimedOnly` — and it does
+        not keep an agent from knowing who it is.
+
+        **An agent is told about itself and about nothing else.** The body is its
+        own identity, its status and the account that claimed it, by row id. Not
+        the account's name or members: an agent knows which account claimed it
+        and does not read that account through this route. No token and no
+        digest, and no event trail — the token lifecycle answers those to the
+        same credential.
+      security:
+        - bearerToken: []
+      responses:
+        '200':
+          description: |
+            The principal behind the presented credential: its identity, its
+            lifecycle status, and — once a human has claimed it — the account that
+            did and when.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentHome'
+              examples:
+                claimed:
+                  summary: a claimed agent, and the account behind it
+                  value:
+                    id: ab000000-0000-0000-0000-0000000000a1
+                    name: Noel
+                    username: noel-7k3m2q
+                    status: claimed
+                    claimed: true
+                    claimed_by_account_id: 0f000000-0000-0000-0000-0000000000c1
+                    claimed_at: '2026-10-09T12:34:56Z'
+                unclaimed:
+                  summary: an agent nobody has claimed yet
+                  value:
+                    id: ab000000-0000-0000-0000-0000000000a1
+                    name: Noel
+                    username: noel-7k3m2q
+                    status: unclaimed
+                    claimed: false
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
   /v1/agents/claim-link/refresh:
     post:
       tags: [agents]
@@ -6886,6 +7065,121 @@ components:
           $ref: '#/components/schemas/AgentSummary'
         claim:
           $ref: '#/components/schemas/AgentClaim'
+
+    AgentClaimPreview:
+      type: object
+      description: |
+        The 200 from `GET /v1/agents/claim/{token}`, and the whole of what a live
+        claim link reveals: the principal's identity, when it registered, what it
+        said about itself, and when its link stops working. It is the shape the
+        website's claim screen reads (`AgentClaim` in `src/lib/identity.ts`,
+        consumed by `useAgentClaimPreview`), so the fields are FLAT — the screen
+        renders `created_at` and `claim_expires_at` as instants and iterates
+        `device` into a fact list.
+
+        **A preview, and the name says it.** No token, no session, no scope, and
+        no credential of any kind. It is a read: the use case has no access to the
+        credential machinery, and a 200 here changes nothing.
+
+        WHAT IS NOT HERE: `claimed_at` and `claimed_by_account_id`. The agent a
+        live link names is unclaimed by definition — the underlying read filters
+        on the status — so a field that is always null is a field a client starts
+        reading as a signal. The claim's own response carries those; this one
+        cannot.
+      required: [id, name, username, status, created_at, device, claim_expires_at]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: The principal the link names.
+        name:
+          type: string
+          description: The display label a human reads. Not unique.
+        username:
+          type: string
+          description: The globally-unique handle the registration chose or generated.
+        status:
+          type: string
+          enum: [unclaimed, claimed, disabled]
+          description: |
+            Always `unclaimed` on this response: a live claim link resolves only
+            while the principal is unclaimed, so the other two labels are
+            unreachable here. It is present rather than omitted so a client can
+            render one field rather than special-case its absence.
+        created_at:
+          type: string
+          format: date-time
+          description: |
+            When the agent registered — a fact about the row, not about the
+            request, so it does not change as the screen reloads.
+        device:
+          type: object
+          description: |
+            The agent's own free-form description of itself, written whole at
+            registration. **No schema**: the keys are the agent's vocabulary, and
+            the values are whatever type it chose. A client keeps the string
+            values and skips the rest, so a non-string value renders as an absent
+            fact rather than as a guess; a `{}` means the agent described itself
+            with nothing.
+          additionalProperties: true
+        claim_expires_at:
+          type: string
+          format: date-time
+          description: |
+            When the LINK stops working — a fact about the credential, not about
+            the agent, which is why it is here rather than on the principal. It is
+            rendered as a fact and never as a countdown: when it passes, the same
+            collapsed 404 arrives, so there is nothing to count down to.
+
+    AgentHome:
+      type: object
+      description: |
+        The 200 from `GET /v1/agents/home`, and the answer to `caf agent
+        whoami`. The fields are FLAT and `status` is at the top level because
+        that is what the client reads: the CLI's `Home` is a pass-through
+        document whose one typed field is `status`, where the server's word
+        overrides the client's cached copy. A body that nested the principal
+        would leave that read answering "no status".
+
+        **An agent is told about itself and about nothing else.** Its identity,
+        its lifecycle status, and the account that claimed it — by row id. Not
+        the account's name, members or slug: this route does not read the account
+        through an agent's credential. No token, no digest, and no event trail.
+      required: [id, name, username, status, claimed]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        username:
+          type: string
+        status:
+          type: string
+          enum: [unclaimed, claimed, disabled]
+          description: |
+            The lifecycle word the CLI switches on. It is the server's own answer,
+            which is what makes `whoami` a proof that the token works rather than
+            a cache read.
+        claimed:
+          type: boolean
+          description: |
+            Whether a human account has ever bound this principal, and it is the
+            ownership question rather than the liveness one: **a disabled agent is
+            claimed**, so `false` answers only "nobody has bound this". Omitted
+            fields below are absent rather than null for the same reason — "" is
+            not a uuid and a client parsing one gets an error rather than "no
+            account".
+        claimed_by_account_id:
+          type: string
+          format: uuid
+          description: The account that claimed this agent. Absent while unclaimed.
+        claimed_at:
+          type: string
+          format: date-time
+          description: When the binding happened. Absent while unclaimed.
 
     AgentSummary:
       type: object
