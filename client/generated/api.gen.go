@@ -90,27 +90,6 @@ func (e AccountRole) Valid() bool {
 	}
 }
 
-// Defines values for AgentStatus.
-const (
-	AgentStatusClaimed   AgentStatus = "claimed"
-	AgentStatusDisabled  AgentStatus = "disabled"
-	AgentStatusUnclaimed AgentStatus = "unclaimed"
-)
-
-// Valid indicates whether the value is a known member of the AgentStatus enum.
-func (e AgentStatus) Valid() bool {
-	switch e {
-	case AgentStatusClaimed:
-		return true
-	case AgentStatusDisabled:
-		return true
-	case AgentStatusUnclaimed:
-		return true
-	default:
-		return false
-	}
-}
-
 // Defines values for AgentSummaryStatus.
 const (
 	AgentSummaryStatusClaimed   AgentSummaryStatus = "claimed"
@@ -159,6 +138,21 @@ const (
 func (e BulkInvitationRevocationConfirm) Valid() bool {
 	switch e {
 	case BulkInvitationRevocationConfirmTrue:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ClaimedAgentStatus.
+const (
+	ClaimedAgentStatusClaimed ClaimedAgentStatus = "claimed"
+)
+
+// Valid indicates whether the value is a known member of the ClaimedAgentStatus enum.
+func (e ClaimedAgentStatus) Valid() bool {
+	switch e {
+	case ClaimedAgentStatusClaimed:
 		return true
 	default:
 		return false
@@ -307,6 +301,7 @@ func (e OIDCClientScopes) Valid() bool {
 const (
 	ProblemCodeAccountLocked            ProblemCode = "account_locked"
 	ProblemCodeAccountOwnershipConflict ProblemCode = "account_ownership_conflict"
+	ProblemCodeAgentUnclaimed           ProblemCode = "agent_unclaimed"
 	ProblemCodeConflict                 ProblemCode = "conflict"
 	ProblemCodeForbidden                ProblemCode = "forbidden"
 	ProblemCodeIdempotencyKeyReused     ProblemCode = "idempotency_key_reused"
@@ -328,6 +323,8 @@ func (e ProblemCode) Valid() bool {
 	case ProblemCodeAccountLocked:
 		return true
 	case ProblemCodeAccountOwnershipConflict:
+		return true
+	case ProblemCodeAgentUnclaimed:
 		return true
 	case ProblemCodeConflict:
 		return true
@@ -721,52 +718,6 @@ type AccountSummary struct {
 	Slug string      `json:"slug"`
 }
 
-// Agent An agent principal, as the claim response sees it.
-//
-// **There is no `token` and no `claim_token_digest`, and both absences are
-// the design.** The claim link's plaintext exists exactly once, in the
-// response to the registration that produced it; the digest is the only part
-// of it any later code can reach and it is not a fact a client has any use
-// for. A minted credential is a separate capability and will arrive as its
-// own type.
-//
-// **`status` is `claimed` on a successful claim**, and it stays claimed
-// through a disable — "was this ever bound" and "is it live" are two
-// questions, and conflating them is a security question answered with a
-// liveness one. This response is returned before any disable can have
-// happened, so the two agree here.
-type Agent struct {
-	// ClaimedAt When the binding happened, and the instant the claim transaction
-	// committed. Present on any agent that has been claimed, disabled or not.
-	ClaimedAt time.Time `json:"claimed_at"`
-
-	// ID The principal's row id, stable across its whole lifecycle.
-	ID openapi_types.UUID `json:"id"`
-
-	// Name What the agent calls itself, as whoever registered it typed it. Not
-	// unique: two agents called "Noel" in two deployments are two different
-	// principals, and a global unique name would make a second registration a
-	// `409` about a name nobody can see.
-	//
-	//
-	// Examples: Noel
-	Name string `json:"name"`
-
-	// Status Where the principal is in its lifecycle. `unclaimed` is what a
-	// registration produces, `claimed` is bound to an account, and `disabled`
-	// was claimed and has been turned off. The transition `unclaimed →
-	// disabled` does not exist and is refused by the state machine and by the
-	// database.
-	Status AgentStatus `json:"status"`
-}
-
-// AgentStatus Where the principal is in its lifecycle. `unclaimed` is what a
-// registration produces, `claimed` is bound to an account, and `disabled`
-// was claimed and has been turned off. The transition `unclaimed →
-// disabled` does not exist and is refused by the state machine and by the
-// database.
-type AgentStatus string
-
 // AgentClaim The claim link, rendered once. `url` is the absolute address a human opens;
 // the link is 256 bits of `cafaye_`-prefixed entropy whose SHA-256 is the
 // only part stored.
@@ -974,6 +925,53 @@ type ClaimAgentRequest struct {
 	// Examples: cafaye_9Xk2Qm7RfT4vB1nJ8pL5wY3hD6sZ0aC
 	Token string `json:"token"`
 }
+
+// ClaimedAgent The 200 from `claimAgent`, and it is the agent PLUS the credential the
+// claim minted for it (W2-P2).
+//
+// **Why this name and not `ClaimAgentResponse`:** oapi-codegen derives the
+// response struct from the operationId, so a schema of that name produces
+// two Go types with one name and a file that does not compile. The schema is
+// the THING, the response is the ENVELOPE, and the envelope keeps the
+// operation's name.
+//
+// **The mint is in the claim's transaction, not a second request.** An agent
+// that is bound and holds no credential is a claim a human completed and an
+// agent cannot use, so the binding and the key are one fact or neither is.
+// `token.token` appears in this body and nowhere else: there is no column
+// holding the plaintext, so no endpoint can print it again, and a client that
+// loses it mints another on `POST /v1/agents/tokens`.
+//
+// **This is not an entitlement.** The claim grants a binding and a
+// credential, and nothing else - no entitlement, no scope beyond what the
+// principal already resolves to. The entitlement grant on a claim is
+// conductor's (W2-P3), and D4 keeps an agent from granting itself one.
+//
+// **`status` is `claimed` on this response**, and it stays claimed through a
+// disable: "was this ever bound" and "is it live" are two questions, and
+// conflating them is a security question answered with a liveness one. This
+// response is returned before any disable can have happened, so the two
+// agree here - which is why the enum carries one member and not three.
+type ClaimedAgent struct {
+	ClaimedAt time.Time          `json:"claimed_at"`
+	ID        openapi_types.UUID `json:"id"`
+
+	// Name Examples: Noel
+	Name string `json:"name"`
+
+	// Status Always `claimed` on this response: the route exists to produce it, and
+	// the store's conditional UPDATE is what decides.
+	Status ClaimedAgentStatus `json:"status"`
+
+	// Token A freshly-minted bearer credential, and the ONLY shape with `token` on it.
+	// Shown once at mint/rotate; there is no column holding the plaintext, so no
+	// endpoint can print it again.
+	Token IssuedAgentToken `json:"token"`
+}
+
+// ClaimedAgentStatus Always `claimed` on this response: the route exists to produce it, and
+// the store's conditional UPDATE is what decides.
+type ClaimedAgentStatus string
 
 // CompleteSecondFactorRequest The second half of a login. `challenge` is optional here and required in
 // effect — omitting it entirely, with no challenge cookie either, is a 401.
@@ -3114,12 +3112,26 @@ type ClientInterface interface {
 	// the same link in the same second produce one claim and one 404, with no
 	// read in between for the two to disagree in.
 	//
-	// ### What a successful claim does NOT return
+	// ### What a successful claim DOES return
 	//
-	// No token. Minting the scoped credential an agent presents is a separate
-	// capability with a separate scope vocabulary, and a response that carried
-	// one before that vocabulary existed would be a credential this service has
-	// not decided what it may do.
+	// The agent, at the status it now holds, **and the bearer credential it
+	// presents from then on.** The mint is inside the claim's own transaction:
+	// an agent that is bound and holds no credential is a claim a human
+	// completed and an agent cannot use, so the two are one fact or neither is.
+	// The token appears in this body and nowhere else, and a client that loses
+	// it mints another on `POST /v1/agents/tokens`.
+	//
+	// The credential is named `claimed`, and the name is the history: the
+	// registration's `bootstrap` credential was minted while the agent was
+	// nobody's, and this one was minted by the human who made it somebody's.
+	// One live token per name per agent is a partial unique index, so the two
+	// could not share a name even if the reading did not matter.
+	//
+	// **The claim mints the agent's own credential and NOTHING ELSE.** No
+	// entitlement, no account role, no scope beyond what the principal already
+	// resolves to: the entitlement grant on a claim is conductor's (W2-P3), and
+	// D4 keeps an agent from granting itself one. A human clicked Approve; what
+	// that click buys is a binding and a key, not a product.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -3180,12 +3192,26 @@ type ClientInterface interface {
 	// the same link in the same second produce one claim and one 404, with no
 	// read in between for the two to disagree in.
 	//
-	// ### What a successful claim does NOT return
+	// ### What a successful claim DOES return
 	//
-	// No token. Minting the scoped credential an agent presents is a separate
-	// capability with a separate scope vocabulary, and a response that carried
-	// one before that vocabulary existed would be a credential this service has
-	// not decided what it may do.
+	// The agent, at the status it now holds, **and the bearer credential it
+	// presents from then on.** The mint is inside the claim's own transaction:
+	// an agent that is bound and holds no credential is a claim a human
+	// completed and an agent cannot use, so the two are one fact or neither is.
+	// The token appears in this body and nowhere else, and a client that loses
+	// it mints another on `POST /v1/agents/tokens`.
+	//
+	// The credential is named `claimed`, and the name is the history: the
+	// registration's `bootstrap` credential was minted while the agent was
+	// nobody's, and this one was minted by the human who made it somebody's.
+	// One live token per name per agent is a partial unique index, so the two
+	// could not share a name even if the reading did not matter.
+	//
+	// **The claim mints the agent's own credential and NOTHING ELSE.** No
+	// entitlement, no account role, no scope beyond what the principal already
+	// resolves to: the entitlement grant on a claim is conductor's (W2-P3), and
+	// D4 keeps an agent from granting itself one. A human clicked Approve; what
+	// that click buys is a binding and a key, not a product.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -6563,12 +6589,26 @@ func (c *Client) RevokeAccountInvitation(ctx context.Context, accountID AccountI
 // the same link in the same second produce one claim and one 404, with no
 // read in between for the two to disagree in.
 //
-// ### What a successful claim does NOT return
+// ### What a successful claim DOES return
 //
-// No token. Minting the scoped credential an agent presents is a separate
-// capability with a separate scope vocabulary, and a response that carried
-// one before that vocabulary existed would be a credential this service has
-// not decided what it may do.
+// The agent, at the status it now holds, **and the bearer credential it
+// presents from then on.** The mint is inside the claim's own transaction:
+// an agent that is bound and holds no credential is a claim a human
+// completed and an agent cannot use, so the two are one fact or neither is.
+// The token appears in this body and nowhere else, and a client that loses
+// it mints another on `POST /v1/agents/tokens`.
+//
+// The credential is named `claimed`, and the name is the history: the
+// registration's `bootstrap` credential was minted while the agent was
+// nobody's, and this one was minted by the human who made it somebody's.
+// One live token per name per agent is a partial unique index, so the two
+// could not share a name even if the reading did not matter.
+//
+// **The claim mints the agent's own credential and NOTHING ELSE.** No
+// entitlement, no account role, no scope beyond what the principal already
+// resolves to: the entitlement grant on a claim is conductor's (W2-P3), and
+// D4 keeps an agent from granting itself one. A human clicked Approve; what
+// that click buys is a binding and a key, not a product.
 //
 // Takes any type of body and a specified content type.
 //
@@ -6639,12 +6679,26 @@ func (c *Client) ClaimAgentWithBody(ctx context.Context, accountID AccountID, co
 // the same link in the same second produce one claim and one 404, with no
 // read in between for the two to disagree in.
 //
-// ### What a successful claim does NOT return
+// ### What a successful claim DOES return
 //
-// No token. Minting the scoped credential an agent presents is a separate
-// capability with a separate scope vocabulary, and a response that carried
-// one before that vocabulary existed would be a credential this service has
-// not decided what it may do.
+// The agent, at the status it now holds, **and the bearer credential it
+// presents from then on.** The mint is inside the claim's own transaction:
+// an agent that is bound and holds no credential is a claim a human
+// completed and an agent cannot use, so the two are one fact or neither is.
+// The token appears in this body and nowhere else, and a client that loses
+// it mints another on `POST /v1/agents/tokens`.
+//
+// The credential is named `claimed`, and the name is the history: the
+// registration's `bootstrap` credential was minted while the agent was
+// nobody's, and this one was minted by the human who made it somebody's.
+// One live token per name per agent is a partial unique index, so the two
+// could not share a name even if the reading did not matter.
+//
+// **The claim mints the agent's own credential and NOTHING ELSE.** No
+// entitlement, no account role, no scope beyond what the principal already
+// resolves to: the entitlement grant on a claim is conductor's (W2-P3), and
+// D4 keeps an agent from granting itself one. A human clicked Approve; what
+// that click buys is a binding and a key, not a product.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -13302,12 +13356,26 @@ type ClientWithResponsesInterface interface {
 	// the same link in the same second produce one claim and one 404, with no
 	// read in between for the two to disagree in.
 	//
-	// ### What a successful claim does NOT return
+	// ### What a successful claim DOES return
 	//
-	// No token. Minting the scoped credential an agent presents is a separate
-	// capability with a separate scope vocabulary, and a response that carried
-	// one before that vocabulary existed would be a credential this service has
-	// not decided what it may do.
+	// The agent, at the status it now holds, **and the bearer credential it
+	// presents from then on.** The mint is inside the claim's own transaction:
+	// an agent that is bound and holds no credential is a claim a human
+	// completed and an agent cannot use, so the two are one fact or neither is.
+	// The token appears in this body and nowhere else, and a client that loses
+	// it mints another on `POST /v1/agents/tokens`.
+	//
+	// The credential is named `claimed`, and the name is the history: the
+	// registration's `bootstrap` credential was minted while the agent was
+	// nobody's, and this one was minted by the human who made it somebody's.
+	// One live token per name per agent is a partial unique index, so the two
+	// could not share a name even if the reading did not matter.
+	//
+	// **The claim mints the agent's own credential and NOTHING ELSE.** No
+	// entitlement, no account role, no scope beyond what the principal already
+	// resolves to: the entitlement grant on a claim is conductor's (W2-P3), and
+	// D4 keeps an agent from granting itself one. A human clicked Approve; what
+	// that click buys is a binding and a key, not a product.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -13368,12 +13436,26 @@ type ClientWithResponsesInterface interface {
 	// the same link in the same second produce one claim and one 404, with no
 	// read in between for the two to disagree in.
 	//
-	// ### What a successful claim does NOT return
+	// ### What a successful claim DOES return
 	//
-	// No token. Minting the scoped credential an agent presents is a separate
-	// capability with a separate scope vocabulary, and a response that carried
-	// one before that vocabulary existed would be a credential this service has
-	// not decided what it may do.
+	// The agent, at the status it now holds, **and the bearer credential it
+	// presents from then on.** The mint is inside the claim's own transaction:
+	// an agent that is bound and holds no credential is a claim a human
+	// completed and an agent cannot use, so the two are one fact or neither is.
+	// The token appears in this body and nowhere else, and a client that loses
+	// it mints another on `POST /v1/agents/tokens`.
+	//
+	// The credential is named `claimed`, and the name is the history: the
+	// registration's `bootstrap` credential was minted while the agent was
+	// nobody's, and this one was minted by the human who made it somebody's.
+	// One live token per name per agent is a partial unique index, so the two
+	// could not share a name even if the reading did not matter.
+	//
+	// **The claim mints the agent's own credential and NOTHING ELSE.** No
+	// entitlement, no account role, no scope beyond what the principal already
+	// resolves to: the entitlement grant on a claim is conductor's (W2-P3), and
+	// D4 keeps an agent from granting itself one. A human clicked Approve; what
+	// that click buys is a binding and a key, not a product.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -17252,7 +17334,7 @@ type ClaimAgentResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *Agent
+	JSON200 *ClaimedAgent
 	// ApplicationProblemJSON400 the response for an HTTP 400 `application/problem+json` response
 	ApplicationProblemJSON400 *MalformedBody
 	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
@@ -17286,7 +17368,7 @@ type ClaimAgentResponse struct {
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ClaimAgentResponse) GetJSON200() *Agent {
+func (r ClaimAgentResponse) GetJSON200() *ClaimedAgent {
 	return r.JSON200
 }
 
@@ -19059,6 +19141,11 @@ type ListAgentTokensResponse401Headers struct {
 	XTraceID string
 }
 
+// ListAgentTokensResponse403Headers the declared response headers of an HTTP 403 response for ListAgentTokens
+type ListAgentTokensResponse403Headers struct {
+	XTraceID string
+}
+
 // ListAgentTokensResponse500Headers the declared response headers of an HTTP 500 response for ListAgentTokens
 type ListAgentTokensResponse500Headers struct {
 	XTraceID string
@@ -19071,12 +19158,16 @@ type ListAgentTokensResponse struct {
 	JSON200 *[]AgentToken
 	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
 	ApplicationProblemJSON401 *Unauthenticated
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Problem
 	// ApplicationProblemJSON500 the response for an HTTP 500 `application/problem+json` response
 	ApplicationProblemJSON500 *InternalError
 	// Headers200 the parsed response headers for an HTTP 200 response
 	Headers200 *ListAgentTokensResponse200Headers
 	// Headers401 the parsed response headers for an HTTP 401 response
 	Headers401 *ListAgentTokensResponse401Headers
+	// Headers403 the parsed response headers for an HTTP 403 response
+	Headers403 *ListAgentTokensResponse403Headers
 	// Headers500 the parsed response headers for an HTTP 500 response
 	Headers500 *ListAgentTokensResponse500Headers
 }
@@ -19089,6 +19180,11 @@ func (r ListAgentTokensResponse) GetJSON200() *[]AgentToken {
 // GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
 func (r ListAgentTokensResponse) GetApplicationProblemJSON401() *Unauthenticated {
 	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ListAgentTokensResponse) GetApplicationProblemJSON403() *Problem {
+	return r.ApplicationProblemJSON403
 }
 
 // GetApplicationProblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
@@ -19135,6 +19231,11 @@ type MintAgentTokenResponse401Headers struct {
 	XTraceID string
 }
 
+// MintAgentTokenResponse403Headers the declared response headers of an HTTP 403 response for MintAgentToken
+type MintAgentTokenResponse403Headers struct {
+	XTraceID string
+}
+
 // MintAgentTokenResponse409Headers the declared response headers of an HTTP 409 response for MintAgentToken
 type MintAgentTokenResponse409Headers struct {
 	XTraceID string
@@ -19162,6 +19263,8 @@ type MintAgentTokenResponse struct {
 	JSON201 *IssuedAgentToken
 	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
 	ApplicationProblemJSON401 *Unauthenticated
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Problem
 	// ApplicationProblemJSON409 the response for an HTTP 409 `application/problem+json` response
 	ApplicationProblemJSON409 *Problem
 	// ApplicationProblemJSON413 the response for an HTTP 413 `application/problem+json` response
@@ -19174,6 +19277,8 @@ type MintAgentTokenResponse struct {
 	Headers201 *MintAgentTokenResponse201Headers
 	// Headers401 the parsed response headers for an HTTP 401 response
 	Headers401 *MintAgentTokenResponse401Headers
+	// Headers403 the parsed response headers for an HTTP 403 response
+	Headers403 *MintAgentTokenResponse403Headers
 	// Headers409 the parsed response headers for an HTTP 409 response
 	Headers409 *MintAgentTokenResponse409Headers
 	// Headers413 the parsed response headers for an HTTP 413 response
@@ -19192,6 +19297,11 @@ func (r MintAgentTokenResponse) GetJSON201() *IssuedAgentToken {
 // GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
 func (r MintAgentTokenResponse) GetApplicationProblemJSON401() *Unauthenticated {
 	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r MintAgentTokenResponse) GetApplicationProblemJSON403() *Problem {
+	return r.ApplicationProblemJSON403
 }
 
 // GetApplicationProblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
@@ -19248,6 +19358,11 @@ type RevokeAgentTokenResponse401Headers struct {
 	XTraceID string
 }
 
+// RevokeAgentTokenResponse403Headers the declared response headers of an HTTP 403 response for RevokeAgentToken
+type RevokeAgentTokenResponse403Headers struct {
+	XTraceID string
+}
+
 // RevokeAgentTokenResponse404Headers the declared response headers of an HTTP 404 response for RevokeAgentToken
 type RevokeAgentTokenResponse404Headers struct {
 	XTraceID string
@@ -19268,6 +19383,8 @@ type RevokeAgentTokenResponse struct {
 	HTTPResponse *http.Response
 	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
 	ApplicationProblemJSON401 *Unauthenticated
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Problem
 	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
 	ApplicationProblemJSON404 *Problem
 	// ApplicationProblemJSON409 the response for an HTTP 409 `application/problem+json` response
@@ -19276,6 +19393,8 @@ type RevokeAgentTokenResponse struct {
 	ApplicationProblemJSON500 *InternalError
 	// Headers401 the parsed response headers for an HTTP 401 response
 	Headers401 *RevokeAgentTokenResponse401Headers
+	// Headers403 the parsed response headers for an HTTP 403 response
+	Headers403 *RevokeAgentTokenResponse403Headers
 	// Headers404 the parsed response headers for an HTTP 404 response
 	Headers404 *RevokeAgentTokenResponse404Headers
 	// Headers409 the parsed response headers for an HTTP 409 response
@@ -19287,6 +19406,11 @@ type RevokeAgentTokenResponse struct {
 // GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
 func (r RevokeAgentTokenResponse) GetApplicationProblemJSON401() *Unauthenticated {
 	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r RevokeAgentTokenResponse) GetApplicationProblemJSON403() *Problem {
+	return r.ApplicationProblemJSON403
 }
 
 // GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
@@ -19343,6 +19467,11 @@ type RotateAgentTokenResponse401Headers struct {
 	XTraceID string
 }
 
+// RotateAgentTokenResponse403Headers the declared response headers of an HTTP 403 response for RotateAgentToken
+type RotateAgentTokenResponse403Headers struct {
+	XTraceID string
+}
+
 // RotateAgentTokenResponse404Headers the declared response headers of an HTTP 404 response for RotateAgentToken
 type RotateAgentTokenResponse404Headers struct {
 	XTraceID string
@@ -19370,6 +19499,8 @@ type RotateAgentTokenResponse struct {
 	JSON201 *IssuedAgentToken
 	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
 	ApplicationProblemJSON401 *Unauthenticated
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Problem
 	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
 	ApplicationProblemJSON404 *Problem
 	// ApplicationProblemJSON409 the response for an HTTP 409 `application/problem+json` response
@@ -19382,6 +19513,8 @@ type RotateAgentTokenResponse struct {
 	Headers201 *RotateAgentTokenResponse201Headers
 	// Headers401 the parsed response headers for an HTTP 401 response
 	Headers401 *RotateAgentTokenResponse401Headers
+	// Headers403 the parsed response headers for an HTTP 403 response
+	Headers403 *RotateAgentTokenResponse403Headers
 	// Headers404 the parsed response headers for an HTTP 404 response
 	Headers404 *RotateAgentTokenResponse404Headers
 	// Headers409 the parsed response headers for an HTTP 409 response
@@ -19400,6 +19533,11 @@ func (r RotateAgentTokenResponse) GetJSON201() *IssuedAgentToken {
 // GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
 func (r RotateAgentTokenResponse) GetApplicationProblemJSON401() *Unauthenticated {
 	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r RotateAgentTokenResponse) GetApplicationProblemJSON403() *Problem {
+	return r.ApplicationProblemJSON403
 }
 
 // GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
@@ -23939,12 +24077,26 @@ func (c *ClientWithResponses) RevokeAccountInvitationWithResponse(ctx context.Co
 // the same link in the same second produce one claim and one 404, with no
 // read in between for the two to disagree in.
 //
-// ### What a successful claim does NOT return
+// ### What a successful claim DOES return
 //
-// No token. Minting the scoped credential an agent presents is a separate
-// capability with a separate scope vocabulary, and a response that carried
-// one before that vocabulary existed would be a credential this service has
-// not decided what it may do.
+// The agent, at the status it now holds, **and the bearer credential it
+// presents from then on.** The mint is inside the claim's own transaction:
+// an agent that is bound and holds no credential is a claim a human
+// completed and an agent cannot use, so the two are one fact or neither is.
+// The token appears in this body and nowhere else, and a client that loses
+// it mints another on `POST /v1/agents/tokens`.
+//
+// The credential is named `claimed`, and the name is the history: the
+// registration's `bootstrap` credential was minted while the agent was
+// nobody's, and this one was minted by the human who made it somebody's.
+// One live token per name per agent is a partial unique index, so the two
+// could not share a name even if the reading did not matter.
+//
+// **The claim mints the agent's own credential and NOTHING ELSE.** No
+// entitlement, no account role, no scope beyond what the principal already
+// resolves to: the entitlement grant on a claim is conductor's (W2-P3), and
+// D4 keeps an agent from granting itself one. A human clicked Approve; what
+// that click buys is a binding and a key, not a product.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -24011,12 +24163,26 @@ func (c *ClientWithResponses) ClaimAgentWithBodyWithResponse(ctx context.Context
 // the same link in the same second produce one claim and one 404, with no
 // read in between for the two to disagree in.
 //
-// ### What a successful claim does NOT return
+// ### What a successful claim DOES return
 //
-// No token. Minting the scoped credential an agent presents is a separate
-// capability with a separate scope vocabulary, and a response that carried
-// one before that vocabulary existed would be a credential this service has
-// not decided what it may do.
+// The agent, at the status it now holds, **and the bearer credential it
+// presents from then on.** The mint is inside the claim's own transaction:
+// an agent that is bound and holds no credential is a claim a human
+// completed and an agent cannot use, so the two are one fact or neither is.
+// The token appears in this body and nowhere else, and a client that loses
+// it mints another on `POST /v1/agents/tokens`.
+//
+// The credential is named `claimed`, and the name is the history: the
+// registration's `bootstrap` credential was minted while the agent was
+// nobody's, and this one was minted by the human who made it somebody's.
+// One live token per name per agent is a partial unique index, so the two
+// could not share a name even if the reading did not matter.
+//
+// **The claim mints the agent's own credential and NOTHING ELSE.** No
+// entitlement, no account role, no scope beyond what the principal already
+// resolves to: the entitlement grant on a claim is conductor's (W2-P3), and
+// D4 keeps an agent from granting itself one. A human clicked Approve; what
+// that click buys is a binding and a key, not a product.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -28399,7 +28565,7 @@ func ParseClaimAgentResponse(rsp *http.Response) (*ClaimAgentResponse, error) {
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest Agent
+		var dest ClaimedAgent
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -30376,6 +30542,13 @@ func ParseListAgentTokensResponse(rsp *http.Response) (*ListAgentTokensResponse,
 		}
 		response.ApplicationProblemJSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest InternalError
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -30406,6 +30579,16 @@ func ParseListAgentTokensResponse(rsp *http.Response) (*ListAgentTokensResponse,
 			headers.XTraceID = value
 		}
 		response.Headers401 = &headers
+	case rsp.StatusCode == 403:
+		var headers ListAgentTokensResponse403Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers403 = &headers
 	case rsp.StatusCode == 500:
 		var headers ListAgentTokensResponse500Headers
 		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
@@ -30448,6 +30631,13 @@ func ParseMintAgentTokenResponse(rsp *http.Response) (*MintAgentTokenResponse, e
 			return nil, err
 		}
 		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
 		var dest Problem
@@ -30500,6 +30690,16 @@ func ParseMintAgentTokenResponse(rsp *http.Response) (*MintAgentTokenResponse, e
 			headers.XTraceID = value
 		}
 		response.Headers401 = &headers
+	case rsp.StatusCode == 403:
+		var headers MintAgentTokenResponse403Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers403 = &headers
 	case rsp.StatusCode == 409:
 		var headers MintAgentTokenResponse409Headers
 		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
@@ -30569,6 +30769,13 @@ func ParseRevokeAgentTokenResponse(rsp *http.Response) (*RevokeAgentTokenRespons
 		}
 		response.ApplicationProblemJSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest Problem
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -30603,6 +30810,16 @@ func ParseRevokeAgentTokenResponse(rsp *http.Response) (*RevokeAgentTokenRespons
 			headers.XTraceID = value
 		}
 		response.Headers401 = &headers
+	case rsp.StatusCode == 403:
+		var headers RevokeAgentTokenResponse403Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers403 = &headers
 	case rsp.StatusCode == 404:
 		var headers RevokeAgentTokenResponse404Headers
 		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
@@ -30666,6 +30883,13 @@ func ParseRotateAgentTokenResponse(rsp *http.Response) (*RotateAgentTokenRespons
 		}
 		response.ApplicationProblemJSON401 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest Problem
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -30717,6 +30941,16 @@ func ParseRotateAgentTokenResponse(rsp *http.Response) (*RotateAgentTokenRespons
 			headers.XTraceID = value
 		}
 		response.Headers401 = &headers
+	case rsp.StatusCode == 403:
+		var headers RotateAgentTokenResponse403Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers403 = &headers
 	case rsp.StatusCode == 404:
 		var headers RotateAgentTokenResponse404Headers
 		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {

@@ -39,8 +39,15 @@ func newAgentServer(t *testing.T, limiterMax int) *agentServer {
 	pool, _ := dbtest.SchemaWithOwner(t)
 	clk := clock.NewFake(time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC))
 
+	// WithTenancy is what mounts the account-scoped routes, and the CLAIM is
+	// account-scoped: without it the service offers registration and the
+	// self-service half but no way for a human to finish claiming anything. A
+	// test server built without it would prove the agent surface does half of
+	// what it claims, which is the shape of bug the router walks are supposed to
+	// catch and this one would have silently introduced.
 	opts := []Option{
 		WithAuth(authServiceFor(pool, clk)),
+		WithTenancy(realTenancy(pool, clk)),
 		WithAgents(agents.NewService(pool, agents.WithClaimUI(agentHTTPClaimUI))),
 		WithClock(clk),
 	}
@@ -166,21 +173,26 @@ func TestTheRefreshRegeneratesALinkAndKeepsTheAgentUnclaimed(t *testing.T) {
 // TestTheAgentTokenLifecycleOverHTTP drives create, list, rotate and revoke through
 // the agent's own credential, proving the credential is shown only at mint/rotate
 // and that a duplicate live name is a 409.
+//
+// THE AGENT IS CLAIMED FIRST, and that is not setup for its own sake: every route
+// this test drives is behind `agentClaimedOnly` (D4), so a lifecycle driven by an
+// unclaimed principal would be a 403 that has nothing to do with the credential
+// mechanics. The claim is done through the real route so the principal under test
+// is one the production path actually produced.
 func TestTheAgentTokenLifecycleOverHTTP(t *testing.T) {
-	s := newAgentServer(t, 100)
-
-	regRec := post(t, s.handler, "/v1/agents", `{"name":"Noel"}`)
-	if regRec.Code != http.StatusCreated {
-		t.Fatalf("registering = %d, want 201; body: %s", regRec.Code, regRec.Body)
+	// ONE WORLD, and it is the claim world's: the claim that unlocks this surface
+	// has to happen in the same schema the lifecycle is driven against.
+	w := newClaimWorld(t)
+	s := w.handler
+	reg, claimed, _ := w.claimOne(t, "Noel")
+	tok := claimed.Token.Token
+	if tok == "" {
+		t.Fatal("the claim minted no token, so the lifecycle below would prove nothing")
 	}
-	var body registerAgentResponse
-	if err := json.Unmarshal(regRec.Body.Bytes(), &body); err != nil {
-		t.Fatalf("decoding the registration: %v", err)
-	}
-	tok := body.APIKey.Token
+	_ = reg
 
 	// Mint a named credential; the plaintext is here once.
-	mint := sendWith(t, s.handler, http.MethodPost, "/v1/agents/tokens", tok, "", `{"name":"deploy"}`)
+	mint := sendWith(t, s, http.MethodPost, "/v1/agents/tokens", tok, "", `{"name":"deploy"}`)
 	if mint.Code != http.StatusCreated {
 		t.Fatalf("minting = %d, want 201; body: %s", mint.Code, mint.Body)
 	}
@@ -194,13 +206,14 @@ func TestTheAgentTokenLifecycleOverHTTP(t *testing.T) {
 	tokenID := issued.ID
 
 	// A duplicate live name is a 409.
-	dup := sendWith(t, s.handler, http.MethodPost, "/v1/agents/tokens", tok, "", `{"name":"deploy"}`)
+	dup := sendWith(t, s, http.MethodPost, "/v1/agents/tokens", tok, "", `{"name":"deploy"}`)
 	if dup.Code != http.StatusConflict {
 		t.Errorf("a second live token of one name = %d, want 409; body: %s", dup.Code, dup.Body)
 	}
 
-	// List: two credentials (bootstrap + deploy), and no body carries a token.
-	list := sendWith(t, s.handler, http.MethodGet, "/v1/agents/tokens", tok, "", "")
+	// List: two credentials (the registration's bootstrap + the claim's), and no
+	// body carries a token.
+	list := sendWith(t, s, http.MethodGet, "/v1/agents/tokens", tok, "", "")
 	if list.Code != http.StatusOK {
 		t.Fatalf("listing = %d, want 200; body: %s", list.Code, list.Body)
 	}
@@ -208,15 +221,15 @@ func TestTheAgentTokenLifecycleOverHTTP(t *testing.T) {
 	if err := json.Unmarshal(list.Body.Bytes(), &listed); err != nil {
 		t.Fatalf("decoding the list: %v", err)
 	}
-	if len(listed) != 2 {
-		t.Fatalf("the agent holds %d tokens, want 2 (bootstrap + deploy)", len(listed))
+	if len(listed) != 3 {
+		t.Fatalf("the agent holds %d tokens, want 3 (bootstrap + the claim's + deploy)", len(listed))
 	}
 	if strings.Contains(list.Body.String(), issued.Token) {
 		t.Error("the list body carries a plaintext token, and no list endpoint may re-read one")
 	}
 
 	// Rotate: a new plaintext, same name, one call.
-	rot := sendWith(t, s.handler, http.MethodPost, "/v1/agents/tokens/"+tokenID+"/rotate", tok, "", `{}`)
+	rot := sendWith(t, s, http.MethodPost, "/v1/agents/tokens/"+tokenID+"/rotate", tok, "", `{}`)
 	if rot.Code != http.StatusCreated {
 		t.Fatalf("rotating = %d, want 201; body: %s", rot.Code, rot.Body)
 	}
@@ -229,7 +242,7 @@ func TestTheAgentTokenLifecycleOverHTTP(t *testing.T) {
 	}
 
 	// Revoke the rotated token by its id.
-	del := sendWith(t, s.handler, http.MethodDelete, "/v1/agents/tokens/"+rotated.ID, tok, "", "")
+	del := sendWith(t, s, http.MethodDelete, "/v1/agents/tokens/"+rotated.ID, tok, "", "")
 	if del.Code != http.StatusNoContent {
 		t.Fatalf("revoking the rotated token = %d, want 204; body: %s", del.Code, del.Body)
 	}

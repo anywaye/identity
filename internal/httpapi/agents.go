@@ -1,16 +1,21 @@
 package httpapi
 
-// THE AGENT SURFACE: ONE ROUTE, AND THE CLAIM IS THE WHOLE OF IT.
+// THE AGENT SURFACE: ONE ACCOUNT-SCOPED ROUTE, THREE SELF-SERVICE ONES, AND THE
+// GATE THAT CLOSES THEM TO A PRINCIPAL NOBODY HAS CLAIMED.
 //
-//	POST /v1/accounts/{accountID}/agents/claim  {token}  →  200 {agent}
+//	POST /v1/accounts/{accountID}/agents/claim  {token}  →  200 {agent, token}
+//	POST /v1/agents                              public registration (W1-P2)
+//	POST /v1/agents/claim-link/refresh           the ONE thing an unclaimed agent may do
+//	POST /v1/agents/tokens …                     the self-service token lifecycle
 //
-// ONE ROUTE IN THIS PACKET, and the reason is a packet boundary rather than a
-// design limit: registration (POST /v1/agents) is W1-P2's, conductor's box
-// capabilities are W1-P3's, and minting the scoped token at claim time is W2-P2's.
-// What lands here is the route that turns a link into a binding, because that is
-// the part every one of those packets is written against — the claim route is what
-// makes an agent an account's, and nothing else in the wave means anything until
-// it exists.
+// THE ACCOUNT-SCOPED CLAIM is W1-P1's route, and since W2-P2 it also mints the
+// bearer credential the agent presents from then on — see `Claim` in
+// internal/agents. Registration, the refresh and the token lifecycle are W1-P2's.
+// What this packet adds beyond the mint is the gate: `agentClaimedOnly`, which
+// refuses an authenticated-but-unclaimed principal on every route that ACTS.
+//
+// The claim route is what makes an agent an account's, and nothing else in the
+// wave means anything until it exists.
 //
 // # WHY THE ACCOUNT IS IN THE PATH AND NOT IN THE BODY
 //
@@ -120,13 +125,14 @@ type claimAgentRequest struct {
 }
 
 // claimAgentResponse is what a successful claim looks like: the agent, at the
-// status it now holds.
+// status it now holds, and the credential it presents from here on.
 //
-// NO TOKEN. The mint is W2-P2's, and a response that carried one before the scope
-// vocabulary exists would be a credential this service has not decided what it
-// may do. `status` is here rather than omitted because the claim screen renders
-// against it and a client that has to re-read the agent to learn it succeeded has
-// made a second request to find out something the first one knew.
+// THE TOKEN IS THE SECOND HALF OF THE CLAIM, and it is here because the claim is
+// the instant the principal becomes anything — see `Claimed` in internal/agents
+// for why the mint is inside the claim's own transaction rather than a second
+// request. `token` appears in this body and nowhere else: there is no column
+// holding the plaintext, so no endpoint can print it again, and a client that
+// loses it mints another on the token lifecycle.
 //
 // ClaimTokenDigest is absent, and the absence is the same one apikeys.Key makes: a
 // response that echoed the digest would tell a client something it has no use for.
@@ -138,6 +144,10 @@ type claimAgentResponse struct {
 	// string rather than a time.Time so the JSON carries no location surprises and
 	// the shape is what the document says it is.
 	ClaimedAt string `json:"claimed_at"`
+	// Token is the credential the claim minted, in the same shape the token
+	// lifecycle answers with. It renders the plaintext once; the id and name are
+	// what a management list and an incident read.
+	Token issuedAgentToken `json:"token"`
 }
 
 // claimedAtOr renders the claim's instant, falling back to now.
@@ -261,6 +271,15 @@ func (o options) handleClaimAgent(w http.ResponseWriter, r *http.Request) {
 		// claim — the table's CHECK makes the pair whole — and the guard is here so
 		// that a future writer cannot render a zero time.
 		ClaimedAt: claimedAtOr(claimed.Agent, o.clk.Now()),
+		// The credential the claim minted, rendered once. The name is the
+		// `claimed` credential internal/agents calls it, and a client that reads
+		// this body into an OS keyring has the only copy that exists.
+		Token: issuedAgentToken{
+			ID:        claimed.Token.ID.String(),
+			Name:      claimed.Token.Name,
+			ExpiresAt: claimed.Token.ExpiresAt.UTC().Format(time.RFC3339),
+			Token:     claimed.TokenPlaintext,
+		},
 	})
 }
 
@@ -333,10 +352,14 @@ func (o options) registerAgentPublicRoutes(r chiRouter) {
 	// at somebody else's. A stranger's request is one 401 before any handler runs.
 	r.Post("/v1/agents/claim-link/refresh", o.agentCredentialOnly(o.handleRefreshAgentClaimLink))
 
-	r.Post("/v1/agents/tokens", o.agentCredentialOnly(o.handleMintAgentToken))
-	r.Get("/v1/agents/tokens", o.agentCredentialOnly(o.handleListAgentTokens))
-	r.Delete("/v1/agents/tokens/{tokenID}", o.agentCredentialOnly(o.handleRevokeAgentToken))
-	r.Post("/v1/agents/tokens/{tokenID}/rotate", o.agentCredentialOnly(o.handleRotateAgentToken))
+	// THE CLAIMED-ONLY SURFACE. `agentClaimedOnly` is `agentCredentialOnly` plus
+	// the D4 check, so the lifecycle a claimed agent runs for itself is closed to
+	// an unclaimed one — see the constant on CodeAgentUnclaimed for why that is
+	// 403 with a remedy rather than a 401.
+	r.Post("/v1/agents/tokens", o.agentClaimedOnly(o.handleMintAgentToken))
+	r.Get("/v1/agents/tokens", o.agentClaimedOnly(o.handleListAgentTokens))
+	r.Delete("/v1/agents/tokens/{tokenID}", o.agentClaimedOnly(o.handleRevokeAgentToken))
+	r.Post("/v1/agents/tokens/{tokenID}/rotate", o.agentClaimedOnly(o.handleRotateAgentToken))
 }
 
 // ---------------------------------------------------------------------------
@@ -376,6 +399,11 @@ func presentedAgentToken(r *http.Request) string {
 // it — while a revoked, expired, disabled or never-issued one is the same 401 a
 // guess gets. The service answers ErrNotFound for all of them, and this turns
 // that into one 401 rather than a sentence naming which.
+//
+// WHAT RESOLVING IS NOT: PERMISSION. This gate answers "is this credential live
+// and whose is it", and the D4 question — has a human claimed this principal — is
+// a SEPARATE gate, `agentClaimedOnly`. They are two functions because they are
+// two answers, and the refresh route needs the first without the second.
 func (o options) agentCredentialOnly(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		token := presentedAgentToken(r)
@@ -393,6 +421,67 @@ func (o options) agentCredentialOnly(next http.HandlerFunc) http.HandlerFunc {
 		next(w, r.WithContext(context.WithValue(r.Context(), agentContextKey{}, owner)))
 	}
 }
+
+// agentClaimedOnly is the D4 gate: the credential resolves, AND a human has
+// claimed the principal behind it.
+//
+// # WHY IT IS A SEPARATE MIDDLEWARE AND NOT A BRANCH IN EACH HANDLER
+//
+// For the reason `requireAdminToken` and `requireSessionLinkMint` are outside the
+// chain: wrapped inside a handler, the property is whatever that handler
+// remembered, and the route added next is the one without it. A claim-requiring
+// route is then one word at the mount, and the route that forgets it is visible in
+// review.
+//
+// # WHY THE REFRESH IS NOT WRAPPED IN IT
+//
+// The one thing an unclaimed agent must be able to do is ask for its claim link:
+// it is the ONLY road out of the state the claim screen is waiting on. Closing it
+// would mean an agent whose link expired before its human got to it could never
+// be claimed by anybody — the failure direction is "an agent nobody can finish",
+// which is worse than an unclaimed agent refreshing a link.
+//
+// # IT IS 403, NOT 401
+//
+// `CodeAgentUnclaimed`, and the argument is on the constant: the credential
+// resolved, so this is not a login problem. The sentence names the remedy
+// (`agentClaimedHint`) because a refusal that says only "unclaimed" leaves a
+// caller knowing it lost and nothing about what to do — and the fleet's CLI
+// switches on this code to swap in its own operator-facing sentence, so the code
+// is the part a machine reads and the detail is the part a human does.
+func (o options) agentClaimedOnly(next http.HandlerFunc) http.HandlerFunc {
+	return o.agentCredentialOnly(func(w http.ResponseWriter, r *http.Request) {
+		owner, ok := agentFrom(r.Context())
+		if !ok {
+			// Unreachable while agentCredentialOnly runs first, and stated because
+			// a handler that re-resolved the credential would be a second lookup.
+			unauthorized(w, r)
+			return
+		}
+		if err := owner.RequireClaimed(); err != nil {
+			o.logger.Info("an unclaimed agent presented a live credential to a claimed-only route",
+				"agent_id", owner.Agent.ID,
+				"route", routeTemplate(r),
+				"trace_id", traceIDFrom(r.Context()))
+			problemFor(w, r, http.StatusForbidden, CodeAgentUnclaimed, agentClaimedHint)
+			return
+		}
+		next(w, r)
+	})
+}
+
+// agentClaimedHint is the sentence that travels with CodeAgentUnclaimed.
+//
+// IT NAMES THE ACTION AND THE ROUTE, and it does not carry the claim URL. The
+// link is a 256-bit credential: putting it in a problem body on every refused
+// route would render it into logs, client error handling and crash reports, which
+// is a wider blast radius than the one response that already had it. The agent
+// already holds it — registration printed it and `POST
+// /v1/agents/claim-link/refresh` re-issues it — so the remedy is a route call,
+// not a value this response could hand over.
+const agentClaimedHint = "this agent has not been claimed by a human account, so it may not act yet. " +
+	"A human must open its claim link and approve it; while the agent is still unclaimed, " +
+	"POST /v1/agents/claim-link/refresh returns the current link"
 
 // agentTokenIDFrom reads and parses the token id in the path, on accountIDFrom's
 // terms: a malformed id is 404, not 422, because the path is part of a resource's

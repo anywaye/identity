@@ -98,6 +98,24 @@ var (
 	// stranger holding a link. The route maps it to the same 404 ErrNotFound gets.
 	ErrAlreadyClaimed = errors.New("this agent has already been claimed")
 
+	// ErrUnclaimed means a caller presented a LIVE agent credential for a
+	// principal that has never been bound to a human account.
+	//
+	// IT IS NOT A 401 AND THAT IS THE WHOLE REASON IT EXISTS. The credential
+	// resolved: the request is authenticated, the principal is real, and the
+	// token is live. What is missing is the CLICK — a human approving the claim
+	// link. A 401 would send a client hunting a login problem that does not
+	// exist, and the caller's remedy is not a new credential but another party's
+	// action.
+	//
+	// D4 is what makes it a refusal rather than a no-op: an agent that registered
+	// itself has done everything an agent can do alone, and "an agent acting
+	// alone gets nothing" means the paths that ACT are closed until a human has
+	// claimed it. The one path that stays open to an unclaimed principal is the
+	// one that asks for its claim link, because closing that would leave an agent
+	// nobody can finish claiming.
+	ErrUnclaimed = errors.New("this agent is unclaimed")
+
 	// ErrIllegalTransition means the state machine refuses from → to.
 	//
 	// It is a 422 at the route rather than a 404, and the difference is who is

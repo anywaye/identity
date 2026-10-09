@@ -3781,12 +3781,26 @@ paths:
         the same link in the same second produce one claim and one 404, with no
         read in between for the two to disagree in.
 
-        ### What a successful claim does NOT return
+        ### What a successful claim DOES return
 
-        No token. Minting the scoped credential an agent presents is a separate
-        capability with a separate scope vocabulary, and a response that carried
-        one before that vocabulary existed would be a credential this service has
-        not decided what it may do.
+        The agent, at the status it now holds, **and the bearer credential it
+        presents from then on.** The mint is inside the claim's own transaction:
+        an agent that is bound and holds no credential is a claim a human
+        completed and an agent cannot use, so the two are one fact or neither is.
+        The token appears in this body and nowhere else, and a client that loses
+        it mints another on `POST /v1/agents/tokens`.
+
+        The credential is named `claimed`, and the name is the history: the
+        registration's `bootstrap` credential was minted while the agent was
+        nobody's, and this one was minted by the human who made it somebody's.
+        One live token per name per agent is a partial unique index, so the two
+        could not share a name even if the reading did not matter.
+
+        **The claim mints the agent's own credential and NOTHING ELSE.** No
+        entitlement, no account role, no scope beyond what the principal already
+        resolves to: the entitlement grant on a claim is conductor's (W2-P3), and
+        D4 keeps an agent from granting itself one. A human clicked Approve; what
+        that click buys is a binding and a key, not a product.
       requestBody:
         required: true
         content:
@@ -3796,15 +3810,17 @@ paths:
       responses:
         '200':
           description: |
-            The agent, at the status it now holds. `status` is `claimed`, and
-            `claimed_at` is the instant the binding happened.
+            The agent, at the status it now holds, and the credential the claim
+            minted for it. `status` is `claimed`, `claimed_at` is the instant the
+            binding happened, and `token.token` is the credential, shown exactly
+            once, here.
           headers:
             X-Trace-Id:
               $ref: '#/components/headers/TraceId'
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Agent'
+                $ref: '#/components/schemas/ClaimedAgent'
         '400':
           $ref: '#/components/responses/MalformedBody'
         '401':
@@ -4077,6 +4093,21 @@ paths:
                   name: ci
                   expires_in: 3600
       responses:
+        '403':
+          description: |
+            The credential is live but the principal behind it has never been
+            claimed by a human account. D4: an agent acting alone gets nothing,
+            so the routes that ACT are closed until a human approves the claim
+            link. The remedy is in the `detail`, and the one route that stays
+            open is `POST /v1/agents/claim-link/refresh`, which is how an
+            unclaimed agent gets the link a human is meant to open.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
         '201':
           description: The credential and its secret. `token` appears only here.
           headers:
@@ -4126,6 +4157,21 @@ paths:
       security:
         - bearerToken: []
       responses:
+        '403':
+          description: |
+            The credential is live but the principal behind it has never been
+            claimed by a human account. D4: an agent acting alone gets nothing,
+            so the routes that ACT are closed until a human approves the claim
+            link. The remedy is in the `detail`, and the one route that stays
+            open is `POST /v1/agents/claim-link/refresh`, which is how an
+            unclaimed agent gets the link a human is meant to open.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
         '200':
           description: The agent's credentials.
           headers:
@@ -4189,6 +4235,21 @@ paths:
             schema:
               $ref: '#/components/schemas/RevokeAgentTokenRequest'
       responses:
+        '403':
+          description: |
+            The credential is live but the principal behind it has never been
+            claimed by a human account. D4: an agent acting alone gets nothing,
+            so the routes that ACT are closed until a human approves the claim
+            link. The remedy is in the `detail`, and the one route that stays
+            open is `POST /v1/agents/claim-link/refresh`, which is how an
+            unclaimed agent gets the link a human is meant to open.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
         '204':
           description: The credential was withdrawn.
         '401':
@@ -4247,6 +4308,21 @@ paths:
             schema:
               $ref: '#/components/schemas/RotateAgentTokenRequest'
       responses:
+        '403':
+          description: |
+            The credential is live but the principal behind it has never been
+            claimed by a human account. D4: an agent acting alone gets nothing,
+            so the routes that ACT are closed until a human approves the claim
+            link. The remedy is in the `detail`, and the one route that stays
+            open is `POST /v1/agents/claim-link/refresh`, which is how an
+            unclaimed agent gets the link a human is meant to open.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
         '201':
           description: The replacement credential and its secret. `token` appears only here.
           headers:
@@ -6363,52 +6439,54 @@ components:
             already-claimed agent, so this is not a way to probe for which agents
             exist.
           examples: [cafaye_9Xk2Qm7RfT4vB1nJ8pL5wY3hD6sZ0aC]
-    Agent:
+    ClaimedAgent:
       type: object
       description: |
-        An agent principal, as the claim response sees it.
+        The 200 from `claimAgent`, and it is the agent PLUS the credential the
+        claim minted for it (W2-P2).
 
-        **There is no `token` and no `claim_token_digest`, and both absences are
-        the design.** The claim link's plaintext exists exactly once, in the
-        response to the registration that produced it; the digest is the only part
-        of it any later code can reach and it is not a fact a client has any use
-        for. A minted credential is a separate capability and will arrive as its
-        own type.
+        **Why this name and not `ClaimAgentResponse`:** oapi-codegen derives the
+        response struct from the operationId, so a schema of that name produces
+        two Go types with one name and a file that does not compile. The schema is
+        the THING, the response is the ENVELOPE, and the envelope keeps the
+        operation's name.
 
-        **`status` is `claimed` on a successful claim**, and it stays claimed
-        through a disable — "was this ever bound" and "is it live" are two
-        questions, and conflating them is a security question answered with a
-        liveness one. This response is returned before any disable can have
-        happened, so the two agree here.
-      required: [id, name, status, claimed_at]
+        **The mint is in the claim's transaction, not a second request.** An agent
+        that is bound and holds no credential is a claim a human completed and an
+        agent cannot use, so the binding and the key are one fact or neither is.
+        `token.token` appears in this body and nowhere else: there is no column
+        holding the plaintext, so no endpoint can print it again, and a client that
+        loses it mints another on `POST /v1/agents/tokens`.
+
+        **This is not an entitlement.** The claim grants a binding and a
+        credential, and nothing else - no entitlement, no scope beyond what the
+        principal already resolves to. The entitlement grant on a claim is
+        conductor's (W2-P3), and D4 keeps an agent from granting itself one.
+
+        **`status` is `claimed` on this response**, and it stays claimed through a
+        disable: "was this ever bound" and "is it live" are two questions, and
+        conflating them is a security question answered with a liveness one. This
+        response is returned before any disable can have happened, so the two
+        agree here - which is why the enum carries one member and not three.
+      required: [id, name, status, claimed_at, token]
       properties:
         id:
           type: string
           format: uuid
-          description: The principal's row id, stable across its whole lifecycle.
         name:
           type: string
-          description: |
-            What the agent calls itself, as whoever registered it typed it. Not
-            unique: two agents called "Noel" in two deployments are two different
-            principals, and a global unique name would make a second registration a
-            `409` about a name nobody can see.
           examples: [Noel]
         status:
           type: string
-          enum: [unclaimed, claimed, disabled]
+          enum: [claimed]
           description: |
-            Where the principal is in its lifecycle. `unclaimed` is what a
-            registration produces, `claimed` is bound to an account, and `disabled`
-            was claimed and has been turned off. The transition `unclaimed →
-            disabled` does not exist and is refused by the state machine and by the
-            database.
+            Always `claimed` on this response: the route exists to produce it, and
+            the store's conditional UPDATE is what decides.
         claimed_at:
           type: string
           format: date-time
-          description: |
-            When the binding happened, and the instant the claim transaction
-            committed. Present on any agent that has been claimed, disabled or not.
+        token:
+          $ref: '#/components/schemas/IssuedAgentToken'
     APIKey:
       type: object
       description: |
@@ -8190,6 +8268,7 @@ components:
             - payload_too_large
             - service_unavailable
             - account_ownership_conflict
+            - agent_unclaimed
         trace_id:
           type: string
           description: Always present, always equal to the `X-Trace-Id` response header.
@@ -8508,6 +8587,22 @@ components:
 #    Same proposal shape as above: add it mapped to 409, or fold it into
 #    `conflict` at the cost of the two becoming indistinguishable to a generated
 #    client.
+#
+#    2c. `agent_unclaimed` (403) is the one that is not this service's to
+#    propose: it is the FLEET's. The `caf` CLI already switches on the string in
+#    a 403 body and swaps in its own operator-facing sentence, so the identifier
+#    is settled by its consumers rather than by this document. It appears on the
+#    agent surface when a LIVE agent credential is presented by a principal no
+#    human has claimed (D4: an agent acting alone gets nothing).
+#
+#    It is 403 and not 401 because the credential RESOLVED - the principal is
+#    real, the token is live, and what is missing is a human's click, which is
+#    not something a new credential fixes. So the code is what a machine reads
+#    and the `detail` is what a human does: it names the route that gets the
+#    caller a fresh claim link. A refusal that says only "unclaimed" tells a
+#    caller it lost and nothing about what to do, and the whole point of a
+#    distinct code here is that the two refusals beside it have different
+#    remedies.
 #
 # 3. `info.version` is set, and it is at 1.9.0.
 #

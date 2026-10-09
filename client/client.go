@@ -1203,11 +1203,20 @@ func (c *Client) AcceptInvitation(ctx context.Context, body generated.AcceptInvi
 // already-claimed agent and an agent that never existed, and a caller must not
 // attempt to tell those four apart.
 //
-// The response carries no token. Minting the scoped credential an agent
-// presents is a separate capability with its own scope vocabulary, and it is
-// not this route.
-func (c *Client) ClaimAgent(ctx context.Context, accountId openapiTypes.UUID, body generated.ClaimAgentJSONRequestBody) (*generated.Agent, error) {
-	var out generated.Agent
+// # The response carries a token, and that is the whole point
+//
+// Since W2-P2 the claim's 200 is `ClaimedAgent`: the principal and the bearer
+// credential the claim minted for it, in one transaction. The mint is not a
+// second request because an agent that is bound and holds no credential is a
+// claim a human completed and an agent cannot use. `token.token` appears here
+// and nowhere else, and a caller that loses it mints another on
+// `POST /v1/agents/tokens`.
+//
+// **It is not an entitlement.** The claim grants a binding and a credential and
+// nothing else; the entitlement grant on a claim is conductor's (W2-P3), and D4
+// keeps an agent from granting itself one.
+func (c *Client) ClaimAgent(ctx context.Context, accountId openapiTypes.UUID, body generated.ClaimAgentJSONRequestBody) (*generated.ClaimedAgent, error) {
+	var out generated.ClaimedAgent
 	err := call(c, "claimAgent", func() (*http.Response, error) {
 		return c.transport.ClaimAgent(ctx, accountId, body)
 	}, &out)
