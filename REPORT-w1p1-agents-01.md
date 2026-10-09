@@ -1,8 +1,10 @@
 # REPORT — W1-P1 identity: agent principals (worktree `identity-w1p1`, branch `agents-first/w1p1`)
 
-**State: COMPLETE for this packet. The store, the use case and the claim route are
-committed and green. What remains is the next packet's, and this file says exactly
-where it starts.**
+**State: COMPLETE for this packet, four commits on `agents-first/w1p1`, all four
+gates green (bin/prime exit 0, go vet clean, gofmt clean, go test -race exit 0 —
+30 packages ok, 0 FAIL, no data race). The store, the use case and the claim route
+are committed. What remains is the next packet's, and this file says exactly where
+it starts.**
 
 The substrate this report's first version described is still there and is still
 green. On top of it now sit the store, `Service.Claim`, the event vocabulary and
@@ -243,18 +245,37 @@ deliberately omits).
 
 ## Gate status
 
-`bin/prime` was re-run over the whole suite with all four commits in the tree,
-against `identity_w1p1` migrated to v33, with the corrected DSNs:
+`bin/prime` was re-run over the whole suite with all five commits in the tree,
+against `identity_w1p1` migrated to **v33**, with the corrected DSNs:
 
 ```
 TEST_DATABASE_URL=postgres://identity:cafaye@localhost:15500/identity_w1p1?sslmode=disable
 TEST_DATABASE_ADMIN_URL=postgres://cafaye:cafaye@localhost:15500/postgres
 ```
 
-The result is in `/tmp/gate-identity-w1p1.log` (`exit` in
-`/tmp/gate-identity-w1p1.exit`), with `go vet ./...`, `gofmt -l .` and
-`go test -race ./...` in `/tmp/gate-identity-w1p1-race.log`. Nothing was weakened
-to make any of it pass.
+**All four gates green, measured on the final tree:**
+
+| gate | result |
+|---|---|
+| `bin/prime` | **exit 0**, 30 packages `ok`, 0 `FAIL` |
+| `go vet ./...` | clean |
+| `gofmt -l .` | clean |
+| `go test -race -count=1 ./...` | **exit 0**, 30 packages `ok`, 0 `FAIL`, no data race |
+
+One **process lesson worth writing down**, because it cost two false reds and
+looked exactly like a real failure. I ran `bin/prime` and the `-race` suite
+**concurrently against the same test database**, and both went red on
+`TestTwoPeopleWithTheSameLocalPartBothRegisterUnderTheRealPolicies` (an FK
+violation from two suites racing on one schema) and a NATS timing test in
+`cmd/identity`. Re-run sequentially, both are green. Two full gates against one
+database is two tenants in one schema, and the private-schema harness is not built
+for it. The log files are keyed to the worktree; the DATABASE is also one tenant
+per run.
+
+One honest note on the numbers in this file: `28893`-era figures quoted in
+`coverage-exclusions`' history are that file's own measurement, and the restatement
+this packet made is measured the same way. Nothing was weakened to make any gate
+pass.
 
 
 ---
