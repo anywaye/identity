@@ -71,6 +71,29 @@ type Owner struct {
 	ActorID id.UUID
 }
 
+// RequireClaimed is the D4 gate on a resolved credential, and it is a method on
+// Owner rather than a branch in a handler because "who may act" belongs beside
+// the lifecycle that decides it.
+//
+// IT IS ONE STATEMENT, DELIBERATELY, AND THE PATH THAT DOES NOT CALL IT IS NAMED.
+// An unclaimed principal may reach exactly one route — the claim-link refresh,
+// which is the only thing it can do that a human has not already done for it.
+// Everything else on the agent surface (the token lifecycle) goes through this,
+// because an agent acting alone gets nothing (D4), and a credential minted
+// before a human claimed anything is a token whose authority would outrun the
+// claim that was supposed to create it.
+//
+// CLAIMED AND DISABLED BOTH PASS HERE, and that is not an oversight: a disabled
+// principal's credential does not resolve at all (Authenticate refuses it), so
+// the only status this method can see is unclaimed. What it answers is "was this
+// ever bound", which is the ownership question, not "is it live".
+func (o Owner) RequireClaimed() error {
+	if !o.Agent.IsClaimed() {
+		return ErrUnclaimed
+	}
+	return nil
+}
+
 // Authenticate resolves an agent's presented bearer credential to its principal,
 // via OwnerByTokenDigest. It is the agent-surface analogue of currentCaller, and
 // it is on the service rather than in the HTTP layer so the transaction boundary

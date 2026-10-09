@@ -119,6 +119,31 @@ const (
 	// `invalid_request` in the specifications.
 	CodeInvalidRequest = "invalid_request"
 
+	// CodeAgentUnclaimed is 403 for a live AGENT credential presented by a
+	// principal no human has claimed.
+	//
+	// IT IS 403 AND NOT 401 BECAUSE THE CREDENTIAL RESOLVED. The principal is real,
+	// the token is live, the request is authenticated — what is missing is the
+	// CLICK, which only a human on the claim screen can supply. A 401 would send a
+	// client hunting a login problem that does not exist, which is the same
+	// argument `requireAdminToken` answers 403 with.
+	//
+	// # WHY THE HINT MATTERS MORE THAN THE CODE
+	//
+	// This is the code the fleet's CLI switches on (`caf agent …` looks for
+	// `agent_unclaimed` in a 403 body and swaps in its own sentence telling the
+	// operator to claim the agent first), and a client that gets the code with no
+	// remedy has been told it is refused and nothing else. The whole point of a
+	// distinct code here is that the two refusals it is told apart from have
+	// different remedies: `unauthorized` needs a credential, this needs a HUMAN.
+	// So the detail names the action and the route that performs it.
+	//
+	// It shares the 403 with the scoped-API-key refusal on the claim route, and it
+	// is told apart from it by the code rather than by the status — the two are
+	// different remedies for different callers and a client must not have to read
+	// the sentence to know which one it got.
+	CodeAgentUnclaimed = "agent_unclaimed"
+
 	// CodeServiceUnavailable is 503, and it is the one code in this file that core's
 	// conventions do not name.
 	//
@@ -157,6 +182,7 @@ var titles = map[string]string{
 	CodeEmailNotVerified:   "Email not verified",
 
 	CodeAccountOwnershipConflict: "Account ownership conflict",
+	CodeAgentUnclaimed:           "Agent unclaimed",
 }
 
 func titleFor(code string) string {

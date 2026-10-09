@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -110,13 +111,15 @@ func TestAClaimBindsTheAgentAndRecordsWhoDidIt(t *testing.T) {
 		t.Errorf("status = %q, want %q", claimed.Agent.Status, StatusClaimed)
 	}
 
-	// The event row, written by the same transaction.
+	// The event rows, written by the same transaction. TWO since W2-P2: the
+	// claim, and the mint it caused — see TestAClaimMintsTheCredentialItPresents
+	// for why both are the human's actor.
 	events, err := NewStore(f.pool).ListEvents(context.Background(), f.pool, claimed.Agent.ID)
 	if err != nil {
 		t.Fatalf("reading the agent's events: %v", err)
 	}
-	if len(events) != 1 {
-		t.Fatalf("the agent has %d events, want 1", len(events))
+	if len(events) != 2 {
+		t.Fatalf("the agent has %d events, want 2 (the claim and the mint it caused)", len(events))
 	}
 	if events[0].Action != ActionClaimed {
 		t.Errorf("the event's action is %q, want %q", events[0].Action, ActionClaimed)
@@ -129,6 +132,92 @@ func TestAClaimBindsTheAgentAndRecordsWhoDidIt(t *testing.T) {
 	}
 	if events[0].TraceID != "trace-1" {
 		t.Errorf("the event carries trace id %q, want the request's", events[0].TraceID)
+	}
+}
+
+// TestAClaimMintsTheCredentialItPresents is the W2-P2 property: the claim hands
+// back a credential, and it is a credential that resolves.
+//
+// THREE ASSERTIONS, and the third is the one that keeps the first two honest:
+// the minted value resolves through Authenticate (so it is a real row and not a
+// string that went nowhere), the row holds only a digest (so nothing downstream
+// can print it again), and the mint's event names the HUMAN rather than the
+// credential it created.
+//
+// THAT LAST ONE IS A SECURITY STATEMENT AND NOT BOOKKEEPING. Recording the new
+// token as its own actor would say the agent issued itself a credential by being
+// claimed, which is the story D4 exists to refuse: an agent acting alone gets
+// nothing, and the only reason this token exists is that a human clicked Approve.
+func TestAClaimMintsTheCredentialItPresents(t *testing.T) {
+	f := newServiceFixture(t)
+
+	link := f.register(t, "Noel")
+
+	claimed, err := f.svc.Claim(f.claimCtx(), ClaimInput{
+		Token:   link,
+		Account: f.account,
+		User:    f.user,
+		TraceID: "trace-mint",
+		Now:     serviceInstant,
+	})
+	if err != nil {
+		t.Fatalf("claiming: %v", err)
+	}
+	if claimed.TokenPlaintext == "" {
+		t.Fatal("the claim returned no credential, so an agent bound by the claim cannot use the binding")
+	}
+	if claimed.Token.Name != claimTokenName {
+		t.Errorf("the claim's credential is named %q, want %q", claimed.Token.Name, claimTokenName)
+	}
+	if claimed.Token.AgentID != claimed.Agent.ID {
+		t.Errorf("the credential belongs to %v, want the agent just claimed %v", claimed.Token.AgentID, claimed.Agent.ID)
+	}
+
+	// It resolves: the plaintext is a live bearer credential for the claimed
+	// principal, and it is the value the claim response renders.
+	owner, err := f.svc.Authenticate(context.Background(), claimed.TokenPlaintext, serviceInstant)
+	if err != nil {
+		t.Fatalf("the claim-minted credential does not resolve: %v", err)
+	}
+	if owner.Agent.ID != claimed.Agent.ID {
+		t.Errorf("the credential resolved to %v, want the claimed agent %v", owner.Agent.ID, claimed.Agent.ID)
+	}
+	if err := owner.RequireClaimed(); err != nil {
+		t.Errorf("a credential minted by a claim is refused as unclaimed: %v", err)
+	}
+
+	// Only the digest is stored. Reading the row back finds no column that could
+	// hold the plaintext, so there is nothing for a careless %+v to print.
+	stored, err := NewStore(f.pool).ByTokenID(context.Background(), f.pool, claimed.Token.ID)
+	if err != nil {
+		t.Fatalf("reading the minted credential back: %v", err)
+	}
+	if stored.TokenDigest != Digest(claimed.TokenPlaintext) {
+		t.Error("the stored digest is not the digest of the value the claim returned")
+	}
+	if strings.Contains(stored.TokenDigest, claimed.TokenPlaintext) {
+		t.Error("the digest column carries the plaintext, which is impossible by construction and would be a catastrophe")
+	}
+
+	// And the mint's actor is the human.
+	events, err := NewStore(f.pool).ListEvents(context.Background(), f.pool, claimed.Agent.ID)
+	if err != nil {
+		t.Fatalf("reading the agent's events: %v", err)
+	}
+	var mint *EventRecord
+	for i := range events {
+		if events[i].Action == ActionTokenMinted {
+			mint = &events[i]
+		}
+	}
+	if mint == nil {
+		t.Fatal("the claim wrote no token_minted event, so the credential in the row has no cause in the trail")
+	}
+	if mint.UserID != f.user {
+		t.Errorf("the mint's actor is %v, want the human whose claim caused it %v", mint.UserID, f.user)
+	}
+	if !mint.TokenID.IsZero() {
+		t.Errorf("the mint's actor names a token %v, and the credential cannot be its own actor", mint.TokenID)
 	}
 }
 
