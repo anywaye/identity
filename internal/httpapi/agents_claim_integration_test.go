@@ -1,11 +1,14 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/cafaye/identity/internal/agents"
 	"github.com/cafaye/identity/internal/platform/dbtest"
@@ -28,6 +31,11 @@ import (
 // cases, and a session for every human who appears in it.
 type claimWorld struct {
 	handler http.Handler
+	// pool is the app-role pool under test, so a world test can read the rows a
+	// route did or did not write. It is the pool newAgentServer already opens —
+	// re-opening one would be a second connection to the same private schema and
+	// a second thing to close.
+	pool *pgxpool.Pool
 }
 
 // newClaimWorld builds the agent surface and the auth surface over one private
@@ -38,7 +46,20 @@ type claimWorld struct {
 func newClaimWorld(t *testing.T) *claimWorld {
 	t.Helper()
 
-	return &claimWorld{handler: newAgentServer(t, 100).handler}
+	s := newAgentServer(t, 100)
+	return &claimWorld{handler: s.handler, pool: s.pool}
+}
+
+// rows counts what the database holds, for the tests that need to prove a route
+// wrote nothing rather than assert on what it answered.
+func (w *claimWorld) rows(t *testing.T, query string, args ...any) int {
+	t.Helper()
+
+	var n int
+	if err := w.pool.QueryRow(context.Background(), query, args...).Scan(&n); err != nil {
+		t.Fatalf("counting rows (%s): %v", query, err)
+	}
+	return n
 }
 
 // human is a signed-in user, and the account their registration created for

@@ -25,7 +25,7 @@
 //
 //	client/generated/   oapi-codegen v2.8.0 output, COMMITTED, lint-excluded
 //	transport.go        the interface the generated client satisfies
-//	client.go           the hand-written client: forty-one operations, typed results
+//	client.go           the hand-written client: forty-three operations, typed results
 //	credentials.go      which credential this is, and where it may be sent
 //	baseurl.go          where requests go, in a documented order
 //	errors.go           RFC 9457 problem to typed error, with a typed fallback
@@ -63,6 +63,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 
 	openapiTypes "github.com/oapi-codegen/runtime/types"
@@ -75,7 +76,7 @@ import (
 // Not `http.Client`'s zero value, which means "no timeout at all": a client for the
 // platform's security boundary that can hang forever on a socket is a resource leak
 // with a credential attached. Thirty seconds is generous for every operation in
-// this document — all forty-one are row reads, row writes, and one argon2id
+// this document — all forty-three are row reads, row writes, and one argon2id
 // verification — and short enough that a caller is not left holding a goroutine.
 const DefaultTimeout = 30 * time.Second
 
@@ -298,7 +299,7 @@ func call[Out any](
 
 	// A 204, and any success with no body, is a success with nothing to decode.
 	// Treating "empty" as an error would make every DELETE in this document — eight
-	// of the forty-one operations — fail while succeeding.
+	// of the forty-three operations — fail while succeeding.
 	if len(bytes.TrimSpace(body)) == 0 {
 		return nil
 	}
@@ -320,7 +321,7 @@ func call[Out any](
 //
 // It exists because Go cannot infer a type parameter from an untyped `nil`, and the
 // alternative — passing a `*struct{}` and hoping — is how a caller ends up with a
-// method that returns a value the contract says does not exist. Nine of the forty-one
+// method that returns a value the contract says does not exist. Eleven of the forty-three
 // operations in this document answer 204, so this is not a rare shape.
 //
 // `ctx` is accepted and ignored for symmetry with `call`; the context reaches the
@@ -329,7 +330,7 @@ func callVoid(ctx context.Context, c *Client, operation string, send func() (*ht
 	return call[struct{}](c, operation, send, nil)
 }
 
-// --- the forty-one operations ------------------------------------------------
+// --- the forty-three operations ------------------------------------------------
 //
 // One per `operationId`, named exactly as the document names them. That naming is
 // not a style choice: `operationId` is the contract, it is what every generated
@@ -1219,6 +1220,64 @@ func (c *Client) ClaimAgent(ctx context.Context, accountId openapiTypes.UUID, bo
 	var out generated.ClaimedAgent
 	err := call(c, "claimAgent", func() (*http.Response, error) {
 		return c.transport.ClaimAgent(ctx, accountId, body)
+	}, &out)
+	return &out, err
+}
+
+// GetAgentClaimPreview reads the claim screen's first frame. Corresponds to
+// `GET /v1/agents/claim/{token}`.
+//
+// **Anonymous.** The claim link in the path is the credential — 256 bits of
+// `cafaye_` entropy whose SHA-256 is the only part stored — so no Authorization
+// header goes out, exactly as an invitation redemption sends none. A human has
+// to be told whose agent it is before they have signed in, and there is no
+// other bearer value in the request to identify them with.
+//
+// A 404 is one answer for a wrong token, an expired link, an already-claimed
+// agent and an agent that never existed, and a caller must not attempt to tell
+// those four apart. That is the same collapse the claim makes, and it is what
+// makes the preview safe to mount anonymously.
+//
+// # It is a preview, and the naming says so
+//
+// The response carries the principal's name, its registration instant, its own
+// device document and when its link stops working. It carries no credential and
+// grants nothing: the wrapper's caller cannot claim through this any more than
+// the route can, and a caller that wants to bind an agent calls `ClaimAgent`.
+func (c *Client) GetAgentClaimPreview(ctx context.Context, token string) (*generated.AgentClaimPreview, error) {
+	// The token is a PATH SEGMENT and it is encoded, the same reason
+	// `StartSocialLogin` encodes its provider: a raw value would put a
+	// caller-chosen string into a URL and a traversal or a `?` into someone
+	// else's request.
+	encoded := url.PathEscape(token)
+	var out generated.AgentClaimPreview
+	err := call(c, "getAgentClaimPreview", func() (*http.Response, error) {
+		return c.transport.GetAgentClaimPreview(ctx, encoded)
+	}, &out)
+	return &out, err
+}
+
+// GetAgentHome answers who the presented agent credential is. Corresponds to
+// `GET /v1/agents/home`, and is the `caf agent whoami` read.
+//
+// # The credential kind is the caller's business, and this route is strict about it
+//
+// It needs the AGENT's own bearer token, attached by newTransport like every
+// other agent route. A session — the credential kind the human surface uses — is
+// refused with 401 here rather than resolved somewhere else, and a caller that
+// presents one has a login problem rather than an authority problem.
+//
+// # An unclaimed agent is entitled to the answer
+//
+// The route is gated on the credential resolving and NOT on the principal being
+// claimed, so an agent that registered itself gets a 200 with `claimed: false`.
+// That is the point: `caf agent whoami` is how an agent finds out whether
+// anybody has claimed it. Gating it the other way would answer "you are not
+// claimed" by refusing to say who is asking.
+func (c *Client) GetAgentHome(ctx context.Context) (*generated.AgentHome, error) {
+	var out generated.AgentHome
+	err := call(c, "getAgentHome", func() (*http.Response, error) {
+		return c.transport.GetAgentHome(ctx)
 	}, &out)
 	return &out, err
 }

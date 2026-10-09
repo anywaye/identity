@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/cafaye/identity/internal/agents"
 	"github.com/cafaye/identity/internal/platform/clock"
 	"github.com/cafaye/identity/internal/platform/dbtest"
@@ -31,6 +33,11 @@ const agentHTTPClaimUI = "https://cafaye.example"
 type agentServer struct {
 	handler http.Handler
 	clk     *clock.Fake
+	// pool is the app-role pool under test, kept so a test can read the rows a
+	// route did or did not write. The owner pool is deliberately NOT kept: a
+	// test that asserted through the owner would prove nothing about the
+	// boundary, and the private schema carries no row-level security anyway.
+	pool *pgxpool.Pool
 }
 
 func newAgentServer(t *testing.T, limiterMax int) *agentServer {
@@ -54,9 +61,15 @@ func newAgentServer(t *testing.T, limiterMax int) *agentServer {
 	if limiterMax > 0 {
 		opts = append(opts, WithRateLimiter(ratelimit.New(clk, map[string]ratelimit.Limit{
 			"/v1/agents": {Max: limiterMax, Window: time.Minute},
+			// The claim preview is in the same map because it is the OTHER
+			// unauthenticated route this registrar mounts, and an anonymous route
+			// that spends a database read per request with no bound is the one
+			// place this surface could be driven by a scanner. Its key is the
+			// route, so the registration's own limit is unaffected.
+			"/v1/agents/claim/{token}": {Max: limiterMax, Window: time.Minute},
 		})))
 	}
-	return &agentServer{handler: New(nil, opts...), clk: clk}
+	return &agentServer{handler: New(nil, opts...), clk: clk, pool: pool}
 }
 
 // TestTheRegistrationHTTPShapeIsTheContract is the happy path the CLI codes against:

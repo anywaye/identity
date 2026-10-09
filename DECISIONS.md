@@ -2086,3 +2086,47 @@ said this packet would decide it.
   one principal and revocable on it, resolved through the agent table rather
   than api_keys. The scope column and its enforcement arrive with the first
   route an agent token would gate.
+
+## D22: the claim preview is a separate read, and the agent home answers an unclaimed agent
+
+**Raised** 2026-10-09 by packet `repair-c` — the two routes the clients already
+called and identity did not mount. Two decisions, and both are about which gate a
+route sits behind.
+
+### The preview is a method, not a flag on the claim
+
+- **A preview that could claim is a preview that will.** The website's claim
+  screen calls `GET /v1/agents/claim/{token}` for its first frame, and the
+  obvious implementation is a `preview bool` on `ClaimInput`. `Claim` mints: it
+  opens a transaction, runs a conditional UPDATE, writes two event rows and
+  creates an `agent_tokens` row. A flag on that is a flag that has to be honoured
+  by six statements, and the day a handler forgets to set it the preview is
+  binding agents to accounts. So `PreviewClaim` is its own use case, and
+  `CreateToken` is not reachable from it — not "not called", *not reachable*.
+  There is no parameter that could make it so.
+- **The preview's 404 is the claim's 404, because the read is the claim's read.**
+  `Store.ByClaimDigest` filters the digest, the status AND the expiry in one
+  statement, which is what collapses a wrong token, an expired link, an
+  already-claimed agent and an agent that never existed into one value. Building
+  the preview on a different query — `ByID`, say, or a read that skipped the
+  status conjunct — would make the preview more talkative than the claim, and a
+  preview that says "this link was real but expired" tells a stranger which of
+  their guesses was close. The collapse is inherited, not restated.
+- **It is rate-limited on the registration's own terms**, with the key being the
+  client and the route and never a token, because it is the one unauthenticated
+  path on this surface that spends a database read per request. The website
+  loads it once; a scanner loads it as often as it likes.
+
+### The home is `agentCredentialOnly` and not `agentClaimedOnly`
+
+- **A "who am I" that refuses to say who you are is not an answer.** `caf agent
+  whoami` is the verb an agent that registered ITSELF runs — there is no other
+  way for it to learn whether a human has claimed it, and the CLI's own comment
+  says the remote answer's word is free precisely because a stale local
+  "unclaimed" is worse than no cache. Gating the route behind `RequireClaimed`
+  would answer "you are not claimed" with a 403 that names no caller at all.
+  So the gate is the credential resolving, and the STATUS is the answer.
+- **D4 is about ACTING, not about knowing.** An unclaimed principal may reach
+  exactly two routes — the claim-link refresh, which is the only road out of the
+  state, and this one, which is a read about itself. The routes that act are
+  behind `agentClaimedOnly` and that is where D4 is enforced.

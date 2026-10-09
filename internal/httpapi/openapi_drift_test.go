@@ -635,7 +635,21 @@ func TestTheDocumentIsOpenAPI31AndCarriesAVersion(t *testing.T) {
 	// response changed. The machine operator surface is untouched, and the
 	// document says on both sides that the two credentials do not cross. See
 	// DECISIONS.md D19.
-	const want = "1.13.0"
+	//
+	// 1.14.0 is the claim preview and the agent home (`GET
+	// /v1/agents/claim/{token}`, the anonymous first frame the website's claim
+	// screen renders, and `GET /v1/agents/home`, the `caf agent whoami` read,
+	// packet repair-c). Both were already being CALLED by a client that had no
+	// route to call — the website's `getAgentClaim` answered 404 for a perfectly
+	// live link and the CLI's `Home` had nothing to ask — which is the sharpest
+	// instance of what this pin exists to make visible: a consumer built against
+	// an operation the document does not describe. It is a NON-BREAKING addition
+	// and a GENERATED-SOURCE change at once — two operations and two new schemas
+	// (`AgentClaimPreview`, `AgentHome`). No existing operation moved and no
+	// existing response changed. The preview is the one operation here whose
+	// `security` is `[]`: the claim link in the path is the credential, so there
+	// is no bearer to attach. See DECISIONS.md D22.
+	const want = "1.14.0"
 	if doc.InfoVersion != want {
 		t.Errorf("%s declares info.version %q, not %q. core's sync rule is that the /v1 "+
 			"prefix says which contract and this says which build of it, and a non-breaking "+

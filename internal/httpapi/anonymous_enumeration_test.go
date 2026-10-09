@@ -543,6 +543,73 @@ func anonymousFamilyAudit() []auditRoute {
 			//
 			// The probe is a minimal valid body so the walk reaches the handler
 			// rather than a 400 about a malformed probe.
+			//
+			// --- the two routes the clients already call ---------------------
+			//
+			// THE CLAIM PREVIEW, and the question this file asks is the SHARPEST
+			// one on the agent surface: not "does this ACCOUNT exist" but "does this
+			// AGENT exist", because a claim link is the only credential a stranger
+			// ever presents and the link names a principal rather than an account.
+			//
+			// The answer is ONE BIT for a link that is live, and it is the bit the
+			// flow cannot do without: a human who opens their own claim URL has to
+			// be told whose agent it is before they can approve it. So a 200 says
+			// "this 256-bit secret is one we issued, that is unclaimed and that has
+			// not expired", and that is all it says — there is no account in the
+			// path, none in the body and none in the response. Guessing the secret
+			// is not a search anybody can run, which is what makes the bit
+			// affordable.
+			//
+			// A dead link is a 404 that is INDISTINGUISHABLE from a stranger's
+			// wrong one: the use case reads through the store's own ByClaimDigest,
+			// which filters the digest, the status AND the expiry in one statement,
+			// so a wrong token, an expired link, an already-claimed agent and an
+			// agent that was never issued are one value here exactly as they are on
+			// the claim that follows. There is no 410 (which would say the link was
+			// real) and no 409 (which would say the agent is taken). Held over the
+			// real SQL by
+			// TestThePreviewCannotTellTheFourWaysALinkIsDeadApart.
+			//
+			// THE PREVIEW IS ALSO THE ONLY AGENT ROUTE A SCANNER CAN DRIVE WITHOUT
+			// ANY CREDENTIAL, which is why it is rate-limited on the registration's
+			// own terms: the key is the client and the route, never a token, so the
+			// 429 is identical for everybody and discloses nothing about the link.
+			name: "preview an agent claim", method: http.MethodGet,
+			pattern:    "/v1/agents/claim/{token}",
+			identifier: "the claim link, which is a 256-bit secret",
+			anonymous:  http.StatusNotFound,
+			discloses: "that the presented 256-bit secret is live, unclaimed and unexpired — " +
+				"one bit, affordably, because guessing it is not a search anybody can run. No " +
+				"account is named in the request or the response. A dead link and a wrong one " +
+				"are ONE 404: the read filters the digest, the status and the expiry in one " +
+				"statement, so an expired link, an already-claimed agent and an agent that never " +
+				"existed are not told apart from each other or from a stranger's guess. No 410, " +
+				"no 409",
+		},
+		{
+			// THE HOME, and it is the mirror of the preview's answer from the other
+			// side of the credential. A stranger with no credential gets 401 before
+			// the handler runs, so no identifier — no agent id, no claim link, no
+			// token — reaches the use case and there is no principal a stranger can
+			// point the route at. There is no path parameter to point either.
+			//
+			// A CALLER PAST THE GATE gets an answer about THEMSELVES only: the
+			// credential resolved to one principal and the body is that principal's
+			// own identity, status and claiming account. It is `agentCredentialOnly`
+			// and NOT `agentClaimedOnly`, on purpose — `caf agent whoami` is the verb
+			// an UNCLAIMED agent runs to find out whether anybody has claimed it,
+			// and a 403 there would answer "you are not claimed" by refusing to say
+			// who is asking. So the status is the answer and the route is open to
+			// every live credential.
+			name: "read the agent home", method: http.MethodGet, pattern: "/v1/agents/home",
+			anonymous: http.StatusUnauthorized,
+			discloses: "nothing: 401 without the agent's own bearer credential, so no principal " +
+				"a stranger can name arrives at the use case. Behind the credential the body is " +
+				"the caller's own identity, status and claiming account — an agent is told about " +
+				"itself, and about nothing else. An unclaimed agent gets the same 200 with " +
+				"`claimed: false`, which is the answer `caf agent whoami` exists to read",
+		},
+		{
 			name: "register an agent", method: http.MethodPost, pattern: "/v1/agents",
 			identifier: "username (optional; a collision is never disclosed)",
 			probe:      `{"name":"census probe"}`,
