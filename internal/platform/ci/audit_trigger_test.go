@@ -55,6 +55,12 @@ var auditTriggers = []struct {
 }{
 	{"account_audit_log", "account_audit_log_is_append_only", "account_audit_log_append_only"},
 	{"user_audit_log", "user_audit_log_is_append_only", "user_audit_log_append_only"},
+	// 00031's agent trail, and it is in this list because a THIRD audit table
+	// cannot be added without somebody deciding whether it belongs here — which
+	// is the moment to decide it. An `agent_events` left out would be a table
+	// whose append-only guarantee is installed in the migration and checked by
+	// nothing, which is the direction this list exists to close.
+	{"agent_events", "agent_events_is_append_only", "agent_events_append_only"},
 }
 
 var (
