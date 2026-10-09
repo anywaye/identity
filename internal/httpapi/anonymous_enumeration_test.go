@@ -1012,6 +1012,20 @@ func TestIntrospectionIsAnOracleByDesignAndGatedOnACredential(t *testing.T) {
 // column. A second copy of either would be a second thing to keep working.
 type auditFixture struct {
 	*recoveryServerFixture
+	// accountID is a real account row, and it exists so a probe for an
+	// account-scoped route can carry a VALID uuid rather than the literal
+	// `{accountID}` chi pattern.
+	//
+	// Before this field existed the census could not audit any account-scoped
+	// route at all: `sendWith` takes a path verbatim, so a probe for
+	// `/v1/accounts/{accountID}/…` sent a path whose parameter was the literal
+	// text `{accountID}`, which `id.Parse` refuses, which produced a 404 from
+	// `accountIDFrom` BEFORE `currentCaller` had answered. Every account-scoped row
+	// would have measured 404 and claimed 404 — a census reporting a refusal that
+	// had nothing to do with the credential gate it was auditing. The substitution
+	// is what makes the first such row measurable, and it is why this fixture
+	// holds an account rather than a made-up string.
+	accountID id.UUID
 }
 
 func newAuditFixture(t *testing.T, opts ...Option) *auditFixture {
@@ -1062,6 +1076,14 @@ func newAuditFixture(t *testing.T, opts ...Option) *auditFixture {
 			&auditSweeper{},
 			outbox.NewStore(pool),
 		)),
+		// The agent claim, for the same reason: it is one of the audited family's
+		// routes, and a fixture without it would answer the audit's own probe with
+		// the router's 404 — "no route matches this request" — while the row says
+		// 401. That is the drift the census exists to catch, reproduced inside the
+		// fixture. The double records the call and answers a successful claim,
+		// which is the shape the probe never reaches: an anonymous request is
+		// refused at the credential gate before the use case runs.
+		WithAgents(newFakeAgents()),
 		// The introspection route is NOT account-scoped and hangs off this alone.
 		// Without it the route is not mounted at all, and the census above would read
 		// a smaller service than the one that runs.
@@ -1085,13 +1107,70 @@ func newAuditFixture(t *testing.T, opts ...Option) *auditFixture {
 	allOpts = append(allOpts, opts...)
 	handler := New(nil, allOpts...)
 
-	return &auditFixture{recoveryServerFixture: &recoveryServerFixture{
-		handler: handler,
-		pool:    pool,
-		clk:     clk,
-		mailer:  mailer,
-		access:  access,
-	}}
+	// A real account, written through the tenancy service rather than by INSERT, so
+	// the row a probe names is one this service would actually have produced. The
+	// caller is a fixture user and nobody else: an anonymous request is refused
+	// before any membership is read, so the owner is irrelevant and inventing one
+	// is noise.
+	fixtureUser := id.MustNew()
+	if _, err := pool.Exec(context.Background(),
+		`INSERT INTO users (id, email, password_digest) VALUES ($1, $2, $3)`,
+		fixtureUser, dbtest.UniqueEmail(t), auditPasswordDigest); err != nil {
+		t.Fatalf("inserting the audit fixture's user: %v", err)
+	}
+
+	return &auditFixture{
+		recoveryServerFixture: &recoveryServerFixture{
+			handler: handler,
+			pool:    pool,
+			clk:     clk,
+			mailer:  mailer,
+			access:  access,
+		},
+		accountID: auditAccount(t, tenancy, fixtureUser),
+	}
+}
+
+// auditPasswordDigest is a syntactically valid argon2id digest for the fixture's
+// user, and it is here because an `INSERT INTO users` is the cheapest way to give
+// a probe something to be refused by.
+//
+// It is a FIXTURE and not a secret: the same literal in every test in this package
+// is what lets one test seal a value and another open it. internal/apikeys carries
+// the same constant for the same reason, and it is restated rather than imported
+// because a test-only digest shared across two packages is a coupling for no gain.
+const auditPasswordDigest = "$argon2id$v=19$m=65536,t=3,p=4$c29tZXNhbHQ$" +
+	"c2FsdHNhbHRzYWx0c2FsdHNhbHQ"
+
+// auditAccount provisions the account an account-scoped probe names, and returns
+// its id.
+func auditAccount(t *testing.T, tenancy Tenancy, owner id.UUID) id.UUID {
+	t.Helper()
+
+	created, err := tenancy.Create(context.Background(), accounts.CreateInput{
+		Name:  "Audit fixture account",
+		Owner: owner,
+	})
+	if err != nil {
+		t.Fatalf("provisioning the audit fixture's account: %v", err)
+	}
+	return created.Account.ID
+}
+
+// substituteAccountParams replaces a chi path parameter with the fixture's real
+// account id, so a probe for an account-scoped route carries a valid uuid.
+//
+// IT IS RESPONSIBLE FOR `{accountID}` AND NOTHING ELSE, and the guard is scoped
+// the same way: an unsubstituted `{accountID}` is fatal, because it would send a
+// probe against a literal and measure the route's parser rather than the route.
+// Any OTHER parameter is left alone — this file's family includes routes with a
+// session id in the path, and this helper does not own those.
+func substituteAccountParams(pattern, accountID string) string {
+	out := strings.ReplaceAll(pattern, "{accountID}", accountID)
+	if strings.Contains(out, "{accountID}") {
+		return pattern
+	}
+	return out
 }
 
 // mintVerification asks for a confirmation link and returns the token that was
@@ -1252,7 +1331,12 @@ func anonymousProbe(t *testing.T, f *auditFixture, method, pattern string) *http
 			break
 		}
 	}
-	return sendWith(t, f.handler, method, pattern, "", "", body)
+	path := substituteAccountParams(pattern, f.accountID.String())
+	if strings.Contains(path, "{accountID}") {
+		t.Fatalf("the census probe for %s carries an unsubstituted {accountID}, so it "+
+			"would measure the route's parser rather than the route", pattern)
+	}
+	return sendWith(t, f.handler, method, path, "", "", body)
 }
 
 // renderProblem marshals a problem document with its trace id already cleared, so

@@ -90,6 +90,27 @@ func (e AccountRole) Valid() bool {
 	}
 }
 
+// Defines values for AgentStatus.
+const (
+	Claimed   AgentStatus = "claimed"
+	Disabled  AgentStatus = "disabled"
+	Unclaimed AgentStatus = "unclaimed"
+)
+
+// Valid indicates whether the value is a known member of the AgentStatus enum.
+func (e AgentStatus) Valid() bool {
+	switch e {
+	case Claimed:
+		return true
+	case Disabled:
+		return true
+	case Unclaimed:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for AuditLogEntryAction.
 const (
 	InvitationRevoked  AuditLogEntryAction = "invitation.revoked"
@@ -679,6 +700,52 @@ type AccountSummary struct {
 	Slug string      `json:"slug"`
 }
 
+// Agent An agent principal, as the claim response sees it.
+//
+// **There is no `token` and no `claim_token_digest`, and both absences are
+// the design.** The claim link's plaintext exists exactly once, in the
+// response to the registration that produced it; the digest is the only part
+// of it any later code can reach and it is not a fact a client has any use
+// for. A minted credential is a separate capability and will arrive as its
+// own type.
+//
+// **`status` is `claimed` on a successful claim**, and it stays claimed
+// through a disable — "was this ever bound" and "is it live" are two
+// questions, and conflating them is a security question answered with a
+// liveness one. This response is returned before any disable can have
+// happened, so the two agree here.
+type Agent struct {
+	// ClaimedAt When the binding happened, and the instant the claim transaction
+	// committed. Present on any agent that has been claimed, disabled or not.
+	ClaimedAt time.Time `json:"claimed_at"`
+
+	// ID The principal's row id, stable across its whole lifecycle.
+	ID openapi_types.UUID `json:"id"`
+
+	// Name What the agent calls itself, as whoever registered it typed it. Not
+	// unique: two agents called "Noel" in two deployments are two different
+	// principals, and a global unique name would make a second registration a
+	// `409` about a name nobody can see.
+	//
+	//
+	// Examples: Noel
+	Name string `json:"name"`
+
+	// Status Where the principal is in its lifecycle. `unclaimed` is what a
+	// registration produces, `claimed` is bound to an account, and `disabled`
+	// was claimed and has been turned off. The transition `unclaimed →
+	// disabled` does not exist and is refused by the state machine and by the
+	// database.
+	Status AgentStatus `json:"status"`
+}
+
+// AgentStatus Where the principal is in its lifecycle. `unclaimed` is what a
+// registration produces, `claimed` is bound to an account, and `disabled`
+// was claimed and has been turned off. The transition `unclaimed →
+// disabled` does not exist and is refused by the state machine and by the
+// database.
+type AgentStatus string
+
 // AuditLogEntry One admin action.
 //
 // **There is no field here that could hold a credential, and that is
@@ -811,6 +878,24 @@ type ChangeMemberRoleRequest struct {
 	// with `unknown_role`, and an empty `role` is the same case — there is no
 	// "unchanged" in a PATCH body.
 	Role AccountRole `json:"role"`
+}
+
+// ClaimAgentRequest The body of `claimAgent`, and it carries **one** field.
+//
+// `additionalProperties: false` is load-bearing rather than tidy. The fields
+// that are refused — an `account_id` and an `agent_id` — are exactly the two
+// a future client would try, and a schema that accepted them would be a
+// schema promising a capability this route refuses. An unknown field is a
+// `400`, the same answer a malformed body gets.
+type ClaimAgentRequest struct {
+	// Token The claim link the agent printed at registration. An absent, empty or
+	// unrecognised token is the same `404` as an expired link and an
+	// already-claimed agent, so this is not a way to probe for which agents
+	// exist.
+	//
+	//
+	// Examples: cafaye_9Xk2Qm7RfT4vB1nJ8pL5wY3hD6sZ0aC
+	Token string `json:"token"`
 }
 
 // CompleteSecondFactorRequest The second half of a login. `challenge` is optional here and required in
@@ -2142,6 +2227,9 @@ type RenameAccountJSONRequestBody = RenameAccountRequest
 // RevokeAccountInvitationsJSONRequestBody defines body for RevokeAccountInvitations for application/json ContentType.
 type RevokeAccountInvitationsJSONRequestBody = BulkInvitationRevocation
 
+// ClaimAgentJSONRequestBody defines body for ClaimAgent for application/json ContentType.
+type ClaimAgentJSONRequestBody = ClaimAgentRequest
+
 // MintAPIKeyJSONRequestBody defines body for MintAPIKey for application/json ContentType.
 type MintAPIKeyJSONRequestBody = MintAPIKeyRequest
 
@@ -2792,6 +2880,138 @@ type ClientInterface interface {
 	//
 	// Corresponds with DELETE /v1/accounts/{account_id}/admin/invitations/{invitation_id} (the `RevokeAccountInvitation` operationId).
 	RevokeAccountInvitation(ctx context.Context, accountID AccountID, invitationID openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ClaimAgentWithBody Claim an agent principal
+	//
+	// Binds an unregistered **agent principal** to an account. The agent registers
+	// itself, prints a claim URL, and a signed-in human opens it — the link is
+	// the credential, the click is explicit, and nothing auto-accepts. That is
+	// the invitation flow's rule, applied to a principal that had no account
+	// until this request.
+	//
+	// ### The account is in the PATH, the link is in the BODY
+	//
+	// Three things come from three different sources, and none of them is
+	// another:
+	//
+	// | what | from | why there |
+	// |---|---|---|
+	// | the account | the path | a claim binds to an account the caller is **authorized** for, and the account in the path is the one `requireAccountRole` just checked their membership in |
+	// | the human | the session | an agent bound by nobody is an agent owned by nobody |
+	// | the agent | the claim link | the link is the only thing that names the principal, and it is the only credential a stranger ever presents on this surface |
+	//
+	// A body that carried an `account_id` would move the membership read into a
+	// handler — a second place a role is checked, in a service that insists it is
+	// checked in one. A body that carried an `agent_id` would let the caller name
+	// a principal they were never given a link for. **Neither field exists.**
+	//
+	// ### Session only, and that is enforced in the middleware
+	//
+	// A scoped API token is refused with `403` before the handler runs. A claim
+	// is a human binding a thing to an account they belong to, and a machine
+	// credential has no use for one — the same rule that refuses a token on
+	// `POST /v1/invitations/accept`. The minimum role is `member` because any
+	// human in the account may claim on its behalf.
+	//
+	// ### One 404, for four different things
+	//
+	// A wrong token, an expired link, an already-claimed agent and an agent that
+	// was never issued are **the same response**: one status, one sentence, one
+	// body. The store collapses all four in a single statement — the lookup
+	// filters on the digest, the principal's status and the expiry together — so
+	// there is no second query that could tell them apart.
+	//
+	// **There is no 410 and no 409 on this route**, and that is a deliberate
+	// departure from `POST /v1/invitations/accept` above. A `410` would say "this
+	// link was real"; a `409` would say "this agent is taken". Both are facts
+	// about a row a stranger is guessing at. An invitation gets its `410`s
+	// because the caller can *act* on them — asking for a new one is a next step,
+	// and the inviter is a person who already knows the invitation exists. A
+	// claim link has no such second party: asking for a new one is not something
+	// a caller holding somebody else's link can do.
+	//
+	// Claiming is single-use and the guarantee is **conditional** — the update
+	// carries the digest and the status in its `WHERE`, so two people clicking
+	// the same link in the same second produce one claim and one 404, with no
+	// read in between for the two to disagree in.
+	//
+	// ### What a successful claim does NOT return
+	//
+	// No token. Minting the scoped credential an agent presents is a separate
+	// capability with a separate scope vocabulary, and a response that carried
+	// one before that vocabulary existed would be a credential this service has
+	// not decided what it may do.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/accounts/{account_id}/agents/claim (the `ClaimAgent` operationId).
+	ClaimAgentWithBody(ctx context.Context, accountID AccountID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ClaimAgent Claim an agent principal
+	//
+	// Binds an unregistered **agent principal** to an account. The agent registers
+	// itself, prints a claim URL, and a signed-in human opens it — the link is
+	// the credential, the click is explicit, and nothing auto-accepts. That is
+	// the invitation flow's rule, applied to a principal that had no account
+	// until this request.
+	//
+	// ### The account is in the PATH, the link is in the BODY
+	//
+	// Three things come from three different sources, and none of them is
+	// another:
+	//
+	// | what | from | why there |
+	// |---|---|---|
+	// | the account | the path | a claim binds to an account the caller is **authorized** for, and the account in the path is the one `requireAccountRole` just checked their membership in |
+	// | the human | the session | an agent bound by nobody is an agent owned by nobody |
+	// | the agent | the claim link | the link is the only thing that names the principal, and it is the only credential a stranger ever presents on this surface |
+	//
+	// A body that carried an `account_id` would move the membership read into a
+	// handler — a second place a role is checked, in a service that insists it is
+	// checked in one. A body that carried an `agent_id` would let the caller name
+	// a principal they were never given a link for. **Neither field exists.**
+	//
+	// ### Session only, and that is enforced in the middleware
+	//
+	// A scoped API token is refused with `403` before the handler runs. A claim
+	// is a human binding a thing to an account they belong to, and a machine
+	// credential has no use for one — the same rule that refuses a token on
+	// `POST /v1/invitations/accept`. The minimum role is `member` because any
+	// human in the account may claim on its behalf.
+	//
+	// ### One 404, for four different things
+	//
+	// A wrong token, an expired link, an already-claimed agent and an agent that
+	// was never issued are **the same response**: one status, one sentence, one
+	// body. The store collapses all four in a single statement — the lookup
+	// filters on the digest, the principal's status and the expiry together — so
+	// there is no second query that could tell them apart.
+	//
+	// **There is no 410 and no 409 on this route**, and that is a deliberate
+	// departure from `POST /v1/invitations/accept` above. A `410` would say "this
+	// link was real"; a `409` would say "this agent is taken". Both are facts
+	// about a row a stranger is guessing at. An invitation gets its `410`s
+	// because the caller can *act* on them — asking for a new one is a next step,
+	// and the inviter is a person who already knows the invitation exists. A
+	// claim link has no such second party: asking for a new one is not something
+	// a caller holding somebody else's link can do.
+	//
+	// Claiming is single-use and the guarantee is **conditional** — the update
+	// carries the digest and the status in its `WHERE`, so two people clicking
+	// the same link in the same second produce one claim and one 404, with no
+	// read in between for the two to disagree in.
+	//
+	// ### What a successful claim does NOT return
+	//
+	// No token. Minting the scoped credential an agent presents is a separate
+	// capability with a separate scope vocabulary, and a response that carried
+	// one before that vocabulary existed would be a credential this service has
+	// not decided what it may do.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/accounts/{account_id}/agents/claim (the `ClaimAgent` operationId).
+	ClaimAgent(ctx context.Context, accountID AccountID, body ClaimAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListAPIKeys List an account's API tokens
 	//
@@ -5843,6 +6063,158 @@ func (c *Client) RevokeAccountInvitations(ctx context.Context, accountID Account
 // Corresponds with DELETE /v1/accounts/{account_id}/admin/invitations/{invitation_id} (the `RevokeAccountInvitation` operationId).
 func (c *Client) RevokeAccountInvitation(ctx context.Context, accountID AccountID, invitationID openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRevokeAccountInvitationRequest(c.Server, accountID, invitationID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ClaimAgentWithBody Claim an agent principal
+//
+// Binds an unregistered **agent principal** to an account. The agent registers
+// itself, prints a claim URL, and a signed-in human opens it — the link is
+// the credential, the click is explicit, and nothing auto-accepts. That is
+// the invitation flow's rule, applied to a principal that had no account
+// until this request.
+//
+// ### The account is in the PATH, the link is in the BODY
+//
+// Three things come from three different sources, and none of them is
+// another:
+//
+// | what | from | why there |
+// |---|---|---|
+// | the account | the path | a claim binds to an account the caller is **authorized** for, and the account in the path is the one `requireAccountRole` just checked their membership in |
+// | the human | the session | an agent bound by nobody is an agent owned by nobody |
+// | the agent | the claim link | the link is the only thing that names the principal, and it is the only credential a stranger ever presents on this surface |
+//
+// A body that carried an `account_id` would move the membership read into a
+// handler — a second place a role is checked, in a service that insists it is
+// checked in one. A body that carried an `agent_id` would let the caller name
+// a principal they were never given a link for. **Neither field exists.**
+//
+// ### Session only, and that is enforced in the middleware
+//
+// A scoped API token is refused with `403` before the handler runs. A claim
+// is a human binding a thing to an account they belong to, and a machine
+// credential has no use for one — the same rule that refuses a token on
+// `POST /v1/invitations/accept`. The minimum role is `member` because any
+// human in the account may claim on its behalf.
+//
+// ### One 404, for four different things
+//
+// A wrong token, an expired link, an already-claimed agent and an agent that
+// was never issued are **the same response**: one status, one sentence, one
+// body. The store collapses all four in a single statement — the lookup
+// filters on the digest, the principal's status and the expiry together — so
+// there is no second query that could tell them apart.
+//
+// **There is no 410 and no 409 on this route**, and that is a deliberate
+// departure from `POST /v1/invitations/accept` above. A `410` would say "this
+// link was real"; a `409` would say "this agent is taken". Both are facts
+// about a row a stranger is guessing at. An invitation gets its `410`s
+// because the caller can *act* on them — asking for a new one is a next step,
+// and the inviter is a person who already knows the invitation exists. A
+// claim link has no such second party: asking for a new one is not something
+// a caller holding somebody else's link can do.
+//
+// Claiming is single-use and the guarantee is **conditional** — the update
+// carries the digest and the status in its `WHERE`, so two people clicking
+// the same link in the same second produce one claim and one 404, with no
+// read in between for the two to disagree in.
+//
+// ### What a successful claim does NOT return
+//
+// No token. Minting the scoped credential an agent presents is a separate
+// capability with a separate scope vocabulary, and a response that carried
+// one before that vocabulary existed would be a credential this service has
+// not decided what it may do.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/accounts/{account_id}/agents/claim (the `ClaimAgent` operationId).
+func (c *Client) ClaimAgentWithBody(ctx context.Context, accountID AccountID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewClaimAgentRequestWithBody(c.Server, accountID, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ClaimAgent Claim an agent principal
+//
+// Binds an unregistered **agent principal** to an account. The agent registers
+// itself, prints a claim URL, and a signed-in human opens it — the link is
+// the credential, the click is explicit, and nothing auto-accepts. That is
+// the invitation flow's rule, applied to a principal that had no account
+// until this request.
+//
+// ### The account is in the PATH, the link is in the BODY
+//
+// Three things come from three different sources, and none of them is
+// another:
+//
+// | what | from | why there |
+// |---|---|---|
+// | the account | the path | a claim binds to an account the caller is **authorized** for, and the account in the path is the one `requireAccountRole` just checked their membership in |
+// | the human | the session | an agent bound by nobody is an agent owned by nobody |
+// | the agent | the claim link | the link is the only thing that names the principal, and it is the only credential a stranger ever presents on this surface |
+//
+// A body that carried an `account_id` would move the membership read into a
+// handler — a second place a role is checked, in a service that insists it is
+// checked in one. A body that carried an `agent_id` would let the caller name
+// a principal they were never given a link for. **Neither field exists.**
+//
+// ### Session only, and that is enforced in the middleware
+//
+// A scoped API token is refused with `403` before the handler runs. A claim
+// is a human binding a thing to an account they belong to, and a machine
+// credential has no use for one — the same rule that refuses a token on
+// `POST /v1/invitations/accept`. The minimum role is `member` because any
+// human in the account may claim on its behalf.
+//
+// ### One 404, for four different things
+//
+// A wrong token, an expired link, an already-claimed agent and an agent that
+// was never issued are **the same response**: one status, one sentence, one
+// body. The store collapses all four in a single statement — the lookup
+// filters on the digest, the principal's status and the expiry together — so
+// there is no second query that could tell them apart.
+//
+// **There is no 410 and no 409 on this route**, and that is a deliberate
+// departure from `POST /v1/invitations/accept` above. A `410` would say "this
+// link was real"; a `409` would say "this agent is taken". Both are facts
+// about a row a stranger is guessing at. An invitation gets its `410`s
+// because the caller can *act* on them — asking for a new one is a next step,
+// and the inviter is a person who already knows the invitation exists. A
+// claim link has no such second party: asking for a new one is not something
+// a caller holding somebody else's link can do.
+//
+// Claiming is single-use and the guarantee is **conditional** — the update
+// carries the digest and the status in its `WHERE`, so two people clicking
+// the same link in the same second produce one claim and one 404, with no
+// read in between for the two to disagree in.
+//
+// ### What a successful claim does NOT return
+//
+// No token. Minting the scoped credential an agent presents is a separate
+// capability with a separate scope vocabulary, and a response that carried
+// one before that vocabulary existed would be a credential this service has
+// not decided what it may do.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/accounts/{account_id}/agents/claim (the `ClaimAgent` operationId).
+func (c *Client) ClaimAgent(ctx context.Context, accountID AccountID, body ClaimAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewClaimAgentRequest(c.Server, accountID, body)
 	if err != nil {
 		return nil, err
 	}
@@ -9459,6 +9831,53 @@ func NewRevokeAccountInvitationRequest(server string, accountID AccountID, invit
 	return req, nil
 }
 
+// NewClaimAgentRequest calls the generic ClaimAgent builder with application/json body
+func NewClaimAgentRequest(server string, accountID AccountID, body ClaimAgentJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewClaimAgentRequestWithBody(server, accountID, "application/json", bodyReader)
+}
+
+// NewClaimAgentRequestWithBody constructs an http.Request for the ClaimAgent method, with any body, and a specified content type
+func NewClaimAgentRequestWithBody(server string, accountID AccountID, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "account_id", accountID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/accounts/%s/agents/claim", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewListAPIKeysRequest constructs an http.Request for the ListAPIKeys method
 func NewListAPIKeysRequest(server string, accountID AccountID) (*http.Request, error) {
 	var err error
@@ -11807,6 +12226,138 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with DELETE /v1/accounts/{account_id}/admin/invitations/{invitation_id} (the `RevokeAccountInvitation` operationId).
 	RevokeAccountInvitationWithResponse(ctx context.Context, accountID AccountID, invitationID openapi_types.UUID, reqEditors ...RequestEditorFn) (*RevokeAccountInvitationResponse, error)
+
+	// ClaimAgentWithBodyWithResponse Claim an agent principal
+	//
+	// Binds an unregistered **agent principal** to an account. The agent registers
+	// itself, prints a claim URL, and a signed-in human opens it — the link is
+	// the credential, the click is explicit, and nothing auto-accepts. That is
+	// the invitation flow's rule, applied to a principal that had no account
+	// until this request.
+	//
+	// ### The account is in the PATH, the link is in the BODY
+	//
+	// Three things come from three different sources, and none of them is
+	// another:
+	//
+	// | what | from | why there |
+	// |---|---|---|
+	// | the account | the path | a claim binds to an account the caller is **authorized** for, and the account in the path is the one `requireAccountRole` just checked their membership in |
+	// | the human | the session | an agent bound by nobody is an agent owned by nobody |
+	// | the agent | the claim link | the link is the only thing that names the principal, and it is the only credential a stranger ever presents on this surface |
+	//
+	// A body that carried an `account_id` would move the membership read into a
+	// handler — a second place a role is checked, in a service that insists it is
+	// checked in one. A body that carried an `agent_id` would let the caller name
+	// a principal they were never given a link for. **Neither field exists.**
+	//
+	// ### Session only, and that is enforced in the middleware
+	//
+	// A scoped API token is refused with `403` before the handler runs. A claim
+	// is a human binding a thing to an account they belong to, and a machine
+	// credential has no use for one — the same rule that refuses a token on
+	// `POST /v1/invitations/accept`. The minimum role is `member` because any
+	// human in the account may claim on its behalf.
+	//
+	// ### One 404, for four different things
+	//
+	// A wrong token, an expired link, an already-claimed agent and an agent that
+	// was never issued are **the same response**: one status, one sentence, one
+	// body. The store collapses all four in a single statement — the lookup
+	// filters on the digest, the principal's status and the expiry together — so
+	// there is no second query that could tell them apart.
+	//
+	// **There is no 410 and no 409 on this route**, and that is a deliberate
+	// departure from `POST /v1/invitations/accept` above. A `410` would say "this
+	// link was real"; a `409` would say "this agent is taken". Both are facts
+	// about a row a stranger is guessing at. An invitation gets its `410`s
+	// because the caller can *act* on them — asking for a new one is a next step,
+	// and the inviter is a person who already knows the invitation exists. A
+	// claim link has no such second party: asking for a new one is not something
+	// a caller holding somebody else's link can do.
+	//
+	// Claiming is single-use and the guarantee is **conditional** — the update
+	// carries the digest and the status in its `WHERE`, so two people clicking
+	// the same link in the same second produce one claim and one 404, with no
+	// read in between for the two to disagree in.
+	//
+	// ### What a successful claim does NOT return
+	//
+	// No token. Minting the scoped credential an agent presents is a separate
+	// capability with a separate scope vocabulary, and a response that carried
+	// one before that vocabulary existed would be a credential this service has
+	// not decided what it may do.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/accounts/{account_id}/agents/claim (the `ClaimAgent` operationId).
+	ClaimAgentWithBodyWithResponse(ctx context.Context, accountID AccountID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ClaimAgentResponse, error)
+
+	// ClaimAgentWithResponse Claim an agent principal
+	//
+	// Binds an unregistered **agent principal** to an account. The agent registers
+	// itself, prints a claim URL, and a signed-in human opens it — the link is
+	// the credential, the click is explicit, and nothing auto-accepts. That is
+	// the invitation flow's rule, applied to a principal that had no account
+	// until this request.
+	//
+	// ### The account is in the PATH, the link is in the BODY
+	//
+	// Three things come from three different sources, and none of them is
+	// another:
+	//
+	// | what | from | why there |
+	// |---|---|---|
+	// | the account | the path | a claim binds to an account the caller is **authorized** for, and the account in the path is the one `requireAccountRole` just checked their membership in |
+	// | the human | the session | an agent bound by nobody is an agent owned by nobody |
+	// | the agent | the claim link | the link is the only thing that names the principal, and it is the only credential a stranger ever presents on this surface |
+	//
+	// A body that carried an `account_id` would move the membership read into a
+	// handler — a second place a role is checked, in a service that insists it is
+	// checked in one. A body that carried an `agent_id` would let the caller name
+	// a principal they were never given a link for. **Neither field exists.**
+	//
+	// ### Session only, and that is enforced in the middleware
+	//
+	// A scoped API token is refused with `403` before the handler runs. A claim
+	// is a human binding a thing to an account they belong to, and a machine
+	// credential has no use for one — the same rule that refuses a token on
+	// `POST /v1/invitations/accept`. The minimum role is `member` because any
+	// human in the account may claim on its behalf.
+	//
+	// ### One 404, for four different things
+	//
+	// A wrong token, an expired link, an already-claimed agent and an agent that
+	// was never issued are **the same response**: one status, one sentence, one
+	// body. The store collapses all four in a single statement — the lookup
+	// filters on the digest, the principal's status and the expiry together — so
+	// there is no second query that could tell them apart.
+	//
+	// **There is no 410 and no 409 on this route**, and that is a deliberate
+	// departure from `POST /v1/invitations/accept` above. A `410` would say "this
+	// link was real"; a `409` would say "this agent is taken". Both are facts
+	// about a row a stranger is guessing at. An invitation gets its `410`s
+	// because the caller can *act* on them — asking for a new one is a next step,
+	// and the inviter is a person who already knows the invitation exists. A
+	// claim link has no such second party: asking for a new one is not something
+	// a caller holding somebody else's link can do.
+	//
+	// Claiming is single-use and the guarantee is **conditional** — the update
+	// carries the digest and the status in its `WHERE`, so two people clicking
+	// the same link in the same second produce one claim and one 404, with no
+	// read in between for the two to disagree in.
+	//
+	// ### What a successful claim does NOT return
+	//
+	// No token. Minting the scoped credential an agent presents is a separate
+	// capability with a separate scope vocabulary, and a response that carried
+	// one before that vocabulary existed would be a credential this service has
+	// not decided what it may do.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/accounts/{account_id}/agents/claim (the `ClaimAgent` operationId).
+	ClaimAgentWithResponse(ctx context.Context, accountID AccountID, body ClaimAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*ClaimAgentResponse, error)
 
 	// ListAPIKeysWithResponse List an account's API tokens
 	//
@@ -15369,6 +15920,152 @@ func (r RevokeAccountInvitationResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r RevokeAccountInvitationResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ClaimAgentResponse200Headers the declared response headers of an HTTP 200 response for ClaimAgent
+type ClaimAgentResponse200Headers struct {
+	XTraceID string
+}
+
+// ClaimAgentResponse400Headers the declared response headers of an HTTP 400 response for ClaimAgent
+type ClaimAgentResponse400Headers struct {
+	XTraceID string
+}
+
+// ClaimAgentResponse401Headers the declared response headers of an HTTP 401 response for ClaimAgent
+type ClaimAgentResponse401Headers struct {
+	XTraceID string
+}
+
+// ClaimAgentResponse403Headers the declared response headers of an HTTP 403 response for ClaimAgent
+type ClaimAgentResponse403Headers struct {
+	XTraceID string
+}
+
+// ClaimAgentResponse404Headers the declared response headers of an HTTP 404 response for ClaimAgent
+type ClaimAgentResponse404Headers struct {
+	XTraceID string
+}
+
+// ClaimAgentResponse413Headers the declared response headers of an HTTP 413 response for ClaimAgent
+type ClaimAgentResponse413Headers struct {
+	XTraceID string
+}
+
+// ClaimAgentResponse422Headers the declared response headers of an HTTP 422 response for ClaimAgent
+type ClaimAgentResponse422Headers struct {
+	XTraceID string
+}
+
+// ClaimAgentResponse500Headers the declared response headers of an HTTP 500 response for ClaimAgent
+type ClaimAgentResponse500Headers struct {
+	XTraceID string
+}
+
+type ClaimAgentResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Agent
+	// ApplicationProblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationProblemJSON400 *MalformedBody
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthenticated
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Problem
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *Problem
+	// ApplicationProblemJSON413 the response for an HTTP 413 `application/problem+json` response
+	ApplicationProblemJSON413 *BodyTooLarge
+	// ApplicationProblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationProblemJSON422 *ValidationFailed
+	// ApplicationProblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationProblemJSON500 *InternalError
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *ClaimAgentResponse200Headers
+	// Headers400 the parsed response headers for an HTTP 400 response
+	Headers400 *ClaimAgentResponse400Headers
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ClaimAgentResponse401Headers
+	// Headers403 the parsed response headers for an HTTP 403 response
+	Headers403 *ClaimAgentResponse403Headers
+	// Headers404 the parsed response headers for an HTTP 404 response
+	Headers404 *ClaimAgentResponse404Headers
+	// Headers413 the parsed response headers for an HTTP 413 response
+	Headers413 *ClaimAgentResponse413Headers
+	// Headers422 the parsed response headers for an HTTP 422 response
+	Headers422 *ClaimAgentResponse422Headers
+	// Headers500 the parsed response headers for an HTTP 500 response
+	Headers500 *ClaimAgentResponse500Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ClaimAgentResponse) GetJSON200() *Agent {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ClaimAgentResponse) GetApplicationProblemJSON400() *MalformedBody {
+	return r.ApplicationProblemJSON400
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ClaimAgentResponse) GetApplicationProblemJSON401() *Unauthenticated {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ClaimAgentResponse) GetApplicationProblemJSON403() *Problem {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r ClaimAgentResponse) GetApplicationProblemJSON404() *Problem {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSON413 returns the response for an HTTP 413 `application/problem+json` response
+func (r ClaimAgentResponse) GetApplicationProblemJSON413() *BodyTooLarge {
+	return r.ApplicationProblemJSON413
+}
+
+// GetApplicationProblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r ClaimAgentResponse) GetApplicationProblemJSON422() *ValidationFailed {
+	return r.ApplicationProblemJSON422
+}
+
+// GetApplicationProblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r ClaimAgentResponse) GetApplicationProblemJSON500() *InternalError {
+	return r.ApplicationProblemJSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ClaimAgentResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ClaimAgentResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ClaimAgentResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ClaimAgentResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -21267,6 +21964,150 @@ func (c *ClientWithResponses) RevokeAccountInvitationWithResponse(ctx context.Co
 	return ParseRevokeAccountInvitationResponse(rsp)
 }
 
+// ClaimAgentWithBodyWithResponse Claim an agent principal
+//
+// Binds an unregistered **agent principal** to an account. The agent registers
+// itself, prints a claim URL, and a signed-in human opens it — the link is
+// the credential, the click is explicit, and nothing auto-accepts. That is
+// the invitation flow's rule, applied to a principal that had no account
+// until this request.
+//
+// ### The account is in the PATH, the link is in the BODY
+//
+// Three things come from three different sources, and none of them is
+// another:
+//
+// | what | from | why there |
+// |---|---|---|
+// | the account | the path | a claim binds to an account the caller is **authorized** for, and the account in the path is the one `requireAccountRole` just checked their membership in |
+// | the human | the session | an agent bound by nobody is an agent owned by nobody |
+// | the agent | the claim link | the link is the only thing that names the principal, and it is the only credential a stranger ever presents on this surface |
+//
+// A body that carried an `account_id` would move the membership read into a
+// handler — a second place a role is checked, in a service that insists it is
+// checked in one. A body that carried an `agent_id` would let the caller name
+// a principal they were never given a link for. **Neither field exists.**
+//
+// ### Session only, and that is enforced in the middleware
+//
+// A scoped API token is refused with `403` before the handler runs. A claim
+// is a human binding a thing to an account they belong to, and a machine
+// credential has no use for one — the same rule that refuses a token on
+// `POST /v1/invitations/accept`. The minimum role is `member` because any
+// human in the account may claim on its behalf.
+//
+// ### One 404, for four different things
+//
+// A wrong token, an expired link, an already-claimed agent and an agent that
+// was never issued are **the same response**: one status, one sentence, one
+// body. The store collapses all four in a single statement — the lookup
+// filters on the digest, the principal's status and the expiry together — so
+// there is no second query that could tell them apart.
+//
+// **There is no 410 and no 409 on this route**, and that is a deliberate
+// departure from `POST /v1/invitations/accept` above. A `410` would say "this
+// link was real"; a `409` would say "this agent is taken". Both are facts
+// about a row a stranger is guessing at. An invitation gets its `410`s
+// because the caller can *act* on them — asking for a new one is a next step,
+// and the inviter is a person who already knows the invitation exists. A
+// claim link has no such second party: asking for a new one is not something
+// a caller holding somebody else's link can do.
+//
+// Claiming is single-use and the guarantee is **conditional** — the update
+// carries the digest and the status in its `WHERE`, so two people clicking
+// the same link in the same second produce one claim and one 404, with no
+// read in between for the two to disagree in.
+//
+// ### What a successful claim does NOT return
+//
+// No token. Minting the scoped credential an agent presents is a separate
+// capability with a separate scope vocabulary, and a response that carried
+// one before that vocabulary existed would be a credential this service has
+// not decided what it may do.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/accounts/{account_id}/agents/claim (the `ClaimAgent` operationId).
+func (c *ClientWithResponses) ClaimAgentWithBodyWithResponse(ctx context.Context, accountID AccountID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ClaimAgentResponse, error) {
+	rsp, err := c.ClaimAgentWithBody(ctx, accountID, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseClaimAgentResponse(rsp)
+}
+
+// ClaimAgentWithResponse Claim an agent principal
+//
+// Binds an unregistered **agent principal** to an account. The agent registers
+// itself, prints a claim URL, and a signed-in human opens it — the link is
+// the credential, the click is explicit, and nothing auto-accepts. That is
+// the invitation flow's rule, applied to a principal that had no account
+// until this request.
+//
+// ### The account is in the PATH, the link is in the BODY
+//
+// Three things come from three different sources, and none of them is
+// another:
+//
+// | what | from | why there |
+// |---|---|---|
+// | the account | the path | a claim binds to an account the caller is **authorized** for, and the account in the path is the one `requireAccountRole` just checked their membership in |
+// | the human | the session | an agent bound by nobody is an agent owned by nobody |
+// | the agent | the claim link | the link is the only thing that names the principal, and it is the only credential a stranger ever presents on this surface |
+//
+// A body that carried an `account_id` would move the membership read into a
+// handler — a second place a role is checked, in a service that insists it is
+// checked in one. A body that carried an `agent_id` would let the caller name
+// a principal they were never given a link for. **Neither field exists.**
+//
+// ### Session only, and that is enforced in the middleware
+//
+// A scoped API token is refused with `403` before the handler runs. A claim
+// is a human binding a thing to an account they belong to, and a machine
+// credential has no use for one — the same rule that refuses a token on
+// `POST /v1/invitations/accept`. The minimum role is `member` because any
+// human in the account may claim on its behalf.
+//
+// ### One 404, for four different things
+//
+// A wrong token, an expired link, an already-claimed agent and an agent that
+// was never issued are **the same response**: one status, one sentence, one
+// body. The store collapses all four in a single statement — the lookup
+// filters on the digest, the principal's status and the expiry together — so
+// there is no second query that could tell them apart.
+//
+// **There is no 410 and no 409 on this route**, and that is a deliberate
+// departure from `POST /v1/invitations/accept` above. A `410` would say "this
+// link was real"; a `409` would say "this agent is taken". Both are facts
+// about a row a stranger is guessing at. An invitation gets its `410`s
+// because the caller can *act* on them — asking for a new one is a next step,
+// and the inviter is a person who already knows the invitation exists. A
+// claim link has no such second party: asking for a new one is not something
+// a caller holding somebody else's link can do.
+//
+// Claiming is single-use and the guarantee is **conditional** — the update
+// carries the digest and the status in its `WHERE`, so two people clicking
+// the same link in the same second produce one claim and one 404, with no
+// read in between for the two to disagree in.
+//
+// ### What a successful claim does NOT return
+//
+// No token. Minting the scoped credential an agent presents is a separate
+// capability with a separate scope vocabulary, and a response that carried
+// one before that vocabulary existed would be a credential this service has
+// not decided what it may do.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/accounts/{account_id}/agents/claim (the `ClaimAgent` operationId).
+func (c *ClientWithResponses) ClaimAgentWithResponse(ctx context.Context, accountID AccountID, body ClaimAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*ClaimAgentResponse, error) {
+	rsp, err := c.ClaimAgent(ctx, accountID, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseClaimAgentResponse(rsp)
+}
+
 // ListAPIKeysWithResponse List an account's API tokens
 //
 // Every credential this account holds, newest first, **revoked ones
@@ -25288,6 +26129,164 @@ func ParseRevokeAccountInvitationResponse(rsp *http.Response) (*RevokeAccountInv
 		response.Headers409 = &headers
 	case rsp.StatusCode == 500:
 		var headers RevokeAccountInvitationResponse500Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers500 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseClaimAgentResponse parses an HTTP response from a ClaimAgentWithResponse call
+func ParseClaimAgentResponse(rsp *http.Response) (*ClaimAgentResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ClaimAgentResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Agent
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest MalformedBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthenticated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest BodyTooLarge
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ValidationFailed
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON500 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers ClaimAgentResponse200Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 400:
+		var headers ClaimAgentResponse400Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers400 = &headers
+	case rsp.StatusCode == 401:
+		var headers ClaimAgentResponse401Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers401 = &headers
+	case rsp.StatusCode == 403:
+		var headers ClaimAgentResponse403Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers403 = &headers
+	case rsp.StatusCode == 404:
+		var headers ClaimAgentResponse404Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers404 = &headers
+	case rsp.StatusCode == 413:
+		var headers ClaimAgentResponse413Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers413 = &headers
+	case rsp.StatusCode == 422:
+		var headers ClaimAgentResponse422Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers422 = &headers
+	case rsp.StatusCode == 500:
+		var headers ClaimAgentResponse500Headers
 		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {

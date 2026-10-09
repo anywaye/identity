@@ -983,11 +983,11 @@ func (c *Client) ConfirmEmailChangeNewAddress(ctx context.Context, body generate
 // Corresponds to `POST /v1/accounts`.
 //
 // **The caller has to hold a session, not an API token**, and the service answers
-// 403 to one — this operation, `ListAccounts` and `AcceptInvitation` are the three
-// on this surface that refuse a token, because each answers a question about the
-// caller's whole set of accounts and a token is bound to one of them. A caller
-// building an onboarding flow therefore needs a session for this step even when
-// every step after it is done with a token.
+// 403 to one — this operation, `ListAccounts`, `AcceptInvitation` and
+// `ClaimAgent` are the four on this surface that refuse a token, because each
+// answers a question about the caller's whole set of accounts and a token is
+// bound to one of them. A caller building an onboarding flow therefore needs a
+// session for this step even when every step after it is done with a token.
 //
 // `body.Name` is the only field: the owner is the caller and the slug is derived,
 // so there is nothing a caller can send that puts an account in somebody else's
@@ -1185,6 +1185,31 @@ func (c *Client) AcceptInvitation(ctx context.Context, body generated.AcceptInvi
 	var out generated.Membership
 	err := call(c, "acceptInvitation", func() (*http.Response, error) {
 		return c.transport.AcceptInvitation(ctx, body)
+	}, &out)
+	return &out, err
+}
+
+// ClaimAgent redeems an agent's claim link. Corresponds to
+// `POST /v1/accounts/{account_id}/agents/claim`.
+//
+// **The caller must already hold a session**, and `AcceptInvitation` above is
+// the whole of the argument: a claim is a human binding a principal to an
+// account they belong to, and a scoped api key is refused with 403 before the
+// handler runs.
+//
+// The link is a credential for as long as it is live, and it is the only field
+// the body carries — the account comes from the path and the human from the
+// session. A 404 is one answer for a wrong token, an expired link, an
+// already-claimed agent and an agent that never existed, and a caller must not
+// attempt to tell those four apart.
+//
+// The response carries no token. Minting the scoped credential an agent
+// presents is a separate capability with its own scope vocabulary, and it is
+// not this route.
+func (c *Client) ClaimAgent(ctx context.Context, accountId openapiTypes.UUID, body generated.ClaimAgentJSONRequestBody) (*generated.Agent, error) {
+	var out generated.Agent
+	err := call(c, "claimAgent", func() (*http.Response, error) {
+		return c.transport.ClaimAgent(ctx, accountId, body)
 	}, &out)
 	return &out, err
 }

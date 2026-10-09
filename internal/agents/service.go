@@ -8,6 +8,7 @@ import (
 
 	"github.com/cafaye/identity/internal/platform/db"
 	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/cafaye/identity/internal/tenancy"
 )
 
 // The service: the use cases that sit between a route and the store.
@@ -101,51 +102,65 @@ func (s *Service) Claim(ctx context.Context, in ClaimInput) (Claimed, error) {
 	}
 
 	// One transaction for the claim and its record. Pool rather than Querier,
-	// because the boundary belongs HERE: the two statements below are one fact.
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return Claimed{}, fmt.Errorf("agents: opening the claim transaction: %w", err)
-	}
-	// The rollback is safe on the success path because a commit has already
-	// happened by the time it runs — pgx.Tx.Rollback returns ErrTxClosed, which
-	// is why the error is inspected rather than assumed.
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	agent, err := s.store.ByClaimDigest(ctx, tx, digest, in.Now)
-	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			// ONE ANSWER, and it is the same one a stranger guessing gets. The
-			// four ways this fails — wrong token, expired link, already claimed,
-			// never existed — are not told apart anywhere, and a use case that
-			// logged which one it was would be a log line an attacker can read.
-			return Claimed{}, ErrNotFound
+	// because the boundary belongs HERE: the three statements below are one fact.
+	//
+	// IT IS TxRunner AND NOT A BARE Begin, and that is not a style choice — see the
+	// BeginAccount call inside for what the difference buys. A use case that opened
+	// its own transaction would read zero rows from every table whose policy
+	// predicate reads the account GUC, and the claim would fail as a 404 for an
+	// agent that exists.
+	var bound Agent
+	err := db.TxRunner{Pool: s.pool}.Do(ctx, func(ctx context.Context, tx db.Querier) error {
+		// THE ACCOUNT BOUNDARY, SET ON THIS TRANSACTION.
+		//
+		// `requireAccountRole` put the account on the request context, and
+		// `cafaye.begin_account/1` is `set_config(..., is_local => true)` — which
+		// outside an explicit transaction expires at the end of the STATEMENT that
+		// set it, so a caller reaching the database in autocommit reads zero rows.
+		//
+		// It is here and not in the route because the transaction is opened here:
+		// one function opens the transaction and sets its identity, and a caller
+		// that had to remember to do it from outside would be a caller who forgets.
+		if err := tenancy.BeginAccount(ctx, tx, in.Account); err != nil {
+			return fmt.Errorf("agents: setting the claim's account boundary: %w", err)
 		}
-		return Claimed{}, err
-	}
 
-	claimed, err := s.store.Claim(ctx, tx, agent.ID, digest, in.Account, in.Now)
+		agent, err := s.store.ByClaimDigest(ctx, tx, digest, in.Now)
+		if err != nil {
+			return err
+		}
+
+		claimed, err := s.store.Claim(ctx, tx, agent.ID, digest, in.Account, in.Now)
+		if err != nil {
+			return err
+		}
+
+		if _, err := s.store.AppendEvent(ctx, tx, Event{
+			AgentID:    claimed.ID,
+			Action:     ActionClaimed,
+			UserID:     in.User,
+			TraceID:    in.TraceID,
+			OccurredAt: in.Now,
+		}); err != nil {
+			return err
+		}
+
+		bound = claimed
+		return nil
+	})
 	if err != nil {
 		if errors.Is(err, ErrNotFound) || errors.Is(err, ErrAlreadyClaimed) {
-			// AlreadyClaimed is mapped onto the same value the route renders as a
-			// 404. It is distinct in the store for the benefit of a caller holding
-			// the row, and the route is not that caller.
+			// ONE ANSWER, and it is the same one a stranger guessing gets. The four
+			// ways this fails — wrong token, expired link, already claimed, never
+			// existed — are not told apart anywhere, and a use case that logged
+			// which one it was would be a log line an attacker can read.
+			//
+			// AlreadyClaimed is mapped onto the same value: it is distinct in the
+			// store for the benefit of a caller holding the row, and the route is
+			// not that caller.
 			return Claimed{}, ErrNotFound
 		}
 		return Claimed{}, err
 	}
-
-	if _, err := s.store.AppendEvent(ctx, tx, Event{
-		AgentID:    claimed.ID,
-		Action:     ActionClaimed,
-		UserID:     in.User,
-		TraceID:    in.TraceID,
-		OccurredAt: in.Now,
-	}); err != nil {
-		return Claimed{}, err
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return Claimed{}, fmt.Errorf("agents: committing the claim: %w", err)
-	}
-	return Claimed{Agent: claimed}, nil
+	return Claimed{Agent: bound}, nil
 }
