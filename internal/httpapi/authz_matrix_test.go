@@ -865,6 +865,14 @@ func mountedAccountRoutes() []string {
 		// router_walk_test.go.
 		admin:        newFakeAdmin(),
 		apiKeyCaller: newFakeAPIKeyCaller(users.User{ID: id.MustNew()}, apikeys.Key{ID: id.MustNew(), AccountID: id.MustNew()}),
+		// agents is here because registerAgentRoutes is called from
+		// registerTenancyRoutes — the claim is an action on an account, so its route
+		// is account-scoped and belongs in the registrar this walk reads — and that
+		// call returns early without the service. With the field absent, the claim
+		// route is invisible here, TestEveryRouteIsInTheMatrix passes with no row
+		// required for it, and the matrix reports as complete while saying nothing
+		// about a route every browser can reach.
+		agents: newFakeAgents(),
 	}
 	opts.registerTenancyRoutes(r)
 

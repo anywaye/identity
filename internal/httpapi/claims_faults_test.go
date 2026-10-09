@@ -77,6 +77,11 @@ func walkOptions() options {
 		// this field would not see it — and the public, unauthenticated endpoint
 		// would be a route no claim check could report.
 		signup: newFakeSignup(),
+		// agents is the seventh instance, and it was found by omission rather than
+		// by reading about it: the claim route was mounted and the whole package
+		// stayed green, because this literal did not set the field and
+		// registerAgentRoutes returns early without it.
+		agents: newFakeAgents(),
 	}
 }
 

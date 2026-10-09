@@ -139,6 +139,17 @@ var auditFamilyPrefixes = []string{
 	// session, 403 with a machine key or a non-staff one — so each gets a row
 	// answering the question, even though every answer is "nothing".
 	"/v1/operator",
+	// The agent claim route, and the prefix is narrow on purpose.
+	//
+	// IT IS NOT `/v1/accounts`, because that would pull in fifteen routes whose
+	// answer to a stranger is uniformly 401 and which would each need a row
+	// saying so. The claim is the one route under that prefix with a real
+	// question to answer, and the question is not the one the file's header
+	// asks first: it is not "does this ACCOUNT exist" but "does this AGENT
+	// exist", because a claim link is the only credential a stranger ever
+	// presents and the link names a principal rather than an account. So the
+	// prefix names the sub-resource and the row answers the real question.
+	"/v1/accounts/{accountID}/agents",
 }
 
 // anonymousFamilyAudit is the table, one row per route.
@@ -441,6 +452,43 @@ func anonymousFamilyAudit() []auditRoute {
 			discloses: "nothing: 401 without a staff session, before the query is read — so a " +
 				"real term, a made-up one and no term at all are the same answer, and no " +
 				"address reaches the directory from outside the trust boundary",
+		},
+		{
+			// THE AGENT CLAIM, and it is the one row on this surface whose question
+			// is not about an account. A claim link is the only credential a
+			// stranger ever presents, and it names a PRINCIPAL — so the question the
+			// row answers is "can the response tell 'this agent exists' from 'it
+			// does not'".
+			//
+			// The answer has two halves because the route has two gates.
+			//
+			//   A STRANGER WITH NO CREDENTIAL gets 401 before the token in the
+			//   body is read, so no identifier reaches the use case at all and
+			//   there is nothing to tell apart.
+			//
+			//   A CALLER WHO IS PAST THE GATE — a real session, holding a link
+			//   they did not receive — gets one 404 for four cases: a wrong token,
+			//   an expired link, an already-claimed agent and an agent that never
+			//   existed. The store collapses all four in ONE statement
+			//   (ByClaimDigest filters on the digest, the status AND the expiry
+			//   together) and the mapper renders them with one sentence. There is
+			//   no 410, which would say "this link was real", and no 409, which
+			//   would say "this agent is taken".
+			//
+			// The probe carries a token because the route reads the body after the
+			// credential gate, and a body it accepts is what keeps the walk from
+			// reporting a session-gated route as one that answered a stranger.
+			name: "claim an agent", method: http.MethodPost,
+			pattern:   "/v1/accounts/{accountID}/agents/claim",
+			probe:     `{"token":"cafaye_` + strings.Repeat("z", 43) + `"}`,
+			anonymous: http.StatusUnauthorized,
+			discloses: "nothing from a stranger: 401 before the token in the body is read. " +
+				"Behind a session, one 404 for a wrong token, an expired link, an " +
+				"already-claimed agent and an agent that never existed — the store collapses " +
+				"all four into one statement and the mapper renders them with one sentence. " +
+				"No 410 (which would say the link was real) and no 409 (which would say the " +
+				"agent is taken). Held by internal/agents' " +
+				"TestAClaimLinkResolvesOnlyWhileItIsLiveIsUnclaimedAndIsNotYetSpent",
 		},
 		{
 			// The staff disable, restated as a census row rather than pointed at
@@ -1152,6 +1200,11 @@ func mountedFamilyRoutes() []string {
 		admin:        newFakeAdmin(),
 		recovery:     newFakeRecovery(),
 		signup:       newFakeSignup(),
+		// agents, because the claim route is mounted from registerTenancyRoutes and
+		// that call returns early without the service. With the field absent this
+		// census cannot see the route, and an un-audited public route is exactly what
+		// this file exists to refuse.
+		agents: newFakeAgents(),
 	}
 	// registerSignupRoutes is called beside registerRoutes, not inside it, because
 	// the mint route needs no database — the same reason newMux calls it there. A
