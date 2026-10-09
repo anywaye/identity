@@ -141,9 +141,20 @@ the order the flow needs it:
    and `agents.Service.ListForAccount` does not. The claim screen's re-visit and
    the owner's management list both need it, and the index says which shape.
 
+## A dead schema, and why it is not still there
+
+The claim's 200 moved from the bare `Agent` schema to `ClaimedAgent`, which left
+`Agent` referenced by nothing. `skip-prune: false` had already been dropping it
+from the generated file — which is how `client/client.go` first failed to build,
+pointing straight at it — while it stayed in the document. It is deleted in
+`73e1fd5`; the one paragraph worth keeping, the `status` reading, moved to the
+schema that replaced it. A dead schema costs nothing until the day somebody
+reads it and believes the service returns that shape.
+
 ## Gate
 
-`bin/prime` green (30 packages), `go test ./...` green with a coverage profile,
+Four commits: `cebc761`, `801791a`, `654f510`, `73e1fd5`. `bin/prime` green (30
+packages, 90 `ok` lines), `go test ./...` green with a coverage profile,
 `go test -race ./...` green, `gofmt -l .` silent, `go vet ./...` silent,
 `bin/coverage-floor` green at **73.4%** against the 70% floor. The client
 regeneration gate passes with the regenerated file committed.
