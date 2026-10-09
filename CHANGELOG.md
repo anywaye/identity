@@ -6,6 +6,28 @@ All notable changes to identity are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added (packet repair-c: the claim preview and the agent home route the clients call)
+
+- **`GET /v1/agents/claim/{token}` — the claim preview.** Anonymous, rate-limited
+  on the registration's own terms, and the first frame of the website's claim
+  screen: the agent's name, its registration instant and its own device document.
+  It is a **read that writes nothing** — `agents.Service.PreviewClaim` is a
+  separate use case with no access to the credential machinery rather than a flag
+  on `Claim`, which mints, and the integration test proves it by claiming the SAME
+  link afterwards. Its 404 is the claim route's own collapse, because the read
+  goes through the store's `ByClaimDigest`, whose three conjuncts are one value:
+  a wrong token, an expired link, an already-claimed agent and an agent that never
+  existed are indistinguishable. The payload is the WEBSITE's own shape
+  (`AgentClaim` in `src/lib/identity.ts`), read out of the client rather than
+  designed here.
+- **`GET /v1/agents/home` — who this agent credential is**, and the `caf agent
+  whoami` read. The agent's identity, its status, and the account that claimed
+  it by row id. It is `agentCredentialOnly` and **not** `agentClaimedOnly`: an
+  unclaimed agent runs whoami to find out whether anybody has claimed it, and a
+  403 there would answer "you are not claimed" by refusing to say who is asking.
+  `status` is flat and at the top level because that is the one field the CLI's
+  `Home` reads.
+
 ### Added (packet m147-identity-system-admin: human staff surface for the Parlor console)
 
 - **Four staff routes under `/v1/operator/*`**, reachable by a signed-in staff

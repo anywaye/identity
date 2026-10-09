@@ -1474,11 +1474,11 @@ the one where the generator is right. Two layers, and the split is MD6's:
 
 ```
 client/generated/api.gen.go   GENERATED, COMMITTED. oapi-codegen v2.8.0 over
-                              openapi/v1.yaml: 41 typed operations and a Client
+                              openapi/v1.yaml: 43 typed operations and a Client
 client/generate.go            the //go:generate line, pinned to v2.8.0
 client/oapi-codegen.yaml      the generator's configuration
 client/transport.go           the interface the generated client satisfies
-client/client.go              the hand-written client: 41 typed methods
+client/client.go              the hand-written client: 43 typed methods
 client/credentials.go         which credential this is, and where it may be sent
 client/baseurl.go             where requests go, in a documented order
 client/errors.go              RFC 9457 problem to typed error, typed fallback

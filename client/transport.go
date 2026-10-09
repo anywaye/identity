@@ -35,7 +35,7 @@ package client
 // regeneration gate's blast radius visible instead of spread across twenty call
 // sites.
 //
-// The forty-eight methods below are the document's forty-eight `operationId`s, in
+// The fifty methods below are the document's fifty `operationId`s, in
 // the document's order, with the generated parameter types. The compile-time
 // assertion at the bottom is what proves the generated `*generated.Client` still
 // satisfies it, so a mismatch is a build failure rather than a runtime surprise.
@@ -162,9 +162,20 @@ type Transport interface {
 	//
 	// RegisterAgent is public and unauthenticated; a caller with no credential
 	// reaches it, which is the whole of what agent self-registration means (D4).
-	// The other five need the agent token attached by newTransport, so a wrapper
+	// GetAgentClaimPreview is also public, for the same reason an invitation
+	// redemption is: the claim link in the path is the credential, and the screen
+	// a human opens before they sign in has to say whose agent it is.
+	// The others need the agent token attached by newTransport, so a wrapper
 	// caller holds one on `Client` before it can call them.
 	RegisterAgent(ctx context.Context, body generated.RegisterAgentJSONRequestBody, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
+	// GetAgentClaimPreview is the claim screen's first frame. It is ANONYMOUS —
+	// the claim link in the path is the credential — so newTransport must be
+	// able to send it with no credential attached at all.
+	GetAgentClaimPreview(ctx context.Context, token string, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
+	// GetAgentHome is `caf agent whoami`, and it needs the AGENT's own token
+	// rather than a session: the credential kind is what decides which principal
+	// answers.
+	GetAgentHome(ctx context.Context, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	RefreshAgentClaimLink(ctx context.Context, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	MintAgentToken(ctx context.Context, body generated.MintAgentTokenJSONRequestBody, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	ListAgentTokens(ctx context.Context, reqEditors ...generated.RequestEditorFn) (*http.Response, error)

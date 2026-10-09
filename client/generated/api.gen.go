@@ -90,6 +90,48 @@ func (e AccountRole) Valid() bool {
 	}
 }
 
+// Defines values for AgentClaimPreviewStatus.
+const (
+	AgentClaimPreviewStatusClaimed   AgentClaimPreviewStatus = "claimed"
+	AgentClaimPreviewStatusDisabled  AgentClaimPreviewStatus = "disabled"
+	AgentClaimPreviewStatusUnclaimed AgentClaimPreviewStatus = "unclaimed"
+)
+
+// Valid indicates whether the value is a known member of the AgentClaimPreviewStatus enum.
+func (e AgentClaimPreviewStatus) Valid() bool {
+	switch e {
+	case AgentClaimPreviewStatusClaimed:
+		return true
+	case AgentClaimPreviewStatusDisabled:
+		return true
+	case AgentClaimPreviewStatusUnclaimed:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AgentHomeStatus.
+const (
+	AgentHomeStatusClaimed   AgentHomeStatus = "claimed"
+	AgentHomeStatusDisabled  AgentHomeStatus = "disabled"
+	AgentHomeStatusUnclaimed AgentHomeStatus = "unclaimed"
+)
+
+// Valid indicates whether the value is a known member of the AgentHomeStatus enum.
+func (e AgentHomeStatus) Valid() bool {
+	switch e {
+	case AgentHomeStatusClaimed:
+		return true
+	case AgentHomeStatusDisabled:
+		return true
+	case AgentHomeStatusUnclaimed:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for AgentSummaryStatus.
 const (
 	AgentSummaryStatusClaimed   AgentSummaryStatus = "claimed"
@@ -725,6 +767,104 @@ type AgentClaim struct {
 	ExpiresAt time.Time `json:"expires_at"`
 	URL       string    `json:"url"`
 }
+
+// AgentClaimPreview The 200 from `GET /v1/agents/claim/{token}`, and the whole of what a live
+// claim link reveals: the principal's identity, when it registered, what it
+// said about itself, and when its link stops working. It is the shape the
+// website's claim screen reads (`AgentClaim` in `src/lib/identity.ts`,
+// consumed by `useAgentClaimPreview`), so the fields are FLAT — the screen
+// renders `created_at` and `claim_expires_at` as instants and iterates
+// `device` into a fact list.
+//
+// **A preview, and the name says it.** No token, no session, no scope, and
+// no credential of any kind. It is a read: the use case has no access to the
+// credential machinery, and a 200 here changes nothing.
+//
+// WHAT IS NOT HERE: `claimed_at` and `claimed_by_account_id`. The agent a
+// live link names is unclaimed by definition — the underlying read filters
+// on the status — so a field that is always null is a field a client starts
+// reading as a signal. The claim's own response carries those; this one
+// cannot.
+type AgentClaimPreview struct {
+	// ClaimExpiresAt When the LINK stops working — a fact about the credential, not about
+	// the agent, which is why it is here rather than on the principal. It is
+	// rendered as a fact and never as a countdown: when it passes, the same
+	// collapsed 404 arrives, so there is nothing to count down to.
+	ClaimExpiresAt time.Time `json:"claim_expires_at"`
+
+	// CreatedAt When the agent registered — a fact about the row, not about the
+	// request, so it does not change as the screen reloads.
+	CreatedAt time.Time `json:"created_at"`
+
+	// Device The agent's own free-form description of itself, written whole at
+	// registration. **No schema**: the keys are the agent's vocabulary, and
+	// the values are whatever type it chose. A client keeps the string
+	// values and skips the rest, so a non-string value renders as an absent
+	// fact rather than as a guess; a `{}` means the agent described itself
+	// with nothing.
+	Device map[string]interface{} `json:"device"`
+
+	// ID The principal the link names.
+	ID openapi_types.UUID `json:"id"`
+
+	// Name The display label a human reads. Not unique.
+	Name string `json:"name"`
+
+	// Status Always `unclaimed` on this response: a live claim link resolves only
+	// while the principal is unclaimed, so the other two labels are
+	// unreachable here. It is present rather than omitted so a client can
+	// render one field rather than special-case its absence.
+	Status AgentClaimPreviewStatus `json:"status"`
+
+	// Username The globally-unique handle the registration chose or generated.
+	Username string `json:"username"`
+}
+
+// AgentClaimPreviewStatus Always `unclaimed` on this response: a live claim link resolves only
+// while the principal is unclaimed, so the other two labels are
+// unreachable here. It is present rather than omitted so a client can
+// render one field rather than special-case its absence.
+type AgentClaimPreviewStatus string
+
+// AgentHome The 200 from `GET /v1/agents/home`, and the answer to `caf agent
+// whoami`. The fields are FLAT and `status` is at the top level because
+// that is what the client reads: the CLI's `Home` is a pass-through
+// document whose one typed field is `status`, where the server's word
+// overrides the client's cached copy. A body that nested the principal
+// would leave that read answering "no status".
+//
+// **An agent is told about itself and about nothing else.** Its identity,
+// its lifecycle status, and the account that claimed it — by row id. Not
+// the account's name, members or slug: this route does not read the account
+// through an agent's credential. No token, no digest, and no event trail.
+type AgentHome struct {
+	// Claimed Whether a human account has ever bound this principal, and it is the
+	// ownership question rather than the liveness one: **a disabled agent is
+	// claimed**, so `false` answers only "nobody has bound this". Omitted
+	// fields below are absent rather than null for the same reason — "" is
+	// not a uuid and a client parsing one gets an error rather than "no
+	// account".
+	Claimed bool `json:"claimed"`
+
+	// ClaimedAt When the binding happened. Absent while unclaimed.
+	ClaimedAt *time.Time `json:"claimed_at,omitempty"`
+
+	// ClaimedByAccountID The account that claimed this agent. Absent while unclaimed.
+	ClaimedByAccountID *openapi_types.UUID `json:"claimed_by_account_id,omitempty"`
+	ID                 openapi_types.UUID  `json:"id"`
+	Name               string              `json:"name"`
+
+	// Status The lifecycle word the CLI switches on. It is the server's own answer,
+	// which is what makes `whoami` a proof that the token works rather than
+	// a cache read.
+	Status   AgentHomeStatus `json:"status"`
+	Username string          `json:"username"`
+}
+
+// AgentHomeStatus The lifecycle word the CLI switches on. It is the server's own answer,
+// which is what makes `whoami` a proof that the token works rather than
+// a cache read.
+type AgentHomeStatus string
 
 // AgentRegistrationResult The 201 from `POST /v1/agents`, in the shape `caf agent register` consumes:
 // the principal at `unclaimed`, the bootstrap token, and the claim URL. The
@@ -3937,6 +4077,73 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/agents/claim-link/refresh (the `RefreshAgentClaimLink` operationId).
 	RefreshAgentClaimLink(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetAgentClaimPreview Preview what an agent claim link is for
+	//
+	// The step-② read: **the agent's name, when it registered, and the device
+	// document it described itself with** — the first frame of the claim screen,
+	// rendered before a human has signed in. This is what
+	// `getAgentClaim` in the website's `src/lib/identity.ts` calls.
+	//
+	// **Anonymous and unauthenticated, and rate-limited** on the same terms
+	// `POST /v1/agents` is. The claim link in the path is the credential: it is
+	// 256 bits of `cafaye_`-prefixed entropy whose SHA-256 is the only part
+	// stored, and guessing it is not a search anybody can run — which is what
+	// makes the one bit a 200 discloses affordable. The limiter's key is the
+	// client and the route and never a token, so a 429 is identical for
+	// everybody and discloses nothing about the link.
+	//
+	// **A preview does not claim and does not mint.** The use case is a read
+	// with no access to the credential machinery at all, so the worst this
+	// route can do is describe an agent whose own registration the caller
+	// already holds a 256-bit secret for. Nothing is written — no
+	// `agent_events` row either, because a preview is a page load and not an
+	// act.
+	//
+	// **A live link is the ONLY thing that answers 200.** A wrong token, an
+	// expired link, an already-claimed agent and an agent that was never issued
+	// are one `404 not_found` with one sentence, and the sentence does not say
+	// which: the underlying read filters the digest, the status and the expiry
+	// together, exactly as the claim that follows does. There is no 410 and no
+	// 409, and the response does not vary with time in a way a caller could
+	// measure.
+	//
+	// **The token in the path is a credential and not an identifier.** Nothing
+	// parses it, so a malformed segment is simply a digest that matches
+	// nothing — one 404, never a 422. A 422 for a short token and a 404 for a
+	// long one would be a length oracle for a credential.
+	//
+	// Corresponds with GET /v1/agents/claim/{token} (the `GetAgentClaimPreview` operationId).
+	GetAgentClaimPreview(ctx context.Context, token string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetAgentHome Who this agent credential is
+	//
+	// **The `caf agent whoami` read**, and the proof that a credential works:
+	// the answer is the server's own word about the principal the bearer token
+	// resolved to, read fresh rather than served out of the client's cache.
+	//
+	// **Authenticated with the agent's own bearer token** — the same `cafaye_`
+	// value the registration or the claim minted, resolving against the agent
+	// table and not the account api-keys table. A token that does not resolve —
+	// wrong, revoked, expired, or belonging to a disabled principal — is the
+	// same 401 an unknown credential gets, and there is no path parameter a
+	// stranger could point at anybody else's agent.
+	//
+	// **Open to an UNCLAIMED principal, and that is the whole point.** The
+	// response carries `claimed: false` and no account, which is the answer
+	// `caf agent whoami` exists to read. D4 keeps an unclaimed agent from
+	// *acting* — the routes that act are behind `agentClaimedOnly` — and it does
+	// not keep an agent from knowing who it is.
+	//
+	// **An agent is told about itself and about nothing else.** The body is its
+	// own identity, its status and the account that claimed it, by row id. Not
+	// the account's name or members: an agent knows which account claimed it
+	// and does not read that account through this route. No token and no
+	// digest, and no event trail — the token lifecycle answers those to the
+	// same credential.
+	//
+	// Corresponds with GET /v1/agents/home (the `GetAgentHome` operationId).
+	GetAgentHome(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListAgentTokens List the agent's bearer tokens
 	//
@@ -7645,6 +7852,93 @@ func (c *Client) RefreshAgentClaimLink(ctx context.Context, reqEditors ...Reques
 	return c.Client.Do(req)
 }
 
+// GetAgentClaimPreview Preview what an agent claim link is for
+//
+// The step-② read: **the agent's name, when it registered, and the device
+// document it described itself with** — the first frame of the claim screen,
+// rendered before a human has signed in. This is what
+// `getAgentClaim` in the website's `src/lib/identity.ts` calls.
+//
+// **Anonymous and unauthenticated, and rate-limited** on the same terms
+// `POST /v1/agents` is. The claim link in the path is the credential: it is
+// 256 bits of `cafaye_`-prefixed entropy whose SHA-256 is the only part
+// stored, and guessing it is not a search anybody can run — which is what
+// makes the one bit a 200 discloses affordable. The limiter's key is the
+// client and the route and never a token, so a 429 is identical for
+// everybody and discloses nothing about the link.
+//
+// **A preview does not claim and does not mint.** The use case is a read
+// with no access to the credential machinery at all, so the worst this
+// route can do is describe an agent whose own registration the caller
+// already holds a 256-bit secret for. Nothing is written — no
+// `agent_events` row either, because a preview is a page load and not an
+// act.
+//
+// **A live link is the ONLY thing that answers 200.** A wrong token, an
+// expired link, an already-claimed agent and an agent that was never issued
+// are one `404 not_found` with one sentence, and the sentence does not say
+// which: the underlying read filters the digest, the status and the expiry
+// together, exactly as the claim that follows does. There is no 410 and no
+// 409, and the response does not vary with time in a way a caller could
+// measure.
+//
+// **The token in the path is a credential and not an identifier.** Nothing
+// parses it, so a malformed segment is simply a digest that matches
+// nothing — one 404, never a 422. A 422 for a short token and a 404 for a
+// long one would be a length oracle for a credential.
+//
+// Corresponds with GET /v1/agents/claim/{token} (the `GetAgentClaimPreview` operationId).
+func (c *Client) GetAgentClaimPreview(ctx context.Context, token string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetAgentClaimPreviewRequest(c.Server, token)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetAgentHome Who this agent credential is
+//
+// **The `caf agent whoami` read**, and the proof that a credential works:
+// the answer is the server's own word about the principal the bearer token
+// resolved to, read fresh rather than served out of the client's cache.
+//
+// **Authenticated with the agent's own bearer token** — the same `cafaye_`
+// value the registration or the claim minted, resolving against the agent
+// table and not the account api-keys table. A token that does not resolve —
+// wrong, revoked, expired, or belonging to a disabled principal — is the
+// same 401 an unknown credential gets, and there is no path parameter a
+// stranger could point at anybody else's agent.
+//
+// **Open to an UNCLAIMED principal, and that is the whole point.** The
+// response carries `claimed: false` and no account, which is the answer
+// `caf agent whoami` exists to read. D4 keeps an unclaimed agent from
+// *acting* — the routes that act are behind `agentClaimedOnly` — and it does
+// not keep an agent from knowing who it is.
+//
+// **An agent is told about itself and about nothing else.** The body is its
+// own identity, its status and the account that claimed it, by row id. Not
+// the account's name or members: an agent knows which account claimed it
+// and does not read that account through this route. No token and no
+// digest, and no event trail — the token lifecycle answers those to the
+// same credential.
+//
+// Corresponds with GET /v1/agents/home (the `GetAgentHome` operationId).
+func (c *Client) GetAgentHome(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetAgentHomeRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ListAgentTokens List the agent's bearer tokens
 //
 // Every credential the calling agent holds, newest first, **revoked ones
@@ -11313,6 +11607,67 @@ func NewRefreshAgentClaimLinkRequest(server string) (*http.Request, error) {
 	return req, nil
 }
 
+// NewGetAgentClaimPreviewRequest constructs an http.Request for the GetAgentClaimPreview method
+func NewGetAgentClaimPreviewRequest(server string, token string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "token", token, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/claim/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetAgentHomeRequest constructs an http.Request for the GetAgentHome method
+func NewGetAgentHomeRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/home")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewListAgentTokensRequest constructs an http.Request for the ListAgentTokens method
 func NewListAgentTokensRequest(server string) (*http.Request, error) {
 	var err error
@@ -14195,6 +14550,77 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/agents/claim-link/refresh (the `RefreshAgentClaimLink` operationId).
 	RefreshAgentClaimLinkWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*RefreshAgentClaimLinkResponse, error)
+
+	// GetAgentClaimPreviewWithResponse Preview what an agent claim link is for
+	//
+	// The step-② read: **the agent's name, when it registered, and the device
+	// document it described itself with** — the first frame of the claim screen,
+	// rendered before a human has signed in. This is what
+	// `getAgentClaim` in the website's `src/lib/identity.ts` calls.
+	//
+	// **Anonymous and unauthenticated, and rate-limited** on the same terms
+	// `POST /v1/agents` is. The claim link in the path is the credential: it is
+	// 256 bits of `cafaye_`-prefixed entropy whose SHA-256 is the only part
+	// stored, and guessing it is not a search anybody can run — which is what
+	// makes the one bit a 200 discloses affordable. The limiter's key is the
+	// client and the route and never a token, so a 429 is identical for
+	// everybody and discloses nothing about the link.
+	//
+	// **A preview does not claim and does not mint.** The use case is a read
+	// with no access to the credential machinery at all, so the worst this
+	// route can do is describe an agent whose own registration the caller
+	// already holds a 256-bit secret for. Nothing is written — no
+	// `agent_events` row either, because a preview is a page load and not an
+	// act.
+	//
+	// **A live link is the ONLY thing that answers 200.** A wrong token, an
+	// expired link, an already-claimed agent and an agent that was never issued
+	// are one `404 not_found` with one sentence, and the sentence does not say
+	// which: the underlying read filters the digest, the status and the expiry
+	// together, exactly as the claim that follows does. There is no 410 and no
+	// 409, and the response does not vary with time in a way a caller could
+	// measure.
+	//
+	// **The token in the path is a credential and not an identifier.** Nothing
+	// parses it, so a malformed segment is simply a digest that matches
+	// nothing — one 404, never a 422. A 422 for a short token and a 404 for a
+	// long one would be a length oracle for a credential.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/claim/{token} (the `GetAgentClaimPreview` operationId).
+	GetAgentClaimPreviewWithResponse(ctx context.Context, token string, reqEditors ...RequestEditorFn) (*GetAgentClaimPreviewResponse, error)
+
+	// GetAgentHomeWithResponse Who this agent credential is
+	//
+	// **The `caf agent whoami` read**, and the proof that a credential works:
+	// the answer is the server's own word about the principal the bearer token
+	// resolved to, read fresh rather than served out of the client's cache.
+	//
+	// **Authenticated with the agent's own bearer token** — the same `cafaye_`
+	// value the registration or the claim minted, resolving against the agent
+	// table and not the account api-keys table. A token that does not resolve —
+	// wrong, revoked, expired, or belonging to a disabled principal — is the
+	// same 401 an unknown credential gets, and there is no path parameter a
+	// stranger could point at anybody else's agent.
+	//
+	// **Open to an UNCLAIMED principal, and that is the whole point.** The
+	// response carries `claimed: false` and no account, which is the answer
+	// `caf agent whoami` exists to read. D4 keeps an unclaimed agent from
+	// *acting* — the routes that act are behind `agentClaimedOnly` — and it does
+	// not keep an agent from knowing who it is.
+	//
+	// **An agent is told about itself and about nothing else.** The body is its
+	// own identity, its status and the account that claimed it, by row id. Not
+	// the account's name or members: an agent knows which account claimed it
+	// and does not read that account through this route. No token and no
+	// digest, and no event trail — the token lifecycle answers those to the
+	// same credential.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/home (the `GetAgentHome` operationId).
+	GetAgentHomeWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetAgentHomeResponse, error)
 
 	// ListAgentTokensWithResponse List the agent's bearer tokens
 	//
@@ -19125,6 +19551,173 @@ func (r RefreshAgentClaimLinkResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r RefreshAgentClaimLinkResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// GetAgentClaimPreviewResponse200Headers the declared response headers of an HTTP 200 response for GetAgentClaimPreview
+type GetAgentClaimPreviewResponse200Headers struct {
+	XTraceID string
+}
+
+// GetAgentClaimPreviewResponse404Headers the declared response headers of an HTTP 404 response for GetAgentClaimPreview
+type GetAgentClaimPreviewResponse404Headers struct {
+	XTraceID string
+}
+
+// GetAgentClaimPreviewResponse429Headers the declared response headers of an HTTP 429 response for GetAgentClaimPreview
+type GetAgentClaimPreviewResponse429Headers struct {
+	RetryAfter *int
+	XTraceID   string
+}
+
+// GetAgentClaimPreviewResponse500Headers the declared response headers of an HTTP 500 response for GetAgentClaimPreview
+type GetAgentClaimPreviewResponse500Headers struct {
+	XTraceID string
+}
+
+type GetAgentClaimPreviewResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AgentClaimPreview
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *Problem
+	// ApplicationProblemJSON429 the response for an HTTP 429 `application/problem+json` response
+	ApplicationProblemJSON429 *RateLimited
+	// ApplicationProblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationProblemJSON500 *InternalError
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *GetAgentClaimPreviewResponse200Headers
+	// Headers404 the parsed response headers for an HTTP 404 response
+	Headers404 *GetAgentClaimPreviewResponse404Headers
+	// Headers429 the parsed response headers for an HTTP 429 response
+	Headers429 *GetAgentClaimPreviewResponse429Headers
+	// Headers500 the parsed response headers for an HTTP 500 response
+	Headers500 *GetAgentClaimPreviewResponse500Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetAgentClaimPreviewResponse) GetJSON200() *AgentClaimPreview {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r GetAgentClaimPreviewResponse) GetApplicationProblemJSON404() *Problem {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSON429 returns the response for an HTTP 429 `application/problem+json` response
+func (r GetAgentClaimPreviewResponse) GetApplicationProblemJSON429() *RateLimited {
+	return r.ApplicationProblemJSON429
+}
+
+// GetApplicationProblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r GetAgentClaimPreviewResponse) GetApplicationProblemJSON500() *InternalError {
+	return r.ApplicationProblemJSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetAgentClaimPreviewResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetAgentClaimPreviewResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetAgentClaimPreviewResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetAgentClaimPreviewResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// GetAgentHomeResponse200Headers the declared response headers of an HTTP 200 response for GetAgentHome
+type GetAgentHomeResponse200Headers struct {
+	XTraceID string
+}
+
+// GetAgentHomeResponse401Headers the declared response headers of an HTTP 401 response for GetAgentHome
+type GetAgentHomeResponse401Headers struct {
+	XTraceID string
+}
+
+// GetAgentHomeResponse500Headers the declared response headers of an HTTP 500 response for GetAgentHome
+type GetAgentHomeResponse500Headers struct {
+	XTraceID string
+}
+
+type GetAgentHomeResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AgentHome
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthenticated
+	// ApplicationProblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationProblemJSON500 *InternalError
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *GetAgentHomeResponse200Headers
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *GetAgentHomeResponse401Headers
+	// Headers500 the parsed response headers for an HTTP 500 response
+	Headers500 *GetAgentHomeResponse500Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetAgentHomeResponse) GetJSON200() *AgentHome {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r GetAgentHomeResponse) GetApplicationProblemJSON401() *Unauthenticated {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r GetAgentHomeResponse) GetApplicationProblemJSON500() *InternalError {
+	return r.ApplicationProblemJSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetAgentHomeResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetAgentHomeResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetAgentHomeResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetAgentHomeResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -25055,6 +25648,89 @@ func (c *ClientWithResponses) RefreshAgentClaimLinkWithResponse(ctx context.Cont
 	return ParseRefreshAgentClaimLinkResponse(rsp)
 }
 
+// GetAgentClaimPreviewWithResponse Preview what an agent claim link is for
+//
+// The step-② read: **the agent's name, when it registered, and the device
+// document it described itself with** — the first frame of the claim screen,
+// rendered before a human has signed in. This is what
+// `getAgentClaim` in the website's `src/lib/identity.ts` calls.
+//
+// **Anonymous and unauthenticated, and rate-limited** on the same terms
+// `POST /v1/agents` is. The claim link in the path is the credential: it is
+// 256 bits of `cafaye_`-prefixed entropy whose SHA-256 is the only part
+// stored, and guessing it is not a search anybody can run — which is what
+// makes the one bit a 200 discloses affordable. The limiter's key is the
+// client and the route and never a token, so a 429 is identical for
+// everybody and discloses nothing about the link.
+//
+// **A preview does not claim and does not mint.** The use case is a read
+// with no access to the credential machinery at all, so the worst this
+// route can do is describe an agent whose own registration the caller
+// already holds a 256-bit secret for. Nothing is written — no
+// `agent_events` row either, because a preview is a page load and not an
+// act.
+//
+// **A live link is the ONLY thing that answers 200.** A wrong token, an
+// expired link, an already-claimed agent and an agent that was never issued
+// are one `404 not_found` with one sentence, and the sentence does not say
+// which: the underlying read filters the digest, the status and the expiry
+// together, exactly as the claim that follows does. There is no 410 and no
+// 409, and the response does not vary with time in a way a caller could
+// measure.
+//
+// **The token in the path is a credential and not an identifier.** Nothing
+// parses it, so a malformed segment is simply a digest that matches
+// nothing — one 404, never a 422. A 422 for a short token and a 404 for a
+// long one would be a length oracle for a credential.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/claim/{token} (the `GetAgentClaimPreview` operationId).
+func (c *ClientWithResponses) GetAgentClaimPreviewWithResponse(ctx context.Context, token string, reqEditors ...RequestEditorFn) (*GetAgentClaimPreviewResponse, error) {
+	rsp, err := c.GetAgentClaimPreview(ctx, token, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetAgentClaimPreviewResponse(rsp)
+}
+
+// GetAgentHomeWithResponse Who this agent credential is
+//
+// **The `caf agent whoami` read**, and the proof that a credential works:
+// the answer is the server's own word about the principal the bearer token
+// resolved to, read fresh rather than served out of the client's cache.
+//
+// **Authenticated with the agent's own bearer token** — the same `cafaye_`
+// value the registration or the claim minted, resolving against the agent
+// table and not the account api-keys table. A token that does not resolve —
+// wrong, revoked, expired, or belonging to a disabled principal — is the
+// same 401 an unknown credential gets, and there is no path parameter a
+// stranger could point at anybody else's agent.
+//
+// **Open to an UNCLAIMED principal, and that is the whole point.** The
+// response carries `claimed: false` and no account, which is the answer
+// `caf agent whoami` exists to read. D4 keeps an unclaimed agent from
+// *acting* — the routes that act are behind `agentClaimedOnly` — and it does
+// not keep an agent from knowing who it is.
+//
+// **An agent is told about itself and about nothing else.** The body is its
+// own identity, its status and the account that claimed it, by row id. Not
+// the account's name or members: an agent knows which account claimed it
+// and does not read that account through this route. No token and no
+// digest, and no event trail — the token lifecycle answers those to the
+// same credential.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/home (the `GetAgentHome` operationId).
+func (c *ClientWithResponses) GetAgentHomeWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetAgentHomeResponse, error) {
+	rsp, err := c.GetAgentHome(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetAgentHomeResponse(rsp)
+}
+
 // ListAgentTokensWithResponse List the agent's bearer tokens
 //
 // Every credential the calling agent holds, newest first, **revoked ones
@@ -30509,6 +31185,176 @@ func ParseRefreshAgentClaimLinkResponse(rsp *http.Response) (*RefreshAgentClaimL
 			headers.XTraceID = value
 		}
 		response.Headers503 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetAgentClaimPreviewResponse parses an HTTP response from a GetAgentClaimPreviewWithResponse call
+func ParseGetAgentClaimPreviewResponse(rsp *http.Response) (*GetAgentClaimPreviewResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetAgentClaimPreviewResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AgentClaimPreview
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest RateLimited
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON500 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers GetAgentClaimPreviewResponse200Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 404:
+		var headers GetAgentClaimPreviewResponse404Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers404 = &headers
+	case rsp.StatusCode == 429:
+		var headers GetAgentClaimPreviewResponse429Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers429 = &headers
+	case rsp.StatusCode == 500:
+		var headers GetAgentClaimPreviewResponse500Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers500 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetAgentHomeResponse parses an HTTP response from a GetAgentHomeWithResponse call
+func ParseGetAgentHomeResponse(rsp *http.Response) (*GetAgentHomeResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetAgentHomeResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AgentHome
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthenticated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON500 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers GetAgentHomeResponse200Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 401:
+		var headers GetAgentHomeResponse401Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers401 = &headers
+	case rsp.StatusCode == 500:
+		var headers GetAgentHomeResponse500Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers500 = &headers
 	}
 
 	return response, nil

@@ -134,8 +134,17 @@ info:
   # response changed. The machine operator surface (`POST
   # /v1/users/{user_id}/disable|enable`) is untouched: the two credentials do
   # not cross, and the document says so on both sides. See DECISIONS.md D17.
-  version: 1.13.0
-  summary: Authentication, sessions, multi-factor authentication, account recovery, accounts, tenancy, scoped API tokens, the admin surface, the operator surface and OIDC registrations.
+  #
+  # 1.14.0 IS THE CLAIM PREVIEW AND THE AGENT HOME: `GET
+  # /v1/agents/claim/{token}` — anonymous, the claim screen's first frame — and
+  # `GET /v1/agents/home`, the `caf agent whoami` read. Both were already being
+  # CALLED: the website's `getAgentClaim` and the CLI's `Home`, and identity
+  # mounted neither, so the screen's own first frame was a 404 that rendered a
+  # live link as unrecognised. Two operations and two new response schemas
+  # (`AgentClaimPreview`, `AgentHome`). No existing operation moved and no
+  # existing response changed. See DECISIONS.md D22.
+  version: 1.14.0
+  summary: Authentication, sessions, multi-factor authentication, account recovery, accounts, tenancy, scoped API tokens, the admin surface, the operator surface, the agent principal and OIDC registrations.
   description: |
     `identity` is the cafaye platform's security boundary: it is what every other
     service asks to identify a caller.
@@ -3989,6 +3998,20 @@ paths:
   # No 410 (which would say the link was real), no 409 (which would say the agent
   # is taken).
   /v1/agents/claim/{token}:
+    parameters:
+      - name: token
+        in: path
+        required: true
+        description: |
+          The claim link itself: 256 bits of `cafaye_`-prefixed entropy whose
+          SHA-256 is the only part stored. **A credential and not an
+          identifier** — there is no row id in this path and nothing that could
+          enumerate one. It is never parsed, so a malformed value is a digest
+          that matches nothing, which is one 404.
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
     get:
       tags: [agents]
       operationId: getAgentClaimPreview

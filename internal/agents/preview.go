@@ -104,6 +104,13 @@ func (s *Service) PreviewClaim(ctx context.Context, in PreviewInput) (ClaimPrevi
 	err := db.TxRunner{Pool: s.pool}.Do(ctx, func(ctx context.Context, tx db.Querier) error {
 		found, err := s.store.ByClaimDigest(ctx, tx, digest, in.Now)
 		if err != nil {
+			// The fold mirrors `Claim`'s, and it is UNREACHABLE TODAY rather than
+			// necessary today: `ByClaimDigest`'s WHERE carries the status
+			// conjunct, so a claimed principal is a digest miss and this arm is
+			// never entered. It is here because the S direction — a future store
+			// change that drops the conjunct — should surface as the collapse it
+			// already is rather than as a 500 from the route's mapper, which maps
+			// everything it does not recognise to `unexpected`.
 			if errors.Is(err, ErrAlreadyClaimed) {
 				return ErrNotFound
 			}
