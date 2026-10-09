@@ -1955,6 +1955,78 @@ tests all still hold.
   disable/enable pair, and whether that composition belongs in one command is
   the next packet's question.
 
+## D21: the claim mints the agent's own credential, and an unclaimed agent may not act
+
+**Raised** 2026-10-09 by packet `W2-P2` — the claim-completion that binds an
+agent to an account, which AGENTS-FIRST.md's flow calls step ③. Two decisions
+the packet had to make that neither W1-P1 nor W1-P2 had settled, both of them
+about what "an agent acting alone gets nothing" (D4) means in code.
+
+### The mint is inside the claim's transaction, and the claim mints nothing else
+
+- **The claim's 200 carries the agent AND the bearer credential**, and the mint
+  is a statement in the same transaction as the conditional UPDATE that binds
+  them. A claim and its credential are one fact or neither is: an agent that is
+  bound and holds no credential is a claim a human completed and an agent
+  cannot use, and a credential for a principal nobody has bound is a key to a
+  thing that does not exist yet. Splitting them into two requests would give
+  the pair a window in which a crash leaves either half.
+- **A claim is caused by a human, so the credential is named `claimed` and not
+  a second `bootstrap`.** `agent_tokens` has a partial unique index on one live
+  name per agent, so a shared name would refuse the claim outright — and the
+  two names read as a history in a management list, which is the same reason
+  api_keys names its credentials. The registration's credential was minted
+  while the agent was nobody's; this one was minted by the human who made it
+  somebody's.
+- **The mint's `agent.token_minted` event names the HUMAN and not the
+  credential it created.** Every other `ActionTokenMinted` on this table names
+  the token that asked, because on the rotation path the agent asked. Here the
+  agent did not ask: a human clicked Approve. Recording the credential as its
+  own actor would say an agent issued itself a token by being claimed, which is
+  exactly the story D4 refuses.
+- **The claim mints a binding and a credential and NOTHING ELSE.** No
+  entitlement, no account role, no scope beyond what the principal already
+  resolves to. The entitlement grant on a claim is conductor's (W2-P3) and D4
+  is what keeps an agent from granting itself one — a claim route that also
+  granted would be an agent approving its own purchase, which is the whole
+  thing the manual reconciliation mechanism in AGENTS-FIRST.md D2 exists to
+  prevent.
+- **`agent_tokens` still has no `scopes` column, and that is unchanged.** The
+  scope vocabulary is declared "one name at a time against a route that
+  exists" (00031), and the first route an agent token would gate is box
+  enrollment — W1-P3/W2's, not this packet's. Adding a column now would fill it
+  with a set nobody decided. "Scoped" continues to mean *held by one principal
+  and revocable on it*.
+
+### The gate is a middleware, not a branch, and it names its one exception
+
+- **An authenticated-but-unclaimed principal is refused on every route that
+  acts, with `403 agent_unclaimed`.** It is 403 and not 401 because the
+  credential RESOLVED: the principal is real, the token is live, and what is
+  missing is a human's click, which a new credential does not fix. A 401 would
+  send a client hunting a login problem that does not exist.
+- **The code is the fleet's identifier, not this service's to invent.** The
+  `caf` CLI already switches on the string in a 403 body and swaps in its own
+  operator-facing sentence, so the contract is settled by its consumers. What
+  this service owes it is the 403, the code, and a `detail` that names the
+  remedy — the hint matters more than the code, because a refusal that says
+  only "unclaimed" tells a caller it lost and nothing about what to do.
+- **The claim-link refresh is the ONE route an unclaimed agent may reach, and
+  the exception is written down rather than discovered.** It is the only road
+  out of the state a human is being asked to finish: closing it would leave an
+  agent whose link expired before its human got to it unclaimable by anybody,
+  which is a worse failure than an unclaimed agent re-issuing its own link. A
+  refresh does not claim, does not mint and does not bind, so what it opens is
+  exactly the one thing the state needs.
+- **The gate is `agentClaimedOnly`, a middleware wrapping
+  `agentCredentialOnly`, for the reason `requireAdminToken` and
+  `requireSessionLinkMint` are outside the chain.** Wrapped inside a handler,
+  the property is whatever that handler remembered, and the route added next is
+  the one without it. The cost of that choice is that the token lifecycle —
+  mint, list, rotate, revoke — is closed to an unclaimed agent, which is a
+  behaviour change from W1-P2 and is asserted by
+  `TestAnUnclaimedAgentGetsNothing` rather than left as prose.
+
 ## D20: the agent handle is globally unique, registration never says "taken", and the claim screen base is configured per deployment
 
 **Raised** 2026-10-09 by packet `W1-P2`, the public agent registration and

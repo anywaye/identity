@@ -121,17 +121,30 @@ func TestAClaimBindsTheAgentAndRecordsWhoDidIt(t *testing.T) {
 	if len(events) != 2 {
 		t.Fatalf("the agent has %d events, want 2 (the claim and the mint it caused)", len(events))
 	}
-	if events[0].Action != ActionClaimed {
-		t.Errorf("the event's action is %q, want %q", events[0].Action, ActionClaimed)
+
+	// FOUND BY ACTION AND NOT BY POSITION, and that is a bug fix rather than a
+	// style choice. `ListEvents` orders by `(occurred_at DESC, id DESC)`, the
+	// claim's two events share one instant, and the id is `gen_random_uuid()` —
+	// so `events[0]` was the claim about half the time and the mint the rest.
+	// `go test -race` caught it, which is not a coincidence: the slower run
+	// changes the scheduling and therefore which uuid the connection pulls.
+	var claim *EventRecord
+	for i := range events {
+		if events[i].Action == ActionClaimed {
+			claim = &events[i]
+		}
 	}
-	if events[0].UserID != f.user {
-		t.Errorf("the event names user %v, want the human who claimed %v", events[0].UserID, f.user)
+	if claim == nil {
+		t.Fatal("the claim wrote no agent.claimed event, so the binding has no cause in the trail")
 	}
-	if !events[0].TokenID.IsZero() {
-		t.Errorf("a claim's actor names a token %v, and a claim has no token actor", events[0].TokenID)
+	if claim.UserID != f.user {
+		t.Errorf("the event names user %v, want the human who claimed %v", claim.UserID, f.user)
 	}
-	if events[0].TraceID != "trace-1" {
-		t.Errorf("the event carries trace id %q, want the request's", events[0].TraceID)
+	if !claim.TokenID.IsZero() {
+		t.Errorf("a claim's actor names a token %v, and a claim has no token actor", claim.TokenID)
+	}
+	if claim.TraceID != "trace-1" {
+		t.Errorf("the event carries trace id %q, want the request's", claim.TraceID)
 	}
 }
 
