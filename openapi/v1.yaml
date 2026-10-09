@@ -3700,6 +3700,127 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  /v1/accounts/{account_id}/agents/claim:
+    parameters:
+      - $ref: '#/components/parameters/AccountId'
+    post:
+      tags: [agents]
+      operationId: claimAgent
+      summary: Claim an agent principal
+      description: |
+        Binds an unregistered **agent principal** to an account. The agent registers
+        itself, prints a claim URL, and a signed-in human opens it — the link is
+        the credential, the click is explicit, and nothing auto-accepts. That is
+        the invitation flow's rule, applied to a principal that had no account
+        until this request.
+
+        ### The account is in the PATH, the link is in the BODY
+
+        Three things come from three different sources, and none of them is
+        another:
+
+        | what | from | why there |
+        |---|---|---|
+        | the account | the path | a claim binds to an account the caller is **authorized** for, and the account in the path is the one `requireAccountRole` just checked their membership in |
+        | the human | the session | an agent bound by nobody is an agent owned by nobody |
+        | the agent | the claim link | the link is the only thing that names the principal, and it is the only credential a stranger ever presents on this surface |
+
+        A body that carried an `account_id` would move the membership read into a
+        handler — a second place a role is checked, in a service that insists it is
+        checked in one. A body that carried an `agent_id` would let the caller name
+        a principal they were never given a link for. **Neither field exists.**
+
+        ### Session only, and that is enforced in the middleware
+
+        A scoped API token is refused with `403` before the handler runs. A claim
+        is a human binding a thing to an account they belong to, and a machine
+        credential has no use for one — the same rule that refuses a token on
+        `POST /v1/invitations/accept`. The minimum role is `member` because any
+        human in the account may claim on its behalf.
+
+        ### One 404, for four different things
+
+        A wrong token, an expired link, an already-claimed agent and an agent that
+        was never issued are **the same response**: one status, one sentence, one
+        body. The store collapses all four in a single statement — the lookup
+        filters on the digest, the principal's status and the expiry together — so
+        there is no second query that could tell them apart.
+
+        **There is no 410 and no 409 on this route**, and that is a deliberate
+        departure from `POST /v1/invitations/accept` above. A `410` would say "this
+        link was real"; a `409` would say "this agent is taken". Both are facts
+        about a row a stranger is guessing at. An invitation gets its `410`s
+        because the caller can *act* on them — asking for a new one is a next step,
+        and the inviter is a person who already knows the invitation exists. A
+        claim link has no such second party: asking for a new one is not something
+        a caller holding somebody else's link can do.
+
+        Claiming is single-use and the guarantee is **conditional** — the update
+        carries the digest and the status in its `WHERE`, so two people clicking
+        the same link in the same second produce one claim and one 404, with no
+        read in between for the two to disagree in.
+
+        ### What a successful claim does NOT return
+
+        No token. Minting the scoped credential an agent presents is a separate
+        capability with a separate scope vocabulary, and a response that carried
+        one before that vocabulary existed would be a credential this service has
+        not decided what it may do.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClaimAgentRequest'
+      responses:
+        '200':
+          description: |
+            The agent, at the status it now holds. `status` is `claimed`, and
+            `claimed_at` is the instant the binding happened.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Agent'
+        '400':
+          $ref: '#/components/responses/MalformedBody'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          description: |
+            A scoped API token was presented, or the caller is a member of the
+            account but not permitted to claim. A token gets this before the
+            handler runs.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: |
+            No agent matches that claim link — one answer for a wrong token, an
+            expired link, an already-claimed agent and an agent that never
+            existed. Also the answer for an account the caller is not a member
+            of, so a guessed account id is indistinguishable from one that is
+            missing.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '413':
+          $ref: '#/components/responses/BodyTooLarge'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
   /v1/accounts/{account_id}/oidc-clients:
     parameters:
       - $ref: '#/components/parameters/AccountId'
@@ -5756,6 +5877,73 @@ components:
             token is the same `404`, so this is not a way to probe for which
             invitation ids exist.
           examples: [Yk9yUW9mYkdVPW5ZbUoyT0dRb1lSdzVaRkczSWxEZ3g]
+    ClaimAgentRequest:
+      type: object
+      description: |
+        The body of `claimAgent`, and it carries **one** field.
+
+        `additionalProperties: false` is load-bearing rather than tidy. The fields
+        that are refused — an `account_id` and an `agent_id` — are exactly the two
+        a future client would try, and a schema that accepted them would be a
+        schema promising a capability this route refuses. An unknown field is a
+        `400`, the same answer a malformed body gets.
+      required: [token]
+      additionalProperties: false
+      properties:
+        token:
+          type: string
+          description: |
+            The claim link the agent printed at registration. An absent, empty or
+            unrecognised token is the same `404` as an expired link and an
+            already-claimed agent, so this is not a way to probe for which agents
+            exist.
+          examples: [cafaye_9Xk2Qm7RfT4vB1nJ8pL5wY3hD6sZ0aC]
+    Agent:
+      type: object
+      description: |
+        An agent principal, as the claim response sees it.
+
+        **There is no `token` and no `claim_token_digest`, and both absences are
+        the design.** The claim link's plaintext exists exactly once, in the
+        response to the registration that produced it; the digest is the only part
+        of it any later code can reach and it is not a fact a client has any use
+        for. A minted credential is a separate capability and will arrive as its
+        own type.
+
+        **`status` is `claimed` on a successful claim**, and it stays claimed
+        through a disable — "was this ever bound" and "is it live" are two
+        questions, and conflating them is a security question answered with a
+        liveness one. This response is returned before any disable can have
+        happened, so the two agree here.
+      required: [id, name, status, claimed_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: The principal's row id, stable across its whole lifecycle.
+        name:
+          type: string
+          description: |
+            What the agent calls itself, as whoever registered it typed it. Not
+            unique: two agents called "Noel" in two deployments are two different
+            principals, and a global unique name would make a second registration a
+            `409` about a name nobody can see.
+          examples: [Noel]
+        status:
+          type: string
+          enum: [unclaimed, claimed, disabled]
+          description: |
+            Where the principal is in its lifecycle. `unclaimed` is what a
+            registration produces, `claimed` is bound to an account, and `disabled`
+            was claimed and has been turned off. The transition `unclaimed →
+            disabled` does not exist and is refused by the state machine and by the
+            database.
+        claimed_at:
+          type: string
+          format: date-time
+          description: |
+            When the binding happened, and the instant the claim transaction
+            committed. Present on any agent that has been claimed, disabled or not.
     APIKey:
       type: object
       description: |

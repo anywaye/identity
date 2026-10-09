@@ -104,6 +104,16 @@ type options struct {
 	// cannot exchange a code with.
 	social Social
 
+	// agents is the AGENT surface: the claim route that binds a principal to an
+	// account. It is absent without a database, like every other surface here, and
+	// it is deliberately NOT conditional on anything else — there is no key and no
+	// mailer a claim needs, because the caller delivers the link themselves.
+	//
+	// It is mounted from registerTenancyRoutes rather than from registerRoutes, for
+	// the reason the admin surface is: a claim is an action on an ACCOUNT, so it is
+	// account-scoped, so it belongs in the registrar the two route walks read.
+	agents Agents
+
 	// rateLimiter bounds what one client address can do on the unauthenticated
 	// auth surface. It is wired UNCONDITIONALLY by main from cfg.RateLimit,
 	// because the surface it protects is the one a security review looks at

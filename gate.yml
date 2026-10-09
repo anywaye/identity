@@ -88,6 +88,7 @@
 #   db-tier: github.com/cafaye/identity/cmd/identity-staff
 #   db-tier: github.com/cafaye/identity/internal/accounts
 #   db-tier: github.com/cafaye/identity/internal/admin
+#   db-tier: github.com/cafaye/identity/internal/agents
 #   db-tier: github.com/cafaye/identity/internal/apikeys
 #   db-tier: github.com/cafaye/identity/internal/auth
 #   db-tier: github.com/cafaye/identity/internal/courier

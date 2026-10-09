@@ -721,6 +721,13 @@ func (o options) registerTenancyRoutes(r chiRouter) {
 	// outright, so an admin action is always performed by a machine credential
 	// that the audit record can name.
 	o.registerAdminRoutes(r)
+
+	// And so does the agent surface, for exactly the reason the admin one is: a
+	// claim is an action on an account — the account is what the agent becomes
+	// bound to — so its route is account-scoped and belongs in the registrar the
+	// two walks read. It is NOT in accountRouteScopes, because it is session-only:
+	// see the note on registerAgentRoutes.
+	o.registerAgentRoutes(r)
 }
 
 // handleCreateAccount provisions an account and makes the caller its owner.

@@ -488,6 +488,58 @@ func SchemaWithOwner(t *testing.T) (app, owner *pgxpool.Pool) {
 		`CREATE TRIGGER user_audit_log_append_only
 			BEFORE UPDATE OR DELETE ON ` + schema + `.user_audit_log
 			FOR EACH ROW EXECUTE FUNCTION ` + schema + `.user_audit_log_is_append_only()`,
+		// 00031: the agent principal, its credentials and its trail. All three get
+		// the treatment, and each for its own reason.
+		//
+		// `agents` carries an enum-typed `status` column, and LIKE copies the
+		// column with its type as a REFERENCE to `public.agent_status` — the same
+		// arrangement connected_accounts has, and the reason no CREATE TYPE appears
+		// here. The private schema's `agents.status` therefore accepts exactly the
+		// three labels production accepts, which is what makes "unclaimed →
+		// disabled is unrepresentable" a statement that holds under test.
+		//
+		// Its `claimed_by_account_id` foreign key is written out because LIKE does
+		// not copy it and it would otherwise point at public.accounts — and a
+		// private schema whose claim bound a PUBLIC account would be a schema in
+		// which two tests could claim the same row.
+		`CREATE TABLE ` + schema + `.agents (LIKE public.agents INCLUDING ALL)`,
+		`ALTER TABLE ` + schema + `.agents ADD CONSTRAINT agents_claimed_by_account_id_fkey
+			FOREIGN KEY (claimed_by_account_id) REFERENCES ` + schema + `.accounts (id) ON DELETE CASCADE`,
+		// agent_tokens' foreign key to agents is written out for the same reason,
+		// and its TWO partial unique indexes come across with INCLUDING ALL — the
+		// one on token_digest and the one on (agent_id, lower(name)) WHERE
+		// revoked_at IS NULL. The second is the load-bearing half: a schema
+		// without it would accept two live credentials of one name and the
+		// "one live token per agent" test would pass for the wrong reason.
+		`CREATE TABLE ` + schema + `.agent_tokens (LIKE public.agent_tokens INCLUDING ALL)`,
+		`ALTER TABLE ` + schema + `.agent_tokens ADD CONSTRAINT agent_tokens_agent_id_fkey
+			FOREIGN KEY (agent_id) REFERENCES ` + schema + `.agents (id) ON DELETE CASCADE`,
+		// agent_events needs BOTH halves of the treatment account_audit_log gets:
+		// the table, and the trigger.
+		//
+		// The trigger is the half that is easy to miss and the half that matters.
+		// LIKE does not copy triggers, so a private schema without this statement
+		// has an `agent_events` that IS append-only in production and freely
+		// editable here — which means a test asserting the append-only property
+		// would PASS against a table production does not have. The check would be
+		// measuring the harness.
+		//
+		// No foreign keys are written out, and that is not an omission to be
+		// tidied away: 00031 declares none, deliberately, because a CASCADE from
+		// agents is a DELETE and a DELETE is what the trigger refuses — the claim
+		// must not be undoable by deleting the account that claimed it. Adding
+		// one here would make the private schema STRICTER than production, which
+		// is the direction that hides a bug.
+		`CREATE TABLE ` + schema + `.agent_events (LIKE public.agent_events INCLUDING ALL)`,
+		`CREATE FUNCTION ` + schema + `.agent_events_is_append_only() RETURNS trigger AS $$
+			BEGIN
+				RAISE EXCEPTION 'agent_events is append-only; % is not permitted', TG_OP
+					USING ERRCODE = 'restrict_violation';
+			END;
+		$$ LANGUAGE plpgsql`,
+		`CREATE TRIGGER agent_events_append_only
+			BEFORE UPDATE OR DELETE ON ` + schema + `.agent_events
+			FOR EACH ROW EXECUTE FUNCTION ` + schema + `.agent_events_is_append_only()`,
 	}
 	for _, stmt := range stmts {
 		if _, err := admin.Exec(ctx, stmt); err != nil {

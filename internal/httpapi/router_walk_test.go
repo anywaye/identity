@@ -82,6 +82,13 @@ var conditionalSurfaces = []string{
 	// field to `options` without adding it HERE is the same defect a fourth time,
 	// and it is why the list is a named thing a test reads rather than a habit.
 	"deletion",
+
+	// `agents` is here for the same reason, and it was found the same way: the
+	// agent claim route was mounted, wired into main, and the whole package stayed
+	// GREEN with no document entry and no enumeration-audit row, because neither
+	// `servedRoutes` nor `mountedAccountRoutes` sets the field and
+	// `registerAgentRoutes` returns early without it. This is the fifth instance.
+	"agents",
 }
 
 // TestEveryConditionalSurfaceIsVisibleToTheWalk is the check.

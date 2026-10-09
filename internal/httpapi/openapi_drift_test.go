@@ -284,6 +284,15 @@ func servedRoutes(t *testing.T) map[operationKey]string {
 		// this field would not see it — and the public, unauthenticated endpoint
 		// would be a route no documentation check could report.
 		signup: newFakeSignup(),
+		// agents is the fifth instance, and it was found by doing it rather than by
+		// reading about it: the claim route was mounted and wired into main, and
+		// this whole package stayed GREEN with no document entry and no
+		// enumeration-audit row, because this literal did not set the field and
+		// registerAgentRoutes returns early without it. It mounts from
+		// registerTenancyRoutes, so the route is account-scoped, so it also has to
+		// be in mountedAccountRoutes's own literal below — which is the check that
+		// requires its row in the authorization matrix.
+		agents: newFakeAgents(),
 	}
 
 	served := map[operationKey]string{}

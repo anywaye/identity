@@ -28,6 +28,7 @@ import (
 	acctboundary "github.com/cafaye/identity/internal/tenancy"
 
 	"github.com/cafaye/identity/internal/accounts"
+	"github.com/cafaye/identity/internal/agents"
 	"github.com/cafaye/identity/internal/apikeys"
 	"github.com/cafaye/identity/internal/auth"
 	"github.com/cafaye/identity/internal/config"
@@ -331,6 +332,13 @@ func newApp(ctx context.Context, cfg config.Config, logger *slog.Logger) (*app, 
 			httpapi.WithAuth(authSvc),
 			httpapi.WithTenancy(tenancy),
 			httpapi.WithDeletion(deletionSvc),
+			// The agent surface. It needs a database and nothing else, and it is
+			// mounted here rather than gated on any key or mailer for the reason
+			// the recovery surface is: a claim is a capability this service has,
+			// and a 404 on it would tell a product identity has never heard of
+			// agents. The caller delivers the claim link themselves, so there is
+			// no mailer to be unavailable.
+			httpapi.WithAgents(agents.NewService(pool)),
 			// The login's second step rides on WithAuth, because auth.Service is what
 			// mints the session behind it. Only the MANAGEMENT routes are conditional,
 			// and only on a usable key: such a process must not be able to enroll a

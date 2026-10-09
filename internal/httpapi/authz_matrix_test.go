@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/cafaye/identity/internal/accounts"
 	"github.com/cafaye/identity/internal/admin"
+	"github.com/cafaye/identity/internal/agents"
 	"github.com/cafaye/identity/internal/apikeys"
 	"github.com/cafaye/identity/internal/oidc"
 	"github.com/cafaye/identity/internal/outbox"
@@ -213,6 +215,41 @@ func matrixEndpoints() []matrixEndpoint {
 			pattern: "/v1/accounts/{accountID}", min: accounts.RoleOwner, success: http.StatusNoContent,
 		},
 
+		// THE AGENT CLAIM, and it is the one row on this surface that is a POST
+		// with no account CREATED by the state it asks for.
+		//
+		// NO `expect` OVERRIDE, and that is the interesting part rather than an
+		// omission: every other rule that would change a column here — the token
+		// kind, the second factor — is a property of the CALLER's credential, which
+		// the matrix already models by giving each column a credential. The route's
+		// second gate, `sessionCredentialOnly`, is the one rule that is about the
+		// credential and not about the role, and it means the token columns get 403
+		// rather than the 404 a non-member gets. That is the same answer
+		// `requireAdminToken` produces on the admin surface, and it is why the
+		// matrix's six columns behave identically here: every column is a session,
+		// and a session is either in the account, not in it, or absent.
+		//
+		// WHY IT IS NOT IN `accountRouteScopes`. The map is walked by
+		// `TestEveryScopeIsEnforcedOnItsRoutes` against the vocabulary, and a row
+		// for a route no token may reach would be a scope gating nothing. `Allows("")`
+		// is false for every granted set, so this route is closed to tokens by the
+		// absence rather than by a declaration — which is the direction that fails
+		// closed, and which is why the row belongs HERE and not there.
+		{
+			name: "claim an agent", method: http.MethodPost,
+			pattern: "/v1/accounts/{accountID}/agents/claim", min: accounts.RoleMember, success: http.StatusOK,
+			body: func(f *matrixFixture) string {
+				// A FRESH AGENT PER REQUEST, and that is the honest way to assert
+				// `200` here. The claim link is single-use by design — the store's
+				// UPDATE carries the digest and the status in its WHERE, so the
+				// second click on one link is a 404 — and a row that reused one link
+				// across six columns would be a row asserting a property the
+				// service does not have. Six columns, six registrations, six links.
+				token := f.registerAgent()
+				return `{"token":"` + token + `"}`
+			},
+		},
+
 		// OWNERSHIP TRANSFER. Owner-only for the reason the api key rows below
 		// give: after this request the caller's authority over the account is
 		// whatever the new owner gives back, so an admin asking is not a near
@@ -395,6 +432,13 @@ type matrixFixture struct {
 	// matrix would prove nothing.
 	apiKeys *apikeys.Service
 
+	// t is the fixture's own test, and it exists because a `body` closure runs
+	// OUTSIDE any test function: `matrixEndpoints()` is a package-level table, so a
+	// closure that has to register an agent has no `*testing.T` to call Fatalf on.
+	// Holding the one the fixture was built with is the honest shape — the agent is
+	// registered while the fixture is alive, inside the test that owns it.
+	t *testing.T
+
 	// The account every row is about, and the plain member inside it, which is
 	// what the member-scoped routes act on.
 	accountID id.UUID
@@ -479,6 +523,19 @@ func newMatrixFixture(t *testing.T) *matrixFixture {
 		// SESSION is refused, and the surface has to exist for there to be
 		// anything to refuse.
 		WithAdmin(adminSvc),
+		// The agent claim route, for the reason the admin routes are above: without
+		// the service the route is not mounted at all and every one of the six
+		// columns answers 404 with "no route matches this request". That is not a
+		// fixture bug being papered over either — the row asserts what a SESSION
+		// and a TOKEN are each answered, and there has to be a surface for there to
+		// be anything to answer.
+		//
+		// THE REAL SERVICE, not a double, and the reason is the row's own claim: the
+		// member, admin and owner columns expect `200`, which means the claim has to
+		// actually resolve a link and bind an agent. A double returning a canned 200
+		// would also pass a route whose claim path was broken, which is the one
+		// thing this row exists to notice.
+		WithAgents(agents.NewService(pool)),
 		WithLogger(slogLogger(&recordingHandler{})),
 	)
 
@@ -488,6 +545,7 @@ func newMatrixFixture(t *testing.T) *matrixFixture {
 	// difference is the entire content of that column: owning an account confers
 	// nothing on any other.
 	return &matrixFixture{
+		t:           t,
 		handler:     handler,
 		pool:        pool,
 		clock:       clk,
@@ -865,6 +923,14 @@ func mountedAccountRoutes() []string {
 		// router_walk_test.go.
 		admin:        newFakeAdmin(),
 		apiKeyCaller: newFakeAPIKeyCaller(users.User{ID: id.MustNew()}, apikeys.Key{ID: id.MustNew(), AccountID: id.MustNew()}),
+		// agents is here because registerAgentRoutes is called from
+		// registerTenancyRoutes — the claim is an action on an account, so its route
+		// is account-scoped and belongs in the registrar this walk reads — and that
+		// call returns early without the service. With the field absent, the claim
+		// route is invisible here, TestEveryRouteIsInTheMatrix passes with no row
+		// required for it, and the matrix reports as complete while saying nothing
+		// about a route every browser can reach.
+		agents: newFakeAgents(),
 	}
 	opts.registerTenancyRoutes(r)
 
@@ -878,6 +944,54 @@ func mountedAccountRoutes() []string {
 
 	sort.Strings(found)
 	return found
+}
+
+// registerAgent writes an unclaimed agent principal through the store and returns
+// the claim link's PLAINTEXT, which is the only place it exists.
+//
+// IT USES THE STORE AND NOT THE SERVICE, because there is no registration use case
+// yet: `POST /v1/agents` is W1-P2's packet, and `agents.Service` mounts only the
+// claim. A fixture that minted through a use case that does not exist would be
+// asserting against a method nobody calls; one that minted through the store is
+// asserting against the row shape the claim route reads, which is exactly what the
+// matrix needs.
+//
+// The plaintext is returned rather than the digest because the matrix's body
+// closure has to SEND a link, and a digest would be a value no row matches.
+func (f *matrixFixture) registerAgent() string {
+	t := f.t
+	t.Helper()
+
+	link, digest, err := agents.NewToken()
+	if err != nil {
+		t.Fatalf("minting a claim link: %v", err)
+	}
+
+	store := agents.NewStore(f.pool)
+	// THE REAL CLOCK, and that is a decision rather than a convenience. This
+	// fixture is the one in the package that does NOT pass WithClock to New, so its
+	// handler judges the claim link's expiry against the system clock while every
+	// row the fixture seeds is written with the fake one. A link registered at the
+	// fake instant would already be expired by the time the handler reads it, and
+	// the member, admin and owner columns would all answer 404 with "no agent
+	// matches that claim link" — a red matrix that reads like a broken claim path
+	// and is actually a clock the fixture never wired.
+	//
+	// Passing WithClock here instead would be the tidier fix and would change the
+	// instant every OTHER row in this matrix is judged at, which is a behaviour
+	// change to sixteen passing rows made in service of one new one. Using the
+	// clock the handler actually reads is the smaller change, and the comment is
+	// what stops the next reader from "tidying" it back.
+	now := time.Now()
+	if _, err := store.Create(context.Background(), f.pool, agents.NewAgent{
+		Name:               "Matrix agent " + id.MustNew().String()[:8],
+		ClaimDigest:        digest,
+		ClaimLinkExpiresAt: now.Add(agents.ClaimLinkTTL),
+		CreatedAt:          now,
+	}); err != nil {
+		t.Fatalf("registering the matrix's agent: %v", err)
+	}
+	return link
 }
 
 // normalizeRoute puts a method and a path into the matrix's key form: chi

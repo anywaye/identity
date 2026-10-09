@@ -35,7 +35,7 @@ package client
 // regeneration gate's blast radius visible instead of spread across twenty call
 // sites.
 //
-// The forty-one methods below are the document's forty-one `operationId`s, in
+// The forty-two methods below are the document's forty-two `operationId`s, in
 // the document's order, with the generated parameter types. The compile-time
 // assertion at the bottom is what proves the generated `*generated.Client` still
 // satisfies it, so a mismatch is a build failure rather than a runtime surprise.
@@ -99,6 +99,13 @@ type Transport interface {
 	RemoveMember(ctx context.Context, accountId openapiTypes.UUID, userId openapiTypes.UUID, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	TransferAccountOwnership(ctx context.Context, accountId openapiTypes.UUID, body generated.TransferAccountOwnershipJSONRequestBody, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	AcceptInvitation(ctx context.Context, body generated.AcceptInvitationJSONRequestBody, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
+	// ClaimAgent binds an agent principal to an account. It is session-only for
+	// the reason `ListSessions` is above: a claim is a human binding a thing to an
+	// account they belong to, and a scoped api key is refused with 403 before the
+	// handler runs. The link in the body is the only thing that names the
+	// principal — the account comes from the path, the human from the session —
+	// so a caller cannot name an agent they were never given a link for.
+	ClaimAgent(ctx context.Context, accountId openapiTypes.UUID, body generated.ClaimAgentJSONRequestBody, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	RegisterOIDCClient(ctx context.Context, accountId openapiTypes.UUID, body generated.RegisterOIDCClientJSONRequestBody, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	ListOIDCClients(ctx context.Context, accountId openapiTypes.UUID, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	GetOIDCClient(ctx context.Context, accountId openapiTypes.UUID, clientId openapiTypes.UUID, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
