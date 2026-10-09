@@ -946,6 +946,12 @@ type ClaimAgentRequest struct {
 // credential, and nothing else - no entitlement, no scope beyond what the
 // principal already resolves to. The entitlement grant on a claim is
 // conductor's (W2-P3), and D4 keeps an agent from granting itself one.
+//
+// **`status` is `claimed` on this response**, and it stays claimed through a
+// disable: "was this ever bound" and "is it live" are two questions, and
+// conflating them is a security question answered with a liveness one. This
+// response is returned before any disable can have happened, so the two
+// agree here - which is why the enum carries one member and not three.
 type ClaimedAgent struct {
 	ClaimedAt time.Time          `json:"claimed_at"`
 	ID        openapi_types.UUID `json:"id"`

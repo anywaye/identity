@@ -6439,54 +6439,6 @@ components:
             already-claimed agent, so this is not a way to probe for which agents
             exist.
           examples: [cafaye_9Xk2Qm7RfT4vB1nJ8pL5wY3hD6sZ0aC]
-    Agent:
-      type: object
-      description: |
-        An agent principal, as the claim response sees it. **The 200 of
-        `claimAgent` is `ClaimAgentResponse` below, not this type** - it adds the
-        minted credential - and this schema remains the principal on its own.
-
-        **There is no `token` and no `claim_token_digest`, and both absences are
-        the design.** The claim link's plaintext exists exactly once, in the
-        response to the registration that produced it; the digest is the only part
-        of it any later code can reach and it is not a fact a client has any use
-        for.
-
-        **`status` is `claimed` on a successful claim**, and it stays claimed
-        through a disable — "was this ever bound" and "is it live" are two
-        questions, and conflating them is a security question answered with a
-        liveness one. This response is returned before any disable can have
-        happened, so the two agree here.
-      required: [id, name, status, claimed_at]
-      properties:
-        id:
-          type: string
-          format: uuid
-          description: The principal's row id, stable across its whole lifecycle.
-        name:
-          type: string
-          description: |
-            What the agent calls itself, as whoever registered it typed it. Not
-            unique: two agents called "Noel" in two deployments are two different
-            principals, and a global unique name would make a second registration a
-            `409` about a name nobody can see.
-          examples: [Noel]
-        status:
-          type: string
-          enum: [unclaimed, claimed, disabled]
-          description: |
-            Where the principal is in its lifecycle. `unclaimed` is what a
-            registration produces, `claimed` is bound to an account, and `disabled`
-            was claimed and has been turned off. The transition `unclaimed →
-            disabled` does not exist and is refused by the state machine and by the
-            database.
-        claimed_at:
-          type: string
-          format: date-time
-          description: |
-            When the binding happened, and the instant the claim transaction
-            committed. Present on any agent that has been claimed, disabled or not.
-
     ClaimedAgent:
       type: object
       description: |
@@ -6510,6 +6462,12 @@ components:
         credential, and nothing else - no entitlement, no scope beyond what the
         principal already resolves to. The entitlement grant on a claim is
         conductor's (W2-P3), and D4 keeps an agent from granting itself one.
+
+        **`status` is `claimed` on this response**, and it stays claimed through a
+        disable: "was this ever bound" and "is it live" are two questions, and
+        conflating them is a security question answered with a liveness one. This
+        response is returned before any disable can have happened, so the two
+        agree here - which is why the enum carries one member and not three.
       required: [id, name, status, claimed_at, token]
       properties:
         id:
