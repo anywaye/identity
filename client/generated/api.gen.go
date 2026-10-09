@@ -3899,11 +3899,15 @@ type ClientInterface interface {
 	// the account that owns the agent manages its access through the account
 	// surface instead. This is the whole of why refresh and claim are two verbs.
 	//
-	// **The Idempotency-Key correlates, it does not cache.** It rides on the
-	// refresh event so a client's retried burst reads as one intent in the audit
-	// trail; every call still mints a NEW link (the previous one is spent by the
-	// refresh that replaces it), which is the deliberate behaviour — a replayed
-	// retry must not resurrect a link that has already been replaced.
+	// **The Idempotency-Key correlates, it does not cache.** It is accepted and
+	// logged beside the request's trace id so a client's retried burst is
+	// correlatable in the service logs; it is not stored and not replayed —
+	// `agent_events` has no idempotency column, and every refresh deliberately
+	// mints a NEW link (the previous one is spent by the refresh that replaces
+	// it), so a retry with the same key gets a different, fresher link. The
+	// endpoint is idempotent in EFFECT — it never claims, and never fails
+	// because a prior refresh already replaced the link — which is what the
+	// CLI's retry actually relies on.
 	//
 	// Corresponds with POST /v1/agents/claim-link/refresh (the `RefreshAgentClaimLink` operationId).
 	RefreshAgentClaimLink(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -7564,11 +7568,15 @@ func (c *Client) RegisterAgent(ctx context.Context, body RegisterAgentJSONReques
 // the account that owns the agent manages its access through the account
 // surface instead. This is the whole of why refresh and claim are two verbs.
 //
-// **The Idempotency-Key correlates, it does not cache.** It rides on the
-// refresh event so a client's retried burst reads as one intent in the audit
-// trail; every call still mints a NEW link (the previous one is spent by the
-// refresh that replaces it), which is the deliberate behaviour — a replayed
-// retry must not resurrect a link that has already been replaced.
+// **The Idempotency-Key correlates, it does not cache.** It is accepted and
+// logged beside the request's trace id so a client's retried burst is
+// correlatable in the service logs; it is not stored and not replayed —
+// `agent_events` has no idempotency column, and every refresh deliberately
+// mints a NEW link (the previous one is spent by the refresh that replaces
+// it), so a retry with the same key gets a different, fresher link. The
+// endpoint is idempotent in EFFECT — it never claims, and never fails
+// because a prior refresh already replaced the link — which is what the
+// CLI's retry actually relies on.
 //
 // Corresponds with POST /v1/agents/claim-link/refresh (the `RefreshAgentClaimLink` operationId).
 func (c *Client) RefreshAgentClaimLink(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -14091,11 +14099,15 @@ type ClientWithResponsesInterface interface {
 	// the account that owns the agent manages its access through the account
 	// surface instead. This is the whole of why refresh and claim are two verbs.
 	//
-	// **The Idempotency-Key correlates, it does not cache.** It rides on the
-	// refresh event so a client's retried burst reads as one intent in the audit
-	// trail; every call still mints a NEW link (the previous one is spent by the
-	// refresh that replaces it), which is the deliberate behaviour — a replayed
-	// retry must not resurrect a link that has already been replaced.
+	// **The Idempotency-Key correlates, it does not cache.** It is accepted and
+	// logged beside the request's trace id so a client's retried burst is
+	// correlatable in the service logs; it is not stored and not replayed —
+	// `agent_events` has no idempotency column, and every refresh deliberately
+	// mints a NEW link (the previous one is spent by the refresh that replaces
+	// it), so a retry with the same key gets a different, fresher link. The
+	// endpoint is idempotent in EFFECT — it never claims, and never fails
+	// because a prior refresh already replaced the link — which is what the
+	// CLI's retry actually relies on.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -24856,11 +24868,15 @@ func (c *ClientWithResponses) RegisterAgentWithResponse(ctx context.Context, bod
 // the account that owns the agent manages its access through the account
 // surface instead. This is the whole of why refresh and claim are two verbs.
 //
-// **The Idempotency-Key correlates, it does not cache.** It rides on the
-// refresh event so a client's retried burst reads as one intent in the audit
-// trail; every call still mints a NEW link (the previous one is spent by the
-// refresh that replaces it), which is the deliberate behaviour — a replayed
-// retry must not resurrect a link that has already been replaced.
+// **The Idempotency-Key correlates, it does not cache.** It is accepted and
+// logged beside the request's trace id so a client's retried burst is
+// correlatable in the service logs; it is not stored and not replayed —
+// `agent_events` has no idempotency column, and every refresh deliberately
+// mints a NEW link (the previous one is spent by the refresh that replaces
+// it), so a retry with the same key gets a different, fresher link. The
+// endpoint is idempotent in EFFECT — it never claims, and never fails
+// because a prior refresh already replaced the link — which is what the
+// CLI's retry actually relies on.
 //
 // Returns a wrapper object for the known response body format(s).
 //

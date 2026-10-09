@@ -587,13 +587,18 @@ func (o options) writeAgentRegistrationError(w http.ResponseWriter, r *http.Requ
 // the human opened it gets a new one; an agent whose human already claimed it
 // gets nothing new, because its access belongs to the account now.
 //
-// # THE IDEMPOTENCY KEY
+// # THE IDEMPOTENCY KEY, STATED HONESTLY
 //
-// The request's Idempotency-Key is recorded on the refresh event's trace lineage
-// so a client's retries are visible as one intent in the audit trail. It is NOT a
-// stored-response replay: each refresh MINT A NEW LINK, and a retry with the same
-// key gets a different link, deliberately — the old one is spent by the refresh
-// that replaced it. The key correlates; it does not cache.
+// The request's Idempotency-Key is ACCEPTED and LOGGED beside the request's trace
+// id, so a client's retried burst is correlatable in the SERVICE LOGS. It is NOT a
+// stored-response replay and NOT written to agent_events (that table has no
+// idempotency column, and adding one for a key that buys no dedup would be a
+// column for nothing): each refresh deliberately MINT A NEW LINK and spends the
+// one it replaces, so a retry with the same key gets a DIFFERENT, fresher link
+// rather than the same one back. The endpoint is idempotent in EFFECT — it never
+// claims, never claims twice, and never fails because the previous refresh
+// already replaced the link — which is the property the CLI's retry actually
+// depends on. The key is correlation for an operator, not a cache.
 func (o options) handleRefreshAgentClaimLink(w http.ResponseWriter, r *http.Request) {
 	owner, ok := agentFrom(r.Context())
 	if !ok {
@@ -624,6 +629,16 @@ func (o options) handleRefreshAgentClaimLink(w http.ResponseWriter, r *http.Requ
 		unexpected(w, r, o.logger, err)
 		return
 	}
+
+	// The Idempotency-Key, logged beside the trace id so a client's retried burst
+	// is correlatable. It is logged and nothing else: see the file-level comment
+	// for why it is not stored and not a cache. A header the CLI auto-generates on
+	// every call means an empty value here is the common case, and logging it
+	// unconditionally keeps the line's shape constant for a log parser.
+	o.logger.Info("agent claim link refreshed",
+		"agent_id", refreshed.Agent.ID,
+		"idempotency_key", r.Header.Get("Idempotency-Key"),
+		"trace_id", traceIDFrom(r.Context()))
 
 	writeJSON(w, http.StatusOK, refreshAgentClaimResponse{
 		Agent: agentSummary{
