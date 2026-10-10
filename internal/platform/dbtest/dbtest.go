@@ -402,11 +402,28 @@ func SchemaWithOwner(t *testing.T) (app, owner *pgxpool.Pool) {
 		// The refresh tokens. Cloned for the reason the access tokens are: TG-C2
 		// gives the token endpoint a third credential table, and a private schema
 		// without it fails the whole grant with "relation ... does not exist",
-		// which reads like a migration that was not applied. The FK to
-		// oidc_clients has no cascade problem here — the parent is in the same
-		// private schema — and the FK to users is the same one the access tokens
-		// carry.
+		// which reads like a migration that was not applied.
+		//
+		// THE SELF-REFERENTIAL FOREIGN KEY IS HERE, and it is the one that was
+		// missing when this list was written. Its absence made the private schema
+		// MORE PERMISSIVE than production on the one constraint that orders two
+		// statements: 00035 declares
+		// `replaced_by ... REFERENCES oidc_refresh_tokens (id)`, so a row may
+		// only name a successor that already exists. Production obeys that —
+		// Storage.CreateRefreshToken inserts the successor and THEN calls
+		// ReplaceRefreshToken — but the refresh-token tests wrote the link first,
+		// and against a schema without the constraint the write is simply
+		// accepted. Statement order was a fact nobody could observe, and the
+		// observable version of it is a 500 on the first rotation a real
+		// deployment performs.
+		//
+		// ON DELETE SET NULL, exactly as the migration has it: a matching action
+		// is what keeps the two schemas' behaviour identical rather than merely
+		// similar, and "similar" is the word for a harness that agrees with a
+		// deferred failure.
 		`CREATE TABLE ` + schema + `.oidc_refresh_tokens (LIKE public.oidc_refresh_tokens INCLUDING ALL)`,
+		`ALTER TABLE ` + schema + `.oidc_refresh_tokens ADD CONSTRAINT oidc_refresh_tokens_replaced_by_fkey
+			FOREIGN KEY (replaced_by) REFERENCES ` + schema + `.oidc_refresh_tokens (id) ON DELETE SET NULL`,
 		`ALTER TABLE ` + schema + `.oidc_refresh_tokens ADD CONSTRAINT oidc_refresh_tokens_client_row_id_fkey
 			FOREIGN KEY (client_row_id) REFERENCES ` + schema + `.oidc_clients (id) ON DELETE CASCADE`,
 		`ALTER TABLE ` + schema + `.oidc_refresh_tokens ADD CONSTRAINT oidc_refresh_tokens_subject_fkey

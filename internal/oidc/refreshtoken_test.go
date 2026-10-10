@@ -91,12 +91,13 @@ func TestARefreshTokenRotates(t *testing.T) {
 		t.Fatal("rotating left used_at NULL, so a second presentation would be accepted")
 	}
 
-	// The replacement, as the token endpoint would write it.
+	// The replacement, as the token endpoint would write it: the row FIRST and
+	// the link second. dbtest now carries 00035's self-referential foreign key
+	// on replaced_by, so the other order is refused here exactly as production
+	// would refuse it — which is the point, because it is the order these
+	// fixtures used to be written in and nothing could see it.
 	replacement := id.MustNew()
 	replacementDigest := mustDigest(t)
-	if err := f.store.ReplaceRefreshToken(f.ctx, f.q(), rootID, replacement); err != nil {
-		t.Fatalf("ReplaceRefreshToken: %v", err)
-	}
 	if err := f.store.CreateRefreshToken(f.ctx, f.q(), NewRefreshToken{
 		ID:          replacement,
 		ClientRowID: client.ID,
@@ -107,6 +108,9 @@ func TestARefreshTokenRotates(t *testing.T) {
 		ExpiresAt:   storeTestNow.Add(time.Minute + RefreshTokenTTL),
 	}); err != nil {
 		t.Fatalf("CreateRefreshToken: %v", err)
+	}
+	if err := f.store.ReplaceRefreshToken(f.ctx, f.q(), rootID, replacement); err != nil {
+		t.Fatalf("ReplaceRefreshToken: %v", err)
 	}
 
 	// The old value is spent and the new one works, which is the whole of
@@ -142,11 +146,10 @@ func TestAReusedRefreshTokenRevokesItsFamily(t *testing.T) {
 		t.Fatalf("RotateRefreshToken: %v", err)
 	}
 
+	// The row before the link, for the reason dbtest's self-referential foreign
+	// key now gives. The token endpoint writes them in this order too.
 	replacement := id.MustNew()
 	replacementDigest := mustDigest(t)
-	if err := f.store.ReplaceRefreshToken(f.ctx, f.q(), rootID, replacement); err != nil {
-		t.Fatalf("ReplaceRefreshToken: %v", err)
-	}
 	if err := f.store.CreateRefreshToken(f.ctx, f.q(), NewRefreshToken{
 		ID:          replacement,
 		ClientRowID: client.ID,
@@ -157,6 +160,9 @@ func TestAReusedRefreshTokenRevokesItsFamily(t *testing.T) {
 		ExpiresAt:   storeTestNow.Add(time.Minute + RefreshTokenTTL),
 	}); err != nil {
 		t.Fatalf("CreateRefreshToken: %v", err)
+	}
+	if err := f.store.ReplaceRefreshToken(f.ctx, f.q(), rootID, replacement); err != nil {
+		t.Fatalf("ReplaceRefreshToken: %v", err)
 	}
 
 	if _, err := f.store.RotateRefreshToken(f.ctx, f.q(), rootDigest, storeTestNow.Add(2*time.Minute)); !errors.Is(err, ErrRefreshTokenReused) {
@@ -264,9 +270,8 @@ func TestRevokingAFamilyRevokesTheWholeChain(t *testing.T) {
 	for i := range 3 {
 		next := id.MustNew()
 		nextDigest := mustDigest(t)
-		if err := f.store.ReplaceRefreshToken(f.ctx, f.q(), previous, next); err != nil {
-			t.Fatalf("ReplaceRefreshToken: %v", err)
-		}
+		// The successor exists before the spent row names it, because the
+		// self-referential foreign key dbtest carries says it has to.
 		if err := f.store.CreateRefreshToken(f.ctx, f.q(), NewRefreshToken{
 			ID:          next,
 			ClientRowID: client.ID,
@@ -277,6 +282,9 @@ func TestRevokingAFamilyRevokesTheWholeChain(t *testing.T) {
 			ExpiresAt:   storeTestNow.Add(time.Duration(i+1)*time.Minute + RefreshTokenTTL),
 		}); err != nil {
 			t.Fatalf("CreateRefreshToken: %v", err)
+		}
+		if err := f.store.ReplaceRefreshToken(f.ctx, f.q(), previous, next); err != nil {
+			t.Fatalf("ReplaceRefreshToken: %v", err)
 		}
 		previous = next
 		digests = append(digests, nextDigest)
@@ -332,9 +340,8 @@ func TestARevocationFromTheMiddleOfAChainTakesTheSuccessors(t *testing.T) {
 	for i := range 3 {
 		next := id.MustNew()
 		nextDigest := mustDigest(t)
-		if err := f.store.ReplaceRefreshToken(f.ctx, f.q(), previous, next); err != nil {
-			t.Fatalf("ReplaceRefreshToken: %v", err)
-		}
+		// The successor exists before the spent row names it, because the
+		// self-referential foreign key dbtest carries says it has to.
 		if err := f.store.CreateRefreshToken(f.ctx, f.q(), NewRefreshToken{
 			ID:          next,
 			ClientRowID: client.ID,
@@ -345,6 +352,9 @@ func TestARevocationFromTheMiddleOfAChainTakesTheSuccessors(t *testing.T) {
 			ExpiresAt:   storeTestNow.Add(time.Duration(i+1)*time.Minute + RefreshTokenTTL),
 		}); err != nil {
 			t.Fatalf("CreateRefreshToken: %v", err)
+		}
+		if err := f.store.ReplaceRefreshToken(f.ctx, f.q(), previous, next); err != nil {
+			t.Fatalf("ReplaceRefreshToken: %v", err)
 		}
 		previous = next
 		ids = append(ids, next)
