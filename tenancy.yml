@@ -16,9 +16,13 @@
 # is kit's `templates/database/tenancy/substrate.sql` copied verbatim, so this
 # block records five `select cafaye.protect_table(...)` calls and what the template
 # writes for each. It does not claim any policy, any predicate or any `force` bit
-# that this repository wrote: every one of the twenty policies is generated, and
-# the four `constrained` lines below are the five CALLS, which is the only place
-# the template's shape is written down in this tree.
+# that this repository wrote: every one of the twenty-four policies `pg_policies`
+# holds on these five tables is generated — twenty from `protect_table` and
+# `protect_credential_table`, plus `account_users_cafaye_members` and
+# `account_users_cafaye_resolve`, which are measured in tg-a1's report and
+# unreadable by the checker for the reasons given at each table below — and the
+# `constrained` lines below are the five CALLS, which is the only place the
+# template's shape is written down in this tree.
 version: 1
 service: identity
 
@@ -34,13 +38,13 @@ scope:
   # rather than guessing between the fleet's three vocabularies.
   key: account_id
   # FILES, NOT DIRECTORIES, and the reason is a completeness obligation rather than
-  # tidiness. These are the three production stores whose SQL reaches one of the
-  # five protected tables; a directory would drag in `_test.go` fixtures, whose
+  # tidiness. These are the production stores whose SQL reaches one of the five
+  # protected tables; a directory would drag in `_test.go` fixtures, whose
   # `dbtest.Schema` clones have an `account_id` column and no policies and are not
   # entry points into anything.
   #
-  # TWO OF THE THREE CONTRIBUTE NO ATTRIBUTED SITE, and naming them anyway is the
-  # point. The scanner reads `internal/apikeys/store.go` and `internal/oidc/store.go`
+  # TWO OF THE THREE STORES CONTRIBUTE NO ATTRIBUTED SITE, and naming them
+  # anyway is the point. The scanner reads `internal/apikeys/store.go` and `internal/oidc/store.go`
   # in full and attributes no account-scoped statement in either, because their
   # credential lookups are addressed by an unguessable secret rather than by an
   # account — `api_keys` by `token_digest`, `oidc_clients` by `client_id` — and
@@ -74,6 +78,43 @@ scope:
     - internal/admin/store.go
     - internal/apikeys/store.go
     - internal/oidc/store.go
+    # THE FOURTH FILE, added after tg-a1 walked the tree for SQL reaching a
+    # protected table and found this one outside the list. `pgProfileReader.Profile`
+    # reads `account_users` twice — the personal-account name and the membership
+    # list behind the `accounts` claim — and until it was named here the checker
+    # could not see any of it, which is the one failure shape this file exists to
+    # prevent: a green that is green because nobody wrote the file down. Naming it
+    # moved `tenancy.enumeration-partial` from eleven sites to fourteen, and the
+    # three it contributes are:
+    #
+    #   internal/oidc/profiles.go:125  join account_users  on au.account_id (name)
+    #   internal/oidc/profiles.go:136  join account_users  on au.account_id (list)
+    #   internal/oidc/profiles.go:167  the `claimAccount` wire struct's json tag
+    #
+    # The two joins are the statements. The third is not a statement at all — it is
+    # the same shape as `auditColumns`, `keyColumns` and `clientColumns`: a line
+    # carrying the tenancy key that no read passes through.
+    #
+    # ITS VERDICT, MEASURED rather than argued, on the real tables as the app role
+    # (`internal/tenancy/profile_read_test.go`): with no identity set — which is
+    # the state production runs it in, because the userinfo path reads through
+    # `db.Direct{Pool: pool}` and a bare pool carries no GUC — the read returns
+    # ZERO rows; with `cafaye.begin_user` naming the subject it returns exactly
+    # that subject's rows; with another user's identity it returns none; with an
+    # `begin_account` set it returns that account's rows only. So it is NOT a
+    # hole — `account_users_cafaye_members` (00018) and the four account policies
+    # hold it in every state, and the Go predicate is a second copy of the same
+    # bound. It is NOT an entry point either: the read is scoped by USER, which
+    # `operation`/`enforced.line` cannot express for the same reason the three
+    # secret-addressed lookups cannot.
+    #
+    # WHAT IS DELIBERATELY NOT PURSUED HERE, named so it is not mistaken for an
+    # oversight: that zero-row answer is also a FUNCTIONAL fact — the `accounts`
+    # claim on the userinfo path is empty in production, and every existing test
+    # asserts it through a fake ProfileReader, so nothing has caught it. That is
+    # an OIDC packet's surface, not this declaration's; the tenancy claim is the
+    # one above and it is proven.
+    - internal/oidc/profiles.go
 
 rls:
   # True, and it is the reason this file exists rather than saying `false` and
@@ -373,28 +414,35 @@ rls:
             file: migrations/00016_account_isolation.sql
             line: 915
 
-# `tenancy.enumeration-partial` NAMES ELEVEN SITES IN `scope.sources` THAT IT
+# `tenancy.enumeration-partial` NAMES FOURTEEN SITES IN `scope.sources` THAT IT
 # COULD NOT ATTRIBUTE, and the finding says the author must read them and confirm
 # each one is declared. Done, and they are two classes:
 #
-# FIVE ARE NOT STATEMENTS. `internal/admin/store.go:27` and
-# `internal/oidc/store.go:92` are the `auditColumns` and `clientColumns` select-list
-# constants, and `internal/admin/store.go:67`, `internal/apikeys/store.go:140` and
-# `internal/oidc/store.go:99` are the column lists of the three `insert into`
-# statements. A column list carrying the word `account_id` is not an account-scoped
-# read, and an `insert` is absent from `entryPoints[].operation` by the schema's own
-# rule: it creates a row rather than reaching an existing one.
+# SIX ARE NOT STATEMENTS. `internal/admin/store.go:27`,
+# `internal/apikeys/store.go:140`, `internal/oidc/store.go:92` and
+# `internal/oidc/profiles.go:167` are the `auditColumns`, `keyColumns`,
+# `clientColumns` and `claimAccount` constants and struct tags, and
+# `internal/admin/store.go:67` and `internal/oidc/store.go:99` are the column lists
+# of the two `insert into` statements. A column list carrying the word `account_id`
+# is not an account-scoped read, and an `insert` is absent from
+# `entryPoints[].operation` by the schema's own rule: it creates a row rather than
+# reaching an existing one.
 #
-# SIX ARE REAL ACCOUNT-SCOPED STATEMENTS THE SCANNER COULD NOT REACH, and they are
-# listed here because that is a measured limit of the checker rather than a
+# EIGHT ARE REAL ACCOUNT-SCOPED STATEMENTS THE SCANNER COULD NOT REACH, and they
+# are listed here because that is a measured limit of the checker rather than a
 # property of this service:
 #
-#   internal/apikeys/store.go:222  the credential lookup's `join account_users`
-#   internal/apikeys/store.go:287  select  api_keys      where account_id = $1
-#   internal/apikeys/store.go:329  update  api_keys      where id = $1 and account_id = $2
-#   internal/apikeys/store.go:404  update  api_keys      where account_id = $1 and user_id = $2
-#   internal/oidc/store.go:159     select  oidc_clients  where account_id = $1
-#   internal/oidc/store.go:234     update  oidc_clients  where id = $1 and account_id = $2
+#   internal/apikeys/store.go:222      the credential lookup's `join account_users`
+#   internal/apikeys/store.go:287      select  api_keys      where account_id = $1
+#   internal/apikeys/store.go:329      update  api_keys      where id = $1 and account_id = $2
+#   internal/apikeys/store.go:404      update  api_keys      where account_id = $1 and user_id = $2
+#   internal/oidc/store.go:159         select  oidc_clients  where account_id = $1
+#   internal/oidc/store.go:234         update  oidc_clients  where id = $1 and account_id = $2
+#   internal/oidc/profiles.go:125      the personal-account name read's `join account_users`
+#   internal/oidc/profiles.go:136      the membership list read's `join account_users`
+#
+# The last two arrived with the fourth source and are the two the new proof is
+# for: `internal/tenancy/profile_read_test.go`.
 #
 # All six DO carry their own `where account_id`, and none is attributed. The
 # reason was re-measured on core's own `scan_file` rather than inferred, and it is
