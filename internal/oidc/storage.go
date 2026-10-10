@@ -727,7 +727,7 @@ func (s *Storage) RevokeToken(ctx context.Context, tokenOrTokenID, _, _ string) 
 			return oidc.ErrServerError().WithParent(err)
 		}
 	} else {
-		if err := s.store.RevokeRefreshTokenFamily(ctx, s.read.Queryer(), refresh.ID, now); err != nil {
+		if _, err := s.store.RevokeRefreshTokenFamily(ctx, s.read.Queryer(), refresh.ID, now); err != nil {
 			return oidc.ErrServerError().WithParent(err)
 		}
 		return nil

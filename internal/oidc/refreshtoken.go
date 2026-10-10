@@ -199,7 +199,7 @@ func (s *Store) RotateRefreshToken(ctx context.Context, q db.Querier, digest str
 		return RefreshToken{}, ErrRefreshTokenExpired
 	}
 	if claimed.UsedAt != nil {
-		if err := s.RevokeRefreshTokenFamily(ctx, q, claimed.ID, now); err != nil {
+		if _, err := s.RevokeRefreshTokenFamily(ctx, q, claimed.ID, now); err != nil {
 			// The refusal is returned either way. A client must not be able to
 			// keep using a reused token because a cleanup UPDATE failed.
 			return RefreshToken{}, fmt.Errorf("%w (and the family could not be revoked: %v)", ErrRefreshTokenReused, err)
@@ -212,39 +212,64 @@ func (s *Store) RotateRefreshToken(ctx context.Context, q db.Querier, digest str
 	return RefreshToken{}, ErrNoRefreshToken
 }
 
-// RevokeRefreshTokenFamily revokes every token descended from one row.
+// RevokeRefreshTokenFamily revokes every token descended from one row and
+// REPORTS HOW MANY ROWS IT TOUCHED.
 //
-// THE WALK IS THE POINT. Rotating leaves the spent row behind on purpose — that
-// is what makes a reuse detectable — so a family is a linked list and this
-// follows replaced_by until it stops. A thief holding token 4 of a chain is
-// refused, the walk finds that 4 was replaced by 5, and 5 and every token after
-// it is dead too, which is the only way the legitimate client can be told to
-// sign in again rather than silently continuing.
+// THE COUNT IS NOT TELEMETRY, and the reason is the failure this signature was
+// changed for: a walk that goes the wrong way reports SUCCESS with
+// RowsAffected=1. It revokes the anchor row — which exists, which has
+// revoked_at IS NULL, and which the UPDATE therefore matches — and terminates
+// there. Every caller then believes a family is dead when only the row it was
+// handed is, and the first thing that notices is a rotation that succeeds on a
+// token reuse was supposed to have killed. An UPDATE that affects one row looks
+// exactly like an UPDATE that affected one row.
 //
-// The whole chain is revoked in ONE statement, so there is no half-revoked
-// family for a failure to leave behind. Termination is replaced_by having no
-// successor, which is exactly the state a client's last successful refresh left
-// behind — and the chain is finite because every link in it was written by a
-// successful rotation, one per refresh, and a refresh only happens while the
-// root is alive.
-func (s *Store) RevokeRefreshTokenFamily(ctx context.Context, q db.Querier, rootID id.UUID, at time.Time) error {
+// THE DIRECTION IS `replaced_by`, FORWARD, and it is written out because the
+// natural-looking SQL is the wrong one. The link means "the row that replaced
+// me", so the chain from a root is root -> successor -> successor's successor,
+// and the walk has to follow it that way:
+
+//	WITH RECURSIVE chain AS (
+//	    SELECT id, replaced_by FROM oidc_refresh_tokens WHERE id = $1
+//	    UNION ALL
+//	    SELECT s.id, s.replaced_by FROM oidc_refresh_tokens s
+//	    JOIN chain ON s.id = chain.replaced_by
+//	)
+
+// The join condition that reads the other way round — `s.replaced_by =
+// c.id`, joining on CHAIN's id — is the mistake, and it is a mistake that
+// survives review because it looks like the ordinary parent/child idiom. A
+// chain is a singly-linked list with the pointer on the PARENT, so joining on
+// `replaced_by = c.id` walks toward the root. On a linear chain that terminates
+// after the anchor: nothing points at a root, so the recursive term matches
+// nothing and `UNION ALL` has one row in it. One UPDATE, one row revoked, no
+// error anywhere. The assertion in the tests is the count, not the error.
+//
+// THE COUNT IS THE CHAIN'S LENGTH, and each test says so with a number it
+// derived from the rows it just wrote rather than one it remembered.
+//
+// Termination is `replaced_by` being NULL, which is exactly the state a client's
+// last successful refresh left behind; the chain is finite because every link
+// in it was written by a successful rotation, one per refresh.
+func (s *Store) RevokeRefreshTokenFamily(ctx context.Context, q db.Querier, rootID id.UUID, at time.Time) (int64, error) {
 	const query = `
 		WITH RECURSIVE chain AS (
-			SELECT id FROM oidc_refresh_tokens WHERE id = $1
+			SELECT id, replaced_by FROM oidc_refresh_tokens WHERE id = $1
 			UNION ALL
-			SELECT r.id
-			FROM oidc_refresh_tokens r
-			JOIN chain c ON r.replaced_by = c.id
+			SELECT successor.id, successor.replaced_by
+			FROM oidc_refresh_tokens successor
+			JOIN chain ON successor.id = chain.replaced_by
 		)
 		UPDATE oidc_refresh_tokens t
 		SET revoked_at = $2
 		FROM chain
 		WHERE t.id = chain.id AND t.revoked_at IS NULL`
 
-	if _, err := q.Exec(ctx, query, rootID, at); err != nil {
-		return fmt.Errorf("oidc: revoking a refresh token's family: %w", err)
+	tag, err := q.Exec(ctx, query, rootID, at)
+	if err != nil {
+		return 0, fmt.Errorf("oidc: revoking a refresh token's family: %w", err)
 	}
-	return nil
+	return tag.RowsAffected(), nil
 }
 
 // RefreshToken loads a row by its digest, WITHOUT claiming it.

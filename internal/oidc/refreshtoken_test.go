@@ -111,11 +111,21 @@ func TestARefreshTokenRotates(t *testing.T) {
 
 	// The old value is spent and the new one works, which is the whole of
 	// rotation seen from a client's side.
-	if _, err := f.store.RotateRefreshToken(f.ctx, f.q(), rootDigest, storeTestNow.Add(2*time.Minute)); !errors.Is(err, ErrRefreshTokenReused) {
-		t.Errorf("rotating the spent token again = %v, want ErrRefreshTokenReused", err)
-	}
+	//
+	// THE ORDER OF THESE TWO IS LOAD-BEARING and it used to be the other way
+	// round. Presented second, the replacement was still usable after the reuse
+	// was detected — which is the defect
+	// TestAReusedRefreshTokenRevokesItsFamily exists to name: detecting theft
+	// took the thief's token and left the legitimate client's working. The two
+	// statements are now written in the order that keeps each one about its own
+	// fact — the replacement rotates while nothing has been revoked, and the
+	// spent root is recognised as a reuse — rather than the order in which the
+	// namespace happened to be filled in.
 	if _, err := f.store.RotateRefreshToken(f.ctx, f.q(), replacementDigest, storeTestNow.Add(2*time.Minute)); err != nil {
 		t.Errorf("rotating the replacement = %v, want it accepted", err)
+	}
+	if _, err := f.store.RotateRefreshToken(f.ctx, f.q(), rootDigest, storeTestNow.Add(2*time.Minute)); !errors.Is(err, ErrRefreshTokenReused) {
+		t.Errorf("rotating the spent token again = %v, want ErrRefreshTokenReused", err)
 	}
 }
 
@@ -159,6 +169,22 @@ func TestAReusedRefreshTokenRevokesItsFamily(t *testing.T) {
 	// defence measured in milliseconds.
 	if _, err := f.store.RotateRefreshToken(f.ctx, f.q(), replacementDigest, storeTestNow.Add(3*time.Minute)); !errors.Is(err, ErrRefreshTokenRevoked) {
 		t.Errorf("the replacement after a reuse = %v, want ErrRefreshTokenRevoked", err)
+	}
+
+	// AND THE MEASUREMENT OF WHAT THE REUSE PATH DID, because the revoke above
+	// happens INSIDE RotateRefreshToken and its count is not reachable from
+	// here. So the rows are counted instead: two live rows went in — the spent
+	// root and the replacement nobody presented — and none may come out. A walk
+	// that stopped at the anchor leaves exactly one, which is the defect this
+	// asserts against; it looks like nothing from the outside, because the
+	// rotation above is refused either way once the count is one short.
+	var live int
+	if err := f.pool.QueryRow(f.ctx,
+		`SELECT count(*) FROM oidc_refresh_tokens WHERE revoked_at IS NULL`).Scan(&live); err != nil {
+		t.Fatalf("counting the live rows the reuse left behind: %v", err)
+	}
+	if live != 0 {
+		t.Errorf("the reuse path left %d live rows, want 0: the chain had a root and a replacement", live)
 	}
 }
 
@@ -256,8 +282,19 @@ func TestRevokingAFamilyRevokesTheWholeChain(t *testing.T) {
 		digests = append(digests, nextDigest)
 	}
 
-	if err := f.store.RevokeRefreshTokenFamily(f.ctx, f.q(), rootID, storeTestNow.Add(time.Hour)); err != nil {
+	// THE MEASUREMENT, and it comes before the symptom on purpose. This is the
+	// store call the reuse path makes, made directly so the count it returns is
+	// visible: the chain this test wrote is the root and its three links, so
+	// four rows. A walk in the wrong direction still answers success here with
+	// a count of 1 — the anchor row, which exists and has revoked_at IS NULL —
+	// and the whole failure is invisible until the rotations below find live
+	// tokens. That is why the count is asserted rather than the error.
+	revoked, err := f.store.RevokeRefreshTokenFamily(f.ctx, f.q(), rootID, storeTestNow.Add(time.Hour))
+	if err != nil {
 		t.Fatalf("RevokeRefreshTokenFamily: %v", err)
+	}
+	if want := int64(len(digests) + 1); revoked != want {
+		t.Errorf("the family revoke touched %d rows, want the %d of the chain this test built", revoked, want)
 	}
 
 	for i, d := range digests {
@@ -265,5 +302,73 @@ func TestRevokingAFamilyRevokesTheWholeChain(t *testing.T) {
 		if !errors.Is(err, ErrRefreshTokenRevoked) {
 			t.Errorf("chain link %d after a family revoke = %v, want ErrRefreshTokenRevoked", i, err)
 		}
+	}
+}
+
+// A revocation from the MIDDLE of a chain takes the successors and stops, and
+// that direction is the property.
+//
+// This is the test the wrong walk cannot pass and the other two cannot catch:
+// a backwards walk revokes the anchor and nothing else, so a revoke issued one
+// link in has to reach the two links after it. It also pins the boundary —
+// three rows, not four — because a revoke that also killed the ancestors would
+// be a different statement, and "which direction the family runs" is a decision
+// this repository makes and should have to make again to undo.
+func TestARevocationFromTheMiddleOfAChainTakesTheSuccessors(t *testing.T) {
+	t.Parallel()
+
+	f := newStoreFixture(t)
+	client := f.mustCreateClient(t, f.account, f.owner)
+
+	rootID, rootDigest := f.seedRefresh(t, client, f.owner, []string{"openid"}, storeTestNow.Add(RefreshTokenTTL))
+	if _, err := f.store.RotateRefreshToken(f.ctx, f.q(), rootDigest, storeTestNow.Add(time.Minute)); err != nil {
+		t.Fatalf("RotateRefreshToken: %v", err)
+	}
+
+	// Three links, each written by a rotation.
+	previous := rootID
+	ids := make([]id.UUID, 0, 3)
+	digests := make([]string, 0, 3)
+	for i := range 3 {
+		next := id.MustNew()
+		nextDigest := mustDigest(t)
+		if err := f.store.ReplaceRefreshToken(f.ctx, f.q(), previous, next); err != nil {
+			t.Fatalf("ReplaceRefreshToken: %v", err)
+		}
+		if err := f.store.CreateRefreshToken(f.ctx, f.q(), NewRefreshToken{
+			ID:          next,
+			ClientRowID: client.ID,
+			Subject:     f.owner,
+			TokenDigest: nextDigest,
+			Scopes:      []string{"openid"},
+			IssuedAt:    storeTestNow.Add(time.Duration(i+1) * time.Minute),
+			ExpiresAt:   storeTestNow.Add(time.Duration(i+1)*time.Minute + RefreshTokenTTL),
+		}); err != nil {
+			t.Fatalf("CreateRefreshToken: %v", err)
+		}
+		previous = next
+		ids = append(ids, next)
+		digests = append(digests, nextDigest)
+	}
+
+	// From the FIRST link: it and its two successors, and not the root.
+	revoked, err := f.store.RevokeRefreshTokenFamily(f.ctx, f.q(), ids[0], storeTestNow.Add(time.Hour))
+	if err != nil {
+		t.Fatalf("RevokeRefreshTokenFamily: %v", err)
+	}
+	if revoked != 3 {
+		t.Errorf("a revoke from the first link touched %d rows, want the 3 it and its successors make", revoked)
+	}
+
+	// The successors are dead and the root is untouched, which is the shape of
+	// a forward walk read from both ends.
+	for i, d := range digests {
+		_, err := f.store.RotateRefreshToken(f.ctx, f.q(), d, storeTestNow.Add(time.Hour))
+		if !errors.Is(err, ErrRefreshTokenRevoked) {
+			t.Errorf("successor %d after a revoke from the first link = %v, want ErrRefreshTokenRevoked", i, err)
+		}
+	}
+	if _, err := f.store.RotateRefreshToken(f.ctx, f.q(), rootDigest, storeTestNow.Add(time.Hour)); !errors.Is(err, ErrRefreshTokenReused) {
+		t.Errorf("the root after a revoke from the first link = %v, want ErrRefreshTokenReused: it spent, not revoked", err)
 	}
 }
