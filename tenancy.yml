@@ -173,6 +173,41 @@ rls:
           constrained:
             file: migrations/00016_account_isolation.sql
             line: 867
+        # FIVE POLICIES, NOT FOUR, AND THE FIFTH IS 00029's. `account_invitations`
+        # reached a credential table in identity-isolation-05: the redemption
+        # lookup is `WHERE token_digest = $1` with no account predicate and none
+        # it could carry, because the account is WHAT THE QUERY IS FOR. So 00029
+        # calls `cafaye.protect_credential_table('account_invitations',
+        # 'token_digest')`, which writes the four account policies above AGAIN
+        # (idempotently — the same four, byte for byte) and then adds this one:
+        # `for select`, `using (token_digest = (select
+        # cafaye.current_credential_digest()))`.
+        #
+        # WHY IT IS DECLARED AND NOT LEFT OUT. It is the same shape as
+        # `api_keys_cafaye_resolve` above and the same argument: a fifth policy
+        # on a declared protected table, in the roles the other four name, is a
+        # row-level-security boundary nobody is accountable for unless it is
+        # written down. Permissive policies are OR-ed, so the one left out is the
+        # one that can widen the four that were named — which is exactly what
+        # `tenancy.rls-undeclared` reported here before this entry existed.
+        #
+        # IT IS NOT AN ACCOUNT POLICY, AND THE DECLARATION DOES NOT PRETEND IT IS.
+        # Its predicate is the digest the CALLER PRESENTED, not the account acting
+        # on it: an authentication request has no account. `clause: using` is the
+        # honest spelling of the mechanism (a `using` clause filters and raises
+        # nothing), and `roles` is the substrate's two because the template's
+        # `to %I, %I` binds them — neither is PUBLIC and neither carries
+        # BYPASSRLS, which is the half the checker reads these names for.
+        # A resolution session still meets the four account policies on every
+        # write, where a NULL identity is 42501, so presenting a token grants no
+        # broader write scope than 00025 had.
+        - name: account_invitations_cafaye_resolve
+          command: select
+          clause: using
+          roles: [identity, identity_app]
+          constrained:
+            file: migrations/00029_invitation_credential_resolve.sql
+            line: 47
     # FIVE POLICIES, NOT FOUR, and the fifth is not an account policy at all. 00016
     # calls `cafaye.protect_credential_table('api_keys', 'token_digest')`, which
     # CALLS `protect_table` — so the four account policies below are byte-for-byte the
@@ -393,7 +428,7 @@ entryPoints:
           asserts: absent
           expects: countAuditRows
           file: internal/tenancy/tenancy_test.go
-          line: 324
+          line: 332
         # ARM TWO, another account's VALID identity. The arm with the information
         # in it: the credential is real and belongs to somebody else, and the
         # result has to be indistinguishable from an account that does not exist.
@@ -401,11 +436,11 @@ entryPoints:
           asserts: absent
           expects: countAuditRowsIn
           file: internal/tenancy/tenancy_test.go
-          line: 339
+          line: 347
         # ARM THREE, its own rows. The positive control, and the only arm a table
         # that denies everybody cannot pass.
         - id: own-account
           asserts: present
           expects: countAuditRowsIn
           file: internal/tenancy/tenancy_test.go
-          line: 349
+          line: 357
