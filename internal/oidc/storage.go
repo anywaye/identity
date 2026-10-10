@@ -502,30 +502,169 @@ func (s *Storage) CreateAccessToken(ctx context.Context, request op.TokenRequest
 	return tokenID.String(), expiresAt, nil
 }
 
-// CreateAccessAndRefreshTokens refuses, and says why at the point of refusal.
+// CreateAccessAndRefreshTokens mints the pair the refresh grant exists for.
 //
-// The interface requires it and this service has no refresh token store. An
-// implementation that minted an opaque value and kept it in memory would look
-// like a working refresh grant until the first restart, and an implementation
-// that returned an error is what a client would then have to handle anyway —
-// so it is the error, at registration time the client was already told about.
-func (s *Storage) CreateAccessAndRefreshTokens(context.Context, op.TokenRequest, string) (string, string, time.Time, error) {
-	return "", "", time.Time{}, errRefreshTokenUnsupported
+// It runs for the two grants that need a refresh token — the authorization-code
+// exchange when the request carried `offline_access` (see the library's
+// needsRefreshToken), and every refresh itself — and the difference between the
+// two is `request`: a RefreshTokenRequest is already a refreshRequest, and the
+// row it carries is the one being rotated, which is what links the chain.
+//
+// THE SCOPES ARE THE TOKEN'S OWN, NOT THE REQUEST'S AMBITION. The library hands
+// over either the original scopes or a narrowed subset that was already
+// validated against them, so what is written is what this token may continue to
+// hold. A refresh is not an upgrade: it cannot widen a grant, and it does not
+// need to narrow one because the narrowing already happened.
+func (s *Storage) CreateAccessAndRefreshTokens(ctx context.Context, request op.TokenRequest, _ string) (string, string, time.Time, error) {
+	subject, err := subjectOf(request)
+	if err != nil {
+		return "", "", time.Time{}, err
+	}
+
+	clientRow, err := s.clientRowFor(ctx, request.GetAudience())
+	if err != nil {
+		return "", "", time.Time{}, err
+	}
+
+	now := s.clk.Now()
+	accessExpiresAt := now.Add(AccessTokenTTL)
+	tokenID := id.MustNew()
+
+	if err := s.store.CreateAccessToken(ctx, s.read.Queryer(), NewAccessToken{
+		ID:          tokenID,
+		ClientRowID: clientRow.ID,
+		Subject:     subject,
+		Scopes:      request.GetScopes(),
+		IssuedAt:    now,
+		ExpiresAt:   accessExpiresAt,
+	}); err != nil {
+		return "", "", time.Time{}, err
+	}
+
+	value, _, err := NewRefreshTokenValue()
+	if err != nil {
+		return "", "", time.Time{}, err
+	}
+	refreshID := id.MustNew()
+	if err := s.store.CreateRefreshToken(ctx, s.read.Queryer(), NewRefreshToken{
+		ID:          refreshID,
+		ClientRowID: clientRow.ID,
+		Subject:     subject,
+		Scopes:      request.GetScopes(),
+		IssuedAt:    now,
+		ExpiresAt:   now.Add(RefreshTokenTTL),
+	}); err != nil {
+		return "", "", time.Time{}, err
+	}
+
+	// The rotation link, and it is written in the SAME statement path as the
+	// creation rather than after the response, because a chain with a missing
+	// link is a chain reuse detection cannot walk. The spent row is already
+	// claimed by TokenRequestByRefreshToken by the time this runs, so the only
+	// thing left is to say which token succeeded it.
+	if spent, ok := request.(refreshRequest); ok {
+		if err := s.store.ReplaceRefreshToken(ctx, s.read.Queryer(), spent.row.ID, refreshID); err != nil {
+			// Refused rather than swallowed. The client is told the refresh
+			// failed and signs in again, which is the safe direction: an
+			// unlinked chain would leave a stolen token's successor outside
+			// the family a reuse revokes.
+			return "", "", time.Time{}, err
+		}
+	}
+
+	return tokenID.String(), value, accessExpiresAt, nil
 }
 
-var errRefreshTokenUnsupported = errors.New("oidc: the refresh_token grant is not implemented; " +
-	"this provider issues short-lived access tokens and no refresh token")
-
-// TokenRequestByRefreshToken refuses, for the same reason.
-func (s *Storage) TokenRequestByRefreshToken(context.Context, string) (op.RefreshTokenRequest, error) {
-	return nil, errRefreshTokenUnsupported
+// refreshRequest is the library's RefreshTokenRequest, over a claimed row.
+//
+// It is this package's own type and not the domain type because the domain type
+// carries no protocol methods — the same split protocolClient makes. The client
+// is resolved at claim time and carried as a string, because the audience the
+// token is minted for has to be the client that presented the refresh token,
+// and re-resolving it here would be a second lookup that could disagree.
+type refreshRequest struct {
+	row      RefreshToken
+	clientID string
 }
 
-// GetRefreshTokenInfo refuses, for the same reason. It must return
-// op.ErrInvalidRefreshToken for anything that is not a refresh token, and this
-// provider has none, so every input is one.
-func (s *Storage) GetRefreshTokenInfo(context.Context, string, string) (string, string, error) {
-	return "", "", op.ErrInvalidRefreshToken
+func (r refreshRequest) GetAMR() []string {
+	// `pwd` once more. A refresh proves possession of a token that was minted
+	// after a password was typed, and nothing stronger; claiming a step-up
+	// mechanism here would be a claim about an authentication that did not
+	// happen this time.
+	return []string{"pwd"}
+}
+
+func (r refreshRequest) GetAudience() []string { return []string{r.clientID} }
+func (r refreshRequest) GetAuthTime() time.Time {
+	// The original authentication, not the refresh. auth_time is the claim a
+	// relying party uses to decide whether to re-prompt, and a refresh is not a
+	// re-authentication.
+	return r.row.IssuedAt
+}
+func (r refreshRequest) GetClientID() string { return r.clientID }
+func (r refreshRequest) GetScopes() []string { return r.row.Scopes }
+func (r refreshRequest) GetSubject() string  { return r.row.Subject.String() }
+
+// SetCurrentScopes records the narrowing a caller asked for. The library calls
+// it after validating the requested scopes are a subset of the original ones, so
+// storing them is recording a check that already passed rather than making one.
+func (r *refreshRequest) SetCurrentScopes(scopes []string) { r.row.Scopes = slices.Clone(scopes) }
+
+// TokenRequestByRefreshToken claims a presented refresh token for one use.
+//
+// The claim is the store's single conditional UPDATE, so two concurrent
+// presentations of the same value cannot both win, and a value that was already
+// spent comes back as ErrRefreshTokenReused with its whole family revoked. The
+// error reaches a client as RFC 6749's `invalid_grant`, which is the only thing
+// it can honestly be: a refused refresh is a sign-in, and a sign-in is not an
+// error a product reports to a user with any more detail than "again".
+func (s *Storage) TokenRequestByRefreshToken(ctx context.Context, refreshToken string) (op.RefreshTokenRequest, error) {
+	claimed, err := s.store.RotateRefreshToken(ctx, s.read.Queryer(), SecretDigest(refreshToken), s.clk.Now())
+	if err != nil {
+		return nil, err
+	}
+
+	client, err := s.store.ClientByRowID(ctx, s.read.Queryer(), claimed.ClientRowID)
+	if err != nil {
+		return nil, err
+	}
+	if !client.IsActive() {
+		// Refused here as well as swept by RevokeClient, because the sweep is a
+		// bulk UPDATE on a registration somebody revoked and this is the request
+		// in flight at that moment. Two gates for one rule is one more than a
+		// careful reader needs, and the cost of the extra is a line.
+		return nil, ErrRevoked
+	}
+
+	return &refreshRequest{row: claimed, clientID: client.ClientID}, nil
+}
+
+// GetRefreshTokenInfo answers the optional CanRefreshTokenInfo question, for a
+// revocation endpoint this packet does not mount.
+//
+// It is implemented rather than left refusing because it is now a question this
+// service can answer correctly, and a refusal that says "not a refresh token"
+// about a token that is one would be a lie waiting for the day somebody mounts
+// the endpoint — the same argument RevokeToken carries. It does NOT claim the
+// token: this is a read, and claiming would turn an introspection into a
+// rotation.
+func (s *Storage) GetRefreshTokenInfo(ctx context.Context, clientID, token string) (string, string, error) {
+	row, err := s.store.RefreshToken(ctx, s.read.Queryer(), SecretDigest(token))
+	if err != nil {
+		if errors.Is(err, ErrNoRefreshToken) {
+			return "", "", op.ErrInvalidRefreshToken
+		}
+		return "", "", err
+	}
+	client, err := s.store.ClientByRowID(ctx, s.read.Queryer(), row.ClientRowID)
+	if err != nil || client.ClientID != clientID {
+		// Not told apart from an unknown token. A caller that could learn "this
+		// is a refresh token for a DIFFERENT client" would have an oracle for
+		// which products hold which credentials.
+		return "", "", op.ErrInvalidRefreshToken
+	}
+	return row.Subject.String(), row.ID.String(), nil
 }
 
 // TerminateSession is a no-op, and it is honest about why.
@@ -551,6 +690,19 @@ func (s *Storage) RevokeAccessTokensForClient(ctx context.Context, q db.Querier,
 	return nil
 }
 
+// RevokeRefreshTokensForClient stops every refresh token issued to a
+// registration.
+//
+// It runs in the SAME transaction as RevokeClient, which is the only reason it
+// works: a sweep in a second transaction would leave a window in which the
+// registration is revoked and its thirty-day credentials are not, and a client
+// refreshing inside that window gets a new access token minted by a revocation
+// that has already happened. Storage's method rather than the Store's for the
+// reason RevokeAccessTokensForClient's is — it is a property of the flow.
+func (s *Storage) RevokeRefreshTokensForClient(ctx context.Context, q db.Querier, clientRowID id.UUID, at time.Time) error {
+	return s.store.RevokeRefreshTokensForClient(ctx, q, clientRowID, at)
+}
+
 // RevokeToken implements RFC 7009 for one token.
 //
 // The endpoint is NOT mounted in this packet, so this method is unreachable
@@ -559,12 +711,32 @@ func (s *Storage) RevokeAccessTokensForClient(ctx context.Context, q db.Querier,
 // somebody mounts the endpoint. Revoking an unknown token returns nil, which is
 // what RFC 7009 §2.2 requires: "the authorization server responds with HTTP
 // status code 200" whether or not the token existed.
+//
+// A refresh token is now a second thing a caller can present, and the answer for
+// it is the family rather than the row: revoking one link of a chain and leaving
+// its successor live is a revocation that does nothing, which is why the two
+// paths are told apart by the digest lookup rather than by a "does it look like
+// an id" decision on the presented string.
 func (s *Storage) RevokeToken(ctx context.Context, tokenOrTokenID, _, _ string) *oidc.Error {
+	now := s.clk.Now()
+
+	refresh, err := s.store.RefreshToken(ctx, s.read.Queryer(), SecretDigest(tokenOrTokenID))
+	if err != nil {
+		if !errors.Is(err, ErrNoRefreshToken) {
+			return oidc.ErrServerError().WithParent(err)
+		}
+	} else {
+		if err := s.store.RevokeRefreshTokenFamily(ctx, s.read.Queryer(), refresh.ID, now); err != nil {
+			return oidc.ErrServerError().WithParent(err)
+		}
+		return nil
+	}
+
 	parsed, err := id.Parse(tokenOrTokenID)
 	if err != nil {
 		return nil
 	}
-	if err := s.store.RevokeAccessToken(ctx, s.read.Queryer(), parsed, s.clk.Now()); err != nil {
+	if err := s.store.RevokeAccessToken(ctx, s.read.Queryer(), parsed, now); err != nil {
 		return oidc.ErrServerError().WithParent(err)
 	}
 	return nil

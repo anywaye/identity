@@ -181,8 +181,11 @@ func TestDiscoveryAdvertisesOnlyWhatIsImplemented(t *testing.T) {
 	if !slices.Equal(doc.ResponseTypesSupported, []string{"code"}) {
 		t.Errorf("response_types_supported = %v, want [code]; there is no implicit flow", doc.ResponseTypesSupported)
 	}
-	if !slices.Equal(doc.GrantTypesSupported, []oidc.GrantType{oidc.GrantTypeCode}) {
-		t.Errorf("grant_types_supported = %v, want [authorization_code]; no refresh token, no client credentials, no JWT profile",
+	if !slices.Equal(doc.GrantTypesSupported, []oidc.GrantType{oidc.GrantTypeCode, oidc.GrantTypeRefreshToken}) {
+		t.Errorf("grant_types_supported = %v, want [authorization_code, refresh_token]; the refresh grant is mounted "+
+			"this packet, and a document that hides a grant the token endpoint honours is a document a client library "+
+			"reads and then does not use. Client credentials and the JWT profile remain absent, and they are absent "+
+			"because there is no service identity and no client private key, not because the list is short.",
 			doc.GrantTypesSupported)
 	}
 	if !slices.Equal(doc.CodeChallengeMethodsSupported, []oidc.CodeChallengeMethod{oidc.CodeChallengeMethodS256}) {

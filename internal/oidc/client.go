@@ -315,11 +315,12 @@ func isLoopbackHost(host string) bool {
 
 // ValidateGrantTypes checks and normalizes the grant list.
 //
-// Only `authorization_code` is implemented, and the absence of the others is a
-// decision rather than a gap:
+// What is implemented, and what is absent because it is a decision rather than
+// a gap:
 //
-//	refresh_token       no refresh token store exists; a token that cannot be
-//	                    refreshed is not a refresh token
+//	authorization_code  the flow this service is for
+//	refresh_token       the code exchange mints one when the request carries
+//	                    `offline_access`; see Storage.CreateAccessAndRefreshTokens
 //	client_credentials  no service identity to authenticate as
 //	implicit            the brief's flow is code + PKCE, and an implicit token
 //	                    arrives in a URL fragment, which is a worse place for a
@@ -347,7 +348,11 @@ func ValidateGrantTypes(give []string) ([]string, error) {
 }
 
 // SupportedGrantTypes is what ValidateGrantTypes accepts.
-var SupportedGrantTypes = []string{GrantAuthorizationCode}
+//
+// It is a list and not a check, so adding a grant is one line here and one in
+// the discovery document, and a grant this service mounts but this list omits
+// is a registration refused at 422 for a flow that would have worked.
+var SupportedGrantTypes = []string{GrantAuthorizationCode, GrantRefreshToken}
 
 // ValidateRegistrationScopes checks and normalizes a registration's scope list.
 //

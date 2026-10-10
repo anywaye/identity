@@ -182,8 +182,11 @@ func NewProvider(cfg Config, storage *Storage) (*Provider, error) {
 			AuthMethodPost:          false,
 			AuthMethodPrivateKeyJWT: false,
 
-			// No refresh token grant. See Storage.CreateAccessAndRefreshTokens.
-			GrantTypeRefreshToken: false,
+			// The refresh token grant, and it is mounted rather than merely
+			// advertised. The library refuses the grant at the token endpoint
+			// without this, so a registration listing it would get an
+			// `unauthorized_client` from a provider that claims to support it.
+			GrantTypeRefreshToken: true,
 
 			// No `request` object: a signed request object is a second way to
 			// carry claims into an authorization request and there is no product
@@ -385,7 +388,13 @@ func (p *Provider) discovery(ctx context.Context) *oidc.DiscoveryConfiguration {
 	// Authorization code and nothing else: no implicit flow, and no JWT profile
 	// grant despite the library advertising it unconditionally.
 	doc.ResponseTypesSupported = []string{string(oidc.ResponseTypeCode)}
-	doc.GrantTypesSupported = []oidc.GrantType{oidc.GrantTypeCode}
+	// Authorization code, and the refresh token. Two entries, and the second
+	// is here because the grant is MOUNTED this packet: the five emptied
+	// endpoints above are what an omission buys, and the refresh grant is the
+	// thing it must not be applied to. A document that hides a grant the token
+	// endpoint would honour is a document a client library reads and then does
+	// not use, which costs the deployment a working integration.
+	doc.GrantTypesSupported = []oidc.GrantType{oidc.GrantTypeCode, oidc.GrantTypeRefreshToken}
 
 	// HTTP Basic only. The library's list always includes `none`, which tells a
 	// client it may skip authenticating — true of a public client with PKCE, and

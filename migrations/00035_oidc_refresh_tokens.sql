@@ -83,6 +83,6 @@ CREATE INDEX oidc_refresh_tokens_client_key
     ON oidc_refresh_tokens (client_row_id)
     WHERE revoked_at IS NULL;
 
--- Down
+-- +goose Down
 
 DROP TABLE oidc_refresh_tokens;

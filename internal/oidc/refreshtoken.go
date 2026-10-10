@@ -176,7 +176,7 @@ func (s *Store) RotateRefreshToken(ctx context.Context, q db.Querier, digest str
 		return RefreshToken{}, fmt.Errorf("oidc: claiming a refresh token: %w", err)
 	}
 
-	claimed, classifyErr := s.classifyUnusedRefreshToken(ctx, q, digest)
+	claimed, classifyErr := s.RefreshToken(ctx, q, digest)
 	if classifyErr != nil {
 		return RefreshToken{}, classifyErr
 	}
@@ -199,26 +199,6 @@ func (s *Store) RotateRefreshToken(ctx context.Context, q db.Querier, digest str
 		return RefreshToken{}, ErrRefreshTokenExpired
 	}
 	return RefreshToken{}, ErrNoRefreshToken
-}
-
-// classifyUnusedRefreshToken reads a row the claim did not take, without
-// changing anything. See RotateRefreshToken for why the read is safe.
-func (s *Store) classifyUnusedRefreshToken(ctx context.Context, q db.Querier, digest string) (RefreshToken, error) {
-	const query = `SELECT ` + refreshTokenColumns + `
-		FROM oidc_refresh_tokens
-		WHERE token_digest = $1`
-
-	var t RefreshToken
-	err := q.QueryRow(ctx, query, digest).Scan(
-		&t.ID, &t.ClientRowID, &t.Subject, &t.Scopes, &t.IssuedAt, &t.ExpiresAt, &t.RevokedAt, &t.UsedAt, &t.ReplacedBy,
-	)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return RefreshToken{}, ErrNoRefreshToken
-	}
-	if err != nil {
-		return RefreshToken{}, fmt.Errorf("oidc: reading a refresh token: %w", err)
-	}
-	return t, nil
 }
 
 // RevokeRefreshTokenFamily revokes every token descended from one row.
@@ -254,6 +234,31 @@ func (s *Store) RevokeRefreshTokenFamily(ctx context.Context, q db.Querier, root
 		return fmt.Errorf("oidc: revoking a refresh token's family: %w", err)
 	}
 	return nil
+}
+
+// RefreshToken loads a row by its digest, WITHOUT claiming it.
+//
+// This is the read the optional CanRefreshTokenInfo path uses, and the difference
+// from RotateRefreshToken is the whole of its reason to exist: claiming mutates,
+// so an endpoint that reads a token to decide what to do with it would burn the
+// credential it was asked about. Nothing on the token endpoint goes through
+// here.
+func (s *Store) RefreshToken(ctx context.Context, q db.Querier, digest string) (RefreshToken, error) {
+	const query = `SELECT ` + refreshTokenColumns + `
+		FROM oidc_refresh_tokens
+		WHERE token_digest = $1`
+
+	var t RefreshToken
+	err := q.QueryRow(ctx, query, digest).Scan(
+		&t.ID, &t.ClientRowID, &t.Subject, &t.Scopes, &t.IssuedAt, &t.ExpiresAt, &t.RevokedAt, &t.UsedAt, &t.ReplacedBy,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return RefreshToken{}, ErrNoRefreshToken
+	}
+	if err != nil {
+		return RefreshToken{}, fmt.Errorf("oidc: reading a refresh token: %w", err)
+	}
+	return t, nil
 }
 
 // RevokeRefreshTokensForClient stops every refresh token issued to a

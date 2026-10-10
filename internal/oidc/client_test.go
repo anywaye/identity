@@ -153,11 +153,20 @@ func TestValidateRedirectURIs(t *testing.T) {
 
 // The grant types this provider honours, and the refusal of everything else.
 //
-// `authorization_code` is the only entry because it is the only flow this
-// service implements. `refresh_token` is absent because there is no refresh
-// token store, and `client_credentials` and the JWT profile because there is no
-// service identity to authenticate as — a package that advertised them would
-// have products configure a grant that fails at the token endpoint.
+// THIS ROW USED TO ASSERT THAT `refresh_token` WAS UNSUPPORTED, and the change
+// is written down here rather than left as a silent diff. The old row was
+// guarding an absence, not a constraint: it asserted that ValidateGrantTypes
+// refused `refresh_token`, and the reason was `internal/oidc/client.go`'s "no
+// refresh token store exists". Packet TG-C2 built the store, so the constraint
+// the test named stopped being true. What the row was NOT guarding was the
+// behaviour — there was no grant to exercise, so nothing downstream was pinned
+// by it. The refusal that still holds for the right reasons is the two rows
+// below it, and they are unchanged: `client_credentials` has no service
+// identity, and the JWT profile has no client private key.
+//
+// The refresh grant itself is proven elsewhere, against a database:
+// internal/oidc/refreshtoken_test.go and the token-endpoint rows in
+// internal/httpapi/oidc_integration_test.go.
 func TestValidateGrantTypes(t *testing.T) {
 	t.Parallel()
 
@@ -169,7 +178,8 @@ func TestValidateGrantTypes(t *testing.T) {
 	}{
 		{name: "authorization_code alone", give: []string{GrantAuthorizationCode}, want: []string{GrantAuthorizationCode}},
 		{name: "deduplicated", give: []string{GrantAuthorizationCode, GrantAuthorizationCode}, want: []string{GrantAuthorizationCode}},
-		{name: "a refresh token grant", give: []string{GrantAuthorizationCode, GrantRefreshToken}, wantCode: CodeUnsupported},
+		// The one entry that is no longer a refusal, and the reason is above.
+		{name: "a refresh token grant", give: []string{GrantAuthorizationCode, GrantRefreshToken}, want: []string{GrantAuthorizationCode, GrantRefreshToken}},
 		{name: "client credentials", give: []string{GrantClientCredentials}, wantCode: CodeUnsupported},
 		{name: "nothing at all", give: nil, wantCode: CodeRequired},
 	}

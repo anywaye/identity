@@ -54,8 +54,16 @@ type EventAppender interface {
 // AccessTokenRevoker is the bulk revocation that makes a revocation real. It is
 // the Storage's method rather than the Store's, because it is a property of the
 // flow and not of the access-token table.
+//
+// IT NAMES BOTH CREDENTIAL CLASSES. An access token lives fifteen minutes and a
+// refresh token lives thirty days, and a revoked registration that stops the
+// first and lets the second mint a new one has been revoked for a fortnight.
+// Both are swept in the same transaction as the revocation itself, so there is
+// no state in which a registration is revoked and a credential it issued still
+// works.
 type AccessTokenRevoker interface {
 	RevokeAccessTokensForClient(ctx context.Context, q db.Querier, clientRowID id.UUID, at time.Time) error
+	RevokeRefreshTokensForClient(ctx context.Context, q db.Querier, clientRowID id.UUID, at time.Time) error
 }
 
 // Service is the client registration use cases.
@@ -251,6 +259,14 @@ func (s *Service) Revoke(ctx context.Context, in RevokeInput) (Client, error) {
 		}
 
 		if err := s.tokens.RevokeAccessTokensForClient(ctx, q, revoked.ID, now); err != nil {
+			return err
+		}
+
+		// The refresh tokens go in the same transaction, and after the access
+		// tokens rather than in parallel: a client that is mid-refresh at this
+		// instant must not be able to mint a new access token from a token the
+		// access sweep did not touch because it had not been issued yet.
+		if err := s.tokens.RevokeRefreshTokensForClient(ctx, q, revoked.ID, now); err != nil {
 			return err
 		}
 
