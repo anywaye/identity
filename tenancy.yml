@@ -114,6 +114,44 @@ rls:
     - table: account_users
       forced: true
       policies:
+        # FOUR ARE DECLARED. FIFTH AND SIXTH ARE LIVE IN THE DATABASE AND THE
+        # CHECKER CANNOT SEE EITHER, so naming them here turns 0 failures into
+        # 2 (`tenancy.rls-policy-absent`, "the migrations do not create it").
+        # Measured, not assumed — the edit was made and the checker run:
+        #
+        #     psql "$TEST_DATABASE_URL" -tAc "select tablename, policyname from
+        #       pg_policies where schemaname='public' order by 1,2"
+        #
+        #   account_users  account_users_cafaye_members   00018:283
+        #   account_users  account_users_cafaye_resolve   00028:92
+        #
+        # Both are REAL and both are LIVE. `cafaye.protect_membership_table`
+        # (00018) calls `protect_table` for the same four policies above and adds
+        # `<table>_cafaye_members`, `for select`, `using (user_id = (select
+        # cafaye.current_user_id()))` — a policy scoped by the CALLER, not by the
+        # account, for the same reason a resolve policy is. 00028's DO block adds
+        # `account_users_cafaye_resolve`, `for select`, `using (EXISTS (SELECT 1
+        # FROM api_keys k WHERE k.account_id = account_users.account_id AND
+        # k.user_id = account_users.user_id AND k.token_digest = (SELECT
+        # cafaye.current_credential_digest()) AND k.revoked_at IS NULL))`.
+        #
+        # WHY THEY ARE NOT DECLARED, and it is not an oversight wearing a
+        # comment. Both are written through `EXECUTE format(...)` inside
+        # plpgsql, so no line in this tree BEGINS `create policy` and the DDL
+        # scanner's `_POLICY_STATEMENT` cannot attribute either to a table.
+        # `select cafaye.protect_membership_table(...)` is a THIRD writer the
+        # checker's `_PROTECT_TABLE` does not resolve — it matches
+        # `protect_(credential_)?table` and `membership_table` is neither. So
+        # declaring them is a false red and NOT declaring them is a real gap in
+        # the declaration, and the only fix that closes both is core's:
+        # resolve `protect_membership_table` the way `protect_credential_table`
+        # is already resolved, and read a `create policy` out of a
+        # `format('create policy %I on %s ...')` string.
+        #
+        # The table IS forced, so both are evaluated against the owner rather
+        # than being catalog decoration, and both bind the substrate's two roles
+        # and neither carries BYPASSRLS. `internal/tenancy/isolation.sql` is
+        # where this repository asserts what the catalog actually holds.
         - name: account_users_cafaye_select
           command: select
           clause: using
