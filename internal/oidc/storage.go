@@ -541,7 +541,7 @@ func (s *Storage) CreateAccessAndRefreshTokens(ctx context.Context, request op.T
 		return "", "", time.Time{}, err
 	}
 
-	value, _, err := NewRefreshTokenValue()
+	value, digest, err := NewRefreshTokenValue()
 	if err != nil {
 		return "", "", time.Time{}, err
 	}
@@ -550,6 +550,7 @@ func (s *Storage) CreateAccessAndRefreshTokens(ctx context.Context, request op.T
 		ID:          refreshID,
 		ClientRowID: clientRow.ID,
 		Subject:     subject,
+		TokenDigest: digest,
 		Scopes:      request.GetScopes(),
 		IssuedAt:    now,
 		ExpiresAt:   now.Add(RefreshTokenTTL),

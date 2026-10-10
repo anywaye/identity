@@ -1810,8 +1810,19 @@ func TestOIDCClientRegistrationValidation(t *testing.T) {
 			wantField: "redirect_uris",
 		},
 		{
+			// TG-C2 changed the payload here and the reason is on the record:
+			// this row was `refresh_token`, refused at 422 because there was
+			// no refresh token store. That store now exists and the grant is
+			// mounted, so a registration asking for it is a 201 — and the
+			// row's PURPOSE, which was to prove an unimplemented grant is
+			// refused at the field rather than at the token endpoint, is
+			// unchanged. `client_credentials` is the grant that is still
+			// refused, and it is refused for the reason it always was: there
+			// is no service identity on this platform to authenticate as.
+			// internal/oidc/refreshtoken_test.go and the token-endpoint rows
+			// are what prove the grant itself now works.
 			name: "a grant this service does not implement",
-			body: fmt.Sprintf(`{"name":"Anytalk","redirect_uris":[%q],"grant_types":["refresh_token"],`+
+			body: fmt.Sprintf(`{"name":"Anytalk","redirect_uris":[%q],"grant_types":["client_credentials"],`+
 				`"scopes":["openid"]}`, oidcTestRedirect),
 			wantField: "grant_types",
 		},

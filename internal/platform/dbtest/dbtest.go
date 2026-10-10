@@ -399,6 +399,18 @@ func SchemaWithOwner(t *testing.T) (app, owner *pgxpool.Pool) {
 			FOREIGN KEY (client_row_id) REFERENCES ` + schema + `.oidc_clients (id) ON DELETE CASCADE`,
 		`ALTER TABLE ` + schema + `.oidc_access_tokens ADD CONSTRAINT oidc_access_tokens_subject_fkey
 			FOREIGN KEY (subject) REFERENCES ` + schema + `.users (id) ON DELETE CASCADE`,
+		// The refresh tokens. Cloned for the reason the access tokens are: TG-C2
+		// gives the token endpoint a third credential table, and a private schema
+		// without it fails the whole grant with "relation ... does not exist",
+		// which reads like a migration that was not applied. The FK to
+		// oidc_clients has no cascade problem here — the parent is in the same
+		// private schema — and the FK to users is the same one the access tokens
+		// carry.
+		`CREATE TABLE ` + schema + `.oidc_refresh_tokens (LIKE public.oidc_refresh_tokens INCLUDING ALL)`,
+		`ALTER TABLE ` + schema + `.oidc_refresh_tokens ADD CONSTRAINT oidc_refresh_tokens_client_row_id_fkey
+			FOREIGN KEY (client_row_id) REFERENCES ` + schema + `.oidc_clients (id) ON DELETE CASCADE`,
+		`ALTER TABLE ` + schema + `.oidc_refresh_tokens ADD CONSTRAINT oidc_refresh_tokens_subject_fkey
+			FOREIGN KEY (subject) REFERENCES ` + schema + `.users (id) ON DELETE CASCADE`,
 		// The MFA tables. No enum types, no AAD, nothing the LIKE clause cannot
 		// copy; the three foreign keys below point at the private schema rather
 		// than at public.users, which is the whole reason they are written out

@@ -53,6 +53,9 @@ type NewRefreshToken struct {
 	ID          id.UUID
 	ClientRowID id.UUID
 	Subject     id.UUID
+	// TokenDigest is the lower-case hex SHA-256 of the value, and it is the
+	// ONLY half of the credential this method is given. See the header.
+	TokenDigest string
 	Scopes      []string
 	IssuedAt    time.Time
 	ExpiresAt   time.Time
@@ -114,10 +117,10 @@ const refreshTokenColumns = `id, client_row_id, subject, scopes, issued_at, expi
 func (s *Store) CreateRefreshToken(ctx context.Context, q db.Querier, n NewRefreshToken) error {
 	const query = `
 		INSERT INTO oidc_refresh_tokens
-			(id, client_row_id, subject, scopes, issued_at, expires_at)
-		VALUES ($1, $2, $3, $4, $5, $6)`
+			(id, client_row_id, subject, token_digest, scopes, issued_at, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)`
 
-	if _, err := q.Exec(ctx, query, n.ID, n.ClientRowID, n.Subject, n.Scopes, n.IssuedAt, n.ExpiresAt); err != nil {
+	if _, err := q.Exec(ctx, query, n.ID, n.ClientRowID, n.Subject, n.TokenDigest, n.Scopes, n.IssuedAt, n.ExpiresAt); err != nil {
 		return fmt.Errorf("oidc: recording a refresh token: %w", err)
 	}
 	return nil
@@ -184,6 +187,17 @@ func (s *Store) RotateRefreshToken(ctx context.Context, q db.Querier, digest str
 	// A token that was already spent is the one state that is never an accident.
 	// Everything else — expired, revoked, never issued — is something a client
 	// can do by being slow, by being logged out, or by being wrong.
+	// EXPIRY IS CHECKED FIRST, and the order is a property rather than a style
+	// choice. A token that is both expired AND revoked — which is what a client
+	// sweep leaves behind — has to read as expired, because expiry is a fact
+	// about the token and revocation is a fact about this service's response to
+	// it. Read the other way round, a deployment that revoked everything during
+	// an incident would stop being able to tell an attacker holding a lapsed
+	// token from a user who simply has not signed in for a month, because every
+	// refusal would say "revoked".
+	if !claimed.ExpiresAt.After(now) {
+		return RefreshToken{}, ErrRefreshTokenExpired
+	}
 	if claimed.UsedAt != nil {
 		if err := s.RevokeRefreshTokenFamily(ctx, q, claimed.ID, now); err != nil {
 			// The refusal is returned either way. A client must not be able to
@@ -194,9 +208,6 @@ func (s *Store) RotateRefreshToken(ctx context.Context, q db.Querier, digest str
 	}
 	if claimed.RevokedAt != nil {
 		return RefreshToken{}, ErrRefreshTokenRevoked
-	}
-	if !claimed.ExpiresAt.After(now) {
-		return RefreshToken{}, ErrRefreshTokenExpired
 	}
 	return RefreshToken{}, ErrNoRefreshToken
 }
