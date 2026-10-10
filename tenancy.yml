@@ -44,9 +44,9 @@ scope:
   # in full and attributes no account-scoped statement in either, because their
   # credential lookups are addressed by an unguessable secret rather than by an
   # account — `api_keys` by `token_digest`, `oidc_clients` by `client_id` — and
-  # because the statements that DO carry `where account_id` put the verb and the
-  # predicate more than four lines apart (all six are listed and classified above
-  # `entryPoints`). The credential half WAS a measured production limitation
+  # because the statements that DO carry `where account_id` wrap their verb and
+  # their table onto separate lines, and core attributes only a statement that
+  # OPENS ON ONE LINE (all six are listed and classified above `entryPoints`). The credential half WAS a measured production limitation
   # rather than a gap in this list: it is pinned by
   # `internal/tenancy/credential_lookup_test.go` and written up in
   # `moon/logs/REPORT-identity-isolation-02.md` §3. Naming the two files is what
@@ -396,14 +396,20 @@ rls:
 #   internal/oidc/store.go:159     select  oidc_clients  where account_id = $1
 #   internal/oidc/store.go:234     update  oidc_clients  where id = $1 and account_id = $2
 #
-# All six DO carry their own `where account_id`, and none is attributed because Go
-# raw-string SQL puts the verb and the predicate three to eight lines apart while
-# core's `ATTRIBUTION_WINDOW` is 4. The two that share the format with
-# `internal/admin/store.go` (where the statement is one long line) are found; the
-# four that do not are not. That is a finding for core — the window should follow
-# the statement, not the line — and it is in
-# `moon/logs/REPORT-identity-isolation-03.md` §4. Until it is fixed the six live
-# here, named, rather than in a green the checker cannot see them inside.
+# All six DO carry their own `where account_id`, and none is attributed. The
+# reason was re-measured on core's own `scan_file` rather than inferred, and it is
+# not the one this paragraph used to give: `sql_operation` matches
+# `select … from <t>`, `update <t> set` and `delete from <t>` as SINGLE-LINE
+# regexes, so a statement opens only when its verb, its table and (for an update)
+# its `set` sit on one line. Every statement above lives in a Go raw string with
+# those on separate lines, so no size of `ATTRIBUTION_WINDOW` would help — the
+# window is not the constraint, the single-line match is. Of every
+# `account_id`-carrying line in these three files, exactly ONE sits under an
+# opening (`internal/admin/store.go:126`, read back from the site at :127),
+# which is why `admin-audit-log-list` is the only entry point there is. The
+# finding for core is not "the window should follow the statement" — it is that a
+# Go raw string cannot be read line by line at all. It is in
+# `moon/logs/REPORT-identity-isolation-03.md` §4.
 #
 # And the reason none of the six is DECLARED is the same reason the five in
 # `internal/accounts/store.go` are not: see below.
@@ -417,11 +423,11 @@ rls:
 #
 # WHAT IS NOT DECLARED, and it is named rather than left for a reader to infer:
 #
-#   internal/accounts/store.go:286  select  account_users       (account_id = $1)
-#   internal/accounts/store.go:356  select  account_users       (account_id = $1)
-#   internal/accounts/store.go:386  delete  account_users       (account_id = $1)
-#   internal/accounts/store.go:593  update  account_invitations (account_id = $2)
-#   internal/accounts/store.go:625  update  account_invitations (account_id = $1)
+#   internal/accounts/store.go:310  select  account_users       (account_id = $1)
+#   internal/accounts/store.go:380  select  account_users       (account_id = $1)
+#   internal/accounts/store.go:410  delete  account_users       (account_id = $1)
+#   internal/accounts/store.go:819  update  account_invitations (account_id = $2)
+#   internal/accounts/store.go:851  update  account_invitations (account_id = $1)
 #
 # All five ARE account-scoped and all five DO carry their own `where account_id`,
 # which is the half of the boundary this service had before 00016. They are absent
