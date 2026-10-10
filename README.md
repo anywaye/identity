@@ -112,6 +112,49 @@ $ curl -s localhost:8080/readyz
 reflects what `readyz` is configured to verify, and Postgres is not in that
 set. Treat it as a liveness signal, not a dependency check.
 
+## Licence
+
+**Business Source Licence 1.1** — [LICENSE](LICENSE). Free to run, free to
+self-host, and never to offer identity as a competing service.
+
+That is `OPS-D2` in `moon/CAFAYE-OPS.md` (line 176): the framework stays open,
+the services move to BSL, and BSL rather than AGPL "because the buyers are
+teams and AGPL makes their lawyers twitchy". The principle behind the split is
+stated there too and is worth quoting to a prospect rather than paraphrasing —
+**the mint is the moat, the redeemer is not**. This repository is the redeemer.
+
+What that means in practice, and the two dates in the file that matter:
+
+- **You can run it.** Production use, on your own box, without asking and
+  without paying. No requirement to publish your changes or to tell us you made
+  them.
+- **What you may not do is offer it as a competing service.** That is the whole
+  of the restriction. It is not a feature flag, a licence-key check, a usage
+  meter or a nagscreen — nothing in this codebase enforces it, because a
+  restriction the software has to check is a restriction a fork removes.
+- **On 2030-10-10 the Change Date arrives** and the Licensed Work becomes
+  Apache-2.0. Four years from 2026-10-10, which is the interval the brief fixed
+  and the one BSL's own Terms name as the default.
+- **There is no Additional Use Grant**, and the `Parameters` block says `None`
+  on purpose. An Additional Use Grant is a *narrowing* — "limited production
+  use", a named subset — and what Cafaye Ops promises is the whole of
+  non-competing production use rather than a carve-out of it.
+
+**Third-party components keep their own licences and notices**, preserved in the
+applicable source files. Nothing here asserts Cafaye ownership over third-party
+work.
+
+The grant is declared in three places that must agree, and each of them is a
+file a reader actually opens: [LICENSE](LICENSE), and the `info.license` block of
+both contracts — [openapi/v1.yaml](openapi/v1.yaml) and
+[openid/openid.yaml](openid/openid.yaml). `cafaye.yml` carries a comment rather
+than a field: core owns the manifest schema
+(`../core/schemas/cafaye.manifest.schema.json`), it sets
+`additionalProperties: false` and lists no `license` key, and a document with
+one fails validation — measured, not inferred. The reason is written down in
+`cafaye.yml` itself, so that the next person to look for a licence field there
+finds out why there is not one instead of adding a violation.
+
 ## Why chi
 
 Chi over echo: same five routing features, a fraction of the dependencies, and

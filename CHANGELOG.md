@@ -6,6 +6,41 @@ All notable changes to identity are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed (packet OPS-P1: identity is Business Source Licence 1.1, and it was "all rights reserved")
+
+**The grant.** [LICENSE](LICENSE) is now a Business Source Licence 1.1 with
+Licensor `Cafaye`, Licensed Work `identity`, Change Date `2030-10-10` and Change
+Licence `Apache-2.0`, and no Additional Use Grant. Free to run, free to self-host,
+never to offer it as a competing service — `OPS-D2` in `moon/CAFAYE-OPS.md:176`.
+The file is the canonical BSL 1.1 text and nothing else, so the same file in
+gateway, courier and parlor is written to diff against this one on the
+Licensed Work line and nowhere else.
+
+**Why it changed at all.** The text that was here — "Copyright (c) 2026 Cafaye.
+All rights reserved", with access to the checkout granting no general
+permission — said the opposite of what the tier copy sells a reader: on the
+tier the landing page calls free self-hosting, cloning this repository told
+them they may do nothing with it.
+
+**What moved with it.** Both contract documents' `info.license` said
+"Proprietary - All rights reserved. See LICENSE in the cafaye/identity
+repository" (`openapi/v1.yaml`, `openid/openid.yaml`) and now name
+`BUSL-1.1`; the m153 commit that made identity proprietary changed LICENSE and
+those two blocks together, and this changes them back together. `cafaye.yml`
+gains a comment rather than a field, because core's manifest schema
+(`../core/schemas/cafaye.manifest.schema.json`) sets `additionalProperties:
+false` and lists no `license` key — measured: a document with one added fails
+validation with "Additional properties are not allowed ('license' was
+unexpected)". README gains a Licence section, which is where a reader looks
+first and where the file previously said nothing.
+
+**What did not move.** No source, no test, no CI, no migration, no dependency.
+The files this packet touches are `LICENSE`, `cafaye.yml`, `openapi/v1.yaml`,
+`openid/openid.yaml`, `README.md` and this file. The third-party notice the old
+`LICENSE` carried is not in the new one — it is a true sentence about all four
+service trees, and four copies of it would be the only thing a reader saw when
+they diffed them, so it is stated in README instead.
+
 ### Added (packet repair-c: the claim preview and the agent home route the clients call)
 
 - **`GET /v1/agents/claim/{token}` — the claim preview.** Anonymous, rate-limited
