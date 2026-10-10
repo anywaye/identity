@@ -45,6 +45,29 @@ language: go
 # at ^0.1.0 is a rename nobody is allowed to ship.
 core: ^0.2.0
 
+# THE LICENCE, and why it is not a field here.
+#
+# The grant is the file at the repository root: LICENSE, a Business Source
+# Licence 1.1 (OPS-D2, taken 2026-10-10) -- free to run, free to self-host, and
+# never to offer identity as a competing service, becoming Apache-2.0 on
+# 2030-10-10.
+#
+# It is NOT declared in this document, and that is a constraint rather than an
+# omission. core owns the schema, ../core/schemas/cafaye.manifest.schema.json,
+# which sets `additionalProperties: false` (line 7) and lists every key it
+# accepts (line 9's `properties`) -- `license` is not one of them, and there is
+# no `x-cafaye-` prefix escape either. Measured, not inferred: validating this
+# document with a `license: BUSL-1.1` key added returns "Additional properties
+# are not allowed ('license' was unexpected)". So a licence field in this file
+# would be a contract violation, and a manifest that disagreed with its own
+# LICENSE would be red rather than silently wrong.
+#
+# The declarations this repository does make are the `info.license` blocks of
+# its two contracts, openapi/v1.yaml and openid/openid.yaml, which are the files
+# a generated client and an integrator read first. If core adds the field, it
+# belongs here and the two blocks move with it -- in the same commit, because
+# two lists that have to agree are exactly how a manifest drifts.
+
 exposes:
   # The repository-relative path to the OpenAPI 3.1 document describing the HTTP
   # surface. This is what `caf gen` generates SDKs from and what the contract

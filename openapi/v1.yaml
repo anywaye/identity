@@ -275,7 +275,20 @@ info:
     url: https://github.com/cafaye/identity
     email: identity@cafaye.com
   license:
-    name: Proprietary - All rights reserved. See LICENSE in the cafaye/identity repository.
+    # Business Source Licence 1.1, SPDX BUSL-1.1. Free to run, free to
+    # self-host, and never to offer identity as a competing service -- the grant
+    # OPS-D2 took on 2026-10-10, and the reason this line is no longer the
+    # "Proprietary - All rights reserved" it was. The text is LICENSE at the
+    # repository root.
+    #
+    # `name` and `identifier` are the whole of what an OpenAPI 3.1 licence
+    # object needs, and a `url` is mutually exclusive with an `identifier` under
+    # that spec, so the pointer to the file is this comment rather than a third
+    # key. This declaration and the file are two halves of one claim: a contract
+    # that offered nothing while the repository offered a grant would be the
+    # exact drift this document is held to.
+    name: Business Source License 1.1
+    identifier: BUSL-1.1
 
 servers:
   - url: https://identity.cafaye.com
