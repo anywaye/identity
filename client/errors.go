@@ -46,7 +46,7 @@ package client
 //
 // # WHY `code` CHOOSES THE TYPE AND `status` IS THE FALLBACK
 //
-// core's conventions: "`type` is a stable `https://errors.cafaye.com/<code>` URI —
+// core's conventions: "`type` is a stable `https://docs.cafaye.com/errors/<code>` URI —
 // the machine-readable contract" and "`code` is the same slug as the last segment of
 // `type`". So `code` is the contract and `status` is a fact about one response, which
 // a service could get wrong or omit, since RFC 9457 makes `status` advisory.

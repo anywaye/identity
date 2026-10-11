@@ -25,7 +25,7 @@ import (
 // MAPPING, not the JSON.
 func problemBody(code string, status int) []byte {
 	document := map[string]any{
-		"type":     "https://errors.cafaye.com/" + code,
+		"type":     "https://docs.cafaye.com/errors/" + code,
 		"title":    "A fixed summary for " + code,
 		"status":   status,
 		"detail":   "something specific to this occurrence",
@@ -216,7 +216,7 @@ func TestTheCodeChoosesTheTypeAndTheStatusOnlyBreaksTies(t *testing.T) {
 	})
 
 	t.Run("the status is used when the code is absent", func(t *testing.T) {
-		body := []byte(`{"type":"https://errors.cafaye.com/","title":"Unauthorized",` +
+		body := []byte(`{"type":"https://docs.cafaye.com/errors/","title":"Unauthorized",` +
 			`"status":401,"detail":"","instance":"/v1/me","trace_id":"abc"}`)
 
 		err := ProblemFrom("getCurrentUser", http.StatusUnauthorized, ProblemContentType, "",
@@ -411,7 +411,7 @@ func TestProblemFieldsAreRedacted(t *testing.T) {
 	// exercises the "not a problem document" branch instead of the redaction this
 	// test is about. It cost one run to find out.
 	leaky, marshalErr := json.Marshal(map[string]any{
-		"type":     "https://errors.cafaye.com/validation_failed",
+		"type":     "https://docs.cafaye.com/errors/validation_failed",
 		"title":    "Validation failed",
 		"status":   422,
 		"detail":   "the token " + apiCredential + " was rejected",

@@ -1024,7 +1024,7 @@ func TestOIDCUnknownScope(t *testing.T) {
 			if p.Status != http.StatusBadRequest {
 				t.Errorf("status field = %d, want 400", p.Status)
 			}
-			if p.Type != "https://errors.cafaye.com/"+CodeInvalidRequest {
+			if p.Type != "https://docs.cafaye.com/errors/"+CodeInvalidRequest {
 				t.Errorf("type = %q, want the cafaye error URI for %q", p.Type, CodeInvalidRequest)
 			}
 			if p.TraceID == "" {

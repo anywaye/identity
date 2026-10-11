@@ -450,7 +450,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Problem'
               example:
-                type: https://errors.cafaye.com/invalid_request
+                type: https://docs.cafaye.com/errors/invalid_request
                 title: Invalid request
                 status: 400
                 detail: 'unknown scope "phone"; this provider implements openid email profile accounts'
@@ -554,7 +554,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Problem'
               example:
-                type: https://errors.cafaye.com/invalid_request
+                type: https://docs.cafaye.com/errors/invalid_request
                 title: Invalid request
                 status: 400
                 detail: 'unknown scope "phone"; this provider implements openid email profile accounts'

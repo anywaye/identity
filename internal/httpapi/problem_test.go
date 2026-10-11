@@ -30,12 +30,12 @@ func TestProblemMatchesTheCoreEnvelope(t *testing.T) {
 		t.Fatalf("the body is not JSON: %v\n%s", err, rec.Body)
 	}
 
-	// type is the machine-readable contract: a stable errors.cafaye.com URI.
-	if want := "https://errors.cafaye.com/unauthorized"; p.Type != want {
+	// type is the machine-readable contract: a stable docs.cafaye.com/errors URI.
+	if want := "https://docs.cafaye.com/errors/unauthorized"; p.Type != want {
 		t.Errorf("type = %q, want %q", p.Type, want)
 	}
 	// code is the same slug as the last segment of type.
-	if slug := strings.TrimPrefix(p.Type, "https://errors.cafaye.com/"); p.Code != slug {
+	if slug := strings.TrimPrefix(p.Type, "https://docs.cafaye.com/errors/"); p.Code != slug {
 		t.Errorf("code = %q, want the last segment of type (%q)", p.Code, slug)
 	}
 	if p.Status != http.StatusUnauthorized {
