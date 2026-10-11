@@ -98,7 +98,7 @@ var leakyResponseHeaders = map[string]string{
 // string on a `ProblemError` goes through the redactor rather than only the ones
 // this package builds itself.
 const leakyProblemBody = `{
-  "type": "https://errors.cafaye.com/validation_failed",
+  "type": "https://docs.cafaye.com/errors/validation_failed",
   "title": "Validation failed",
   "status": 422,
   "detail": "the field 'token' was rejected: '` + fakeToken + `'",

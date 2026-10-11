@@ -185,7 +185,7 @@ func TestAgainstInteractionsRecordedFromRealCourier(t *testing.T) {
 				`mailbox that has said it is gone.","instance":"/v1/messages",` +
 				`"status":409,"title":"Conflict",` +
 				`"trace_id":"1cd5f880-fc3a-428d-923c-71866c488ea6",` +
-				`"type":"https://errors.cafaye.com/conflict"}`,
+				`"type":"https://docs.cafaye.com/errors/conflict"}`,
 			wantErrIs: ErrSuppressed,
 			wantCode:  "conflict",
 			wantTrace: "1cd5f880-fc3a-428d-923c-71866c488ea6",
@@ -202,7 +202,7 @@ func TestAgainstInteractionsRecordedFromRealCourier(t *testing.T) {
 				`has asked not to be written to.","instance":"/v1/messages",` +
 				`"status":409,"title":"Conflict",` +
 				`"trace_id":"d1f22bfb-7948-443b-bb39-2eb87882f860",` +
-				`"type":"https://errors.cafaye.com/conflict"}`,
+				`"type":"https://docs.cafaye.com/errors/conflict"}`,
 			wantErrIs: ErrSuppressed,
 			wantCode:  "conflict",
 			wantTrace: "d1f22bfb-7948-443b-bb39-2eb87882f860",
@@ -221,7 +221,7 @@ func TestAgainstInteractionsRecordedFromRealCourier(t *testing.T) {
 				`"field":"type"}],"instance":"/v1/messages","status":422,` +
 				`"title":"Validation failed",` +
 				`"trace_id":"c5eb7c00-76a4-46cc-82bd-afc067babfe8",` +
-				`"type":"https://errors.cafaye.com/validation_failed"}`,
+				`"type":"https://docs.cafaye.com/errors/validation_failed"}`,
 			wantErrIs: ErrDeclined,
 			wantCode:  "validation_failed",
 			wantTrace: "c5eb7c00-76a4-46cc-82bd-afc067babfe8",
@@ -244,7 +244,7 @@ func TestAgainstInteractionsRecordedFromRealCourier(t *testing.T) {
 				`"field":"type"}],"instance":"/v1/messages","status":422,` +
 				`"title":"Validation failed",` +
 				`"trace_id":"2226cc75-4b8c-4a24-8dc5-5fceba01e4be",` +
-				`"type":"https://errors.cafaye.com/validation_failed"}`,
+				`"type":"https://docs.cafaye.com/errors/validation_failed"}`,
 			wantErrIs: ErrRefused,
 			wantCode:  "validation_failed",
 			wantTrace: "2226cc75-4b8c-4a24-8dc5-5fceba01e4be",
@@ -267,7 +267,7 @@ func TestAgainstInteractionsRecordedFromRealCourier(t *testing.T) {
 				`valid.","errors":[{"code":"unknown_field","field":"subject"}],` +
 				`"instance":"/v1/messages","status":422,"title":"Validation failed",` +
 				`"trace_id":"baa4918d-f58a-4b78-bc56-9514d64ce7ee",` +
-				`"type":"https://errors.cafaye.com/validation_failed"}`,
+				`"type":"https://docs.cafaye.com/errors/validation_failed"}`,
 			wantErrIs: ErrRefused,
 			wantCode:  "validation_failed",
 			wantTrace: "baa4918d-f58a-4b78-bc56-9514d64ce7ee",
@@ -286,7 +286,7 @@ func TestAgainstInteractionsRecordedFromRealCourier(t *testing.T) {
 				`valid.","errors":[{"code":"invalid_format","field":"user_id"}],` +
 				`"instance":"/v1/messages","status":422,"title":"Validation failed",` +
 				`"trace_id":"cfd5fdca-17a7-4298-8a8c-d031bef8f3a2",` +
-				`"type":"https://errors.cafaye.com/validation_failed"}`,
+				`"type":"https://docs.cafaye.com/errors/validation_failed"}`,
 			wantErrIs: ErrRefused,
 			wantCode:  "validation_failed",
 			wantTrace: "cfd5fdca-17a7-4298-8a8c-d031bef8f3a2",
@@ -305,7 +305,7 @@ func TestAgainstInteractionsRecordedFromRealCourier(t *testing.T) {
 				`valid.","errors":[{"code":"invalid_format","field":"url"}],` +
 				`"instance":"/v1/messages","status":422,"title":"Validation failed",` +
 				`"trace_id":"5e8c6f7d-dc5a-44a0-897d-140c4cf2d564",` +
-				`"type":"https://errors.cafaye.com/validation_failed"}`,
+				`"type":"https://docs.cafaye.com/errors/validation_failed"}`,
 			wantErrIs: ErrRefused,
 			wantCode:  "validation_failed",
 			wantTrace: "5e8c6f7d-dc5a-44a0-897d-140c4cf2d564",
@@ -330,7 +330,7 @@ func TestAgainstInteractionsRecordedFromRealCourier(t *testing.T) {
 				`be a uuid, chosen by the client.","field":"Idempotency-Key"}],` +
 				`"instance":"/v1/messages","status":422,"title":"Validation failed",` +
 				`"trace_id":"4f54da8d-6453-474c-8a04-5a9aa69de187",` +
-				`"type":"https://errors.cafaye.com/validation_failed"}`,
+				`"type":"https://docs.cafaye.com/errors/validation_failed"}`,
 			wantErrIs: ErrRefused,
 			wantCode:  "validation_failed",
 			wantTrace: "4f54da8d-6453-474c-8a04-5a9aa69de187",
@@ -356,7 +356,7 @@ func TestAgainstInteractionsRecordedFromRealCourier(t *testing.T) {
 				`new key.","instance":"/v1/messages","status":409,` +
 				`"title":"Idempotency key reused",` +
 				`"trace_id":"328ebc5c-dab5-4f5d-93c4-4fc573ca1f0c",` +
-				`"type":"https://errors.cafaye.com/idempotency_key_reused"}`,
+				`"type":"https://docs.cafaye.com/errors/idempotency_key_reused"}`,
 			wantErrIs: ErrRefused,
 			wantCode:  "idempotency_key_reused",
 			wantTrace: "328ebc5c-dab5-4f5d-93c4-4fc573ca1f0c",
@@ -377,7 +377,7 @@ func TestAgainstInteractionsRecordedFromRealCourier(t *testing.T) {
 				`authenticated caller.","instance":"/v1/messages","status":401,` +
 				`"title":"Unauthorized",` +
 				`"trace_id":"4adb7daa-a480-48d1-bbe8-e6a6f9c5db6f",` +
-				`"type":"https://errors.cafaye.com/unauthorized"}`,
+				`"type":"https://docs.cafaye.com/errors/unauthorized"}`,
 			wantErrIs: ErrUnauthenticated,
 			wantCode:  "unauthorized",
 			wantTrace: "4adb7daa-a480-48d1-bbe8-e6a6f9c5db6f",
@@ -402,7 +402,7 @@ func TestAgainstInteractionsRecordedFromRealCourier(t *testing.T) {
 				`"instance":"/v1/messages","status":503,` +
 				`"title":"Service unavailable",` +
 				`"trace_id":"5c0f0b3a-1f9d-4c0e-9c1e-2f3a4b5c6d7e",` +
-				`"type":"https://errors.cafaye.com/unavailable"}`,
+				`"type":"https://docs.cafaye.com/errors/unavailable"}`,
 			wantErrIs: ErrUnavailable,
 			wantCode:  "unavailable",
 			wantTrace: "5c0f0b3a-1f9d-4c0e-9c1e-2f3a4b5c6d7e",

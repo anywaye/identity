@@ -171,7 +171,7 @@ func TestRegisterUserWithoutThePairIsStillRefusedTheSameWay(t *testing.T) {
 
 	// The server refuses a pairless body the way this service does: the generic
 	// validation failure, naming nothing.
-	const refusal = `{"type":"https://errors.cafaye.com/validation_failed",` +
+	const refusal = `{"type":"https://docs.cafaye.com/errors/validation_failed",` +
 		`"title":"Validation failed","status":422,` +
 		`"detail":"the request has an invalid field",` +
 		`"code":"validation_failed","trace_id":"0f9c2a1e-0000-4000-8000-000000000000"}`

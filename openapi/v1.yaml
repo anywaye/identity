@@ -553,7 +553,7 @@ paths:
                 conflict:
                   summary: the address is taken
                   value:
-                    type: https://errors.cafaye.com/conflict
+                    type: https://docs.cafaye.com/errors/conflict
                     title: Conflict
                     status: 409
                     detail: an account already exists for that email address
@@ -716,7 +716,7 @@ paths:
                 notAToken:
                   summary: A browser session, or no credential
                   value:
-                    type: https://errors.cafaye.com/forbidden
+                    type: https://docs.cafaye.com/errors/forbidden
                     title: Forbidden
                     status: 403
                     detail: >-
@@ -731,7 +731,7 @@ paths:
                 missingScope:
                   summary: A token without the scope
                   value:
-                    type: https://errors.cafaye.com/forbidden
+                    type: https://docs.cafaye.com/errors/forbidden
                     title: Forbidden
                     status: 403
                     detail: this api key does not carry the users:disable scope
@@ -807,7 +807,7 @@ paths:
                 notAToken:
                   summary: A browser session, or no credential
                   value:
-                    type: https://errors.cafaye.com/forbidden
+                    type: https://docs.cafaye.com/errors/forbidden
                     title: Forbidden
                     status: 403
                     detail: >-
@@ -822,7 +822,7 @@ paths:
                 missingScope:
                   summary: A token without the scope
                   value:
-                    type: https://errors.cafaye.com/forbidden
+                    type: https://docs.cafaye.com/errors/forbidden
                     title: Forbidden
                     status: 403
                     detail: this api key does not carry the users:disable scope
@@ -902,7 +902,7 @@ paths:
                 notStaff:
                   summary: An authenticated session whose user is not staff
                   value:
-                    type: https://errors.cafaye.com/forbidden
+                    type: https://docs.cafaye.com/errors/forbidden
                     title: Forbidden
                     status: 403
                     detail: >-
@@ -915,7 +915,7 @@ paths:
                 notASession:
                   summary: A scoped API token
                   value:
-                    type: https://errors.cafaye.com/forbidden
+                    type: https://docs.cafaye.com/errors/forbidden
                     title: Forbidden
                     status: 403
                     detail: >-
@@ -1222,7 +1222,7 @@ paths:
               examples:
                 refused:
                   value:
-                    type: https://errors.cafaye.com/unauthorized
+                    type: https://docs.cafaye.com/errors/unauthorized
                     title: Unauthorized
                     status: 401
                     detail: authentication is required to access this resource
@@ -1304,7 +1304,7 @@ paths:
               examples:
                 disabled:
                   value:
-                    type: https://errors.cafaye.com/forbidden
+                    type: https://docs.cafaye.com/errors/forbidden
                     title: Forbidden
                     status: 403
                     detail: this account is disabled; contact the person or organisation that administers it
@@ -1344,7 +1344,7 @@ paths:
               examples:
                 locked:
                   value:
-                    type: https://errors.cafaye.com/account_locked
+                    type: https://docs.cafaye.com/errors/account_locked
                     title: Account locked
                     status: 423
                     detail: too many failed sign-in attempts for this account; retry after 900 seconds
@@ -1591,7 +1591,7 @@ paths:
               examples:
                 default:
                   value:
-                    type: https://errors.cafaye.com/not_found
+                    type: https://docs.cafaye.com/errors/not_found
                     title: Not found
                     status: 404
                     detail: no route matches this request
@@ -2129,7 +2129,7 @@ paths:
                 soleOwner:
                   summary: The caller is the only owner of a team account
                   value:
-                    type: https://errors.cafaye.com/account_ownership_conflict
+                    type: https://docs.cafaye.com/errors/account_ownership_conflict
                     title: Account ownership conflict
                     status: 409
                     code: account_ownership_conflict
@@ -2393,7 +2393,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Problem'
               example:
-                type: https://errors.cafaye.com/not_found
+                type: https://docs.cafaye.com/errors/not_found
                 title: Not found
                 status: 404
                 detail: no such link, or it has already been used
@@ -2531,7 +2531,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Problem'
               example:
-                type: https://errors.cafaye.com/not_found
+                type: https://docs.cafaye.com/errors/not_found
                 title: Not found
                 status: 404
                 detail: no such link, or it has already been used
@@ -2675,7 +2675,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Problem'
               example:
-                type: https://errors.cafaye.com/conflict
+                type: https://docs.cafaye.com/errors/conflict
                 title: Conflict
                 status: 409
                 detail: an account already exists for that email address
@@ -2741,7 +2741,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Problem'
               example:
-                type: https://errors.cafaye.com/not_found
+                type: https://docs.cafaye.com/errors/not_found
                 title: Not found
                 status: 404
                 detail: no such link, or it has already been used
@@ -2817,7 +2817,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Problem'
               example:
-                type: https://errors.cafaye.com/not_found
+                type: https://docs.cafaye.com/errors/not_found
                 title: Not found
                 status: 404
                 detail: no such link, or it has already been used
@@ -2926,7 +2926,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Problem'
               example:
-                type: https://errors.cafaye.com/conflict
+                type: https://docs.cafaye.com/errors/conflict
                 title: Conflict
                 status: 409
                 detail: an account with that name already exists; its handle is the name in lower case with dashes
@@ -5470,7 +5470,7 @@ paths:
                 disabled:
                   summary: The subject has been turned off by a person
                   value:
-                    type: https://errors.cafaye.com/forbidden
+                    type: https://docs.cafaye.com/errors/forbidden
                     title: Forbidden
                     status: 403
                     detail: that account is disabled and cannot be given a session
@@ -5660,7 +5660,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Problem'
               example:
-                type: https://errors.cafaye.com/forbidden
+                type: https://docs.cafaye.com/errors/forbidden
                 title: Forbidden
                 status: 403
                 detail: a scoped api key may not exchange a delegated link for a browser session
@@ -5681,7 +5681,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Problem'
               example:
-                type: https://errors.cafaye.com/not_found
+                type: https://docs.cafaye.com/errors/not_found
                 title: Not found
                 status: 404
                 detail: no such link, or it has already been used
@@ -8559,8 +8559,8 @@ components:
         type:
           type: string
           format: uri
-          description: 'A stable `https://errors.cafaye.com/<code>` URI — the machine-readable contract.'
-          example: https://errors.cafaye.com/validation_failed
+          description: 'A stable `https://docs.cafaye.com/errors/<code>` URI — the machine-readable contract.'
+          example: https://docs.cafaye.com/errors/validation_failed
         title:
           type: string
           description: A fixed human-readable summary for the code. May be reworded without a version bump.
@@ -8657,7 +8657,7 @@ components:
           schema:
             $ref: '#/components/schemas/Problem'
           example:
-            type: https://errors.cafaye.com/rate_limited
+            type: https://docs.cafaye.com/errors/rate_limited
             title: Too many requests
             status: 429
             detail: too many requests; slow down and try again later
@@ -8688,7 +8688,7 @@ components:
           schema:
             $ref: '#/components/schemas/Problem'
           example:
-            type: https://errors.cafaye.com/service_unavailable
+            type: https://docs.cafaye.com/errors/service_unavailable
             title: Service unavailable
             status: 503
             detail: this deployment cannot send email, so it cannot send that link
@@ -8707,7 +8707,7 @@ components:
           schema:
             $ref: '#/components/schemas/Problem'
           example:
-            type: https://errors.cafaye.com/unauthorized
+            type: https://docs.cafaye.com/errors/unauthorized
             title: Unauthorized
             status: 401
             detail: authentication is required to access this resource
@@ -8730,7 +8730,7 @@ components:
           schema:
             $ref: '#/components/schemas/Problem'
           example:
-            type: https://errors.cafaye.com/forbidden
+            type: https://docs.cafaye.com/errors/forbidden
             title: Forbidden
             status: 403
             detail: your role in this account does not permit this action
@@ -8751,7 +8751,7 @@ components:
           schema:
             $ref: '#/components/schemas/Problem'
           example:
-            type: https://errors.cafaye.com/not_found
+            type: https://docs.cafaye.com/errors/not_found
             title: Not found
             status: 404
             detail: no such OIDC client is visible to you
@@ -8772,7 +8772,7 @@ components:
             passwordTooShort:
               summary: the password is under the minimum
               value:
-                type: https://errors.cafaye.com/validation_failed
+                type: https://docs.cafaye.com/errors/validation_failed
                 title: Validation failed
                 status: 422
                 detail: the request has an invalid field
@@ -8785,7 +8785,7 @@ components:
             unknownField:
               summary: the body has a field the endpoint does not accept
               value:
-                type: https://errors.cafaye.com/validation_failed
+                type: https://docs.cafaye.com/errors/validation_failed
                 title: Validation failed
                 status: 422
                 detail: the request body has a field this endpoint does not accept
@@ -8803,7 +8803,7 @@ components:
           schema:
             $ref: '#/components/schemas/Problem'
           example:
-            type: https://errors.cafaye.com/invalid_json
+            type: https://docs.cafaye.com/errors/invalid_json
             title: Malformed request body
             status: 400
             detail: the request body is not a JSON object this endpoint accepts
@@ -8821,7 +8821,7 @@ components:
           schema:
             $ref: '#/components/schemas/Problem'
           example:
-            type: https://errors.cafaye.com/payload_too_large
+            type: https://docs.cafaye.com/errors/payload_too_large
             title: Request body too large
             status: 413
             detail: the request body is larger than the 4096 bytes this endpoint accepts
@@ -8841,7 +8841,7 @@ components:
           schema:
             $ref: '#/components/schemas/Problem'
           example:
-            type: https://errors.cafaye.com/internal
+            type: https://docs.cafaye.com/errors/internal
             title: Internal server error
             status: 500
             detail: the request could not be completed. Quote the trace id when reporting this.

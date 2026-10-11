@@ -370,7 +370,7 @@ func TestASuppressedMailboxIsRefusedRatherThanReportedAsSent(t *testing.T) {
 		_, _ = w.Write([]byte(`{"code":"conflict","detail":"That mailbox does not ` +
 			`exist: it hard-bounced a previous message.","instance":"/v1/messages",` +
 			`"status":409,"title":"Conflict","trace_id":"sup-1",` +
-			`"type":"https://errors.cafaye.com/conflict"}`))
+			`"type":"https://docs.cafaye.com/errors/conflict"}`))
 	}))
 	defer suppressed.Close()
 
@@ -419,7 +419,7 @@ func TestTheSuppressionNeverReachesTheAddress(t *testing.T) {
 		w.WriteHeader(http.StatusConflict)
 		_, _ = w.Write([]byte(`{"code":"conflict","detail":"That mailbox does not ` +
 			`exist.","status":409,"trace_id":"sup-2",` +
-			`"type":"https://errors.cafaye.com/conflict"}`))
+			`"type":"https://docs.cafaye.com/errors/conflict"}`))
 	}))
 	defer suppressed.Close()
 
@@ -551,7 +551,7 @@ func newCourierStub(t *testing.T) *courierStub {
 			_, _ = w.Write([]byte(`{"code":"validation_failed","detail":"` + field +
 				`","errors":[{"code":"invalid_format","field":"` + field + `"}],` +
 				`"status":422,"trace_id":"stub-1",` +
-				`"type":"https://errors.cafaye.com/validation_failed"}`))
+				`"type":"https://docs.cafaye.com/errors/validation_failed"}`))
 			return
 		}
 

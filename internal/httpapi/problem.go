@@ -8,9 +8,9 @@ import (
 )
 
 // errorTypeBase is the stable URI prefix for the `type` attribute. core:
-// "type is a stable https://errors.cafaye.com/<code> URI — the machine-readable
+// "type is a stable https://docs.cafaye.com/errors/<code> URI — the machine-readable
 // contract". Changing this is a breaking change to every client.
-const errorTypeBase = "https://errors.cafaye.com/"
+const errorTypeBase = "https://docs.cafaye.com/errors/"
 
 // Problem codes.
 //

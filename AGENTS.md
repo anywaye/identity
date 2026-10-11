@@ -123,7 +123,7 @@ dev/prod commands are in [migrations/README.md](migrations/README.md).
 
 **`cafaye.yml` is a draft.** The schema belongs to `cafaye/core` and is still in
 flight. Fields marked `# GUESS` in that file are a reconciliation list, not
-precedent — when core freezes the manifest, `caf init` regenerates the file and
+precedent — when core freezes the manifest, `cafe init` regenerates the file and
 guessed fields are dropped, not migrated.
 
 **Deps are the ones with a stated cause, plus nothing.** `chi` for routing,
@@ -655,7 +655,7 @@ pulls (`0.1.0`).
 2. Tests first: status code, JSON shape, `Content-Type`, and the anonymous case.
 3. Add the row to the README endpoint table, and to `openapi/v1.yaml` or
    `openid/openid.yaml` depending on which surface it is on. Both validate
-   against OpenAPI 3.1 and `caf contract lint` validates the manifest.
+   against OpenAPI 3.1 and `cafe contract lint` validates the manifest.
    **The document entry is not optional and not a follow-up**:
    `TestEveryServedRouteIsDocumentedOrNamed` reads the route out of the router
    and fails when no document describes it, so a handler merged without its

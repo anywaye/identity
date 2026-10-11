@@ -1794,7 +1794,7 @@ type Problem struct {
 	// TraceID Always present, always equal to the `X-Trace-Id` response header.
 	TraceID string `json:"trace_id"`
 
-	// Type A stable `https://errors.cafaye.com/<code>` URI — the machine-readable contract.
+	// Type A stable `https://docs.cafaye.com/errors/<code>` URI — the machine-readable contract.
 	Type string `json:"type"`
 }
 

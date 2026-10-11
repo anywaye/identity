@@ -819,7 +819,7 @@ func TestRegistrationPublishesOnlyThatAnAddressIsTaken(t *testing.T) {
 	// A problem document is seven fields. If a future change adds an eighth — an id, a
 	// name, a `verified` boolean — this fails and names it.
 	want := Problem{
-		Type:     "https://errors.cafaye.com/conflict",
+		Type:     "https://docs.cafaye.com/errors/conflict",
 		Title:    "Conflict",
 		Status:   http.StatusConflict,
 		Detail:   "an account already exists for that email address",
