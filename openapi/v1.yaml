@@ -4101,7 +4101,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Problem'
               example:
-                type: https://cafaye.com/problems/not-found
+                type: https://docs.cafaye.com/errors/not_found
                 title: Not Found
                 status: 404
                 detail: no agent matches that claim link
@@ -6037,7 +6037,7 @@ paths:
               examples:
                 refused:
                   value:
-                    type: https://cafaye.com/problems/invalid_request
+                    type: https://docs.cafaye.com/errors/invalid_request
                     title: Invalid request
                     status: 400
                     code: invalid_request
@@ -6085,7 +6085,7 @@ paths:
               examples:
                 emailInUse:
                   value:
-                    type: https://cafaye.com/problems/conflict
+                    type: https://docs.cafaye.com/errors/conflict
                     title: Conflict
                     status: 409
                     code: conflict
