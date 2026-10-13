@@ -16,6 +16,12 @@
 #     shell in this image, so a compromised process cannot curl-and-pipe.
 #   - The build context is the repository root, so `COPY go.mod go.sum ./` sees
 #     the manifests and the dependency layer caches until they change.
+#   - The image CARRIES ITS OWN SCHEMA. `migrations/*.sql` are embedded into the
+#     binary (migrations/embed.go), so `identity migrate` — the same binary, at
+#     /app/bin/migrate as well as /app/service — applies them in place, with no
+#     shell, no `psql` and no goose CLI in the artifact. That is what makes the
+#     substrate's one-shot migrate Job possible at all; the entrypoint above is
+#     still the server and still never migrates on boot.
 ARG GO_VERSION=1.26
 
 FROM golang:${GO_VERSION} AS build
@@ -34,11 +40,26 @@ RUN go build -trimpath -ldflags="-s -w" -o /out/service ./cmd/${SERVICE_NAME}
 # column written by a binary from another commit is a schema the service has
 # not reviewed.
 RUN go build -trimpath -ldflags="-s -w" -o /out/identity-staff ./cmd/identity-staff
+# /app/bin/migrate IS THE SERVICE BINARY UNDER A SECOND NAME, and that is the
+# whole trick: the runtime stage is distroless, so this path cannot be a shell
+# script, and it must exist because it is the path kit's substrate already
+# invokes for identity (`migration_command_for` in
+# templates/substrate/install.sh) with no override.
+#
+# A symlink rather than a second copy: `os.Args[0]` is preserved across one, so
+# the binary sees the name it was called by and dispatches on it (see
+# `subcommand` in cmd/identity/main.go). It is created here, in the builder,
+# because the runtime stage has no shell to run `ln` in. If a Docker COPY does
+# dereference it instead, the result is a byte-identical second copy of the same
+# binary, which dispatches exactly the same way — the failure mode of the
+# unusual case is a larger image, not a broken one.
+RUN mkdir -p /out/bin && ln -s /app/service /out/bin/migrate
 
 FROM gcr.io/distroless/static-debian12:nonroot AS runtime
 WORKDIR /app
 COPY --from=build /out/service /app/service
 COPY --from=build /out/identity-staff /app/identity-staff
+COPY --from=build /out/bin/migrate /app/bin/migrate
 USER nonroot:nonroot
 EXPOSE 8080
 # The service is stateless: the connection pool is opened lazily and closed on

@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -36,6 +37,7 @@ import (
 	"github.com/cafaye/identity/internal/deletion"
 	"github.com/cafaye/identity/internal/httpapi"
 	"github.com/cafaye/identity/internal/mfa"
+	"github.com/cafaye/identity/internal/migrate"
 	"github.com/cafaye/identity/internal/oauth"
 	"github.com/cafaye/identity/internal/oidc"
 	"github.com/cafaye/identity/internal/outbox"
@@ -48,6 +50,13 @@ import (
 	"github.com/cafaye/identity/internal/telemetry"
 	"github.com/cafaye/identity/internal/useraudit"
 	"github.com/cafaye/identity/internal/users"
+
+	// The schema, embedded. It is imported here rather than by internal/migrate
+	// because `go:embed` can only reach files at or below its own package
+	// directory, and this is the one place that decides WHICH migrations the
+	// binary applies — internal/migrate takes an fs.FS so a test can hand it a
+	// different one.
+	"github.com/cafaye/identity/migrations"
 )
 
 // shutdownTimeout is how long in-flight requests get to finish once a
@@ -74,10 +83,125 @@ func main() {
 		os.Exit(healthcheck())
 	}
 
-	if err := run(); err != nil {
-		slog.Error("identity exited with an error", "error", err)
-		os.Exit(1)
+	// ONE BINARY, TWO JOBS, AND THE SUBCOMMAND IS HOW THE SECOND ONE IS ASKED
+	// FOR. `serve` is what the container's ENTRYPOINT does (no arguments) and
+	// what every replica does; `migrate` applies the embedded schema and exits.
+	// Nothing about serving changed: the migrate path is not reached from run(),
+	// so a replica still never migrates at boot (migrations/README.md, "Prod").
+	//
+	// See `subcommand` for why the same binary is also shipped as
+	// `/app/bin/migrate`.
+	command, err := subcommand(os.Args)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "identity: %v\n", err)
+		os.Exit(2)
 	}
+
+	switch command {
+	case commandMigrate:
+		// DATABASE_URL is read HERE and not through config.Load, and the
+		// difference matters to a deployed Job: the substrate's migrate step
+		// passes this variable and nothing else, so requiring the service's full
+		// configuration — a signing key, a login UI address — to apply a
+		// migration would fail the Job for a reason that has nothing to do with
+		// the schema.
+		if err := runMigrate(context.Background(), os.Getenv("DATABASE_URL"), os.Stderr); err != nil {
+			// The exit status is the contract with the substrate, which watches
+			// the pod phase: non-zero is `Failed`, and the line below is what its
+			// `kubectl logs` prints. The failing file is in there — see
+			// migrate.nameTheFailure.
+			fmt.Fprintf(os.Stderr, "identity migrate: %v\n", err)
+			os.Exit(1)
+		}
+	default:
+		if err := run(); err != nil {
+			slog.Error("identity exited with an error", "error", err)
+			os.Exit(1)
+		}
+	}
+}
+
+// The subcommands. `serve` is spelled out even though it is also what no
+// arguments means, because the pair has to be testable and a default that can
+// only be reached by omission is a default nothing asserts.
+const (
+	commandServe   = "serve"
+	commandMigrate = "migrate"
+)
+
+// subcommand reads the command out of the process's arguments.
+//
+// IT ALSO READS argv[0], and that is the whole reason this is a function rather
+// than a `switch os.Args[1]`. The substrate's migrations step runs a service's
+// migrate entrypoint at a path it already knows — `/app/bin/migrate` for
+// identity — because that is the path the repository has always said. A
+// distroless image has no shell to write that path as a script and no `cp -a`
+// at build time to duplicate a 10 MB binary for it, so the image ships
+// `/app/bin/migrate` as a second NAME for `/app/service` (a symlink; see the
+// Dockerfile), and the binary decides by the name it was invoked under. argv[0]
+// is preserved across a symlink, so `kubectl run … -- /app/bin/migrate` arrives
+// here as `{"", "/app/bin/migrate"}` and selects migrate.
+//
+// BOTH SPELLINGS ARE SUPPORTED ON PURPOSE. `/app/service migrate` is the honest
+// description of what is happening and is what a person debugging a box will
+// type; `/app/bin/migrate` is the path a substrate that this repository does not
+// own already invokes. Neither is a second implementation — they converge on the
+// same call.
+//
+// An unrecognised NON-FLAG argument is an error rather than a silent serve. A
+// typo (`identity migration`) that started a server would look like it worked
+// until somebody asked why the schema was still empty. Flags are left alone and
+// fall through to serve, because `-healthcheck` is handled above and a future
+// flag must not turn a container's start into a usage error.
+func subcommand(args []string) (string, error) {
+	if len(args) == 0 {
+		return commandServe, nil
+	}
+	if len(args) > 1 {
+		switch args[1] {
+		case commandMigrate:
+			return commandMigrate, nil
+		case commandServe:
+			return commandServe, nil
+		}
+		if !strings.HasPrefix(args[1], "-") {
+			return "", fmt.Errorf("unknown command %q; want %q, %q or -healthcheck", args[1], commandServe, commandMigrate)
+		}
+	}
+	if filepath.Base(args[0]) == commandMigrate {
+		return commandMigrate, nil
+	}
+	return commandServe, nil
+}
+
+// runMigrate is `identity migrate`: apply the embedded schema, report what was
+// applied, exit.
+//
+// The logger writes to the same stream `main` prints its failures to, so the
+// substrate's `kubectl logs` shows the progress lines and the failure in one
+// place. Its level is fixed at Info rather than read from the service's
+// configuration for the reason the DSN is read from the environment: this process
+// has one job, and its output belongs in the Job's log.
+//
+// IT DOES NOT DECLARE SUCCESS FOR DOING NOTHING. goose returns no results when
+// there was nothing pending and the substrate's re-run relies on that being a
+// zero exit, so this reports it in a sentence — a log that is silent about
+// "applied 0" is a log an operator cannot tell from one where the files did not
+// get embedded.
+func runMigrate(ctx context.Context, dsn string, out io.Writer) error {
+	logger := slog.New(slog.NewTextHandler(out, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	logger.Info("applying the embedded migrations", "command", commandMigrate)
+
+	applied, err := migrate.Run(ctx, dsn, migrations.FS, logger)
+	if err != nil {
+		return err
+	}
+	if len(applied) == 0 {
+		logger.Info("already at the embedded schema; nothing to apply")
+		return nil
+	}
+	logger.Info("migrations applied", "count", len(applied), "last", applied[len(applied)-1])
+	return nil
 }
 
 // healthcheckTimeout bounds the probe. Short, because a compose healthcheck that
