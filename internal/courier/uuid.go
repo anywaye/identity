@@ -23,8 +23,6 @@ import (
 
 // Errors the helpers below can return.
 var (
-	errNoResponse = errors.New("no response was read")
-
 	errNotOK = errors.New("the response was not 200")
 )
 

@@ -56,12 +56,7 @@ const codeUnreadable = "unreadable_problem"
 // Reading every 409 as suppression would report a mailbox that cannot receive mail
 // for a key collision, and `recovery` would then CONCEAL it from an anonymous
 // caller on the strength of a fact that has nothing to do with the recipient.
-func classify(op string, resp *http.Response, raw []byte) error {
-	if resp == nil {
-		return &Error{Op: op, Code: codeUnreadable, sentinel: ErrUnavailable, retry: true,
-			cause: errNoResponse}
-	}
-
+func classify(op string, status int, header http.Header, raw []byte) error {
 	var doc problem
 	if len(raw) > 0 {
 		// A body that is not a problem document is not itself an error to report.
@@ -78,10 +73,9 @@ func classify(op string, resp *http.Response, raw []byte) error {
 	if trace == "" {
 		// courier puts the id in the body AND in a header, and the header is the
 		// one that survives a body this client could not read.
-		trace = resp.Header.Get("x-trace-id")
+		trace = header.Get("x-trace-id")
 	}
 
-	status := resp.StatusCode
 	refused := &Error{
 		Op:      op,
 		Status:  status,

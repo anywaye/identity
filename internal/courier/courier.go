@@ -624,7 +624,7 @@ func (c *Client) SendMessage(ctx context.Context, req MessageRequest) (MessageRe
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
-	_, resp, raw, err := c.do(ctx, http.MethodPost, messagesPath, "send", key, body)
+	_, status, raw, err := c.do(ctx, http.MethodPost, messagesPath, "send", key, body)
 	if err != nil {
 		return MessageResult{}, err
 	}
@@ -632,7 +632,7 @@ func (c *Client) SendMessage(ctx context.Context, req MessageRequest) (MessageRe
 	var sent sentResponse
 	if err := json.Unmarshal(raw, &sent); err != nil {
 		return MessageResult{}, fmt.Errorf("%w: courier answered %d with a body that is not a send result",
-			ErrMalformedResponse, statusOf(resp))
+			ErrMalformedResponse, status)
 	}
 	if err := validateResult(sent.Data); err != nil {
 		return MessageResult{}, err
@@ -661,14 +661,14 @@ func (c *Client) Ready(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, c.probeTimeout)
 	defer cancel()
 
-	_, resp, _, err := c.do(ctx, http.MethodGet, readyzPath, "probe", "", nil)
+	_, status, _, err := c.do(ctx, http.MethodGet, readyzPath, "probe", "", nil)
 	if err != nil {
 		return err
 	}
-	if statusOf(resp) != http.StatusOK {
+	if status != http.StatusOK {
 		return &Error{
 			Op:       "probe",
-			Status:   statusOf(resp),
+			Status:   status,
 			Code:     codeUnreadable,
 			sentinel: ErrUnavailable,
 			retry:    true,
@@ -680,18 +680,24 @@ func (c *Client) Ready(ctx context.Context) error {
 
 // do performs one request and reads courier's answer.
 //
-// IT RETURNS FOUR THINGS AND THAT IS THE POINT: the parsed status, the response,
+// IT RETURNS FOUR THINGS AND THAT IS THE POINT: the parsed result, the status,
 // the raw body, and an error. A single `(*Response, error)` pair cannot express
 // "courier answered 503 and this client read the body" versus "the connection
 // never happened", and a client that conflates them ends up retrying a refusal as
 // though it were a network fault.
+//
+// The answer arrives as a status and NOT as the `*http.Response`, because the
+// body is already read and closed by the time this returns: handing out the
+// response would invite reading a spent body, and no reader — human or linter —
+// can tell a closed body from a leaked one. The one header `classify` needs
+// travels as an argument instead.
 //
 // It does NOT decide the outcome. Classification is `classify`'s job and parsing a
 // 2xx is `SendMessage`'s, so that the table that decides what each status MEANS is
 // one table and this function is only about getting the bytes.
 func (c *Client) do(
 	ctx context.Context, method, path, op, idempotencyKey string, body []byte,
-) (MessageResult, *http.Response, []byte, error) {
+) (MessageResult, int, []byte, error) {
 	var reader io.Reader
 	if body != nil {
 		reader = bytes.NewReader(body)
@@ -699,7 +705,7 @@ func (c *Client) do(
 
 	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, reader)
 	if err != nil {
-		return MessageResult{}, nil, nil, fmt.Errorf("courier: building the request: %w", err)
+		return MessageResult{}, 0, nil, fmt.Errorf("courier: building the request: %w", err)
 	}
 	if body != nil {
 		// Set rather than rely on the default: courier's `:accepts` plug and its
@@ -715,14 +721,17 @@ func (c *Client) do(
 		req.Header.Set("Idempotency-Key", idempotencyKey)
 	}
 	if err := c.authorize(req); err != nil {
-		return MessageResult{}, nil, nil, err
+		return MessageResult{}, 0, nil, err
 	}
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return MessageResult{}, nil, nil, c.transportError(ctx, err)
+		return MessageResult{}, 0, nil, c.transportError(ctx, err)
 	}
-	defer resp.Body.Close()
+	// The body is read and closed here, before any return: what travels on is
+	// the status and the bytes, never the response, so there is no spent body
+	// for a caller to close — or to leak.
+	defer func() { _ = resp.Body.Close() }()
 
 	raw, readErr := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 
@@ -734,13 +743,13 @@ func (c *Client) do(
 		if readErr != nil && len(raw) == 0 {
 			raw = nil
 		}
-		return MessageResult{}, resp, raw, classify(op, resp, raw)
+		return MessageResult{}, resp.StatusCode, raw, classify(op, resp.StatusCode, resp.Header, raw)
 	}
 
 	if readErr != nil {
-		return MessageResult{}, resp, nil, c.transportError(ctx, readErr)
+		return MessageResult{}, resp.StatusCode, nil, c.transportError(ctx, readErr)
 	}
-	return MessageResult{}, resp, raw, nil
+	return MessageResult{}, resp.StatusCode, raw, nil
 }
 
 // transportError normalises the failures that happen before a status exists.
@@ -1011,12 +1020,4 @@ func normaliseBaseURL(raw string) (string, error) {
 		return "", fmt.Errorf("%w: %q has a query or a fragment", ErrNoBaseURL, trimmed)
 	}
 	return strings.TrimRight(trimmed, "/"), nil
-}
-
-// statusOf reads a status, tolerating a nil response.
-func statusOf(resp *http.Response) int {
-	if resp == nil {
-		return 0
-	}
-	return resp.StatusCode
 }
