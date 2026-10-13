@@ -2189,6 +2189,20 @@ docker build -t identity .
 docker run --rm -p 8080:8080 identity
 ```
 
+**The image migrates its own schema, because there is no shell to migrate it
+with.** `migrations/*.sql` are embedded in the binary and `identity migrate`
+applies them; the same binary is also shipped at `/app/bin/migrate`, which is
+the path kit's substrate invokes for identity, so a box's migrate Job needs no
+configuration:
+
+```sh
+docker run --rm -e DATABASE_URL="$DATABASE_URL" identity migrate
+```
+
+The entrypoint is still `/app/service` and a replica still never migrates at
+boot — see [migrations/README.md](migrations/README.md) for the mechanism, the
+substrate's line, and the one caveat worth knowing.
+
 ### What a push to master publishes
 
 `.github/workflows/publish.yml`, on every push to `master`:

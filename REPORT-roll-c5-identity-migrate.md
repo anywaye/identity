@@ -275,7 +275,31 @@ RACE-OUTPUT
 
 ---
 
-## 5. What I deliberately did NOT do
+## 5. The one residual risk, and it is the live box's, not this packet's
+
+**A database whose schema was applied out-of-band has no `goose_db_version`, and
+the Job will fail on it.** kit's report §3 discloses that the live box's
+`identity` schema was applied by hand — 22 tables owned by `identity`, **no
+`goose_db_version` table**, the signature of `bin/migrate`'s `psql` loop. On that
+box the migrate Job will now fail at `00001` with `relation "users" already
+exists`, because goose will correctly believe nothing has been applied.
+
+That is not a defect in the migrator: *no* versioned tool can distinguish "an
+empty database" from "a populated database nobody recorded". It is the exact cost
+of the out-of-band apply, and there are two ways out, both one-time and both
+outside this packet: **stamp the baseline** — create goose's own table and record
+the versions whose objects are already present
+(`goose_db_version(id, version_id, is_applied, tstamp)`, one applied row per
+version up to 35, plus goose's `version_id = 0` row) — or **rebuild** on a box
+where the schema holds nothing worth keeping. On a **fresh** box, which is what
+the packet is about and what the Job is for, the apply is clean, as §3's evidence
+shows.
+
+`bin/migrate`'s `psql` loop not writing a version table is written down in
+migrations/README.md as the reason to use `goose` or `identity migrate` for
+anything a deployed box will later touch.
+
+## 6. What I deliberately did NOT do
 
 - **Did not touch `cafaye/kit` or any other repository.** The substrate's step
   needs no change: its identity default is the path this image now ships.

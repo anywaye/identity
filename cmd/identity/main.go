@@ -134,13 +134,14 @@ const (
 // IT ALSO READS argv[0], and that is the whole reason this is a function rather
 // than a `switch os.Args[1]`. The substrate's migrations step runs a service's
 // migrate entrypoint at a path it already knows — `/app/bin/migrate` for
-// identity — because that is the path the repository has always said. A
-// distroless image has no shell to write that path as a script and no `cp -a`
-// at build time to duplicate a 10 MB binary for it, so the image ships
-// `/app/bin/migrate` as a second NAME for `/app/service` (a symlink; see the
-// Dockerfile), and the binary decides by the name it was invoked under. argv[0]
-// is preserved across a symlink, so `kubectl run … -- /app/bin/migrate` arrives
-// here as `{"", "/app/bin/migrate"}` and selects migrate.
+// identity — because that is the path the repository has always said, and a
+// substrate this repository does not own is not the place to change it. So the
+// image ships the same binary at that path as well (`COPY`, and the Dockerfile
+// says why it is a copy rather than a link: the runtime stage has no shell to
+// run `ln` in and `COPY` dereferences a link anyway), and the dispatch is by the
+// name the process was started under. argv[0] is that name, so
+// `kubectl run … -- /app/bin/migrate` arrives here as
+// `{"", "/app/bin/migrate"}` and selects migrate.
 //
 // BOTH SPELLINGS ARE SUPPORTED ON PURPOSE. `/app/service migrate` is the honest
 // description of what is happening and is what a person debugging a box will
