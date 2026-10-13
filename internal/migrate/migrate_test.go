@@ -184,16 +184,39 @@ func TestAMigrationThatFailsIsNamedAndTheRunStopsThere(t *testing.T) {
 // It FAILS rather than skips when TEST_DATABASE_URL is unset, because every test
 // above is a database test that skips without it: this file would report `ok`
 // having proven nothing about the image's ability to migrate.
+//
+// IT IS A READ, deliberately. The tests above migrate databases of their own;
+// this one points at the SHARED suite database, which bin/prime has already
+// provisioned and migrated, and it asks it for its recorded version. Applying
+// anything there would be this file mutating a database other packages are
+// testing against at the same moment.
 func TestTheDatabaseTierActuallyRan(t *testing.T) {
-	if os.Getenv(dbtest.EnvVar) == "" {
+	dsn := os.Getenv(dbtest.EnvVar)
+	if dsn == "" {
 		t.Fatalf("%s is not set, so every migrate test above skipped and a green run "+
 			"has verified nothing about the image's ability to migrate its own schema. "+
 			"Start Postgres (`docker compose up -d --wait postgres`) and re-run with %s set.",
 			dbtest.EnvVar, dbtest.EnvVar)
 	}
-	if _, err := Run(context.Background(), os.Getenv(dbtest.EnvVar), migrations.FS, testLogger(t)); err != nil {
-		t.Fatalf("%s is set but its database could not be migrated: %v", dbtest.EnvVar, err)
+
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatalf("opening %s: %v", dbtest.EnvVar, err)
 	}
+	defer func() { _ = db.Close() }()
+
+	var version int64
+	if err := db.QueryRowContext(context.Background(),
+		`select coalesce(max(version_id), 0) from goose_db_version`).Scan(&version); err != nil {
+		t.Fatalf("%s is set but has no readable goose_db_version (%v), so the suite is "+
+			"running against a database no migration has touched. bin/prime provisions it "+
+			"with bin/provision-testdb before the suite; a scan that reaches a server without it "+
+			"reads like a code failure rather than a pipeline that is wired wrong.", dbtest.EnvVar, err)
+	}
+	if version < 1 {
+		t.Fatalf("%s records no applied migration (max version %d)", dbtest.EnvVar, version)
+	}
+	t.Logf("the shared suite database is at migration version %d", version)
 }
 
 // newScratchDatabase creates a database for one test and returns a DSN for it.

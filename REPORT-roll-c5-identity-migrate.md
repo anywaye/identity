@@ -152,10 +152,14 @@ ok  	github.com/cafaye/identity/internal/migrate	1.786s
 | a broken migration is **named** | run twice under two **different** filenames, so the name cannot be a hardcoded string |
 | the run **stops** at the failure | a valid `00037_never_reached.sql` after it, and the assertion is made by asking the DATABASE (`information_schema.tables`), not by reading the error |
 | the failure is the injected file | a control database, same harness, same migrations, no injection: it applies all 35 and the marker table does not exist |
-| the embed has not narrowed | the embedded set is compared with the directory's set in both directions |
-| every embedded file will run | goose collects **non-strictly** (v3.28.0 `provider.go:122`, `strict=false`), so a misnamed `.sql` is skipped in silence; the naming convention is therefore asserted on the artifact |
+| the embed has not narrowed | the embedded set is compared with the directory's set in both directions || every embedded file will run | goose collects **non-strictly** (v3.28.0 `provider.go:122`, `strict=false`), so a misnamed `.sql` is skipped in silence; the naming convention is therefore asserted on the artifact |
 | the closure carries no dialect driver | pgx and goose must be PRESENT, or "no ClickHouse/MySQL/…" passes over an empty list |
 | the migration path is the one kit runs | `argv[0] = /app/bin/migrate` is a table case, and the Dockerfile's `COPY` to that path is asserted — the check that would have caught this packet's own bug, below |
+
+`TestTheDatabaseTierActuallyRan` is a **read**: it asks the shared suite database
+for its recorded version rather than migrating it. The other tests migrate
+databases of their own, so the file never mutates a database another package is
+testing against at the same moment.
 
 ### The bug this packet shipped and then caught
 
@@ -269,8 +273,15 @@ $ go vet ./...          # clean, exit 0
 $ IDENTITY_ROLLBACK_URL="postgres://identity:identity@localhost:5432/identity?sslmode=disable" ./bin/rollback
 rollback: 35 migrations, each rolled back and re-applied with zero leftovers
                                                         # exit 0 — no migration file changed
-$ go test -race -count=1 -p 4 ./...                     # the fourth gate; see below
-RACE-OUTPUT
+$ go test -race -count=1 -p 4 ./...                     # the fourth gate
+ok  	github.com/cafaye/identity/internal/migrate	…
+ok  	github.com/cafaye/identity/migrations	1.618s
+ok  	github.com/cafaye/identity/internal/tenancy	3.076s
+ok  	github.com/cafaye/identity/internal/users	2.855s
+                                                        # 32 packages ok, exit 0
+$ golangci-lint run ./internal/migrate/... ./migrations/... ./cmd/identity/... ./internal/platform/ci/...
+9 issues:                        # ALL pre-existing, none in a file this packet added
+* errcheck: 9                    # (os.Unsetenv/Close/Remove in test files from earlier packets)
 ```
 
 ---
