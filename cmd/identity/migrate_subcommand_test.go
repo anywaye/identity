@@ -119,17 +119,15 @@ func TestRunMigrateRefusesWithoutADSN(t *testing.T) {
 func TestTheImageShipsTheMigrateEntrypointTheSubstrateInvokes(t *testing.T) {
 	dockerfile := dockerfileText(t)
 
-	// The symlink is built in the builder stage, because the runtime stage has
-	// no shell to run `ln` in. Both lines are asserted: the link alone would not
-	// be copied, and the copy alone would not exist.
-	if !strings.Contains(dockerfile, "ln -s /app/service /out/bin/migrate") {
-		t.Error("the Dockerfile does not create /out/bin/migrate as a second name for " +
-			"/app/service. The runtime stage is distroless — no shell, no `ln` — so the link " +
-			"has to be made in the builder and copied.")
-	}
-	if !strings.Contains(dockerfile, "COPY --from=build /out/bin/migrate /app/bin/migrate") {
-		t.Error("the Dockerfile does not copy /out/bin/migrate into the runtime image, so the " +
-			"image has no migrate entrypoint and kit's migrations step can only fail loudly.")
+	// ONE `go build`, TWO NAMES, and the COPY is the only thing that makes them
+	// the same bytes: the runtime stage has no shell, so `/app/bin/migrate`
+	// cannot be a script, and `COPY --from=<stage>` DEREFERENCES a symlink
+	// (measured — see the Dockerfile's comment), so a link made in the builder
+	// would arrive as this same second copy anyway.
+	if !strings.Contains(dockerfile, "COPY --from=build /out/service /app/bin/migrate") {
+		t.Error("the Dockerfile does not copy the service binary to /app/bin/migrate, so the " +
+			"image has no migrate entrypoint at the path kit's substrate invokes and the " +
+			"migrations step can only fail loudly.")
 	}
 	if !strings.Contains(dockerfile, "/app/bin/migrate") {
 		t.Error("the Dockerfile never mentions /app/bin/migrate, which is the path " +

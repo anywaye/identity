@@ -40,26 +40,41 @@ RUN go build -trimpath -ldflags="-s -w" -o /out/service ./cmd/${SERVICE_NAME}
 # column written by a binary from another commit is a schema the service has
 # not reviewed.
 RUN go build -trimpath -ldflags="-s -w" -o /out/identity-staff ./cmd/identity-staff
-# /app/bin/migrate IS THE SERVICE BINARY UNDER A SECOND NAME, and that is the
-# whole trick: the runtime stage is distroless, so this path cannot be a shell
-# script, and it must exist because it is the path kit's substrate already
-# invokes for identity (`migration_command_for` in
-# templates/substrate/install.sh) with no override.
-#
-# A symlink rather than a second copy: `os.Args[0]` is preserved across one, so
-# the binary sees the name it was called by and dispatches on it (see
-# `subcommand` in cmd/identity/main.go). It is created here, in the builder,
-# because the runtime stage has no shell to run `ln` in. If a Docker COPY does
-# dereference it instead, the result is a byte-identical second copy of the same
-# binary, which dispatches exactly the same way — the failure mode of the
-# unusual case is a larger image, not a broken one.
-RUN mkdir -p /out/bin && ln -s /app/service /out/bin/migrate
 
 FROM gcr.io/distroless/static-debian12:nonroot AS runtime
 WORKDIR /app
 COPY --from=build /out/service /app/service
 COPY --from=build /out/identity-staff /app/identity-staff
-COPY --from=build /out/bin/migrate /app/bin/migrate
+# /app/bin/migrate IS THE SAME BINARY AS /app/service, COPIED A SECOND TIME, AND
+# IT EXISTS FOR THE SUBSTRATE RATHER THAN FOR A PERSON.
+#
+# kit's `install_migrations` runs each service's migrate entrypoint at a path it
+# already knows — `/app/bin/migrate` for identity (`migration_command_for` in
+# templates/substrate/install.sh) — with no override, so that is the path that
+# has to exist for a box to come up with a schema. The runtime stage is
+# distroless, so it cannot be a shell script, and there is no `ln` and no `cp` to
+# run in it at all.
+#
+# A SYMLINK WAS TRIED AND DOES NOT SURVIVE THE COPY. Measured against Docker
+# 29.8.2 with a busybox stand-in for exactly these two lines:
+#
+#     FROM busybox AS build
+#     RUN mkdir -p /out/bin && ln -s /bin/busybox /out/bin/migrate
+#     FROM busybox
+#     COPY --from=build /out/bin/migrate /app/bin/migrate
+#     RUN ls -l /app/bin/migrate
+#     -rwxr-xr-x 1 root root 1185328 /app/bin/migrate      # a regular file
+#
+# `COPY --from=<stage>` DEREFERENCES the link, so a link made in the builder
+# arrives as a second copy of its target anyway. Saying that out loud is the
+# honest form: ONE `go build`, TWO NAMES, and this COPY is what makes them the
+# same bytes (two builds would be a migrator from another commit, which is the
+# thing the staff binary's comment above refuses for the same reason).
+#
+# The dispatch is by the name the process was started under (`subcommand` in
+# cmd/identity/main.go), which is what makes `/app/bin/migrate` the migrator and
+# `/app/service` the server.
+COPY --from=build /out/service /app/bin/migrate
 USER nonroot:nonroot
 EXPOSE 8080
 # The service is stateless: the connection pool is opened lazily and closed on
