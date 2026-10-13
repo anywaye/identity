@@ -162,6 +162,11 @@ jobs:
   gate:
     name: 'gate (bin/prime, migrations, tiers, lockfile)'
     runs-on: ubuntu-latest
+    # 30, and not GitHub's 360-minute default: a hung job burns billing hours.
+    # This job's real cost is minutes — toolchain install, 17 migrations both
+    # ways, bin/prime plus a second -race run, three boots — so 30 is a ceiling
+    # a healthy run never reaches, not a target.
+    timeout-minutes: 30
 
     services:
       postgres:
