@@ -284,6 +284,13 @@ $ golangci-lint run ./internal/migrate/... ./migrations/... ./cmd/identity/... .
 * errcheck: 9                    # (os.Unsetenv/Close/Remove in test files from earlier packets)
 ```
 
+The `bin/prime` output quoted above is the first green run. The branch head
+(`0f55d25`, after the sentinel became a read rather than a migration) was run
+again with the same two variables and the same command: **exit 0, 32 packages
+`ok`**, including `internal/migrate 23.709s`, `internal/platform/ci 6.198s`,
+`cmd/identity 11.439s` and `migrations 0.258s` — the only difference from the
+block above being the timings.
+
 ---
 
 ## 5. The one residual risk, and it is the live box's, not this packet's
