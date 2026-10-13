@@ -170,7 +170,7 @@ func TestOpenAndPingIntegration(t *testing.T) {
 	}
 }
 
-// TestOpenAppliesConfiguredPoolSize proves the pool honours Options, again
+// TestOpenAppliesConfiguredPoolSize proves the pool honors Options, again
 // only when a real database is available.
 func TestOpenAppliesConfiguredPoolSize(t *testing.T) {
 	dsn := os.Getenv("TEST_DATABASE_URL")

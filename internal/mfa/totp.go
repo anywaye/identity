@@ -15,7 +15,7 @@ import (
 // a secret and a counter into a six-digit string, and hotp.ValidateCustom is
 // that same computation with a constant-time comparison in front of it. This
 // package supplies the counter and asks the question. That is the whole
-// division of labour, and it is the one that keeps this file auditable: there is
+// division of labor, and it is the one that keeps this file auditable: there is
 // no truncation, no padding and no comparison here to get wrong.
 
 // hotpOptions is the library's verification options, built from a row's columns.

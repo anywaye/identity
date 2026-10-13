@@ -379,7 +379,7 @@ func TestALoginHalfwayThroughWhenTheUserChangesMFA(t *testing.T) {
 		challenge := h.challengeAt()
 		oldCode := h.code()
 
-		// Rotate: authorise with the current code, then confirm the new secret.
+		// Rotate: authorize with the current code, then confirm the new secret.
 		started, err := h.svc.StartEnrollment(t.Context(), StartEnrollmentInput{UserID: h.user.ID, Factor: oldCode})
 		if err != nil {
 			t.Fatalf("rotating: %v", err)

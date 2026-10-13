@@ -239,7 +239,7 @@ func TestTheTwoSessionOnlyRoutesAreTheOnlyTwoThatRequireOne(t *testing.T) {
 // On the four redemption routes a session is not refused — and it must not be
 // REQUIRED either. If any of them called `currentUser`, a person following a link
 // from a mail client with no cookie would get a 401 on a link they legitimately
-// received, and the token that IS their credential would be ignored in favour of a
+// received, and the token that IS their credential would be ignored in favor of a
 // browser session they may not have.
 //
 // So: four routes, zero credentials, and every one of them reaches the use case.

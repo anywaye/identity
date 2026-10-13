@@ -101,7 +101,6 @@ type tenancyResponse struct {
 	member    membershipResponse
 	invite    invitationResponse
 	list      []accountListItem
-	decoded   bool
 	problem   Problem
 	rawHeader http.Header
 }

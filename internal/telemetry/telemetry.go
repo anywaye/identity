@@ -64,7 +64,6 @@ package telemetry
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -106,7 +105,7 @@ const defaultEndpoint = "http://otel-collector:4318"
 const DefaultEndpoint = defaultEndpoint
 
 // EndpointVariable is the only contract between identity and an observability
-// backend. Set it and telemetry goes there; unset it and nothing is dialled.
+// backend. Set it and telemetry goes there; unset it and nothing is dialed.
 const EndpointVariable = "IDENTITY_OTEL_ENDPOINT"
 
 // TenantVariable names the deployment's tenant, which goes on the RESOURCE and
@@ -773,7 +772,3 @@ func sortedKeys(attributes map[string]any) []string {
 	sort.Strings(keys)
 	return keys
 }
-
-// joinErrs combines shutdown errors without importing the errors package's
-// variadic Join into every caller's error handling.
-func joinErrs(errs ...error) error { return errors.Join(errs...) }

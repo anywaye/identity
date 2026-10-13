@@ -94,7 +94,7 @@ func TestUnusableInboundTraceIDIsReplaced(t *testing.T) {
 			if got == "" {
 				t.Error("no trace id was set at all")
 			}
-			// The forged header must not have materialised.
+			// The forged header must not have materialized.
 			if rec.Header().Get("X-Admin") != "" {
 				t.Error("the injected header reached the response")
 			}

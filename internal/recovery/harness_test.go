@@ -42,7 +42,7 @@ type harness struct {
 	// secondFactor is the seam the session-link mint asks about its subject. It is a
 	// STUB and not internal/mfa's service because that package's own store needs its
 	// own tables and a vault, and the property under test here is the mint's
-	// BEHAVIOUR for each answer rather than mfa's lookup — which is exercised in
+	// BEHAVIOR for each answer rather than mfa's lookup — which is exercised in
 	// internal/mfa. A stub that could not fail would be a problem, so it can: see
 	// `err` and `enrolled`.
 	secondFactor *stubSecondFactor
@@ -71,13 +71,6 @@ func (m *recordingMailer) Send(_ context.Context, msg Message) error {
 	}
 	m.sent = append(m.sent, msg)
 	return nil
-}
-
-// messages is every message delivered so far.
-func (m *recordingMailer) messages() []Message {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return append([]Message(nil), m.sent...)
 }
 
 // count is how many messages have been delivered, which is the assertion a mail
@@ -129,13 +122,11 @@ func (r *recordingAccessRevoker) swept(userID id.UUID) (time.Time, bool) {
 
 // stubSecondFactor is `mfa.Service.Enabled`'s answer, held in memory.
 //
-// IT IS A STUB WITH THREE ANSWERS RATHER THAN A BOOLEAN FIELD, and the third is the
-// point: `enabled`, `enrolled` and `err` cover the two questions the mint asks and
-// the failure where the seam cannot answer at all, so a test can prove that a
-// deployment which cannot look is refused rather than served. A stub with only
-// `enrolled bool` could not express the case the refusal exists for.
+// `enrolled` and `err` cover the question the mint asks and the failure where
+// the seam cannot answer at all, so a test can prove that a deployment which
+// cannot look is refused rather than served. A stub with only `enrolled bool`
+// could not express the case the refusal exists for.
 type stubSecondFactor struct {
-	enabled  bool
 	enrolled bool
 	err      error
 }
@@ -223,7 +214,6 @@ func testHasher() *users.Hasher {
 type account struct {
 	id    id.UUID
 	email string
-	token string
 }
 
 // register creates a user and signs them in.

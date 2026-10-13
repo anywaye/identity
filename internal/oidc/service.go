@@ -217,7 +217,7 @@ func (s *Service) Get(ctx context.Context, accountID, rowID id.UUID) (Client, er
 	return client, nil
 }
 
-// RevokeInput is a request to stop honouring a registration.
+// RevokeInput is a request to stop honoring a registration.
 type RevokeInput struct {
 	AccountID id.UUID
 	ClientID  id.UUID
@@ -227,7 +227,7 @@ type RevokeInput struct {
 	Reason string
 }
 
-// Revoke stops honouring a registration and announces it.
+// Revoke stops honoring a registration and announces it.
 //
 // Three writes in one transaction: the row, the bulk revocation of every access
 // token issued against it, and the event. The middle one is the reason this is

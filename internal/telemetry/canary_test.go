@@ -86,7 +86,7 @@ func renderExports(recorder *tracetest.SpanRecorder) string {
 			rendered.WriteString(" ")
 			rendered.WriteString(string(kv.Key))
 			rendered.WriteString("=")
-			rendered.WriteString(kv.Value.Emit())
+			rendered.WriteString(kv.Value.String())
 		}
 		rendered.WriteString("\n")
 	}
@@ -269,7 +269,7 @@ func TestTheResourceCarriesOnlyCoresFiveNames(t *testing.T) {
 
 	got := map[string]string{}
 	for _, kv := range built.Attributes() {
-		got[string(kv.Key)] = kv.Value.Emit()
+		got[string(kv.Key)] = kv.Value.String()
 	}
 
 	// core/schemas/telemetry/traces.schema.json `$defs.resource.properties`, and

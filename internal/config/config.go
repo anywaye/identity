@@ -658,7 +658,7 @@ func (c Config) OIDCEnabled() bool {
 //
 // The split sentinel matters at the one place it is used: `main` treats "absent"
 // as a deployment with no mail path and mounts `recovery.Unavailable{}`, and treats
-// "present and unreadable" as a startup failure. Those are opposite behaviours and
+// "present and unreadable" as a startup failure. Those are opposite behaviors and
 // an operator who cannot tell them apart from the log has been told nothing.
 func (c Config) CourierToken() (string, error) {
 	if c.CourierTokenValue == "" {
@@ -972,7 +972,7 @@ func (c *Config) loadOAuth(lookup Lookup) error {
 		if variable := oauthEndpointVariable(err); variable != "" {
 			return fmt.Errorf("%w: %s: %w", ErrInvalidOAuth, variable, err)
 		}
-		return fmt.Errorf("%w: %v", ErrInvalidOAuth, err)
+		return fmt.Errorf("%w: %w", ErrInvalidOAuth, err)
 	}
 	return nil
 }
@@ -1027,7 +1027,7 @@ func (c *Config) loadMFA(lookup Lookup) error {
 	// OIDC_SIGNING_KEY does not have to think about it.
 	decoded, err := base64.RawURLEncoding.DecodeString(encoded)
 	if err != nil {
-		return fmt.Errorf("%w: it is not base64url: %v", ErrInvalidMFA, err)
+		return fmt.Errorf("%w: it is not base64url: %w", ErrInvalidMFA, err)
 	}
 	c.MFAEncryptionKeyValue = decoded
 	return nil
@@ -1226,7 +1226,7 @@ func (c *Config) loadAgentClaimUI(lookup Lookup) error {
 
 	parsed, err := url.Parse(raw)
 	if err != nil {
-		return fmt.Errorf("%w: it is not a URL: %v", ErrInvalidAgentClaimUI, err)
+		return fmt.Errorf("%w: it is not a URL: %w", ErrInvalidAgentClaimUI, err)
 	}
 	if parsed.Scheme != "https" && parsed.Scheme != "http" {
 		return fmt.Errorf("%w: its scheme is %q, want http or https", ErrInvalidAgentClaimUI, parsed.Scheme)
@@ -1460,7 +1460,7 @@ func resolveLinkTemplates(lookup Lookup) (map[recovery.Purpose]string, error) {
 func validateMailBaseURL(raw string) error {
 	parsed, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil {
-		return fmt.Errorf("%w: COURIER_BASE_URL is not a URL: %v", ErrInvalidCourier, err)
+		return fmt.Errorf("%w: COURIER_BASE_URL is not a URL: %w", ErrInvalidCourier, err)
 	}
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
 		return fmt.Errorf("%w: COURIER_BASE_URL scheme is %q, want http or https",
@@ -1504,7 +1504,7 @@ func validateLinkTemplate(variable, raw string) error {
 	probe := strings.ReplaceAll(trimmed, recoveryTokenPlaceholder, "6f5d4c3b-2a19-4e8f-9c07-1b2d3e4f5061")
 	parsed, err := url.Parse(probe)
 	if err != nil {
-		return fmt.Errorf("%w: %s is not a URL: %v", ErrInvalidCourier, variable, err)
+		return fmt.Errorf("%w: %s is not a URL: %w", ErrInvalidCourier, variable, err)
 	}
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
 		return fmt.Errorf("%w: %s scheme is %q, want http or https",
@@ -1593,12 +1593,12 @@ func (c *Config) loadOIDC(lookup Lookup) error {
 	// The boot-time half of the login UI rule, and the refusal an operator reads
 	// names the variable they have to set.
 	if err := oidc.ValidateLoginUIURL(loginUI); err != nil {
-		return fmt.Errorf("%w: %s: %v", ErrInvalidOIDC, oidc.LoginUIEnvVar, err)
+		return fmt.Errorf("%w: %s: %w", ErrInvalidOIDC, oidc.LoginUIEnvVar, err)
 	}
 
 	parsed, err := url.Parse(issuer)
 	if err != nil {
-		return fmt.Errorf("%w: OIDC_ISSUER is not a URL: %v", ErrInvalidOIDC, err)
+		return fmt.Errorf("%w: OIDC_ISSUER is not a URL: %w", ErrInvalidOIDC, err)
 	}
 	if parsed.Scheme != "https" && parsed.Scheme != "http" {
 		return fmt.Errorf("%w: OIDC_ISSUER scheme is %q, want https", ErrInvalidOIDC, parsed.Scheme)

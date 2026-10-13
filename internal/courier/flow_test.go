@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -304,7 +305,9 @@ func TestTheTwoOutcomesAgreeOnEverythingACallerCanSee(t *testing.T) {
 	registered := flow.requestReset(t, flow.who.email)
 	unregistered := flow.requestReset(t, "still-nobody@example.com")
 
-	if registered != unregistered {
+	// Compared with errors.Is rather than !=: a wrapped refusal is the same
+	// refusal, and != would call two identical outcomes different.
+	if !errors.Is(registered, unregistered) {
 		t.Errorf("a registered address produced %v and an unregistered one %v; that "+
 			"difference is the oracle", registered, unregistered)
 	}
@@ -523,7 +526,7 @@ func newCourierStub(t *testing.T) *courierStub {
 
 	stub.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// `/readyz` is outside every pipeline in courier and answers for its
-		// database. Honouring it is what makes the flow reach the send path at all,
+		// database. Honoring it is what makes the flow reach the send path at all,
 		// and it is the same route the real client probes.
 		if r.URL.Path == readyzPath {
 			w.Header().Set("Content-Type", "application/json")

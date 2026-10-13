@@ -58,7 +58,7 @@ import (
 // It is one test rather than a table because there is exactly one shape to prove
 // and three properties to hold on it: the error is a *DisabledError, the session
 // mint was never reached, and the failure counter was left where a locked-out
-// login would leave it rather than being credited or penalised by a state the
+// login would leave it rather than being credited or penalized by a state the
 // caller cannot act on.
 func TestLoginRefusesADisabledAccountWithItsOwnError(t *testing.T) {
 	t.Parallel()
@@ -326,7 +326,7 @@ func TestASocialCallbackForADisabledAccountMintsNothing(t *testing.T) {
 // administrator to act inside it.
 //
 // The check is inside the same transaction that creates the session, so a refusal
-// rolls the session back rather than minting one and apologising.
+// rolls the session back rather than minting one and apologizing.
 func TestCompletingASecondFactorForAnAccountDisabledMidwayMintsNoSession(t *testing.T) {
 	t.Parallel()
 

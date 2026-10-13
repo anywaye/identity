@@ -74,7 +74,7 @@ const (
 // the digit count or the algorithm after enrollment does not upgrade anybody's
 // second factor — it invalidates it, silently, for every user at once. So they
 // are written down here, in the code that reads them, and the row carries them
-// as well so a verifier honours what the provisioning URI promised rather than
+// as well so a verifier honors what the provisioning URI promised rather than
 // what this version of the code happens to assume.
 const (
 	// Digits is the length of a TOTP code. Six, because that is what every
@@ -249,10 +249,6 @@ type FieldError struct {
 
 func (e *FieldError) Error() string {
 	return e.Field + ": " + e.Code
-}
-
-func fieldErr(field, code string) error {
-	return &FieldError{Field: field, Code: code}
 }
 
 // Credential is a row in mfa_credentials.

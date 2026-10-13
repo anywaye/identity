@@ -404,9 +404,10 @@ func TestTheStaffDirectoryRefusesEverybodyElse(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newStaffFixture(t, tc.staff)
 			credential := tc.credential
-			if credential == "session" {
+			switch credential {
+			case "session":
 				credential = f.session
-			} else if credential == "machine" {
+			case "machine":
 				credential = apiKeySecret
 			}
 
@@ -522,9 +523,10 @@ func TestTheStaffDisableEnableRefusesEverybodyElse(t *testing.T) {
 					f.auth.authErr = auth.ErrUnauthenticated
 				}
 				credential := tc.credential
-				if credential == "session" {
+				switch credential {
+				case "session":
 					credential = f.session
-				} else if credential == "machine" {
+				case "machine":
 					credential = apiKeySecret
 				}
 				subject := id.MustNew()

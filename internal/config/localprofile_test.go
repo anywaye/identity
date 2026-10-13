@@ -133,7 +133,7 @@ func TestTheLocalProfileIsProdShaped(t *testing.T) {
 	if cfg.OIDCIssuer != localIssuer {
 		t.Errorf("OIDCIssuer = %q, want %q — the issuer is baked into every token and is the one value "+
 			"PLAN §1 says is never moved after first issuance, so a local run that minted anything else "+
-			"would be practising a shape no verifier accepts", cfg.OIDCIssuer, localIssuer)
+			"would be practicing a shape no verifier accepts", cfg.OIDCIssuer, localIssuer)
 	}
 	if cfg.OIDCAllowInsecure {
 		t.Error("OIDCAllowInsecure is true; the local issuer is https and must not need the escape hatch")

@@ -49,7 +49,7 @@ func (f *Fake) Now() time.Time {
 }
 
 // Advance moves the clock forward by d. A non-positive d is ignored: rewinding
-// time is never what a test means, and honouring it would let a bug hide.
+// time is never what a test means, and honoring it would let a bug hide.
 func (f *Fake) Advance(d time.Duration) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

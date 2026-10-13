@@ -95,7 +95,7 @@ func TestTenancyACredentialResolvesByTheDigestTheCallerPresentedAndNothingElse(t
 	// value that is NOT the account — and that shape is the point, so it is
 	// exercised on api_keys itself, with real foreign keys, because a fixture that
 	// dodged them would not be the query.
-	tenantA, tenantB := seedCredentialRows(t, ctx, conn)
+	tenantA, tenantB := seedCredentialRows(ctx, t, conn)
 
 	// 0. THE FIXTURE REALLY HOLDS TWO KEYS, and this is asserted rather than
 	//    assumed. Every "a resolution session sees exactly one row" assertion below
@@ -490,7 +490,7 @@ func inTransaction(ctx context.Context, conn *pgx.Conn, begin, arg string, fn fu
 // assert WHICH row a resolution returned rather than only how many it returned.
 // Two keys named `fixture` would make "one row" and "the right one row" the same
 // assertion, and case 3 needs them to be different.
-func seedCredentialRows(t *testing.T, ctx context.Context, conn *pgx.Conn) (tenantA, tenantB string) {
+func seedCredentialRows(ctx context.Context, t *testing.T, conn *pgx.Conn) (tenantA, tenantB string) {
 	t.Helper()
 
 	if err := conn.QueryRow(ctx, `select gen_random_uuid()::text, gen_random_uuid()::text`).

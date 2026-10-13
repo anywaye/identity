@@ -161,10 +161,10 @@ func TestAnAuthorizationRequestIsNotSpendableByABrowserThatDidNotStartIt(t *test
 			rec.Header().Get("Location"))
 	}
 
-	switch {
-	case rec.Code == http.StatusForbidden:
+	switch rec.Code {
+	case http.StatusForbidden:
 		// The expected answer, and the one the flow cookie buys.
-	case rec.Code == http.StatusFound:
+	case http.StatusFound:
 		redirect := mustRedirectToLoginUI(t, rec)
 		if redirect.Query().Get(oidc.LoginParamRequestID) != requestIDOf(t, attackerLoginURL) {
 			t.Errorf("the redirect names %q rather than the request in the URL; a login UI "+

@@ -44,14 +44,20 @@ func main() {
 func run(args []string, lookup func(string) (string, bool), stdout, stderr *os.File) int {
 	action, email, err := parse(args)
 	if err != nil {
-		fmt.Fprintln(stderr, err)
-		fmt.Fprintln(stderr, usage())
+		if werr := say(stderr, err.Error()); werr != nil {
+			return 1
+		}
+		if werr := say(stderr, usage()); werr != nil {
+			return 1
+		}
 		return 2
 	}
 
 	dsn, ok := lookup("DATABASE_URL")
 	if !ok || dsn == "" {
-		fmt.Fprintln(stderr, "DATABASE_URL is not set: this command writes to the database the service reads")
+		if werr := say(stderr, "DATABASE_URL is not set: this command writes to the database the service reads"); werr != nil {
+			return 1
+		}
 		return 1
 	}
 
@@ -60,7 +66,9 @@ func run(args []string, lookup func(string) (string, bool), stdout, stderr *os.F
 
 	pool, err := db.Open(ctx, dsn, db.DefaultOptions())
 	if err != nil {
-		fmt.Fprintln(stderr, "opening the database pool:", err)
+		if werr := say(stderr, fmt.Sprintf("opening the database pool: %v", err)); werr != nil {
+			return 1
+		}
 		return 1
 	}
 	defer pool.Close()
@@ -68,15 +76,29 @@ func run(args []string, lookup func(string) (string, bool), stdout, stderr *os.F
 	user, err := apply(ctx, users.NewStore(pool), pool, action, email)
 	if err != nil {
 		if errors.Is(err, users.ErrNotFound) {
-			fmt.Fprintf(stderr, "no user with address %q exists on this deployment\n", email)
+			if werr := say(stderr, fmt.Sprintf("no user with address %q exists on this deployment", email)); werr != nil {
+				return 1
+			}
 			return 1
 		}
-		fmt.Fprintln(stderr, "the staff change failed:", err)
+		if werr := say(stderr, fmt.Sprintf("the staff change failed: %v", err)); werr != nil {
+			return 1
+		}
 		return 1
 	}
 
-	fmt.Fprintf(stdout, "%s staff=%t\n", user.Email, user.IsStaff)
+	if werr := say(stdout, fmt.Sprintf("%s staff=%t", user.Email, user.IsStaff)); werr != nil {
+		return 1
+	}
 	return 0
+}
+
+// say prints one line for the operator. A CLI that cannot write its own
+// answer has itself failed, so the write error is returned: the caller turns
+// it into an exit code rather than dropping it beside the one it chose.
+func say(w *os.File, msg string) error {
+	_, err := fmt.Fprintln(w, msg)
+	return err
 }
 
 // action is what the operator asked for.

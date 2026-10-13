@@ -76,22 +76,19 @@ func WithTenancy(t Tenancy) Option {
 // http.HandlerFunc, and the session is resolved once per request rather than once
 // per handler that needs the caller.
 //
-// The three credential facts a handler might need, and they are deliberately
-// three fields rather than one union type. A session caller has ScopeKey zero and
-// KeyID zero; a token caller has all three set. A handler that needs to know which
-// it is can ask, and a handler that does not — nearly all of them — never has to.
+// The credential facts a handler might need, and they are deliberately
+// fields rather than one union type. A session caller has KeyID zero; a token
+// caller has it set. A handler that needs to know which it is can ask, and a
+// handler that does not — nearly all of them — never has to.
+//
+// Scopes deliberately travel NO field here: the scope gate reads the granted
+// set off the authenticated caller itself (`caller.Key.Allows`), so a copy on
+// the context would be a second answer to "what may this token do" that goes
+// stale. See RequireAccountRole.
 type accountScope struct {
 	Account accounts.Account
 	Role    accounts.Role
 	User    users.User
-	// Scopes is the caller's token's granted scopes, empty for a session caller.
-	//
-	// EMPTY FOR A SESSION IS NOT "NO AUTHORITY". A session is a human's credential
-	// and it carries the full authority of its role; a token is a narrowed one. That
-	// asymmetry is the reason the scope check below is skipped for sessions rather
-	// than failing them, and it is the reason a session can reach a route whose
-	// scope a token cannot.
-	Scopes []string
 	// KeyID is the api key's row id, zero for a session caller. It is what a
 	// handler puts in an audit line, and the rule from the packet is that a test
 	// identifying a token uses its id or its name — never the value.
@@ -112,12 +109,6 @@ func accountFrom(ctx context.Context) (accounts.Account, bool) {
 func roleFrom(ctx context.Context) accounts.Role {
 	scope, _ := ctx.Value(accountContextKey{}).(accountScope)
 	return scope.Role
-}
-
-// scopeFrom returns the caller's token scopes, empty for a session caller.
-func scopeFrom(ctx context.Context) []string {
-	scope, _ := ctx.Value(accountContextKey{}).(accountScope)
-	return scope.Scopes
 }
 
 // scopeRequiredBy is the account route → required scope table.
@@ -396,8 +387,7 @@ func (o options) requireAccountRole(min accounts.Role, next http.HandlerFunc) ht
 		// shipped a 500 on registration.
 		ctx := tenancy.WithAccount(context.WithValue(r.Context(), accountContextKey{}, accountScope{
 			Account: account, Role: role, User: user,
-			Scopes: caller.Key.Scopes,
-			KeyID:  caller.Key.ID,
+			KeyID: caller.Key.ID,
 		}), account.ID)
 		next(w, r.WithContext(ctx))
 	}

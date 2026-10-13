@@ -111,7 +111,7 @@ func healthcheck() int {
 	if err != nil {
 		return 1
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	_, _ = io.Copy(io.Discard, resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
@@ -156,7 +156,11 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	defer a.Close()
+	defer func() {
+		if err := a.Close(); err != nil {
+			logger.Warn("closing the app on the way out failed", "error", err)
+		}
+	}()
 
 	if err := a.Listen(); err != nil {
 		return err
@@ -1268,7 +1272,7 @@ func buildOIDC(cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger, event
 // Listen binds the socket. It is separate from Run so the address is known —
 // and reported — before the first request is served.
 func (a *app) Listen() error {
-	listener, err := net.Listen("tcp", a.cfg.Addr())
+	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", a.cfg.Addr())
 	if err != nil {
 		return fmt.Errorf("listening on %s: %w", a.cfg.Addr(), err)
 	}

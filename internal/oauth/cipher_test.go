@@ -140,7 +140,7 @@ func TestCipherSealProducesTheDocumentedFormat(t *testing.T) {
 		t.Errorf("len(Seal(%q)) = %d, want %d (prefix plus base64url of nonce, ciphertext and tag)", "x", len(sealed), want)
 	}
 	for _, r := range strings.TrimPrefix(sealed, SealPrefix) {
-		if !(r >= 'A' && r <= 'Z') && !(r >= 'a' && r <= 'z') && !(r >= '0' && r <= '9') && r != '-' && r != '_' {
+		if (r < 'A' || r > 'Z') && (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' && r != '_' {
 			t.Errorf("Seal produced %q, which is not base64url", sealed)
 			break
 		}

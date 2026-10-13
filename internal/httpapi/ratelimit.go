@@ -50,7 +50,10 @@ func (r *responseRecorder) flush() {
 		}
 	}
 	r.ResponseWriter.WriteHeader(r.status)
-	r.ResponseWriter.Write(r.body.Bytes())
+	// A failed write is a client that is already gone, and there is no one
+	// left to answer — so the error is dropped here rather than returned to a
+	// handler that has nothing to do with it.
+	_, _ = r.ResponseWriter.Write(r.body.Bytes())
 }
 
 // rateLimit wraps next with the request-rate limiter for one route.

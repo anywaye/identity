@@ -372,7 +372,7 @@ func golangciLintEnabled(t *testing.T) []string {
 			"Original error: %v", err)
 	}
 
-	cmd := exec.Command("golangci-lint", "linters", "--json")
+	cmd := exec.CommandContext(t.Context(), "golangci-lint", "linters", "--json")
 	cmd.Dir = repoRoot(t)
 
 	var stdout strings.Builder
@@ -432,7 +432,7 @@ func parseEnabledLinters(raw string) []string {
 func goFiles(t *testing.T, root string) []string {
 	t.Helper()
 
-	out, err := exec.Command("git", "-C", root, "ls-files", "*.go").CombinedOutput()
+	out, err := exec.CommandContext(t.Context(), "git", "-C", root, "ls-files", "*.go").CombinedOutput()
 	if err != nil {
 		t.Fatalf("git ls-files '*.go': %v\n%s", err, out)
 	}

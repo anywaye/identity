@@ -155,7 +155,7 @@ type Status struct {
 // StartEnrollmentInput is a request to begin enrolling a second factor.
 type StartEnrollmentInput struct {
 	UserID id.UUID
-	// Factor is the code presented to authorise a ROTATION. It is required when
+	// Factor is the code presented to authorize a ROTATION. It is required when
 	// the user already has a credential and ignored when they do not, and the
 	// caller does not have to know which case it is: the use case resolves that
 	// from the rows and says so.

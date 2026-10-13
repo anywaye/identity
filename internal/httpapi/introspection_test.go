@@ -222,7 +222,7 @@ func TestAnUnusableTokenIsInactiveAndCarriesNothingElse(t *testing.T) {
 // token asking about somebody else's gets 403; a session that is not an owner of
 // the token's account gets 404 or 403 depending on whether they are a member. All
 // of those are about the REQUEST, and none of them is `{"active": false}` — which
-// would tell an unauthorised caller that the token they named is real.
+// would tell an unauthorized caller that the token they named is real.
 func TestTheCallersStandingIsDecidedSeparatelyFromTheTokens(t *testing.T) {
 	t.Parallel()
 

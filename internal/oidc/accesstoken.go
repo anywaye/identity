@@ -17,7 +17,7 @@ import (
 // There is a row because the access token is a JWT, and a JWT is verifiable by
 // anybody holding the published JWKS — which is the point, and is also why a
 // stateless token needs a way to stop working before it expires. The row is that
-// way: userinfo reads it, and so does anything that has to honour a revocation
+// way: userinfo reads it, and so does anything that has to honor a revocation
 // faster than the signature's `exp` would allow.
 //
 // The id IS the `jti`. There is no surrogate key, because the library hands this

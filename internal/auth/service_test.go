@@ -27,7 +27,7 @@ var start = time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
 // doubles
 // ---------------------------------------------------------------------------
 
-// fakeUsers is an in-memory users.Store. Modelling the state faithfully matters:
+// fakeUsers is an in-memory users.Store. Modeling the state faithfully matters:
 // the lockout tests are only meaningful if the counter and the lock survive
 // across calls the way a row does.
 type fakeUsers struct {
@@ -306,7 +306,7 @@ func (f *fakeSessions) Revoke(_ context.Context, _ db.Querier, sessionID id.UUID
 // ListLiveForUser mirrors the real query's two properties that matter here: the
 // OWNER is part of the predicate, and an expired row is not returned.
 //
-// The expiry half is modelled with `expired` rather than by comparing against a
+// The expiry half is modeled with `expired` rather than by comparing against a
 // clock argument, because the real store takes `now` from the caller and a fake
 // that ignored it could not distinguish "the use case passed the wrong instant"
 // from "the use case passed the right one" — `nowSeen` is what makes that

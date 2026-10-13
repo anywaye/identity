@@ -353,7 +353,7 @@ func (c *Client) getJWKS(ctx context.Context, endpoint string) (*jose.JSONWebKey
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrProviderUnavailable, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("%w: the jwks endpoint answered %d", ErrProviderUnavailable, resp.StatusCode)

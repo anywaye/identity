@@ -176,7 +176,7 @@ func (c *Client) Identity(ctx context.Context, p Provider, tokens Tokens) (Ident
 	if tokens.AccessToken == "" {
 		// Not a refusal: there is nothing to present. It is reported as unavailable
 		// because from here it is indistinguishable from a credential the provider
-		// will not honour, and the caller treats both the same way.
+		// will not honor, and the caller treats both the same way.
 		return Identity{}, fmt.Errorf("%w: there is no access token to present", ErrProviderUnavailable)
 	}
 
@@ -424,7 +424,7 @@ func (c *Client) getJSON(ctx context.Context, endpoint, accessToken string, dst 
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrProviderUnavailable, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("%w: the provider answered %d", ErrProviderUnavailable, resp.StatusCode)

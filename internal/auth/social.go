@@ -329,7 +329,7 @@ func (s *SocialService) signIn(
 // sign in as them.
 //
 // The freshly issued credential is written onto the existing row, which is what a
-// re-consent produces and what keeps the stored copy from ageing into something
+// re-consent produces and what keeps the stored copy from aging into something
 // unusable. It is written on the way IN and not on a later provider call, so the
 // only copy of a token this service ever holds is the most recent one.
 func (s *SocialService) signInAs(

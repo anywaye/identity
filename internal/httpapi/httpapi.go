@@ -149,7 +149,7 @@ type options struct {
 	parameterizedRoute string
 }
 
-// Option customises the handler built by New.
+// Option customizes the handler built by New.
 type Option func(*options)
 
 // WithLogger sets the logger used to report probe failures.

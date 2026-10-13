@@ -36,7 +36,7 @@ package httpapi
 // state is the one thing this pair of routes must not do.
 //
 // So the start route records what it saw, in a second HttpOnly cookie the browser
-// will not let a page read or write, and the callback honours that record. An
+// will not let a page read or write, and the callback honors that record. An
 // attacker can make a victim's browser START a flow; they cannot make it finish one
 // started with somebody else's code, because the state cookie is unreadable to them
 // and VerifyState refuses a mismatch. And a flow that started signed-out arrives

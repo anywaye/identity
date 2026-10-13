@@ -87,7 +87,7 @@ type Batch interface {
 //
 // SKIP LOCKED is what lets several publisher instances run at once: each takes a
 // disjoint set of rows and none of them blocks on another's lock. Without it, two
-// instances would serialise on the head of the table and the second would wait out
+// instances would serialize on the head of the table and the second would wait out
 // the first's entire publish.
 //
 // The transaction stays open until Commit or Release. That is the trade: holding
@@ -168,9 +168,8 @@ type pgBatch struct {
 	events  []Envelope
 	claimed map[id.UUID]struct{}
 
-	mu        sync.Mutex
-	settled   bool
-	committed bool
+	mu      sync.Mutex
+	settled bool
 }
 
 func (b *pgBatch) Events() []Envelope { return b.events }

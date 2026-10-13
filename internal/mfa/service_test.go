@@ -348,7 +348,7 @@ func TestConfirmingAnnouncesItself(t *testing.T) {
 	if payload.CredentialID != credential.ID.String() || payload.Method != MethodTOTP || payload.UserID != h.user.ID.String() {
 		t.Errorf("payload = %+v", payload)
 	}
-	// And nothing secret travelled with it. Every event on the platform reaches
+	// And nothing secret traveled with it. Every event on the platform reaches
 	// every subscriber, which is the wrong place for a credential.
 	rendered := string(events[0].Data)
 	for _, secretValue := range []string{h.secret, h.codes[0], strings.Join(h.codes, "")} {
@@ -440,7 +440,7 @@ func TestARotatedSecretInvalidatesTheOldOne(t *testing.T) {
 	// the old row is untouched. That is the safe direction: an abandoned rotation
 	// leaves the user with the factor they had.
 	//
-	// The clock moves on first, because authorising the rotation spent the current
+	// The clock moves on first, because authorizing the rotation spent the current
 	// step against the OLD secret: re-presenting that exact code would be a replay
 	// and would correctly be refused, which would make this an assertion about the
 	// replay guard rather than about the rotation.
@@ -585,8 +585,8 @@ func TestRegeneratingInvalidatesTheOldSetAtomically(t *testing.T) {
 		t.Errorf("regenerating with no factor = %v, want ErrInvalidFactor", err)
 	}
 
-	// A code the user has already spent cannot authorise anything, so spend one
-	// first and then try to authorise with it.
+	// A code the user has already spent cannot authorize anything, so spend one
+	// first and then try to authorize with it.
 	if _, err := h.svc.VerifyFactor(t.Context(), h.user.ID, old[0], h.now()); err != nil {
 		t.Fatalf("spending a code: %v", err)
 	}
@@ -896,7 +896,7 @@ func TestADeploymentWithNoKeyFailsClosed(t *testing.T) {
 	store := NewStore(pool)
 	user := newTestUser(t, pool)
 
-	// Enrol with a key, so there is a real secret in the row.
+	// Enroll with a key, so there is a real secret in the row.
 	real := NewService(db.TxRunner{Pool: pool}, db.Direct{Pool: pool}, store,
 		outbox.NewStore(pool), sessions.NewStore(pool), mustVault(t), clk, testIssuer)
 	started, err := real.StartEnrollment(t.Context(), StartEnrollmentInput{UserID: user.ID})

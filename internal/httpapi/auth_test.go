@@ -38,7 +38,7 @@ func parseUUIDish(s string) (string, error) {
 			}
 			continue
 		}
-		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f')) {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
 			return "", errors.New("not lower-case hex")
 		}
 	}
@@ -784,7 +784,7 @@ func TestLoginLockedIs423WithRetryAfter(t *testing.T) {
 }
 
 // Retry-After is rounded up: telling a client to wait 419.7 seconds when 420
-// remain is a rounding error in the client's disfavour for no reason.
+// remain is a rounding error in the client's disfavor for no reason.
 func TestRetryAfterSecondsRoundsUp(t *testing.T) {
 	t.Parallel()
 

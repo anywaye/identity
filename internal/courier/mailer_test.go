@@ -545,7 +545,7 @@ func TestTheMailerNeverPrintsACredentialOrAToken(t *testing.T) {
 		"client %#v":       mailer.client,
 		"log output":       log.String(),
 		"retryable":        Retryable(clientErr),
-		"serialized error": serialise(t, clientErr),
+		"serialized error": serialize(t, clientErr),
 	}
 
 	for what, thing := range things {
@@ -822,9 +822,9 @@ func renderAll(t *testing.T, thing any) string {
 	return out.String()
 }
 
-// serialise renders an error as JSON, which is what a structured logger does with
+// serialize renders an error as JSON, which is what a structured logger does with
 // anything it is handed.
-func serialise(t *testing.T, err error) string {
+func serialize(t *testing.T, err error) string {
 	t.Helper()
 	encoded, marshalErr := json.Marshal(map[string]any{"error": err.Error()})
 	if marshalErr != nil {

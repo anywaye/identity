@@ -50,7 +50,7 @@ func fetchUserInfo(t *testing.T, uid string) map[string]json.RawMessage {
 	// The bearer is not optional: `authorizes` compares it against the fake's own
 	// access token, and a 401 here would be the fake refusing rather than a fact
 	// about the uid.
-	req, err := http.NewRequest(http.MethodGet, provider.UserInfoURL, nil)
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, provider.UserInfoURL, nil)
 	if err != nil {
 		t.Fatalf("building the request: %v", err)
 	}

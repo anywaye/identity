@@ -1,6 +1,7 @@
 package recovery
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -245,7 +246,7 @@ func TestAnEmailChangeToAnAddressSomebodyElseHasIsRefusedTwice(t *testing.T) {
 		_, err := h.svc.RequestEmailChange(t.Context(), RequestEmailChangeInput{
 			UserID: who.id, Email: taken.email,
 		})
-		if err != ErrEmailTaken {
+		if !errors.Is(err, ErrEmailTaken) {
 			t.Errorf("RequestEmailChange to a registered address = %v, want ErrEmailTaken", err)
 		}
 		if got := h.mailer.count(); got != 0 {
@@ -268,7 +269,7 @@ func TestAnEmailChangeToAnAddressSomebodyElseHasIsRefusedTwice(t *testing.T) {
 			t.Fatalf("registering the address mid-change: %v", err)
 		}
 
-		if _, err := h.svc.ConfirmEmailChangeNew(t.Context(), ConfirmEmailChangeNewInput{Token: next}); err != ErrEmailTaken {
+		if _, err := h.svc.ConfirmEmailChangeNew(t.Context(), ConfirmEmailChangeNewInput{Token: next}); !errors.Is(err, ErrEmailTaken) {
 			t.Errorf("ConfirmEmailChangeNew onto a registered address = %v, want ErrEmailTaken", err)
 		}
 		assertEmailIs(t, h, who, who.email)
@@ -286,7 +287,7 @@ func TestAnEmailChangeToTheCurrentAddressIsRefused(t *testing.T) {
 		_, err := h.svc.RequestEmailChange(t.Context(), RequestEmailChangeInput{
 			UserID: who.id, Email: address,
 		})
-		if err != ErrSameAddress {
+		if !errors.Is(err, ErrSameAddress) {
 			t.Errorf("RequestEmailChange(%q) = %v, want ErrSameAddress", address, err)
 		}
 	}

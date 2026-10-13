@@ -435,7 +435,7 @@ func NewRecoveryMailer(cfg RecoveryMailerConfig) (*RecoveryMailer, error) {
 //	a template that will not     delegated to `ValidateLinkTemplate`, once per
 //	                             purpose, with the purpose named around it.
 //	a purpose with no message    a template is a setting an operator changes and
-//	                             nothing honours. It is refused rather than ignored
+//	                             nothing honors. It is refused rather than ignored
 //	                             because a variable that is read by nothing is a
 //	                             promise this service does not keep — the same rule
 //	                             as a scope documented on a route that does not gate

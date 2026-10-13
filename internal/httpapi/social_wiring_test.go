@@ -392,7 +392,7 @@ func TestTheRealWiringRefusesToMintASessionOnARefusedProvider(t *testing.T) {
 	// cleared either way.
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("the callback = %d, want 400. The use case's exchanger refuses every code, so a "+
-			"session here would mean the adapter minted one the use case never authorised — a "+
+			"session here would mean the adapter minted one the use case never authorized — a "+
 			"credential obtained by completing a third-party round trip.", rec.Code)
 	}
 	if body := rec.Body.String(); strings.Contains(body, `"token"`) {

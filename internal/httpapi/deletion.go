@@ -21,7 +21,7 @@ import (
 // Every account route goes through `requireAccountRole` because it has an
 // `{accountID}` in its path to resolve a role against. This one has no account:
 // a user belongs to as many accounts as they like, so there is no single
-// membership to authorise against, and inventing one — "their personal account"
+// membership to authorize against, and inventing one — "their personal account"
 // — would make deleting a person depend on which account the router happened to
 // pick. So the credential is resolved the way `GET /v1/me` resolves it, with
 // `currentUser`, and the answer to "who is this" has one implementation in this
@@ -77,7 +77,7 @@ func (o options) registerDeletionRoute(r chiRouter) {
 	}
 
 	// SESSION-ONLY, and the reason is in the file header: there is no scope that
-	// could authorise this for a token, so a token is refused by the handler's own
+	// could authorize this for a token, so a token is refused by the handler's own
 	// resolution rather than by a scope check. `sessionCredentialOnly` is NOT
 	// wrapped around it because that middleware does not authenticate — it only
 	// refuses the api-key prefix — and the 401 has to come from somewhere anyway.

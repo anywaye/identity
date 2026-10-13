@@ -366,12 +366,6 @@ func (s *mfaServer) get(t *testing.T, path, token string) *httptest.ResponseReco
 	return sendWith(t, s.handler, http.MethodGet, path, token, "", "")
 }
 
-// enrollAndConfirm runs the whole flow over HTTP and returns the enrolled user.
-func (s *mfaServer) enrollAndConfirm(t *testing.T, email string) enrolledUser {
-	t.Helper()
-	return s.enrollAndConfirmFor(t, email, "")
-}
-
 func (s *mfaServer) enrollAndConfirmFor(t *testing.T, email, token string) enrolledUser {
 	t.Helper()
 

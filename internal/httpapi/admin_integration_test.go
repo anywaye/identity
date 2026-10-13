@@ -49,7 +49,6 @@ type adminWorld struct {
 
 	accountID  id.UUID
 	ownerID    id.UUID
-	memberID   id.UUID
 	invitation id.UUID
 	// tokenSecret is the api key's plaintext. It exists in this file ONLY to be
 	// presented to the router, and TestAnAdminActionNeverWritesACredential asserts

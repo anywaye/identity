@@ -19,7 +19,7 @@ import (
 //
 // This test is what makes adding a scope deliberate rather than an append: it
 // fails until the new name is written down, which is the moment somebody has to
-// decide whether identity will actually honour it.
+// decide whether identity will actually honor it.
 
 func TestSupportedScopesAreExactlyTheFive(t *testing.T) {
 	t.Parallel()

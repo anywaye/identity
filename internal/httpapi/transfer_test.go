@@ -126,7 +126,7 @@ func TestTheCallerComesFromTheCredentialAndTheHeirFromTheBody(t *testing.T) {
 //
 // This is the same property as the test above reached from the other direction,
 // and it is here because it is enforced by `decodeBody`'s DisallowUnknownFields
-// rather than by this route: there is no `actor` field to honour, so a caller who
+// rather than by this route: there is no `actor` field to honor, so a caller who
 // sends one gets a 400 and a use case call with all three ids zero. That is
 // stronger than ignoring the field, and it is worth a test that names the
 // mechanism — a handler that grew an actor field would still pass the test above

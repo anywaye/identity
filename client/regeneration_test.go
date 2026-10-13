@@ -104,7 +104,7 @@ func TestTheCommittedGeneratedFileIsWhatThePinnedGeneratorProduces(t *testing.T)
 		t.Fatalf("git is not on PATH, so this test cannot ask whether the generator "+
 			"produced a file the repository does not have: %v", err)
 	}
-	if out, err := exec.Command("git", "-C", root, "rev-parse", "--is-inside-work-tree").CombinedOutput(); err != nil {
+	if out, err := exec.CommandContext(t.Context(), "git", "-C", root, "rev-parse", "--is-inside-work-tree").CombinedOutput(); err != nil {
 		t.Fatalf("this checkout is not a git work tree, so the regeneration gate cannot "+
 			"detect a generated file that is new rather than changed: %v\n%s", err, out)
 	}
@@ -325,7 +325,7 @@ func TestTheGeneratedFileIsCommittedAndNotIgnored(t *testing.T) {
 
 	// `git ls-files --error-unmatch` exits non-zero for a path git does not track,
 	// which covers both "not committed" and "committed then deleted from the index".
-	if out, err := exec.Command("git", "-C", root, "ls-files", "--error-unmatch", "--", rel).CombinedOutput(); err != nil {
+	if out, err := exec.CommandContext(t.Context(), "git", "-C", root, "ls-files", "--error-unmatch", "--", rel).CombinedOutput(); err != nil {
 		t.Fatalf("git does not track %s.\n"+
 			"The generated file is COMMITTED, on purpose: a generated file that is not "+
 			"committed cannot be reviewed, and a diff nobody reads is a change nobody "+
@@ -339,7 +339,7 @@ func TestTheGeneratedFileIsCommittedAndNotIgnored(t *testing.T) {
 	// And ignored, which is the other half. `check-ignore` exits 0 and prints the
 	// path when it IS ignored, so the exit status is the answer and the stdout is
 	// not worth printing — `-q` makes it empty on success.
-	if err := exec.Command("git", "-C", root, "check-ignore", "-q", "--", rel).Run(); err == nil {
+	if err := exec.CommandContext(t.Context(), "git", "-C", root, "check-ignore", "-q", "--", rel).Run(); err == nil {
 		t.Errorf("git IGNORES %s even though it is tracked.\n"+
 			"A tracked-but-ignored file is the worst of the two states: it is in the "+
 			"history and it is invisible to every status query, so a regeneration gate "+
@@ -440,7 +440,7 @@ func firstDifference(got, want []byte) string {
 func gitOutput(t *testing.T, root string, args ...string) string {
 	t.Helper()
 
-	cmd := exec.Command("git", args...)
+	cmd := exec.CommandContext(t.Context(), "git", args...)
 	cmd.Dir = root
 
 	out, err := cmd.CombinedOutput()

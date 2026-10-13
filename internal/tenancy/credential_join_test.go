@@ -63,7 +63,7 @@ func TestTenancyACredentialJoinSeesItsMembership(t *testing.T) {
 		t.Fatalf("assuming the app role: %v", err)
 	}
 
-	tenantA, tenantB := seedJoinRows(t, ctx, owner)
+	tenantA, tenantB := seedJoinRows(ctx, t, owner)
 
 	// 1. THE RESOLUTION ITSELF. A live key's digest returns its row and its
 	// owner's live role, with no account identity set — the account is what
@@ -222,7 +222,7 @@ func byDigestJoinAs(ctx context.Context, conn *pgx.Conn, digest string, now time
 // join under test has nothing to find even on a correct database, and the
 // resolution would read zero rows for a reason the test built rather than the
 // boundary. Every assertion in this file is only meaningful with it present.
-func seedJoinRows(t *testing.T, ctx context.Context, owner *pgx.Conn) (tenantA, tenantB string) {
+func seedJoinRows(ctx context.Context, t *testing.T, owner *pgx.Conn) (tenantA, tenantB string) {
 	t.Helper()
 
 	if err := owner.QueryRow(ctx, `select gen_random_uuid()::text, gen_random_uuid()::text`).

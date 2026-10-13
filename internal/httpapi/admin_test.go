@@ -102,10 +102,10 @@ func newFakeAdmin() *fakeAdmin { return &fakeAdmin{revokedOne: 1, revokedMany: 1
 
 var _ Admin = (*fakeAdmin)(nil)
 
-// auditFailure is what a failed audit write looks like to a handler: an error
+// errAuditFailure is what a failed audit write looks like to a handler: an error
 // that is not one of the mapped sentinels, so it takes the 500 arm. It stands in
 // for the trigger-raised failure in the integration test.
-var auditFailure = errors.New("appending the audit record: injected failure")
+var errAuditFailure = errors.New("appending the audit record: injected failure")
 
 // ---------------------------------------------------------------------------
 // fixture
@@ -553,7 +553,7 @@ func TestAFailedAuditWriteIsAFiveHundred(t *testing.T) {
 	t.Run("revoking one", func(t *testing.T) {
 		t.Parallel()
 		f := newAdminFixture(t)
-		f.admin.revokeOneErr = auditFailure
+		f.admin.revokeOneErr = errAuditFailure
 
 		rec := f.adminSend(t, http.MethodDelete, f.revokeOnePath(), "", f.token)
 		if rec.Code != http.StatusInternalServerError {
@@ -576,7 +576,7 @@ func TestAFailedAuditWriteIsAFiveHundred(t *testing.T) {
 	t.Run("revoking many", func(t *testing.T) {
 		t.Parallel()
 		f := newAdminFixture(t)
-		f.admin.revokeManyEr = auditFailure
+		f.admin.revokeManyEr = errAuditFailure
 
 		body := `{"invitation_ids":["` + id.MustNew().String() + `"],"confirm":true}`
 		rec := f.adminSend(t, http.MethodPost, f.revokeAllPath(), body, f.token)

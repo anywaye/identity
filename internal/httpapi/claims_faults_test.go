@@ -200,7 +200,7 @@ func TestTheClaimWalkSeesNothingWhenTheServicesAreAbsent(t *testing.T) {
 // trees, and it exists because they are assembled by two literals in two files.
 //
 // `servedRoutes` is what the claim comparisons use. `walkOptions` is what the tests
-// above use. They are written out separately — one in claims_test.go's neighbour
+// above use. They are written out separately — one in claims_test.go's neighbor
 // openapi_drift_test.go, one here — and nothing forces them to stay the same. If
 // they diverge, the tests in this file describe one router and the checks describe
 // another, and both pass.

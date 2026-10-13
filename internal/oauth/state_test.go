@@ -33,7 +33,7 @@ func TestNewStateBindsTheProvider(t *testing.T) {
 		t.Errorf("the state token is %d characters, want 43 (32 bytes of base64url)", len(token))
 	}
 	for _, r := range token {
-		if !(r >= 'A' && r <= 'Z') && !(r >= 'a' && r <= 'z') && !(r >= '0' && r <= '9') && r != '-' && r != '_' {
+		if (r < 'A' || r > 'Z') && (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' && r != '_' {
 			t.Errorf("the state token %q is not base64url", token)
 			break
 		}
@@ -158,7 +158,7 @@ func TestNewStateTakesNoArgumentsBeyondTheProvider(t *testing.T) {
 	// The compile-time assertion is the test. If NewState ever grows a clock or a
 	// store argument, this call site stops compiling and the failure is at the
 	// build rather than in a test that has to be written to catch it.
-	var newState func(string) (string, error) = NewState
+	newState := NewState
 	if _, err := newState("google"); err != nil {
 		t.Fatalf("NewState: %v", err)
 	}

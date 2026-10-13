@@ -20,10 +20,9 @@ import (
 // The assertions are deliberately few. A double that asserted real behavior would
 // be a second implementation of the use case, and the use case's own tests in
 // internal/agents are where the behavior is proved. What this one owes the suite
-// is that calling it is visible: it records what it was asked to do and hands back
-// a claim that looks like the one production produces.
+// is queued answers with production's shapes: a claim that looks like the one
+// production produces, and ErrNotFound where production finds nothing.
 type fakeAgents struct {
-	calls  []agents.ClaimInput
 	claims []agents.Claimed
 	// err is returned on the next call, and nil is the default so the happy path
 	// needs no setup.
@@ -47,11 +46,7 @@ type fakeAgents struct {
 
 func newFakeAgents() *fakeAgents { return &fakeAgents{} }
 
-// fail queues an error for the next Claim call.
-func (f *fakeAgents) fail(err error) { f.err = err }
-
 func (f *fakeAgents) Claim(_ context.Context, in agents.ClaimInput) (agents.Claimed, error) {
-	f.calls = append(f.calls, in)
 	if f.err != nil {
 		return agents.Claimed{}, f.err
 	}
@@ -74,17 +69,6 @@ func (f *fakeAgents) Claim(_ context.Context, in agents.ClaimInput) (agents.Clai
 	}
 	return agents.Claimed{Agent: agent}, nil
 }
-
-// lastCall is the most recent Claim this double received.
-func (f *fakeAgents) lastCall() agents.ClaimInput {
-	if len(f.calls) == 0 {
-		return agents.ClaimInput{}
-	}
-	return f.calls[len(f.calls)-1]
-}
-
-// count is how many times Claim was called.
-func (f *fakeAgents) count() int { return len(f.calls) }
 
 // --- the claim preview ------------------------------------------------
 
@@ -110,12 +94,6 @@ func (f *fakeAgents) PreviewClaim(_ context.Context, in agents.PreviewInput) (ag
 	}
 	return agents.ClaimPreview{}, agents.ErrNotFound
 }
-
-// queuePreview queues the resolved claim a PreviewClaim call will return.
-func (f *fakeAgents) queuePreview(p agents.ClaimPreview) { f.previews = append(f.previews, p) }
-
-// failPreview queues an error for the next PreviewClaim call.
-func (f *fakeAgents) failPreview(err error) { f.previewErr = err }
 
 // --- the W1-P2 surface ------------------------------------------------
 //
@@ -240,12 +218,3 @@ func (f *fakeAgents) RotateToken(_ context.Context, agentID, tokenID id.UUID, _ 
 		Plaintext: agents.Prefix + "fake-rotated-token",
 	}, nil
 }
-
-// failRegister queues an error for the next Register call.
-func (f *fakeAgents) failRegister(err error) { f.regErr = err }
-
-// failRefresh queues an error for the next RefreshClaimLink call.
-func (f *fakeAgents) failRefresh(err error) { f.refreshErr = err }
-
-// failAuth queues an error for the next Authenticate call.
-func (f *fakeAgents) failAuth(err error) { f.authErr = err }

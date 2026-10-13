@@ -256,7 +256,7 @@ func (a *fakeAccounts) RefreshTokens(_ context.Context, q db.Querier, accountID 
 
 	// The row is updated rather than merely recorded, so a test that reads it back
 	// sees the fresh credential — which is the property signInAs claims about
-	// keeping the stored copy from ageing.
+	// keeping the stored copy from aging.
 	for key, row := range a.rows {
 		if row.ID == accountID {
 			row.AccessTokenCiphertext = t.AccessTokenCiphertext

@@ -690,7 +690,7 @@ func TestTheSchemaRefusesWhatTheGoCodeRefuses(t *testing.T) {
 // requirement, asserted by reading the table the way a dump would and trying to
 // use what comes back.
 //
-// The test is deliberately adversarial about its own setup: it enrols a real
+// The test is deliberately adversarial about its own setup: it enrolls a real
 // credential through the real use case, confirms it with a real code, and then
 // insists that NOTHING the database holds lets an attacker produce a passing
 // code. A test that merely checked "the column is not the secret" would pass if

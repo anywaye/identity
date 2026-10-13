@@ -357,7 +357,7 @@ func TestOneTemplateForBothPurposesRendersOneLinkForBothMessages(t *testing.T) {
 //
 // So the second half of this test does not inspect a table; it builds a Config
 // from an environment with EVERY variable set and refuses to build a mailer from
-// it. A declared variable that this adapter cannot honour is a promise the service
+// it. A declared variable that this adapter cannot honor is a promise the service
 // does not keep, and the constructor says so.
 func TestEveryPurposeThisAdapterCanDeliverHasAVariableToConfigureItsLink(t *testing.T) {
 	// First: every deliverable message has a variable that configures its link.
@@ -376,7 +376,7 @@ func TestEveryPurposeThisAdapterCanDeliverHasAVariableToConfigureItsLink(t *test
 	// happens.
 	//
 	// IT IS ASSERTED AGAINST THE CONSTRUCTOR rather than against `config`'s table,
-	// because the constructor is the thing that would have to honour it. `config` has
+	// because the constructor is the thing that would have to honor it. `config` has
 	// no way to know which purposes courier can deliver, and it must not be made to:
 	// that knowledge is courier's adapter's, and a table in `config` listing a
 	// variable for a purpose with no message is exactly the drift this catches.
@@ -392,7 +392,7 @@ func TestEveryPurposeThisAdapterCanDeliverHasAVariableToConfigureItsLink(t *test
 		}
 		if variable, ok := config.LinkTemplateVariable(purpose); ok {
 			t.Errorf("config declares %s for the %q purpose, which this adapter cannot "+
-				"deliver; a variable an operator sets and nothing honours is a promise "+
+				"deliver; a variable an operator sets and nothing honors is a promise "+
 				"this service does not keep", variable, purpose)
 		}
 	}

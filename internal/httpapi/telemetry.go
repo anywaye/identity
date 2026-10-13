@@ -107,14 +107,11 @@ func telemetryMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// routeTelemetry records the parts of a request that are only knowable AFTER
-// routing.
-//
-// WHY IT CANNOT SIT BESIDE telemetryMiddleware, which is the whole reason this is
-// a second function. chi fills RoutePattern in as the request walks its routing
-// tree, and it does so on a request it creates along the way. Measured, because
-// the first version of this code read the route in the OUTER middleware and every
-// span came out with no route at all:
+// WHY THE ROUTE IS NOT RECORDED BESIDE telemetryMiddleware. chi fills
+// RoutePattern in as the request walks its routing tree, and it does so on a
+// request it creates along the way. Measured, because the first version of
+// this code read the route in the OUTER middleware and every span came out
+// with no route at all:
 //
 //	OUTER before routing           pattern=""     <- what telemetryMiddleware saw
 //	MIDDLEWARE (chi.Use)           pattern=""     <- a Use middleware is also outside
@@ -124,10 +121,10 @@ func telemetryMiddleware(next http.Handler) http.Handler {
 // wraps the router, so it runs before routing too. Only the matched handler
 // receives the routed request.
 //
-// So the route is recorded by a wrapper applied TO EACH ROUTE, which is where chi
-// has a pattern to give. `mountTelemetry` wraps the handler in the two places
-// routes are registered, and a test that reads a span without a route on it knows
-// to look at this function rather than at the router.
+// So the route is recorded by `traced` (auth.go), a wrapper applied TO EACH ROUTE,
+// which is where chi has a pattern to give — and a test that reads a span
+// without a route on it knows to look at that function rather than at the
+// router.
 //
 // THE CONSEQUENCE IS DELIBERATE AND IT IS A GAP WORTH NAMING. A request that
 // matches no route — a 404 — passes through no route handler, so it gets a span
@@ -140,16 +137,6 @@ func telemetryMiddleware(next http.Handler) http.Handler {
 // content leak in the same move. The 405 case is the same, and the same reasoning
 // applies. Both are asserted in observability_test.go so the gap stays a
 // documented decision rather than becoming a surprise.
-func mountTelemetry(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		span := trace.SpanFromContext(r.Context())
-		telemetry.Record(span, map[string]any{
-			"http.request.method": r.Method,
-			"http.route":          routeTemplate(r),
-		})
-		next.ServeHTTP(w, r)
-	})
-}
 
 // statusWriter remembers the status the response was committed with.
 //
@@ -251,7 +238,7 @@ func statusClass(status int) string {
 	// `statusClass(0)` and `statusClass(99)` came to return "2xx": every arm
 	// below the first one that matched swallowed them, because 0 < 300. That is
 	// not a cosmetic bug — a status outside 100..599 is not a fact about an HTTP
-	// response, and a metric labelled "2xx" for a request that never got a
+	// response, and a metric labeled "2xx" for a request that never got a
 	// response is a number nobody can trust.
 	//
 	// A test caught it. That test is below, and it is why the ladder is asserted

@@ -557,7 +557,7 @@ func TestTheRequestIsBoundedAndTheWaitIsTheUsers(t *testing.T) {
 	if !Retryable(err) {
 		t.Error("a timeout was reported as not retryable; courier releases a failed key, so it is")
 	}
-	// A canceled caller must still be recognisable, because the difference between
+	// A canceled caller must still be recognizable, because the difference between
 	// "the user gave up" and "courier is slow" is what an operator reads.
 	if !isError(err, context.DeadlineExceeded) {
 		t.Error("the error does not match context.DeadlineExceeded, so a canceled caller is indistinguishable")

@@ -1170,7 +1170,7 @@ func (o options) writeAuthError(w http.ResponseWriter, r *http.Request, err erro
 		// account state, which is the enumeration oracle this check is positioned to
 		// avoid.
 		problemFor(w, r, http.StatusForbidden, CodeForbidden,
-			"this account is disabled; contact the person or organisation that administers it")
+			"this account is disabled; contact the person or organization that administers it")
 
 	case errors.As(err, &unverified):
 		// 403 forbidden, anchored AFTER the password for the same reason the

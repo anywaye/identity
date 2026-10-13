@@ -146,7 +146,7 @@ func WithParameterizedRouteForTest(pattern string) Option {
 func spanAttributes(span sdktrace.ReadOnlySpan) map[string]string {
 	attributes := make(map[string]string, len(span.Attributes()))
 	for _, kv := range span.Attributes() {
-		attributes[string(kv.Key)] = kv.Value.Emit()
+		attributes[string(kv.Key)] = kv.Value.String()
 	}
 	return attributes
 }
@@ -178,7 +178,7 @@ func renderSpans(r *tracetest.SpanRecorder) string {
 			rendered.WriteString(" ")
 			rendered.WriteString(string(kv.Key))
 			rendered.WriteString("=")
-			rendered.WriteString(kv.Value.Emit())
+			rendered.WriteString(kv.Value.String())
 		}
 		rendered.WriteString("\n")
 	}
@@ -189,7 +189,7 @@ func renderSpans(r *tracetest.SpanRecorder) string {
 func hasAttribute(r *tracetest.SpanRecorder, name, value string) bool {
 	for _, span := range r.Ended() {
 		for _, kv := range span.Attributes() {
-			if string(kv.Key) == name && kv.Value.Emit() == value {
+			if string(kv.Key) == name && kv.Value.String() == value {
 				return true
 			}
 		}

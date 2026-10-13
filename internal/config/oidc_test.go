@@ -129,7 +129,7 @@ func TestLoadOIDC(t *testing.T) {
 			},
 		},
 		{
-			name: "a misspelt opt-in",
+			name: "a misspelled opt-in",
 			env: map[string]string{
 				"OIDC_ISSUER":         "https://identity.cafaye.com",
 				"OIDC_SIGNING_KEY":    keyPEM,

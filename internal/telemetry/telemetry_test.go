@@ -18,7 +18,7 @@ import (
 // that the TEST's idea of the payload is correct, which is not the property under
 // test.
 //
-// In-memory precisely so nothing leaves the process: a test that dialled a
+// In-memory precisely so nothing leaves the process: a test that dialed a
 // collector would be a network call in a suite whose rule is no sockets, and a
 // suite that phones an observability backend is a suite that phones an
 // observability backend.

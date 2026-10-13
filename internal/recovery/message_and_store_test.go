@@ -1,6 +1,7 @@
 package recovery
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -280,11 +281,7 @@ func TestOneTokenSpentOnceUnderConcurrency(t *testing.T) {
 	token := h.requestReset(t, who)
 
 	const racers = 8
-	type outcome struct {
-		ok  bool
-		err error
-	}
-	results := make(chan outcome, racers)
+	results := make(chan error, racers)
 	start := make(chan struct{})
 
 	for range racers {
@@ -293,15 +290,14 @@ func TestOneTokenSpentOnceUnderConcurrency(t *testing.T) {
 			_, err := h.svc.RedeemPasswordReset(t.Context(), RedeemPasswordResetInput{
 				Token: token, Password: "one of these will win",
 			})
-			results <- outcome{err: err}
+			results <- err
 		}()
 	}
 	close(start)
 
 	won := 0
 	for range racers {
-		got := <-results
-		if got.err == nil {
+		if err := <-results; err == nil {
 			won++
 		}
 	}
@@ -357,7 +353,7 @@ func TestTheStoredDigestIsTheOnlyCredential(t *testing.T) {
 	if _, err := NewStore(h.pool).Live(t.Context(), h.pool, digest, PurposePasswordReset, h.now()); err != nil {
 		t.Fatalf("Live on a fresh token: %v", err)
 	}
-	if _, err := NewStore(h.pool).Live(t.Context(), h.pool, digest, PurposeVerifyEmail, h.now()); err != ErrTokenNotFound {
+	if _, err := NewStore(h.pool).Live(t.Context(), h.pool, digest, PurposeVerifyEmail, h.now()); !errors.Is(err, ErrTokenNotFound) {
 		t.Errorf("Live for the wrong purpose = %v, want ErrTokenNotFound", err)
 	}
 }

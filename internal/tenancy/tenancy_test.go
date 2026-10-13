@@ -215,7 +215,7 @@ func TestTenancyIdentityOwnsItsFiveTables(t *testing.T) {
 
 	t.Run("every declared table is enabled and FORCED", func(t *testing.T) {
 		for _, table := range identityTables {
-			enabled, forced, acctIndex, policies := protectedCatalogRow(t, ctx, conn, table)
+			enabled, forced, acctIndex, policies := protectedCatalogRow(ctx, t, conn, table)
 			// One sentence for every finding below, decided once. Four failure
 			// messages that each restate "the catalog disagrees" is how a
 			// two-line catalog diff ends up costing a worker an hour: the
@@ -321,14 +321,14 @@ func TestTenancyIdentityOwnsItsFiveTables(t *testing.T) {
 			// `with check (account_id = (select cafaye.current_account_id()))`, so a
 			// writer with no identity is refused, which is the write-side twin of the
 			// read denial and is itself correct.
-			tenantA, tenantB := seedAuditRows(t, ctx, conn, role)
+			tenantA, tenantB := seedAuditRows(ctx, t, conn, role)
 
 			// ARM ONE. No identity. `begin_account(NULL)` clears, which is the state a
 			// request that never authenticated is in.
 			if _, err := conn.Exec(ctx, `select cafaye.begin_account(NULL)`); err != nil {
 				t.Fatalf("clearing the account identity: %v", err)
 			}
-			if got := countAuditRows(t, ctx, conn); got != 0 {
+			if got := countAuditRows(ctx, t, conn); got != 0 {
 				t.Errorf("as %s with NO identity: read %d rows, want 0. A request that never "+
 					"authenticated is reading account data", role, got)
 			}
@@ -339,11 +339,11 @@ func TestTenancyIdentityOwnsItsFiveTables(t *testing.T) {
 			if _, err := conn.Exec(ctx, `select cafaye.begin_account($1)`, tenantB); err != nil {
 				t.Fatalf("setting the other tenant's identity: %v", err)
 			}
-			if got := countAuditRows(t, ctx, conn); got != 1 {
+			if got := countAuditRows(ctx, t, conn); got != 1 {
 				t.Errorf("as %s carrying ANOTHER tenant's valid identity: read %d rows, want 1 "+
 					"(its own). Anything more is a cross-account read", role, got)
 			}
-			if got := countAuditRowsIn(t, ctx, conn, tenantA); got != 0 {
+			if got := countAuditRowsIn(ctx, t, conn, tenantA); got != 0 {
 				t.Errorf("as %s carrying ANOTHER tenant's valid identity: read %d of THAT "+
 					"tenant's rows, want 0", role, got)
 			}
@@ -353,12 +353,12 @@ func TestTenancyIdentityOwnsItsFiveTables(t *testing.T) {
 			if _, err := conn.Exec(ctx, `select cafaye.begin_account($1)`, tenantA); err != nil {
 				t.Fatalf("setting the account's own identity: %v", err)
 			}
-			if got := countAuditRowsIn(t, ctx, conn, tenantA); got != 1 {
+			if got := countAuditRowsIn(ctx, t, conn, tenantA); got != 1 {
 				t.Errorf("as %s with its OWN identity: read %d of its own rows, want 1. A table "+
 					"that denies everybody also passes the two arms above, which is why this one "+
 					"exists", role, got)
 			}
-			if got := countAuditRows(t, ctx, conn); got != 1 {
+			if got := countAuditRows(ctx, t, conn); got != 1 {
 				t.Errorf("as %s with its OWN identity: an unqualified read returned %d rows, want 1 "+
 					"(its own only)", role, got)
 			}
@@ -421,7 +421,7 @@ const catalogProof = `
 // the property the schema scope exists to guarantee — a relation name is
 // unique within a schema — and a proof that accepted two rows and read
 // either one would be the flake again with extra steps.
-func protectedCatalogRow(t *testing.T, ctx context.Context, conn *pgx.Conn, table string) (enabled, forced, acctIndex, policies bool) {
+func protectedCatalogRow(ctx context.Context, t *testing.T, conn *pgx.Conn, table string) (enabled, forced, acctIndex, policies bool) {
 	t.Helper()
 
 	rows, err := conn.Query(ctx, catalogProof, table)
@@ -633,7 +633,7 @@ func TestTenancyCatalogProofReadsThePublicRowNotAClone(t *testing.T) {
 // account_audit_log is the table used because 00012 gives it NO foreign keys, so the
 // fixture needs no users and no accounts and cannot collide with another package's
 // rows in the shared TEST_DATABASE_URL.
-func seedAuditRows(t *testing.T, ctx context.Context, conn *pgx.Conn, role string) (tenantA, tenantB string) {
+func seedAuditRows(ctx context.Context, t *testing.T, conn *pgx.Conn, role string) (tenantA, tenantB string) {
 	t.Helper()
 
 	// `gen_random_uuid()` is executable by PUBLIC and reads no table, so this works
@@ -666,12 +666,12 @@ func seedAuditRows(t *testing.T, ctx context.Context, conn *pgx.Conn, role strin
 	return ids[0], ids[1]
 }
 
-func countAuditRows(t *testing.T, ctx context.Context, conn *pgx.Conn) int {
+func countAuditRows(ctx context.Context, t *testing.T, conn *pgx.Conn) int {
 	t.Helper()
-	return countAuditRowsIn(t, ctx, conn, "")
+	return countAuditRowsIn(ctx, t, conn, "")
 }
 
-func countAuditRowsIn(t *testing.T, ctx context.Context, conn *pgx.Conn, accountID string) int {
+func countAuditRowsIn(ctx context.Context, t *testing.T, conn *pgx.Conn, accountID string) int {
 	t.Helper()
 	var n int
 	var err error

@@ -204,7 +204,7 @@ func TestAGitHubLookupFailureIsNotSwallowedAsAbsence(t *testing.T) {
 	}
 }
 
-// `publish` has to be a scope identity will actually honour. A scope name that
+// `publish` has to be a scope identity will actually honor. A scope name that
 // is defined but absent from the supported list is dropped from the token request
 // by NormalizeScopes, so the claim would be unreachable by a client that asked
 // for it correctly -- which reads as "the feature does not work".

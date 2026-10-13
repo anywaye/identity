@@ -692,21 +692,8 @@ func refuseTableWrites(t *testing.T, pool *pgxpool.Pool, table, op string) {
 	}
 }
 
-// readUser fetches the row Register created, through the real store.
-//
-// It takes the RegisteredUser rather than a bare id so that no call site can
-// parse an id incorrectly and still compile — `registered.ID` is already a
-// string here and `id.Parse` is the one way this repository turns one into a UUID.
-func readUser(t *testing.T, pool *pgxpool.Pool, registered RegisteredUser) users.User {
-	t.Helper()
-	user, err := users.NewStore(pool).ByID(context.Background(), pool, registered.ID)
-	if err != nil {
-		t.Fatalf("reading back the registered user: %v", err)
-	}
-	return user
-}
-
-// readUserByID is readUser for the cases that already hold a UUID, which is most
+// readUserByID fetches the row Register created, through the real store, for
+// the cases that already hold a UUID, which is most of them: the fixture keeps
 // of them: the fixture keeps the user as a `users.User` rather than as the
 // registration's own return value.
 func readUserByID(t *testing.T, pool *pgxpool.Pool, userID id.UUID) users.User {

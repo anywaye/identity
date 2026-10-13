@@ -23,7 +23,7 @@ package ci
 // migration and its exact inverse, in order, correctly. A developer running
 // `bin/dev` got an empty database and no error.
 //
-// CI never saw it, because CI runs `goose`, which honours the annotations. The
+// CI never saw it, because CI runs `goose`, which honors the annotations. The
 // broken path was the fallback nobody runs in CI: the most likely place for a
 // bug to live, and the one place a developer is actually relying on.
 //

@@ -1141,7 +1141,7 @@ type DisableInput struct {
 //
 // IT DOES NOT NEED THE ACCESS-TOKEN REVOKER, and its absence from Enable's preamble
 // is not an oversight. A re-enable mints nothing and revokes nothing — the column is
-// what the sessions already honour — so the only thing that can fail here is the two
+// what the sessions already honor — so the only thing that can fail here is the two
 // writes, and ErrNoUserAuditRecorder is the same refusal Disable makes.
 func (s *Service) Enable(ctx context.Context, in EnableInput) error {
 	// Same ordering as Disable and the same reason: after the column write, a nil

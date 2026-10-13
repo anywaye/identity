@@ -249,7 +249,7 @@ func (s *Service) RedeemSessionLink(ctx context.Context, in RedeemSessionLinkInp
 //
 // Because the mint's answer was about a different moment. `MintSessionLink` refuses
 // an enrolled subject at mint time, so no link for one exists then; a user can
-// enroll in the ten-minute window before redeeming, and honouring the link would
+// enroll in the ten-minute window before redeeming, and honoring the link would
 // hand a first factor's worth of credential to whoever holds it. That is the
 // downgrade `ErrSubjectHasSecondFactor` exists to prevent, arriving through the
 // other door, so the mint's refusal is necessary and not sufficient.

@@ -3,6 +3,7 @@ package apikeys
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -708,8 +709,8 @@ func assertFieldError(t *testing.T, err error, target **FieldError) {
 	if err == nil {
 		t.Fatal("expected a validation error and got nil")
 	}
-	fe, ok := err.(*FieldError)
-	if !ok {
+	fe := &FieldError{}
+	if !errors.As(err, &fe) {
 		t.Fatalf("error is %T, want *FieldError", err)
 	}
 	*target = fe

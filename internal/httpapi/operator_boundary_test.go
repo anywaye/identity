@@ -222,7 +222,7 @@ func TestTheAdminSurfaceStillCannotReachAPerson(t *testing.T) {
 // TestTheOperatorSurfaceNeedsNoAdminService is the absence, stated rather than left
 // implicit.
 //
-// The admin service is the operator surface's nearest neighbour by vocabulary and
+// The admin service is the operator surface's nearest neighbor by vocabulary and
 // shares none of its wiring: mounting these two routes needs `auth` and nothing else,
 // so a deployment with no `internal/admin` at all still serves them. That is worth a
 // test because the intuitive implementation — hanging them off the `admin` option —

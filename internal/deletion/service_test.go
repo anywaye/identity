@@ -50,11 +50,6 @@ type fakeAccounts struct {
 	deleteErr error
 }
 
-type account struct {
-	ID   id.UUID
-	Name string
-}
-
 func (s *fakeAccounts) PersonalAccounts(_ context.Context, _ db.Querier, _ id.UUID) ([]accounts.Account, error) {
 	return s.personal, nil
 }

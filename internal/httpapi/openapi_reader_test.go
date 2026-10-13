@@ -234,7 +234,7 @@ func (d *openAPIDocument) record(path string, number int, op documentedOperation
 //
 // It is a second pass rather than a nested parse because that field is the only
 // thing inside an operation body this check cares about, and a reader that
-// modelled an operation body would be modelling everything a future document
+// modeled an operation body would be modeling everything a future document
 // might put in one.
 func (d *openAPIDocument) readOperationIDs(groups [][]yamlLine, methodLevel int) {
 	for _, group := range groups {
@@ -342,7 +342,7 @@ type yamlLine struct {
 // significantLines drops blank lines and comments. Nothing else: a block
 // scalar's content is indented deeper than the key that owns it, so it never
 // reaches a level this reader treats as structure, and dropping it here would
-// mean modelling block scalars to keep the line numbers honest.
+// mean modeling block scalars to keep the line numbers honest.
 func significantLines(contents string) []yamlLine {
 	var out []yamlLine
 	scanner := bufio.NewScanner(strings.NewReader(contents))

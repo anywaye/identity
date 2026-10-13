@@ -187,7 +187,9 @@ func TestSigningKeySatisfiesTheLibraryInterfaces(t *testing.T) {
 	t.Parallel()
 
 	var _ op.SigningKey = (*SigningKey)(nil)
-	var _ op.Key = PublicKeyOf(nil)
+	if key := PublicKeyOf(nil); key.ID() != "" {
+		t.Fatalf("PublicKeyOf(nil).ID() = %q, want the empty id of a key that is not there", key.ID())
+	}
 }
 
 // PEM encodings. Both are accepted because `openssl genrsa` has emitted both for

@@ -287,7 +287,7 @@ func TestTheRouteOnASpanIsTheTemplateAndNotThePath(t *testing.T) {
 			if string(kv.Key) != "http.route" {
 				continue
 			}
-			got := kv.Value.Emit()
+			got := kv.Value.String()
 			if strings.Contains(got, canaryAccount) {
 				t.Errorf("the span carries the CONCRETE PATH %q as its route.\n\n"+
 					"A route template is one value per endpoint; a concrete path is one per "+
@@ -580,7 +580,7 @@ func TestAMalformedTraceparentStartsANewTraceAndIsNeverA4xx(t *testing.T) {
 }
 
 // TestTelemetryIsNeverInTheReadinessPath is the rule from kit's compose file,
-// asserted on the service that has to honour it.
+// asserted on the service that has to honor it.
 //
 // "Nothing but the collector may be in a readiness path." A service that waits
 // for telemetry serves no traffic while the telemetry is down, which is strictly

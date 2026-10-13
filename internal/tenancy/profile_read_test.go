@@ -77,7 +77,7 @@ func TestTenancyTheProfileReadSeesOneUsersMembershipsAndNothingElse(t *testing.T
 		t.Fatalf("assuming the app role: %v", err)
 	}
 
-	tenantA, userA, tenantB, userB := seedProfileRows(t, ctx, owner)
+	tenantA, userA, tenantB, userB := seedProfileRows(ctx, t, owner)
 
 	// The read itself. `profiles.go`'s shape, verbatim — plus the transaction the
 	// identity needs. `cafaye.begin_user/1` is `set_config(..., is_local => true)`,
@@ -222,7 +222,7 @@ func TestTenancyTheProfileReadSeesOneUsersMembershipsAndNothingElse(t *testing.T
 // policy is `with check (account_id = (select cafaye.current_account_id()))` and a
 // writer with no identity is refused — the write-side twin of the denial these
 // tests are about.
-func seedProfileRows(t *testing.T, ctx context.Context, owner *pgx.Conn) (tenantA, userA, tenantB, userB string) {
+func seedProfileRows(ctx context.Context, t *testing.T, owner *pgx.Conn) (tenantA, userA, tenantB, userB string) {
 	t.Helper()
 
 	if err := owner.QueryRow(ctx, `select gen_random_uuid()::text, gen_random_uuid()::text`).

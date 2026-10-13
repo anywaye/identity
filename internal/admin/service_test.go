@@ -86,17 +86,10 @@ func (s *staging) QueryRow(context.Context, string, ...any) pgx.Row {
 // implementation that swallows the error and commits anyway.
 type fakeTx struct {
 	world *fakeWorld
-	// appendErr is what makes the audit write fail. This is the injection point
-	// the packet's red proof needs: the audit write is made to fail, and the test
-	// asks what happened to the mutation.
-	appendErr error
-	// revokedInTx records which invitation ids the mutation inside the
-	// transaction touched, and whether the transaction was committed. The
-	// "committed" half is the assertion; the "touched" half is only there so a
-	// failure message can say the mutation ran and was undone rather than that it
-	// never ran.
+	// committed records whether the transaction committed, so a test can assert
+	// "the mutation did not happen" as committed state rather than as a call
+	// count.
 	committed bool
-	ran       int
 }
 
 func (tx *fakeTx) Do(_ context.Context, fn func(context.Context, db.Querier) error) error {

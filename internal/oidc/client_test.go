@@ -151,7 +151,7 @@ func TestValidateRedirectURIs(t *testing.T) {
 	}
 }
 
-// The grant types this provider honours, and the refusal of everything else.
+// The grant types this provider honors, and the refusal of everything else.
 //
 // THIS ROW USED TO ASSERT THAT `refresh_token` WAS UNSUPPORTED, and the change
 // is written down here rather than left as a silent diff. The old row was

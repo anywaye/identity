@@ -59,7 +59,7 @@ var (
 	//
 	// IT IS A REFUSAL AND NOT A CHALLENGE, and the reason is a security property
 	// rather than a missing feature. A session link redeems into a session, so
-	// honouring one for an enrolled subject would let a token holder turn a first
+	// honoring one for an enrolled subject would let a token holder turn a first
 	// factor into a complete login: the whole value of MFA is that the second factor
 	// is required on every session, and a route that mints one without it is the
 	// downgrade this service's own vocabulary says no machine credential may perform.

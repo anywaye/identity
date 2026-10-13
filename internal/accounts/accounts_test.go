@@ -152,7 +152,7 @@ func TestSlugifyAlwaysProducesAStorableSlug(t *testing.T) {
 			t.Errorf("Slugify(%q) = %q, which has a doubled dash", in, slug)
 		}
 		for _, r := range slug {
-			if !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-') {
+			if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' {
 				t.Errorf("Slugify(%q) = %q, which contains %q", in, slug, r)
 			}
 		}

@@ -377,12 +377,6 @@ type liveCourier struct {
 	// traverse courier's own validator, and the invitation path composes a
 	// message type the recovery one never builds.
 	invitationMailer *InvitationMailer
-
-	// userID is an account courier will accept an arbitrary `user_id` for. courier
-	// holds no foreign key to identity's users, so any well-formed uuid works and
-	// the preferences lookup finds nothing, which means the default (enabled)
-	// applies.
-	userID string
 }
 
 // requireLiveCourier builds the adapter against a real courier, or SKIPS BY NAME.
@@ -484,7 +478,7 @@ func requireLiveCourier(t *testing.T) *liveCourier {
 func skipWithoutCourier(t *testing.T) {
 	t.Helper()
 
-	t.Skipf("SKIPPED A LIVE-PROOF, NOT A BEHAVIOUR: %s is not set, so this test could not "+
+	t.Skipf("SKIPPED A LIVE-PROOF, NOT A BEHAVIOR: %s is not set, so this test could not "+
 		"prove that a message identity rendered by internal/recovery traverses courier's own "+
 		"validation and comes back accepted.\n"+
 		"  Every other property of this integration IS asserted offline: the request identity "+

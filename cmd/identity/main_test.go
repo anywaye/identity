@@ -72,7 +72,7 @@ func newServer(t *testing.T, cfg config.Config) *app {
 func freePort(t *testing.T) string {
 	t.Helper()
 
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("reserving a port: %v", err)
 	}
@@ -87,7 +87,11 @@ func freePort(t *testing.T) string {
 
 // getRaw performs a request and reports transport errors instead of failing.
 func getRaw(url string) (int, string, error) {
-	resp, err := http.Get(url)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
+	if err != nil {
+		return 0, "", err
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return 0, "", err
 	}
@@ -146,7 +150,7 @@ func TestRunServesRequestsAndStopsWhenTheContextIsCancelled(t *testing.T) {
 	}
 
 	// The socket must be released so the orchestrator can rebind immediately.
-	if conn, err := net.DialTimeout("tcp", a.Addr(), time.Second); err == nil {
+	if conn, err := (&net.Dialer{Timeout: time.Second}).DialContext(t.Context(), "tcp", a.Addr()); err == nil {
 		conn.Close()
 		t.Errorf("listener on %s still accepts connections after shutdown", a.Addr())
 	}
@@ -379,7 +383,7 @@ func waitForLine(t *testing.T, lines <-chan string, want string) {
 func assertNotListening(t *testing.T, addr string) {
 	t.Helper()
 
-	conn, err := net.DialTimeout("tcp", addr, time.Second)
+	conn, err := (&net.Dialer{Timeout: time.Second}).DialContext(t.Context(), "tcp", addr)
 	if err != nil {
 		return
 	}

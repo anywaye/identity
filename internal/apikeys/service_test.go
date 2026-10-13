@@ -170,7 +170,7 @@ func (f *serviceFixture) user(t *testing.T) id.UUID {
 // builds its accounts through accounts.Service, which publishes
 // identity.account.created of its own — so an unfiltered count would be asserting
 // that the tenancy use cases were silent, and every test in this file would be
-// coupled to another package's event catalogue. A test that wanted "this mint
+// coupled to another package's event catalog. A test that wanted "this mint
 // announced exactly one thing" would break when a future packet added a second
 // event to account creation, for no reason to do with this one.
 //

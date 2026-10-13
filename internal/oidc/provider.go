@@ -392,7 +392,7 @@ func (p *Provider) discovery(ctx context.Context) *oidc.DiscoveryConfiguration {
 	// is here because the grant is MOUNTED this packet: the five emptied
 	// endpoints above are what an omission buys, and the refresh grant is the
 	// thing it must not be applied to. A document that hides a grant the token
-	// endpoint would honour is a document a client library reads and then does
+	// endpoint would honor is a document a client library reads and then does
 	// not use, which costs the deployment a working integration.
 	doc.GrantTypesSupported = []oidc.GrantType{oidc.GrantTypeCode, oidc.GrantTypeRefreshToken}
 

@@ -132,7 +132,7 @@ func TestDigestOfGarbageIsStillAWellFormedDigest(t *testing.T) {
 			t.Errorf("Digest(%q) = %q, want 64 hex characters", truncate(give), got)
 		}
 		for _, c := range got {
-			if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
 				t.Errorf("Digest(%q) = %q contains a non-hex character %q", truncate(give), got, c)
 			}
 		}

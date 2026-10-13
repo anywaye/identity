@@ -2,6 +2,7 @@ package recovery
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -498,10 +499,10 @@ func TestADeploymentWithNoMailerRefusesBeforeItLearnsAnything(t *testing.T) {
 
 	unknown := dbtest.UniqueEmail(t)
 	for _, address := range []string{known.email, unknown, "not-an-address", ""} {
-		if err := h.svc.RequestPasswordReset(t.Context(), address); err != ErrNoMailer {
+		if err := h.svc.RequestPasswordReset(t.Context(), address); !errors.Is(err, ErrNoMailer) {
 			t.Errorf("RequestPasswordReset(%q) = %v, want ErrNoMailer", address, err)
 		}
-		if err := h.svc.RequestVerification(t.Context(), address); err != ErrNoMailer {
+		if err := h.svc.RequestVerification(t.Context(), address); !errors.Is(err, ErrNoMailer) {
 			t.Errorf("RequestVerification(%q) = %v, want ErrNoMailer", address, err)
 		}
 	}

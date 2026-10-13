@@ -3,7 +3,7 @@ package oauth
 // The endpoint overrides are the one thing in this package that lets a DEPLOYMENT
 // — rather than a test — point the whole sign-in flow at a server it controls. The
 // property that makes that safe is narrow and is asserted here rather than argued:
-// with nothing set, this service dials exactly the URLs it dialled before these
+// with nothing set, this service dials exactly the URLs it dialed before these
 // variables existed, and with them set the URLs it dials are the ones the deployer
 // chose.
 
@@ -232,7 +232,7 @@ func TestTokenUserInfoAndEmailsOverridesReachTheCallsThisServiceMakes(t *testing
 }
 
 // The point of the packet in one test: with nothing set, the ONLY addresses this
-// service dials are the five it dialled before these variables existed. Every
+// service dials are the five it dialed before these variables existed. Every
 // request is refused and its URL recorded, so the assertion is about which endpoints
 // were chosen rather than about a field that was set — and an override applied when
 // none was configured moves one of these and fails.
@@ -268,8 +268,8 @@ func TestWithNoOverridesSetTheOnlyOutboundCallsAreTheShippedEndpoints(t *testing
 		// and every call in this test is refused before any answer arrives. The fake
 		// provider test above is where that last URL is exercised.
 	}
-	if got := recorder.Dialled(); !equalPaths(got, want) {
-		t.Errorf("this service dialled %v, want exactly %v", got, want)
+	if got := recorder.Dialed(); !equalPaths(got, want) {
+		t.Errorf("this service dialed %v, want exactly %v", got, want)
 	}
 }
 
@@ -288,9 +288,9 @@ func (rt *recordingTransport) RoundTrip(r *http.Request) (*http.Response, error)
 	return nil, errors.New("refusing to dial in a test that only records endpoints")
 }
 
-// Dialled returns the distinct URLs requested, in the order they were first asked
+// Dialed returns the distinct URLs requested, in the order they were first asked
 // for.
-func (rt *recordingTransport) Dialled() []string {
+func (rt *recordingTransport) Dialed() []string {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
 

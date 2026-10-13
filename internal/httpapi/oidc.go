@@ -298,12 +298,12 @@ func (o options) handleOIDCAuthorize(w http.ResponseWriter, r *http.Request) {
 	// success and the library's own refusal, which is correct: the library's
 	// refusals redirect back to the client rather than to the login page, so the
 	// marker is spent either way and cannot accumulate meaning.
-	if state, err := oauth.NewState(OIDCStateProvider); err != nil {
+	state, err := oauth.NewState(OIDCStateProvider)
+	if err != nil {
 		unexpected(w, r, o.logger, err)
 		return
-	} else {
-		http.SetCookie(w, oidcFlowCookie(state))
 	}
+	http.SetCookie(w, oidcFlowCookie(state))
 
 	o.delegateOIDC(w, r)
 }
@@ -957,17 +957,6 @@ func (o options) failOIDCChallenge(w http.ResponseWriter, r *http.Request, reque
 	}
 }
 
-// oidcClientName is the application's name for the challenge form. It is re-read
-// from the auth request rather than carried in the cookie, because a cookie holding
-// a product's name is a cookie an attacker can set.
-func (o options) oidcClientName(r *http.Request, requestID string) string {
-	banner, err := o.oidc.LoginBanner(r.Context(), requestID)
-	if err != nil {
-		return "this application"
-	}
-	return banner.ClientName
-}
-
 // oidcChallengeCookie writes the challenge token where completeOIDCChallenge finds
 // it.
 func oidcChallengeCookie(requestID, token string, expiresAt time.Time) *http.Cookie {
@@ -1355,7 +1344,7 @@ func (o options) handleGetOIDCClient(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, newOIDCClientResponse(client))
 }
 
-// handleRevokeOIDCClient stops honouring a registration.
+// handleRevokeOIDCClient stops honoring a registration.
 //
 //	DELETE /v1/accounts/:id/oidc-clients/:clientId  →  204
 //

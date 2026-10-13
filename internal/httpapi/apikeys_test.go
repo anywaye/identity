@@ -335,15 +335,15 @@ func TestExpiresInIsSecondsAndOptional(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name     string
-		body     string
-		wantSet  bool
-		wantSecs time.Duration
+		name    string
+		body    string
+		wantSet bool
+		want    time.Duration
 	}{
 		{name: "omitted", body: `{"name":"ci","scopes":["accounts:read"]}`},
 		{
 			name: "thirty days", body: `{"name":"ci","scopes":["accounts:read"],"expires_in":2592000}`,
-			wantSet: true, wantSecs: 30 * 24 * time.Hour,
+			wantSet: true, want: 30 * 24 * time.Hour,
 		},
 		{
 			// A negative value is passed through rather than clamped, so the use
@@ -351,11 +351,11 @@ func TestExpiresInIsSecondsAndOptional(t *testing.T) {
 			// nonsense request into a request for the floor, which is a different
 			// credential than the one that was asked for.
 			name: "negative", body: `{"name":"ci","scopes":["accounts:read"],"expires_in":-1}`,
-			wantSet: true, wantSecs: -time.Second,
+			wantSet: true, want: -time.Second,
 		},
 		{
 			name: "zero", body: `{"name":"ci","scopes":["accounts:read"],"expires_in":0}`,
-			wantSet: true, wantSecs: 0,
+			wantSet: true, want: 0,
 		},
 	}
 
@@ -384,8 +384,8 @@ func TestExpiresInIsSecondsAndOptional(t *testing.T) {
 			if got == nil {
 				t.Fatal("ExpiresIn = nil, want the requested lifetime")
 			}
-			if *got != tt.wantSecs {
-				t.Errorf("ExpiresIn = %s, want %s", *got, tt.wantSecs)
+			if *got != tt.want {
+				t.Errorf("ExpiresIn = %s, want %s", *got, tt.want)
 			}
 		})
 	}

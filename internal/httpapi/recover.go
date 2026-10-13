@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"errors"
 	"log/slog"
 	"net/http"
 )
@@ -27,7 +28,9 @@ func recoverPanics(logger *slog.Logger, next http.Handler) http.Handler {
 			// http.ErrAbortHandler is the documented way to abandon a response, and
 			// it is not a bug. Re-panicking with it lets net/http close the
 			// connection quietly instead of inventing a 500 for a deliberate abort.
-			if recovered == http.ErrAbortHandler {
+			// Matched with errors.Is rather than ==, because a panic value that
+			// wraps the sentinel is the same deliberate abort one layer up.
+			if rerr, ok := recovered.(error); ok && errors.Is(rerr, http.ErrAbortHandler) {
 				panic(recovered)
 			}
 

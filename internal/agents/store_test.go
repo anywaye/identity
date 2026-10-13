@@ -84,19 +84,6 @@ func (f *fixture) register(t *testing.T, name string) Agent {
 	return agent
 }
 
-// claim binds the fixture's agent the way the route will, so a test about tokens
-// starts from a principal that is live.
-func (f *fixture) claim(t *testing.T, agent Agent) Agent {
-	t.Helper()
-
-	claimed, err := f.store.Claim(context.Background(), f.store.Pool(), agent.ID,
-		theClaimDigest(agent.Name), f.account, testInstant)
-	if err != nil {
-		t.Fatalf("claiming %q: %v", agent.Name, err)
-	}
-	return claimed
-}
-
 // TestARegisteredAgentIsUnclaimedAndCarriesNoAuthority is the row W1-P2's
 // registration route writes, asserted at the store so the shape is pinned
 // before any route depends on it.

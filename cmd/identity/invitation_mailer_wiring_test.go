@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cafaye/identity/internal/accounts"
 	"github.com/cafaye/identity/internal/config"
 )
 
@@ -45,7 +44,7 @@ func TestBuildInvitationMailerNoCourierStaysNilAcrossTheInterfaceBoundary(t *tes
 	// THE SAME ASSIGNMENT buildAuth performs: the builder's result into the
 	// interface accounts.NewService takes. A typed nil pointer lands here as
 	// a non-nil interface and defeats Invite's nil guard.
-	var mailer accounts.InvitationMailer = built
+	mailer := built
 	if mailer != nil {
 		t.Fatalf("buildInvitationMailer's no-Courier result is %T, which is non-nil as an "+
 			"accounts.InvitationMailer — Invite's `s.mailer != nil` guard passes and "+

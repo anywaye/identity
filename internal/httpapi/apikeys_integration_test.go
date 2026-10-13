@@ -191,34 +191,6 @@ func (s *apiKeyServer) mint(t *testing.T, name string, scopes ...string) (id.UUI
 	return parsed, issued.Token
 }
 
-// mintInto mints against a named account rather than the fixture's own.
-func (s *apiKeyServer) mintInto(t *testing.T, account id.UUID, name string, scopes ...string) (id.UUID, string) {
-	t.Helper()
-
-	body := fmt.Sprintf(`{"name":%q,"scopes":[`, name)
-	for i, scope := range scopes {
-		if i > 0 {
-			body += ","
-		}
-		body += fmt.Sprintf("%q", scope)
-	}
-	body += `]}`
-
-	rec := apiKeyPost(t, s.handler, apiKeyPath(account), s.session, body)
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("minting %q into %s: %d; body: %s", name, account, rec.Code, rec.Body)
-	}
-	var issued issuedAPIKeyResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &issued); err != nil {
-		t.Fatalf("decoding: %v", err)
-	}
-	parsed, err := id.Parse(issued.ID)
-	if err != nil {
-		t.Fatalf("parsing the id: %v", err)
-	}
-	return parsed, issued.Token
-}
-
 // bearer issues a request as a scoped token.
 func (s *apiKeyServer) bearer(t *testing.T, method, path, token, body string) *httptest.ResponseRecorder {
 	t.Helper()
@@ -584,8 +556,8 @@ func (s *apiKeyServer) expectScopeAnswer(t *testing.T, method, path, body, held,
 	required := s.requiredScope(method, path)
 	rec := s.bearer(t, method, path, secret, body)
 
-	switch {
-	case required == "":
+	switch required {
+	case "":
 		// No declared scope, so no token may reach it — whatever it holds. 403
 		// rather than 401, because the caller IS authenticated and a 401 would send
 		// the developer looking for a login problem.
@@ -593,7 +565,7 @@ func (s *apiKeyServer) expectScopeAnswer(t *testing.T, method, path, body, held,
 			t.Errorf("%s %s with %q = %d, want 403: no scope reaches this route",
 				method, path, held, rec.Code)
 		}
-	case required == held:
+	case held:
 		// Allowed by the scope. It may still be refused for a reason the scope is
 		// not about — the route's minimum role, a body this fixture did not render —
 		// and those are not what this test is for. What must not happen is a scope

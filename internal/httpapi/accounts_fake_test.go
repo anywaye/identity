@@ -224,16 +224,6 @@ func request(t *testing.T, h http.Handler, method, target, body string) *httptes
 	return rec
 }
 
-// get is an unauthenticated read. It does NOT assert the failure, because some
-// of its call sites are checking a 2xx from a handler reached through a
-// middleware that has already authenticated — see accounts_test.go.
-func get(t *testing.T, h http.Handler, target string) *httptest.ResponseRecorder {
-	t.Helper()
-	return send(t, h, methodGet, target, "")
-}
-
-const methodGet = "GET"
-
 // requestAs sends a request carrying a bearer token.
 func requestAs(t *testing.T, h http.Handler, token, method, target, body string) *httptest.ResponseRecorder {
 	t.Helper()

@@ -437,7 +437,7 @@ func (c *Client) RegisterUserWithSignupTimestamp(
 	// tell "I sent a body this client could not rewrite" from "the network
 	// failed" is debugging a bot defense instead of the bug.
 	editor := withSignupTimestamp(pair)
-	if err := editor(ctx, probeRequestEditorInput(body)); err != nil {
+	if err := editor(ctx, probeRequestEditorInput(ctx, body)); err != nil {
 		return nil, &CallError{
 			Operation: "registerUser",
 			redactor:  c.redactor,
@@ -460,7 +460,7 @@ func (c *Client) RegisterUserWithSignupTimestamp(
 // request, so this cannot change what is sent. It exists so a body the editor
 // cannot rewrite is refused by a typed error here rather than by an untyped one
 // from inside the generated client.
-func probeRequestEditorInput(body generated.RegisterUserJSONRequestBody) *http.Request {
+func probeRequestEditorInput(ctx context.Context, body generated.RegisterUserJSONRequestBody) *http.Request {
 	encoded, err := json.Marshal(body)
 	if err != nil {
 		// Unreachable for this struct: two string fields. If it ever became
@@ -469,9 +469,9 @@ func probeRequestEditorInput(body generated.RegisterUserJSONRequestBody) *http.R
 		encoded = nil
 	}
 	// A relative URL is deliberate: nothing here sends this request, and
-	// `http.NewRequest` needs a parseable target to fill in the fields the editor
+	// `http.NewRequestWithContext` needs a parseable target to fill in the fields the editor
 	// reads. A fixed path keeps the pre-flight free of any configuration.
-	req, err := http.NewRequest(http.MethodPost, "http://identity.invalid/v1/users", bytes.NewReader(encoded))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://identity.invalid/v1/users", bytes.NewReader(encoded))
 	if err != nil {
 		// Also unreachable for the same reason as the marshal above. Handed back
 		// anyway so the editor runs against a non-nil request and reports

@@ -1,7 +1,6 @@
 package httpapi
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -731,10 +730,4 @@ func TestRoleOfTheWrongJSONTypeIs400(t *testing.T) {
 	if code := decodeProblem(t, rec).Code; code != CodeInvalidJSON {
 		t.Errorf("code = %q, want %q", code, CodeInvalidJSON)
 	}
-}
-
-// contextWithAccount is a helper for handler tests that need the request context
-// RequireAccountRole populates.
-func contextWithAccount(ctx context.Context, a accounts.Account, role accounts.Role) context.Context {
-	return context.WithValue(ctx, accountContextKey{}, accountScope{Account: a, Role: role})
 }

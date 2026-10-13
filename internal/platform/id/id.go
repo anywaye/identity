@@ -152,8 +152,8 @@ func (u UUID) Version() int { return int(u[6] >> 4) }
 
 // Variant returns the variant encoded in byte 8.
 func (u UUID) Variant() Variant {
-	switch {
-	case u[8]&0x80 == 0x00:
+	switch u[8] & 0x80 {
+	case 0x00:
 		return NReserved
 	default:
 		return RFC4122
