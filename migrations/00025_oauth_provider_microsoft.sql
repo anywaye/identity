@@ -40,26 +40,48 @@
 -- the value becomes visible to the next migration rather than to a write that
 -- cannot be rolled back past.
 --
--- # WHY THE DOWN IS EMPTY
+-- # WHY THE DOWN REBUILDS THE TYPE INSTEAD OF DROPPING THE VALUE
 --
 -- PostgreSQL parses `ALTER TYPE ... DROP VALUE` and answers it with 0A000,
 -- "dropping an enum value is not implemented". There is no supported way to
--- remove an enum value; the only route is to recreate the type, which means
--- dropping every column that uses it — `connected_accounts.provider` and the
--- unique index on (provider, provider_uid) with it — and rebuilding them around
--- a copy of the rows. That is a data-destructive operation far beyond a
--- rollback's remit, and this tree's rule for a migration that cannot be
--- reversed is to say so next to an empty Down rather than to omit the section
--- or to fake one.
+-- remove a single enum label; the only route is to recreate the type without
+-- it and rewrite every column that uses it — `connected_accounts.provider`
+-- and the unique index on (provider, provider_uid) with it — around a copy of
+-- the rows. That used to read as "far beyond a rollback's remit", with an
+-- empty Down beside it. It is not: `bin/rollback` (and the CI step that runs
+-- it) applies each Down and then re-applies the Up, so an empty Down leaves
+-- the label behind and the re-apply dies with `enum label "microsoft" already
+-- exists`. A rollback-then-redeploy that fails is not a rollback at all — for
+-- a real operator as much as for the gate — so the Down does the rebuild.
 --
--- The practical consequence, stated rather than hidden: a deployment that
--- needs to undo this migration backs up `connected_accounts` first and does
--- the type rebuild by hand. The value is additive — no existing row names
--- 'microsoft', and nothing reads it until a provider behind it exists — so
--- the ordinary rollback path (down, fix, up) is not one this migration
--- participates in.
+-- The value set in the CREATE TYPE below is positional, not current: when this
+-- Down runs, 00026 (apple) has already been rolled back — goose undoes
+-- migrations newest-first, and `bin/rollback` replays each migration against
+-- the stack its own Up found — so the enum holds exactly google, github and
+-- microsoft. A later migration adding a fifth provider does not change what
+-- THIS Down must produce.
+--
+-- Rows naming 'microsoft' refuse loudly rather than vanish: the USING cast
+-- errors on a value the new type does not have, so a rollback past live data
+-- fails the migration instead of silently deleting rows. The value is additive
+-- — no existing row names 'microsoft', and nothing reads it until a provider
+-- behind it exists — so the normal case is zero such rows and a clean rebuild.
+--
+-- The practical consequence, stated rather than hidden: a deployment that has
+-- stored 'microsoft' rows and still needs to undo this migration deletes or
+-- migrates those rows first, by hand, and the failure names them.
 
 -- +goose Up
 ALTER TYPE oauth_provider ADD VALUE 'microsoft';
 
 -- +goose Down
+
+ALTER TYPE oauth_provider RENAME TO oauth_provider_retired;
+
+CREATE TYPE oauth_provider AS ENUM ('google', 'github');
+
+ALTER TABLE connected_accounts
+    ALTER COLUMN provider TYPE oauth_provider
+    USING provider::text::oauth_provider;
+
+DROP TYPE oauth_provider_retired;
