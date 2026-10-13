@@ -404,12 +404,14 @@ jobs:
       # THE DEPLOY STEP. Above the tests, alone, never conditional.
       # ---------------------------------------------------------------------
       - name: goose
-        # Pinned, and deliberately not a module dependency: migrations/README.md
-        # says goose is installed separately so that nothing in go.sum moves when
-        # it changes. Installing it the way the README offers (`@latest`) would
-        # make a suite that passes today depend on which goose was published last
-        # night. v3.28.0 is the version this repository's migrations were last
-        # verified against.
+        # Pinned, and pinned for one reason even now that the library is linked
+        # into the image: the CLI and the library must be the SAME version, or
+        # the version table they share (`goose_db_version`) is written by one
+        # engine and read by another. v3.28.0 is the version this repository's
+        # migrations were last verified against, and it is the version
+        # go.mod requires (migrations/README.md). Installing `@latest` would
+        # make a suite that passes today depend on which goose was published
+        # last night.
         run: |
           set -euo pipefail
           go install github.com/pressly/goose/v3/cmd/goose@v3.28.0

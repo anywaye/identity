@@ -3,8 +3,12 @@
 Schema for `identity`, as goose SQL files. One migration per file, named
 `NNNNN_snake_case_description.sql`, applied in filename order.
 
-`goose` is **not** a module dependency of this repository — it is a command line
-tool, installed separately, so nothing in `go.sum` moves when it changes.
+`goose` is a **command line tool** and is not installed into the image. The
+**library** it ships (`github.com/pressly/goose/v3`, pinned to the same
+`v3.28.0` the CLI is) is linked into the `identity` binary, so the image can
+apply these files with no shell, no `psql` and no CLI — see "The image migrates
+itself" below. The CLI remains the thing a developer and CI use; the two are
+the same engine at the same version, sharing one `goose_db_version` table.
 
 ## The convention
 
@@ -47,6 +51,39 @@ Rules that matter for review:
 - **No data backfill in a migration that also changes schema.** A backfill that
   touches every row locks the table. Schema first, backfill as a separate
   migration with a batched `UPDATE`.
+
+## The image migrates itself
+
+`identity migrate` applies everything pending and exits. It needs nothing but
+`DATABASE_URL`:
+
+```sh
+docker run --rm -e DATABASE_URL="$DATABASE_URL" identity migrate
+```
+
+The files are embedded in the binary (`migrations/embed.go`, `//go:embed *.sql`)
+and applied by the goose library, so the runtime image — distroless, no shell,
+no `psql` — is the only artifact involved. `/app/bin/migrate` is the same binary
+under a second name (a symlink to `/app/service`), because that is the path kit's
+substrate already invokes for identity; the binary dispatches on the name it was
+called under. `identity serve` is the default and is what a replica boots into:
+**the service still never migrates at boot**, which is the rule above and not a
+detail — a rolling deploy with two versions live would race, and a failed
+migration would take the process down with it.
+
+The substrate's migrations step is what runs it in a cluster, as its OWNER role,
+in the same image the Deployment runs — one one-shot `kubectl run … -- /app/bin/migrate`
+per schema-owning service. Re-running it is a no-op: goose records what it has
+applied, so a second run has nothing pending.
+
+**`bin/migrate` (the `psql` loop) and `identity migrate` are two front ends on
+one engine's worth of semantics, but only one of them records versions.** The
+`psql` loop exists for a machine with no goose installed and applies the Up
+section of every file without writing `goose_db_version` — so a database it built
+is one goose will try to apply from `00001` all over again. Use `goose` (or
+`identity migrate`) for anything a deployed box will later touch;
+`bin/migrate` is for a throwaway dev database. This is the reason the `psql` path
+is not what the substrate invokes.
 
 ## Running migrations
 

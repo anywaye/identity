@@ -32,4 +32,6 @@ import "embed"
 // `TestTheEmbeddedSetIsTheSetOnDisk` is the check that the pattern has not
 // narrowed: a rename or a pattern edit that drops a file from the binary is
 // invisible until a deployed box migrates to the wrong version.
+//
+//go:embed *.sql
 var FS embed.FS

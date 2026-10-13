@@ -69,7 +69,7 @@
 #       awk '{deps=substr($0, length($1)+2); if (deps ~ /internal\/platform\/dbtest/) print $1}'
 #
 #   keep the lines whose DEPS contain dbtest, normalise `P [P.test]` /
-#   `P.test` / `P_test` back to `P`. Measured on this tree: 16 packages.
+#   `P.test` / `P_test` back to `P`. Measured on this tree: 17 packages.
 #   `internal/platform/dbtest` itself is NOT listed — it has no tests,
 #   and a package does not import itself.
 #
@@ -95,6 +95,7 @@
 #   db-tier: github.com/cafaye/identity/internal/deletion
 #   db-tier: github.com/cafaye/identity/internal/httpapi
 #   db-tier: github.com/cafaye/identity/internal/mfa
+#   db-tier: github.com/cafaye/identity/internal/migrate
 #   db-tier: github.com/cafaye/identity/internal/oauth
 #   db-tier: github.com/cafaye/identity/internal/oidc
 #   db-tier: github.com/cafaye/identity/internal/outbox

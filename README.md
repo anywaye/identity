@@ -228,6 +228,24 @@ Direct dependencies, each with a cause:
   `bmatcuk/doublestar`, `otel`, `gorilla/securecookie` and their closures).
   `go mod tidy` is idempotent and `go.sum` is committed.
 
+- `github.com/pressly/goose/v3` (v3.28.0) — **the migrator, and it is a
+  dependency now because the image has no other way to migrate.** The runtime
+  stage is distroless: no shell, no `psql`, and no `migrations/` — so the
+  substrate's one-shot migrate Job had nothing to run, and a box booted against
+  an empty schema. The library is linked in at exactly the version the CLI is
+  pinned to in `bin/provision-testdb` and `ci.yml`, so one engine and one
+  `goose_db_version` table describe every database. The alternative — a second
+  applier over pgx — was refused on this repository's own evidence: `bin/migrate`
+  was the second implementation, and applying both goose sections in order is
+  what it cost (identity-31). It brings four modules
+  (`mfridman/interpolate`, `sethvargo/go-retry`, `go.uber.org/multierr`, and a
+  patch bump of `grpc`/`genproto` that goose's own `go.mod` requires). It does
+  **not** bring goose's other dialects: the root package imports no driver, so
+  the ClickHouse, MySQL, MSSQL and SQLite dependencies in goose's `go.mod` are
+  never built. `TestTheServiceBinaryCarriesNoDatabaseDriverButPgx` holds that on
+  the binary's own dependency closure (`go list -deps ./cmd/identity`), in both
+  directions, so it is a check and not a sentence here.
+
 Two more, and both are the floor rather than a choice among alternatives:
 
 - `go.opentelemetry.io/otel/sdk` and
@@ -2148,7 +2166,9 @@ exercisable from here.
 ## Migrations
 
 goose SQL files in `migrations/`, numbered and annotated. `goose` is a CLI
-tool, not a module dependency. `00001_init.sql` establishes the convention and
+tool; its **library** is linked into the binary at the same pinned version so the
+image can apply the embedded files itself (`identity migrate`, see
+[migrations/README.md](migrations/README.md)). `00001_init.sql` establishes the convention and
 `00002`–`00004` create `users`, `sessions` and `outbox_events`, `00005`–`00008`
 the tenancy and social-login tables (`00008`'s `connected_accounts` is defined and
 unused — the social-login surface is not mounted, see "Not built yet"), `00009` the
