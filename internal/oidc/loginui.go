@@ -283,7 +283,7 @@ func ValidateLoginUIURL(raw string) error {
 	}
 	parsed, err := url.Parse(raw)
 	if err != nil {
-		return fmt.Errorf("%w: it is not a URL: %v", ErrInvalidLoginUI, err)
+		return fmt.Errorf("%w: it is not a URL: %w", ErrInvalidLoginUI, err)
 	}
 	if parsed.Scheme != "https" && parsed.Scheme != "http" {
 		return fmt.Errorf("%w: its scheme is %q, want http or https", ErrInvalidLoginUI, parsed.Scheme)

@@ -219,7 +219,7 @@ func TestNATSPublisherPublishesTheEnvelopeOnTheSubjectOfTheType(t *testing.T) {
 // recorded, and the row still claimable. Both failure modes — a silent broker
 // and a refusing one — leave the row in exactly this state, which is the
 // contract.
-func assertFailedPublishLeftTheRowClaimable(t *testing.T, pool *pgxpool.Pool, store *Store, ctx context.Context, e Envelope) {
+func assertFailedPublishLeftTheRowClaimable(ctx context.Context, t *testing.T, pool *pgxpool.Pool, store *Store, e Envelope) {
 	t.Helper()
 
 	state := rowStateOf(t, pool, e.ID)
@@ -296,7 +296,7 @@ func TestNATSPublisherFailureLeavesTheRowClaimable(t *testing.T) {
 		t.Errorf("RunOnce published %d events, want 0", n)
 	}
 
-	assertFailedPublishLeftTheRowClaimable(t, pool, store, ctx, e)
+	assertFailedPublishLeftTheRowClaimable(ctx, t, pool, store, e)
 
 	// The message DID reach the core subscriber — that is the mechanism of the
 	// silence, and asserting it is what proves the hang was real rather than a
@@ -352,7 +352,7 @@ func TestNATSPublisherRefusalLeavesTheRowClaimable(t *testing.T) {
 		t.Errorf("RunOnce published %d events, want 0", n)
 	}
 
-	assertFailedPublishLeftTheRowClaimable(t, pool, store, ctx, e)
+	assertFailedPublishLeftTheRowClaimable(ctx, t, pool, store, e)
 }
 
 // At-least-once means a duplicate is survivable, and it is survivable only

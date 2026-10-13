@@ -1661,7 +1661,7 @@ func (c *Config) loadSignupSigningKey(lookup Lookup) error {
 
 	decoded, err := base64.RawURLEncoding.DecodeString(encoded)
 	if err != nil {
-		return fmt.Errorf("%w: it is not base64url: %v", ErrInvalidSignupSigningKey, err)
+		return fmt.Errorf("%w: it is not base64url: %w", ErrInvalidSignupSigningKey, err)
 	}
 	if len(decoded) != 32 {
 		return fmt.Errorf("%w: it decodes to %d bytes, want exactly 32",
@@ -1710,7 +1710,7 @@ func (c Config) validateDatabaseURL() error {
 	}
 	parsed, err := url.Parse(c.DatabaseURL)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrInvalidDatabaseURL, err)
+		return fmt.Errorf("%w: %w", ErrInvalidDatabaseURL, err)
 	}
 	if parsed.Scheme != "postgres" && parsed.Scheme != "postgresql" {
 		return fmt.Errorf("%w: scheme %q is not postgres", ErrInvalidDatabaseURL, parsed.Scheme)

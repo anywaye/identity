@@ -316,7 +316,7 @@ func isRedirectStatus(status int) bool { return status >= 300 && status < 400 }
 // `*.go` and this one cannot: the question here is whether a TEMPLATE is
 // committed, so the filter would exclude the answer.
 func trackedFiles(t *testing.T) ([]string, error) {
-	out, err := exec.Command("git", "-C", repoRoot(t), "ls-files").CombinedOutput()
+	out, err := exec.CommandContext(t.Context(), "git", "-C", repoRoot(t), "ls-files").CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("git ls-files: %w\n%s", err, out)
 	}

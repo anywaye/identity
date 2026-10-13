@@ -475,7 +475,7 @@ func namedStepScripts(t *testing.T, job string) []namedStep {
 func TestTheCoverageExclusionsAreShellAndYAMLClean(t *testing.T) {
 	root := repoRoot(t)
 
-	if out, err := exec.Command("bash", "-n", filepath.Join(root, "bin", "coverage-floor")).CombinedOutput(); err != nil {
+	if out, err := exec.CommandContext(t.Context(), "bash", "-n", filepath.Join(root, "bin", "coverage-floor")).CombinedOutput(); err != nil {
 		t.Fatalf("bin/coverage-floor is not valid bash: %v\n%s\n"+
 			"The floor is enforced by this script. A syntax error in it is a floor that cannot "+
 			"run, and a build that cannot run its floor is a build whose green badge is a guess.",
@@ -724,7 +724,7 @@ func TestTheCoverageFilterCanFail(t *testing.T) {
 		if err := os.WriteFile(profPath, []byte(justAbove), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		out, err := exec.Command(script, profPath, filepath.Join(root, exclusionsFile)).CombinedOutput()
+		out, err := exec.CommandContext(t.Context(), script, profPath, filepath.Join(root, exclusionsFile)).CombinedOutput()
 		if err != nil {
 			t.Fatalf("bin/coverage-floor refused 70.1%% against a floor of 70: %v\\n%s", err, out)
 		}
@@ -745,7 +745,7 @@ func TestTheCoverageFilterCanFail(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			out, err := exec.Command(script, profPath, declPath, tc.assert).CombinedOutput()
+			out, err := exec.CommandContext(t.Context(), script, profPath, declPath, tc.assert).CombinedOutput()
 			if err == nil {
 				t.Fatalf("bin/coverage-floor exited 0 on a declaration it must refuse.\n"+
 					"Output was:\n%s", out)
@@ -766,7 +766,7 @@ func TestTheCoverageFilterCanFail(t *testing.T) {
 		if err := os.WriteFile(profPath, []byte(profileHigh), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		out, err := exec.Command(script, profPath, filepath.Join(root, exclusionsFile)).CombinedOutput()
+		out, err := exec.CommandContext(t.Context(), script, profPath, filepath.Join(root, exclusionsFile)).CombinedOutput()
 		if err != nil {
 			t.Fatalf("bin/coverage-floor refused the repository's own %s: %v\n%s",
 				exclusionsFile, err, out)
@@ -899,7 +899,7 @@ var isoDate = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 func goFilesUnder(t *testing.T, root string, prefix ...string) []string {
 	t.Helper()
 
-	out, err := exec.Command("git", "-C", root, "ls-files", "*.go").CombinedOutput()
+	out, err := exec.CommandContext(t.Context(), "git", "-C", root, "ls-files", "*.go").CombinedOutput()
 	if err != nil {
 		t.Fatalf("git ls-files '*.go': %v\n%s", err, out)
 	}

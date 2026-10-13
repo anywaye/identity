@@ -223,7 +223,7 @@ const (
 	// by lunchtime.
 	//
 	// MaxSessionLinkTTL is one hour, and it is the answer to "a caller may choose a
-	// shorter window" rather than a licence to choose a longer one. The maximum is
+	// shorter window" rather than a license to choose a longer one. The maximum is
 	// what actually bounds how long a delivered link stays live, so it is a
 	// published number rather than a field the caller fills in.
 	SessionLinkTTL    = 10 * time.Minute

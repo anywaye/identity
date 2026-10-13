@@ -106,7 +106,7 @@ func MintAppleClientSecret(in AppleSecretInputs) (string, error) {
 	}
 	key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
 	if err != nil {
-		return "", fmt.Errorf("OAUTH_APPLE_PRIVATE_KEY is not a parseable .p8 private key: %v", err)
+		return "", fmt.Errorf("OAUTH_APPLE_PRIVATE_KEY is not a parseable .p8 private key: %w", err)
 	}
 	ecdsaKey, ok := key.(*ecdsa.PrivateKey)
 	if !ok {
@@ -118,7 +118,7 @@ func MintAppleClientSecret(in AppleSecretInputs) (string, error) {
 		(&jose.SignerOptions{}).WithHeader("kid", in.KeyID),
 	)
 	if err != nil {
-		return "", fmt.Errorf("building the ES256 signer: %v", err)
+		return "", fmt.Errorf("building the ES256 signer: %w", err)
 	}
 
 	now := time.Now()
@@ -131,12 +131,12 @@ func MintAppleClientSecret(in AppleSecretInputs) (string, error) {
 	}
 	payload, err := json.Marshal(claims)
 	if err != nil {
-		return "", fmt.Errorf("encoding the client_secret claims: %v", err)
+		return "", fmt.Errorf("encoding the client_secret claims: %w", err)
 	}
 
 	jws, err := signer.Sign(payload)
 	if err != nil {
-		return "", fmt.Errorf("signing the client_secret: %v", err)
+		return "", fmt.Errorf("signing the client_secret: %w", err)
 	}
 	return jws.CompactSerialize()
 }
@@ -273,7 +273,7 @@ func (c *Client) appleIdentity(ctx context.Context, p Provider, tokens Tokens) (
 func (c *Client) verifyAppleIDToken(ctx context.Context, p Provider, idToken string) (*appleIDToken, error) {
 	jws, err := jose.ParseSigned(idToken, []jose.SignatureAlgorithm{jose.ES256})
 	if err != nil {
-		return nil, fmt.Errorf("%w: the id_token is not an ES256-signed JWT: %v", ErrProviderUnavailable, err)
+		return nil, fmt.Errorf("%w: the id_token is not an ES256-signed JWT: %w", ErrProviderUnavailable, err)
 	}
 	if len(jws.Signatures) != 1 {
 		return nil, fmt.Errorf("%w: the id_token carries %d signatures, want exactly 1", ErrProviderUnavailable, len(jws.Signatures))
@@ -308,12 +308,12 @@ func (c *Client) verifyAppleIDToken(ctx context.Context, p Provider, idToken str
 	payload, err := jws.Verify(pub)
 	if err != nil {
 		return nil, fmt.Errorf("%w: the id_token's signature does not verify against apple's "+
-			"published key: %v", ErrProviderUnavailable, err)
+			"published key: %w", ErrProviderUnavailable, err)
 	}
 
 	var claims appleIDToken
 	if err := json.Unmarshal(payload, &claims); err != nil {
-		return nil, fmt.Errorf("%w: the verified id_token's claims are not readable: %v", ErrProviderUnavailable, err)
+		return nil, fmt.Errorf("%w: the verified id_token's claims are not readable: %w", ErrProviderUnavailable, err)
 	}
 
 	if claims.Issuer != appleIssuer {
@@ -345,13 +345,13 @@ func (c *Client) verifyAppleIDToken(ctx context.Context, p Provider, idToken str
 func (c *Client) getJWKS(ctx context.Context, endpoint string) (*jose.JSONWebKeySet, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return nil, fmt.Errorf("%w: building the request: %v", ErrProviderUnavailable, err)
+		return nil, fmt.Errorf("%w: building the request: %w", ErrProviderUnavailable, err)
 	}
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrProviderUnavailable, err)
+		return nil, fmt.Errorf("%w: %w", ErrProviderUnavailable, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -361,7 +361,7 @@ func (c *Client) getJWKS(ctx context.Context, endpoint string) (*jose.JSONWebKey
 
 	var jwks jose.JSONWebKeySet
 	if err := json.NewDecoder(io.LimitReader(resp.Body, maxIdentityBytes)).Decode(&jwks); err != nil {
-		return nil, fmt.Errorf("%w: reading the jwks document: %v", ErrProviderUnavailable, err)
+		return nil, fmt.Errorf("%w: reading the jwks document: %w", ErrProviderUnavailable, err)
 	}
 	return &jwks, nil
 }

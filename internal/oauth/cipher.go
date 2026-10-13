@@ -144,7 +144,7 @@ func (c *Cipher) Open(value string) (string, error) {
 
 	raw, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(value, SealPrefix))
 	if err != nil {
-		return "", fmt.Errorf("%w: not base64url: %v", ErrMalformedCiphertext, err)
+		return "", fmt.Errorf("%w: not base64url: %w", ErrMalformedCiphertext, err)
 	}
 
 	nonceSize := c.aead.NonceSize()

@@ -31,7 +31,7 @@
 // TEST_DATABASE_URL is unset (so `go test ./...` stays green with no database, which
 // this suite is built to do), and REQUIRED_DB=1 to turn that skip into a FAILURE for
 // anyone who needs the tier to be non-optional - which is the same contract kit's
-// driver states, carried over so the driver is still recognisably kit's.
+// driver states, carried over so the driver is still recognizably kit's.
 package tenancy
 
 import (

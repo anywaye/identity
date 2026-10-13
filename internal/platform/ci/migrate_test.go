@@ -137,7 +137,7 @@ func TestEveryMigrationForwardsItsUpSectionIntact(t *testing.T) {
 
 	for _, migration := range migrations {
 		t.Run(filepath.Base(migration), func(t *testing.T) {
-			out, err := exec.Command(extractor, migration).Output()
+			out, err := exec.CommandContext(t.Context(), extractor, migration).Output()
 			if err != nil {
 				t.Fatalf("bin/migration-up-section %s: %v", filepath.Base(migration), err)
 			}
@@ -164,7 +164,7 @@ func TestTheExtractorRefusesWhatItCannotRead(t *testing.T) {
 		{filepath.Join(root, "migrations", "00001_nonexistent.sql")}, // unreadable
 		{"a.sql", "b.sql"}, // two files, one verb
 	} {
-		cmd := exec.Command(extractor, args...)
+		cmd := exec.CommandContext(t.Context(), extractor, args...)
 		var stderr strings.Builder
 		cmd.Stderr = &stderr
 		err := cmd.Run()
@@ -214,7 +214,7 @@ func stubPsql(t *testing.T) (string, func(dsn string) (string, error)) {
 	}
 
 	run := func(dsn string) (string, error) {
-		cmd := exec.Command("bash", filepath.Join(root, "bin", "migrate"))
+		cmd := exec.CommandContext(t.Context(), "bash", filepath.Join(root, "bin", "migrate"))
 		cmd.Dir = root
 		cmd.Env = append(os.Environ(),
 			"PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"),
@@ -268,7 +268,7 @@ func TestTheDownSectionExtractorHandsPsqlTheUndoAndNotTheForwardApply(t *testing
 		t.Fatalf("writing the scratch migration: %v", err)
 	}
 
-	out, err := exec.Command(filepath.Join(root, "bin", "migration-down-section"), migration).Output()
+	out, err := exec.CommandContext(t.Context(), filepath.Join(root, "bin", "migration-down-section"), migration).Output()
 	if err != nil {
 		t.Fatalf("bin/migration-down-section: %v", err)
 	}
@@ -299,7 +299,7 @@ func TestTheDownSectionExtractorHandsPsqlTheUndoAndNotTheForwardApply(t *testing
 	if err := os.WriteFile(noDown, []byte("-- +goose Up\nCREATE TABLE scratch2 (id int);\n"), 0o644); err != nil {
 		t.Fatalf("writing the Down-less migration: %v", err)
 	}
-	out, err = exec.Command(filepath.Join(root, "bin", "migration-down-section"), noDown).Output()
+	out, err = exec.CommandContext(t.Context(), filepath.Join(root, "bin", "migration-down-section"), noDown).Output()
 	if err != nil {
 		t.Fatalf("bin/migration-down-section on a Down-less file: %v", err)
 	}

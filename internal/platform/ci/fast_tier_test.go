@@ -142,7 +142,7 @@ func normalisePackage(pkg string) string {
 
 func goList(t *testing.T, args ...string) ([]byte, error) {
 	t.Helper()
-	cmd := exec.Command("go", append([]string{"list"}, args...)...)
+	cmd := exec.CommandContext(t.Context(), "go", append([]string{"list"}, args...)...)
 	cmd.Dir = repoRoot(t)
 	return cmd.Output()
 }
@@ -330,7 +330,7 @@ func TestTheFastTierRefusesAnUndeclaredPoolPackage(t *testing.T) {
 		t.Fatalf("writing the stub go: %v", err)
 	}
 
-	cmd := exec.Command(filepath.Join(root, "bin", "prime"), "--fast")
+	cmd := exec.CommandContext(t.Context(), filepath.Join(root, "bin", "prime"), "--fast")
 	cmd.Dir = root
 	cmd.Env = append(os.Environ(),
 		"PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"),

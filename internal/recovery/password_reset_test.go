@@ -508,7 +508,7 @@ func TestADeploymentWithNoMailerRefusesBeforeItLearnsAnything(t *testing.T) {
 	}
 	if _, err := h.svc.RequestEmailChange(t.Context(), RequestEmailChangeInput{
 		UserID: known.id, Email: dbtest.UniqueEmail(t),
-	}); err != ErrNoMailer {
+	}); !errors.Is(err, ErrNoMailer) {
 		t.Errorf("RequestEmailChange = %v, want ErrNoMailer", err)
 	}
 
@@ -526,10 +526,10 @@ func TestADeploymentWithNoMailerRefusesBeforeItLearnsAnything(t *testing.T) {
 func TestUnavailableRefusesEveryEntryPoint(t *testing.T) {
 	var m Mailer = Unavailable{}
 
-	if err := m.Ready(t.Context()); err != ErrNoMailer {
+	if err := m.Ready(t.Context()); !errors.Is(err, ErrNoMailer) {
 		t.Errorf("Ready = %v, want ErrNoMailer", err)
 	}
-	if err := m.Send(t.Context(), Message{To: "kaka@example.com", Body: "hello"}); err != ErrNoMailer {
+	if err := m.Send(t.Context(), Message{To: "kaka@example.com", Body: "hello"}); !errors.Is(err, ErrNoMailer) {
 		t.Errorf("Send = %v, want ErrNoMailer", err)
 	}
 }

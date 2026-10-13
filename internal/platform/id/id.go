@@ -119,7 +119,7 @@ func Parse(s string) (UUID, error) {
 
 	raw, err := hex.DecodeString(string(hexDigits[:]))
 	if err != nil {
-		return UUID{}, fmt.Errorf("%w: %v", ErrInvalid, err)
+		return UUID{}, fmt.Errorf("%w: %w", ErrInvalid, err)
 	}
 	copy(u[:], raw)
 

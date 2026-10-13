@@ -160,7 +160,7 @@ func TestProvisionTestDBOldFormIsRejectedAndTheNewFormDeliversAVariable(t *testi
 
 	// The OLD shape: the defect. psql receives the variable reference in -c,
 	// interpolation does not apply, and the server rejects it.
-	old := exec.Command("bash", "-c", `"$0" "$1" -X -q -w --set ON_ERROR_STOP=1 -v pw="$2" -c "CREATE ROLE $3 LOGIN PASSWORD :'pw'"`,
+	old := exec.CommandContext(t.Context(), "bash", "-c", `"$0" "$1" -X -q -w --set ON_ERROR_STOP=1 -v pw="$2" -c "CREATE ROLE $3 LOGIN PASSWORD :'pw'"`,
 		fake, "postgres://x/x", "p@ss", "identity")
 	if out, err := old.CombinedOutput(); err == nil {
 		t.Errorf("the old `-c \"CREATE ROLE ... PASSWORD :'pw'\"` shape succeeded against the fake psql; it must be rejected.\n"+
@@ -173,7 +173,7 @@ func TestProvisionTestDBOldFormIsRejectedAndTheNewFormDeliversAVariable(t *testi
 	// printf pipe into psql with `-v pw=` bound and :'pw' literal in SQL.
 	outFile := filepath.Join(dir, "stdin.sql")
 	runNew := func(role string) (string, error) {
-		cmd := exec.Command("bash", "-c", `printf '%s\n' "CREATE ROLE $0 LOGIN PASSWORD :'pw'" | "$1" "$2" -X -q -w --set ON_ERROR_STOP=1 -v pw="$3"`,
+		cmd := exec.CommandContext(t.Context(), "bash", "-c", `printf '%s\n' "CREATE ROLE $0 LOGIN PASSWORD :'pw'" | "$1" "$2" -X -q -w --set ON_ERROR_STOP=1 -v pw="$3"`,
 			role, fake, "postgres://x/x", "s3cret' OR '1'='1")
 		cmd.Env = append(os.Environ(), "FAKE_PSQL_OUT="+outFile)
 		out, err := cmd.CombinedOutput()
@@ -319,7 +319,7 @@ func TestProvisionTestDBIsValidBash(t *testing.T) {
 		t.Fatalf("bash is not on PATH, so neither this check nor bin/provision-testdb can run: %v", err)
 	}
 	path := filepath.Join(repoRoot(t), "bin", "provision-testdb")
-	if out, err := exec.Command(bash, "-n", path).CombinedOutput(); err != nil {
+	if out, err := exec.CommandContext(t.Context(), bash, "-n", path).CombinedOutput(); err != nil {
 		t.Errorf("bin/provision-testdb is not valid bash: %v\n%s", err, out)
 	}
 }

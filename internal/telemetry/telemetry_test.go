@@ -313,7 +313,9 @@ func TestTheErrorVocabularyIsCoreExactly(t *testing.T) {
 	// Byte-identical to the `enum` in core's traces.schema.json.
 	want := []string{
 		"_OTHER",
-		"cancelled",
+		// Core's spelling — see the note on ErrorTypes. This literal IS the
+		// schema's enum, so it carries the same suppression.
+		"cancelled", //nolint:misspell
 		"circuit_open",
 		"conflict",
 		"connection_failed",
@@ -834,7 +836,7 @@ func TestTheTenantGoesOnTheResourceAndNowhereElse(t *testing.T) {
 
 	got := map[string]string{}
 	for _, kv := range resource.Attributes() {
-		got[string(kv.Key)] = kv.Value.Emit()
+		got[string(kv.Key)] = kv.Value.String()
 	}
 	for name, want := range map[string]string{
 		"service.name":           "identity",
@@ -865,7 +867,7 @@ func TestTheTenantGoesOnTheResourceAndNowhereElse(t *testing.T) {
 // the whole fleet's.
 func TestAnUnsetResourceVariableIsAbsentRatherThanEmpty(t *testing.T) {
 	for _, kv := range Resource(lookupFrom(map[string]string{})).Attributes() {
-		if value := kv.Value.Emit(); value == "" {
+		if value := kv.Value.String(); value == "" {
 			t.Errorf("resource %s is an empty string; absent is not the same as empty", kv.Key)
 		}
 	}

@@ -434,7 +434,7 @@ func TestEveryRunBlockIsValidShell(t *testing.T) {
 			if err := os.WriteFile(path, []byte(script), 0o600); err != nil {
 				t.Fatalf("writing the run block of job %q, block %d: %v", job, i+1, err)
 			}
-			if out, err := exec.Command(bash, "-n", path).CombinedOutput(); err != nil {
+			if out, err := exec.CommandContext(t.Context(), bash, "-n", path).CombinedOutput(); err != nil {
 				t.Errorf("job %q, run block %d, is not valid bash: %v\n%s\n"+
 					"An apostrophe inside a single-quoted region — an awk program, a sed\n"+
 					"script, a grep pattern — ends the quoting, and the shell re-parses the\n"+

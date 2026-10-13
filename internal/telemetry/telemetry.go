@@ -202,7 +202,10 @@ var allowedSpanAttributes = func() map[string]struct{} {
 // collector anyway, and a silently-missing drill-down is worse than a loud one.
 var ErrorTypes = []string{
 	"_OTHER",
-	"cancelled",
+	// Core's spelling, not a typo: traces.schema.json's closed error.type enum
+	// mandates it byte-identical on all three signals, and
+	// TestTheErrorVocabularyIsCoreExactly fails on anything else.
+	"cancelled", //nolint:misspell
 	"circuit_open",
 	"conflict",
 	"connection_failed",

@@ -2,6 +2,7 @@ package users
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/cafaye/identity/internal/platform/dbtest"
@@ -84,7 +85,7 @@ func TestSetStaffGrantsAndRevokes(t *testing.T) {
 		t.Error("IsStaff = true after revoke, want false")
 	}
 
-	if err := store.SetStaff(ctx, pool, id.MustNew(), true); err != ErrNotFound {
+	if err := store.SetStaff(ctx, pool, id.MustNew(), true); !errors.Is(err, ErrNotFound) {
 		t.Errorf("SetStaff for an unknown user = %v, want ErrNotFound", err)
 	}
 }

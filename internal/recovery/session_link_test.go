@@ -1,6 +1,7 @@
 package recovery
 
 import (
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -284,7 +285,7 @@ func TestALinkAnswersIdenticallyForEveryWayOfBeingWrong(t *testing.T) {
 			switch {
 			case tc.wantLive && err != nil:
 				t.Fatalf("Live on a live link = %v, want the row", err)
-			case !tc.wantLive && err != ErrTokenNotFound:
+			case !tc.wantLive && !errors.Is(err, ErrTokenNotFound):
 				t.Errorf("Live = %v, want exactly ErrTokenNotFound", err)
 			}
 		})

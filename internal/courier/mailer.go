@@ -606,7 +606,7 @@ func (m *RecoveryMailer) Send(ctx context.Context, message recovery.Message) err
 			"subject", message.Subject,
 			"reason", "the message named no account, and courier's request requires one",
 		)
-		return fmt.Errorf("%w: %s: %v", ErrUnsupportedMessage, message.Subject, err)
+		return fmt.Errorf("%w: %s: %w", ErrUnsupportedMessage, message.Subject, err)
 	}
 
 	// The link, for a message whose courier template renders one. Rendered from

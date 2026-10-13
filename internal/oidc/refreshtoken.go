@@ -202,7 +202,7 @@ func (s *Store) RotateRefreshToken(ctx context.Context, q db.Querier, digest str
 		if _, err := s.RevokeRefreshTokenFamily(ctx, q, claimed.ID, now); err != nil {
 			// The refusal is returned either way. A client must not be able to
 			// keep using a reused token because a cleanup UPDATE failed.
-			return RefreshToken{}, fmt.Errorf("%w (and the family could not be revoked: %v)", ErrRefreshTokenReused, err)
+			return RefreshToken{}, fmt.Errorf("%w (and the family could not be revoked: %w)", ErrRefreshTokenReused, err)
 		}
 		return RefreshToken{}, ErrRefreshTokenReused
 	}

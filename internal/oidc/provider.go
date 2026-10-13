@@ -132,7 +132,7 @@ func NewProvider(cfg Config, storage *Storage) (*Provider, error) {
 		// Unreachable: ValidateLoginUIURL just parsed it. Kept rather than
 		// asserted because a constructor that panics on its own input is a
 		// constructor with a second, undocumented failure mode.
-		return nil, fmt.Errorf("%w: it is not a URL: %v", ErrInvalidLoginUI, parseErr)
+		return nil, fmt.Errorf("%w: it is not a URL: %w", ErrInvalidLoginUI, parseErr)
 	}
 
 	encryptionKey, encryptionKeyID := deriveEncryptionKey(cfg.SigningKey)

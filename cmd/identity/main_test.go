@@ -305,7 +305,7 @@ func TestMainHandlesSIGTERM(t *testing.T) {
 	}
 
 	port := freePort(t)
-	cmd := exec.Command(os.Args[0], "-test.run=^TestMainHandlesSIGTERM$")
+	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestMainHandlesSIGTERM$")
 	// SIGNUP_SIGNING_KEY is the one secret a boot cannot go without, and the
 	// child runs the REAL main(), which reads the REAL environment: without
 	// it the child refuses to start and the signal lands on a dead process.

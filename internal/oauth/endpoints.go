@@ -243,7 +243,7 @@ func (e ProviderEndpoints) validate(name string) error {
 func validateEndpointURL(raw string) error {
 	parsed, err := url.Parse(raw)
 	if err != nil {
-		return fmt.Errorf("it does not parse: %v", err)
+		return fmt.Errorf("it does not parse: %w", err)
 	}
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
 		return fmt.Errorf("scheme %q is not http or https", parsed.Scheme)

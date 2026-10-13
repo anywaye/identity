@@ -797,7 +797,7 @@ func assertRecordedAccepted(t *testing.T, got MessageResult, tc recordedCase) {
 // enum", and that is not the property this check exists to have.
 func findCourierOpenAPI(t *testing.T) string {
 	t.Helper()
-	if document, ok := sourceCheckoutCourier(); ok {
+	if document, ok := sourceCheckoutCourier(t); ok {
 		return document
 	}
 	candidates := []string{
@@ -819,8 +819,9 @@ func findCourierOpenAPI(t *testing.T) string {
 // sourceCheckoutCourier resolves courier's document in the source checkout — the
 // `cafaye/courier` repository, not whatever worktree of it happens to sit beside
 // this one.
-func sourceCheckoutCourier() (string, bool) {
-	out, err := exec.Command("git", "rev-parse", "--git-common-dir").Output()
+func sourceCheckoutCourier(t *testing.T) (string, bool) {
+	t.Helper()
+	out, err := exec.CommandContext(t.Context(), "git", "rev-parse", "--git-common-dir").Output()
 	if err != nil {
 		return "", false
 	}

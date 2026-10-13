@@ -183,7 +183,7 @@ func BeginAccount(ctx context.Context, q db.Querier, account id.UUID) error {
 //
 // Every query KEEPS its own `where account_id = ?`. That is unchanged by this
 // type and is not optional: the predicate is what makes the query indexable, and
-// RLS is defense in depth rather than a licence to delete it.
+// RLS is defense in depth rather than a license to delete it.
 type TxRunner struct {
 	db.TxRunner
 }

@@ -51,7 +51,7 @@ func TestTheServiceBinaryDoesNotReachTheGeneratedClient(t *testing.T) {
 		t.Fatalf("go is not on PATH, so the dependency graph cannot be read: %v", err)
 	}
 
-	cmd := exec.Command("go", "list", "-deps", "./cmd/identity")
+	cmd := exec.CommandContext(t.Context(), "go", "list", "-deps", "./cmd/identity")
 	cmd.Dir = root
 
 	var stdout strings.Builder

@@ -345,7 +345,7 @@ func validateRedirectBase(baseURL string) error {
 
 	parsed, err := url.Parse(baseURL)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrInvalidRedirectBaseURL, err)
+		return fmt.Errorf("%w: %w", ErrInvalidRedirectBaseURL, err)
 	}
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
 		return fmt.Errorf("%w: scheme %q is not http or https", ErrInvalidRedirectBaseURL, parsed.Scheme)

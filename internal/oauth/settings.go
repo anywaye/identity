@@ -156,7 +156,7 @@ func (s Settings) Key() ([]byte, error) {
 
 	raw, err := base64.StdEncoding.DecodeString(s.EncryptionKey)
 	if err != nil {
-		return nil, fmt.Errorf("%w: it is not standard base64: %v", ErrInvalidEncKey, err)
+		return nil, fmt.Errorf("%w: it is not standard base64: %w", ErrInvalidEncKey, err)
 	}
 	if len(raw) != 32 {
 		return nil, fmt.Errorf("%w: it decodes to %d bytes, want 32", ErrInvalidEncKey, len(raw))

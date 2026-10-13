@@ -412,7 +412,7 @@ func identity(uid, email, name string) (Identity, error) {
 func (c *Client) getJSON(ctx context.Context, endpoint, accessToken string, dst any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return fmt.Errorf("%w: building the request: %v", ErrProviderUnavailable, err)
+		return fmt.Errorf("%w: building the request: %w", ErrProviderUnavailable, err)
 	}
 	// `token` is GitHub's older documented scheme and `Bearer` is what Google
 	// documents. Both providers accept Bearer, and only GitHub accepts token, so
@@ -422,7 +422,7 @@ func (c *Client) getJSON(ctx context.Context, endpoint, accessToken string, dst 
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrProviderUnavailable, err)
+		return fmt.Errorf("%w: %w", ErrProviderUnavailable, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -431,7 +431,7 @@ func (c *Client) getJSON(ctx context.Context, endpoint, accessToken string, dst 
 	}
 
 	if err := json.NewDecoder(io.LimitReader(resp.Body, maxIdentityBytes)).Decode(dst); err != nil {
-		return fmt.Errorf("%w: reading the identity response: %v", ErrProviderUnavailable, err)
+		return fmt.Errorf("%w: reading the identity response: %w", ErrProviderUnavailable, err)
 	}
 	return nil
 }
@@ -452,5 +452,5 @@ func providerError(what string, err error) error {
 		}
 		return fmt.Errorf("%w: %s failed with %d", ErrProviderUnavailable, what, status)
 	}
-	return fmt.Errorf("%w: %s: %v", ErrProviderUnavailable, what, err)
+	return fmt.Errorf("%w: %s: %w", ErrProviderUnavailable, what, err)
 }

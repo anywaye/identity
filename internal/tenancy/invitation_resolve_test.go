@@ -59,7 +59,7 @@ func TestTenancyAnInvitationResolvesByTheDigestTheCallerPresentedAndNothingElse(
 		t.Fatalf("assuming the app role: %v", err)
 	}
 
-	tenantA, tenantB := seedInvitationRows(t, ctx, owner)
+	tenantA, tenantB := seedInvitationRows(ctx, t, owner)
 
 	// 0. THE FIXTURE REALLY HOLDS TWO INVITATIONS, one per tenant. Every
 	// "exactly one row" assertion below is only meaningful against a table
@@ -259,7 +259,7 @@ func TestTheInvitationResolvePolicyIsInstalled(t *testing.T) {
 // digest is digestFor(accountID), so each tenant's invitation has a stable,
 // distinct value the test can present; the column's 64-character CHECK is what
 // makes that shape mandatory rather than convenient.
-func seedInvitationRows(t *testing.T, ctx context.Context, owner *pgx.Conn) (tenantA, tenantB string) {
+func seedInvitationRows(ctx context.Context, t *testing.T, owner *pgx.Conn) (tenantA, tenantB string) {
 	t.Helper()
 
 	if err := owner.QueryRow(ctx, `select gen_random_uuid()::text, gen_random_uuid()::text`).

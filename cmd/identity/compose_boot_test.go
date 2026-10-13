@@ -104,7 +104,7 @@ func TestTheComposeManifestBootsTheBinary(t *testing.T) {
 		resolved[key] = value
 	}
 
-	cmd := exec.Command(os.Args[0], "-test.run=^TestTheComposeManifestBootsTheBinary$")
+	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestTheComposeManifestBootsTheBinary$")
 	cmd.Env = append(mapToEnv(resolved), "IDENTITY_TEST_CHILD=1")
 
 	stderr, err := cmd.StderrPipe()
