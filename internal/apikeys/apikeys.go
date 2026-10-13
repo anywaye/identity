@@ -3,7 +3,7 @@
 //
 // A SESSION IS BROWSER-SHAPED AND AN API KEY IS NOT, and every decision in this
 // package follows from that difference rather than from the two being two
-// flavours of the same thing:
+// flavors of the same thing:
 //
 //   - a session expires in weeks, is created by a password and a second factor,
 //     and lives in a `__Host-` cookie this service sets and the browser enforces;
@@ -63,11 +63,11 @@ import (
 //
 // IT IS A FEATURE AND THE FEATURE IS RECOGNITION. A secret that leaks — into a
 // CI log, a shell history, a support ticket, a screenshot, a paste buffer — is
-// recognised as a cafaye credential by its first seven characters, which turns
+// recognized as a cafaye credential by its first seven characters, which turns
 // "somebody has to guess which of these strings is a working key" into a grep.
 // It is the same reason the OIDC client id is 32 random bytes rather than a
 // counter, and the same reason gateway's api key carries a prefix: a credential
-// you cannot recognise is a credential you cannot revoke in time.
+// you cannot recognize is a credential you cannot revoke in time.
 //
 // It is the PREFIX of the value rather than a separator somewhere in the middle
 // because a scanner that looks at the first bytes is looking at the bytes a
@@ -167,7 +167,7 @@ const LastUsedResolution = 5 * time.Minute
 // these is a refusal rather than an oversight:
 //
 //	there is NO scope for the second factor. A token cannot read whether an
-//	account has MFA, enrol one, rotate one, or turn one off — and that is not a
+//	account has MFA, enroll one, rotate one, or turn one off — and that is not a
 //	gap in the vocabulary, it is the reason the vocabulary is safe. A machine
 //	credential that could disable a second factor is a credential whose theft is
 //	a downgrade rather than a break-in, and the routes refuse a token outright

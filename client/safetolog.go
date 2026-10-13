@@ -65,7 +65,7 @@ import (
 //
 // ## THE LIMIT OF THIS ONE, AND WHICH OF THE TWO TO REACH FOR
 //
-// **This function does not know your credential.** It recognises the `cafaye_`
+// **This function does not know your credential.** It recognizes the `cafaye_`
 // prefix, a JWS, and header lines — shapes. A bare session token is 43 base64url
 // characters with no prefix and no dots, and there is nothing about it that
 // distinguishes it from an opaque id, so this function passes it through.

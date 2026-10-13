@@ -1281,7 +1281,7 @@ func (s *Service) UpdateTheme(ctx context.Context, userID id.UUID, theme *string
 // A token that resolves to nothing is a success, not an error. A client retrying
 // a logout, or a browser presenting a cookie that has already expired, should get
 // an answer; answering 500 would make a retry look like a failure and would make
-// the natural client behaviour (retry) pathological.
+// the natural client behavior (retry) pathological.
 func (s *Service) Logout(ctx context.Context, token string) error {
 	if token == "" {
 		return nil
@@ -1301,7 +1301,7 @@ func (s *Service) Logout(ctx context.Context, token string) error {
 	return nil
 }
 
-// Session is one row of GET /v1/sessions: a session a caller can recognise and
+// Session is one row of GET /v1/sessions: a session a caller can recognize and
 // name, with nothing on it that is a credential.
 //
 // # WHY IT IS NOT sessions.Session
@@ -1330,7 +1330,7 @@ type Session struct {
 	ExpiresAt time.Time
 	CreatedAt time.Time
 	// UserAgent is the caller's own header as recorded at sign-in. It is shown
-	// because it is the only thing in the row a person recognises — "Chrome on my
+	// because it is the only thing in the row a person recognizes — "Chrome on my
 	// laptop" — and it is shown raw rather than parsed because a device label this
 	// service invents is a label that can be wrong, and a UI that trusts a
 	// server-side label shows somebody the wrong laptop. The caller parses it.

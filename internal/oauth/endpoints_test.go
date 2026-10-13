@@ -51,7 +51,7 @@ func configuredProviders() Settings {
 }
 
 // THE REGRESSION GUARD FOR THIS PACKET. Every field of both providers, byte for
-// byte, plus the scopes and the one extra authorize option — because "behaviour
+// byte, plus the scopes and the one extra authorize option — because "behavior
 // must be identical with nothing set" includes the parameters on the wire, and an
 // override that dropped `access_type=offline` would leave every Google account
 // without a refresh token and every assertion in this file green.

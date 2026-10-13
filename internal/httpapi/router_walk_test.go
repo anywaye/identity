@@ -123,7 +123,7 @@ func TestEveryConditionalSurfaceIsVisibleToTheWalk(t *testing.T) {
 
 // TestTheDriftWalkSeesTheAdminSurface is the specific instance, and it is here
 // rather than only in the general check because the general one is a list
-// membership test and this one is a behavioural one: it asserts the walk FINDS
+// membership test and this one is a behavioral one: it asserts the walk FINDS
 // the routes, not that a field is set.
 //
 // A field can be set to a double that does not satisfy the interface's idea of
@@ -152,7 +152,7 @@ func TestTheDriftWalkSeesTheAdminSurface(t *testing.T) {
 // bug, for the eight routes the recovery packet added.
 //
 // It is here rather than folded into the general check because the general one is a
-// list membership test and this one is behavioural: it asserts the walk FINDS the
+// list membership test and this one is behavioral: it asserts the walk FINDS the
 // routes. A field can be set to a double the registrar does not consider
 // "configured", and only the routes appearing in the walk can tell.
 func TestTheDriftWalkSeesTheRecoverySurface(t *testing.T) {
@@ -216,7 +216,7 @@ func TestTheDriftWalkSeesTheSessionLinkSurface(t *testing.T) {
 	}
 }
 
-// TestTheDriftWalkSeesTheSignupSurface is the behavioural instance for the signup
+// TestTheDriftWalkSeesTheSignupSurface is the behavioral instance for the signup
 // timestamp mint, and it is the fifth instance of the same bug.
 //
 // IT IS HERE FOR A REASON SPECIFIC TO THIS SURFACE: the mint is mounted in newMux
@@ -241,7 +241,7 @@ func TestTheDriftWalkSeesTheSignupSurface(t *testing.T) {
 	}
 }
 
-// TestTheDriftWalkSeesTheSocialLoginSurface is the behavioural instance for the
+// TestTheDriftWalkSeesTheSocialLoginSurface is the behavioral instance for the
 // third occurrence, and it is the pair of checks that let the social-login
 // tripwire go green on the day its own subject was mounted.
 //

@@ -476,7 +476,7 @@ func (s *Service) Get(ctx context.Context, accountID, userID id.UUID) (Account, 
 // as any caller can tell. `tenancy.BeginUser` refuses the nil caller for
 // precisely this reason ("a membership read with no membership to find is not a
 // thing anybody meant to ask for"), and this is the same rule about the other
-// half of the identity. The HTTP layer renders an unrecognised error as a 500
+// half of the identity. The HTTP layer renders an unrecognized error as a 500
 // with a trace id, which is the right answer for a route reached without the
 // middleware that is supposed to have authorized it.
 func (s *Service) Members(ctx context.Context, accountID id.UUID) ([]MemberSummary, error) {
@@ -743,7 +743,7 @@ func (s *Service) outgoingInvitation(ctx context.Context, invited Invited) (Outg
 // you to join": a blank there is a mail that does not say who invited them, and
 // a uuid would be worse. Most users have no display name — the column is
 // nullable and registration does not set it — so the address is the common
-// case, and it is a value the invitee can recognise.
+// case, and it is a value the invitee can recognize.
 func displayNameOrEmail(u users.User) string {
 	if u.DisplayName != nil && *u.DisplayName != "" {
 		return *u.DisplayName
@@ -1089,7 +1089,7 @@ func (s *Service) RemoveMember(ctx context.Context, in RemoveMemberInput) error 
 		// So the removal revokes explicitly. The row is kept, `revoked_at` is set,
 		// and the credential is dead for good: a re-invite is a NEW grant and starts
 		// from nothing, which is the only outcome an operator who offboarded
-		// somebody would recognise as correct.
+		// somebody would recognize as correct.
 		//
 		// The alternative considered and rejected: keying the token on the
 		// membership's `created_at` so a re-invite's new row does not match. It

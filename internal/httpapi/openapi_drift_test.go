@@ -620,7 +620,7 @@ func TestTheDocumentIsOpenAPI31AndCarriesAVersion(t *testing.T) {
 	// way. The signup timestamp mint is a NON-BREAKING addition and a
 	// GENERATED-SOURCE change at once — a public, unauthenticated endpoint that
 	// hands out a fresh signed pair for the signup form, and the second half of
-	// signup bot defence after the honeypot. A Go consumer that names the new
+	// signup bot defense after the honeypot. A Go consumer that names the new
 	// method gets it and every other consumer cannot tell the difference. The
 	// merged document describes sessions, the display name, the deletion and the
 	// signup timestamp, and a consumer pinned at 1.10.0 saw none of the four.

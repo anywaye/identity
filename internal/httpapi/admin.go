@@ -36,7 +36,7 @@ package httpapi
 // is the right check for the right reason: the property is about the SURFACE, and
 // a check inside the handler would pass if a future packet mounted a DELETE beside
 // it. (The table itself refuses UPDATE and DELETE at the database — see
-// migrations/00012 — but that is a second line of defence behind this one.)
+// migrations/00012 — but that is a second line of defense behind this one.)
 
 import (
 	"context"

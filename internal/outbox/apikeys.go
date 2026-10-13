@@ -41,7 +41,7 @@ const (
 	// event — which is information a field on this one would not add.
 	EventAPIKeyCreated = "identity.api_key.created"
 
-	// EventAPIKeyRevoked is emitted when a credential stops being honoured,
+	// EventAPIKeyRevoked is emitted when a credential stops being honored,
 	// whether a person withdrew it or its window closed.
 	EventAPIKeyRevoked = "identity.api_key.revoked"
 )

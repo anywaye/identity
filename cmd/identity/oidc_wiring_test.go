@@ -36,7 +36,7 @@ func testKeyPEM(t *testing.T) string {
 	}
 	der, err := x509.MarshalPKCS8PrivateKey(priv)
 	if err != nil {
-		t.Fatalf("marshalling the signing key: %v", err)
+		t.Fatalf("marshaling the signing key: %v", err)
 	}
 	return string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}))
 }

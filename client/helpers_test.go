@@ -10,11 +10,11 @@ package client
 import (
 	"context"
 	"errors"
+	"time"
 
 	uuidlib "github.com/google/uuid"
 
 	openapiTypes "github.com/oapi-codegen/runtime/types"
-	"time"
 )
 
 // contextWithTimeout bounds a subprocess. Used by the regeneration gate, which
@@ -35,7 +35,7 @@ func uuidOf(s string) openapiTypes.UUID {
 	if err != nil {
 		panic("fixture uuid " + s + ": " + err.Error())
 	}
-	return openapiTypes.UUID(parsed)
+	return parsed
 }
 
 // ptr is a fixture convenience: the generated structs distinguish an absent field

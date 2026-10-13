@@ -95,7 +95,7 @@ func TestTheGitHubIDClaimIsAStringNotANumber(t *testing.T) {
 
 // And the digits must survive the JSON encoding a token actually goes through,
 // which is a different question from the Go type above: a value can be a Go
-// string and still be marshalled into a number by something upstream.
+// string and still be marshaled into a number by something upstream.
 func TestTheGitHubIDClaimIsQuotedInTheEncodedToken(t *testing.T) {
 	claims := claimsFor(t, &fakeGitHubIDs{id: "107346492749283471920"}, ScopeOpenID, ScopePublish)
 

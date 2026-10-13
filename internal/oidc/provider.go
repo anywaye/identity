@@ -78,7 +78,7 @@ type Config struct {
 	// SigningKey is the one RSA key. See keys.go.
 	SigningKey *SigningKey
 	// AllowInsecure permits an http issuer. It exists for `localhost` and for
-	// tests, and it is a field rather than a behaviour because "this deployment
+	// tests, and it is a field rather than a behavior because "this deployment
 	// is local" is a fact about the deployment.
 	AllowInsecure bool
 	// LoginUIURL is where a browser goes to authenticate. It is REQUIRED, and

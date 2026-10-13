@@ -389,7 +389,7 @@ func TestATruncatedTokenAnswers404Not422(t *testing.T) {
 			p.TraceID = ""
 			rendered, err := json.Marshal(p)
 			if err != nil {
-				t.Fatalf("re-marshalling the problem: %v", err)
+				t.Fatalf("re-marshaling the problem: %v", err)
 			}
 			switch {
 			case reference == "":

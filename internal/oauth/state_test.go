@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// The state parameter is the entire CSRF defence for the OAuth round trip.
+// The state parameter is the entire CSRF defense for the OAuth round trip.
 //
 // The callback arrives as a top-level cross-site GET from the provider, so it
 // cannot carry a header and cannot read one; the session cookie rides along
@@ -165,7 +165,7 @@ func TestNewStateTakesNoArgumentsBeyondTheProvider(t *testing.T) {
 }
 
 // The authorize URL is what a browser is handed, and every one of its parameters
-// is load-bearing: without `state` the flow has no CSRF defence, and without a
+// is load-bearing: without `state` the flow has no CSRF defense, and without a
 // `redirect_uri` that matches the callback exactly the provider refuses.
 func TestProviderAuthCodeURLCarriesTheRequiredParameters(t *testing.T) {
 	t.Parallel()
@@ -214,7 +214,7 @@ func TestGoogleAsksForOfflineAccess(t *testing.T) {
 }
 
 // GitHub has no such switch, and sending one is harmless but inventing per-provider
-// behaviour that no provider documents is how a config ends up wrong. What matters
+// behavior that no provider documents is how a config ends up wrong. What matters
 // is that the scopes are the ones the identity endpoints actually need.
 func TestProviderScopesAreTheOnesTheIdentityEndpointsNeed(t *testing.T) {
 	t.Parallel()

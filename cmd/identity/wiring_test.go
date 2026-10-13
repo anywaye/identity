@@ -26,7 +26,7 @@ func discardLogger() *slog.Logger {
 
 // The wiring tests: newApp has to produce a process that serves the v1 surface
 // when a database is configured, and that still serves its probes when one is
-// not. The auth behaviour itself is covered in internal/httpapi and
+// not. The auth behavior itself is covered in internal/httpapi and
 // internal/auth; what matters here is that the two are actually connected.
 
 func testDatabaseURL(t *testing.T) string {
@@ -171,7 +171,7 @@ func TestNewAppWithoutADatabaseStillServesTheProbes(t *testing.T) {
 }
 
 // A syntactically valid DATABASE_URL pointing at nothing is a different case from
-// a malformed one: db.Open parses without dialling, so the app builds and the
+// a malformed one: db.Open parses without dialing, so the app builds and the
 // readiness probe is what reports the database as unreachable. main_test.go covers
 // the malformed case. This one proves the lazy-pool rule still holds now that the
 // pool is also carrying the auth stores.

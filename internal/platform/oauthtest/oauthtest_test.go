@@ -79,7 +79,7 @@ func fetchUserInfo(t *testing.T, uid string) map[string]json.RawMessage {
 
 // The uid crosses as a JSON STRING under `sub`, always, whatever it is. This is
 // MD21's ruling as a property of the fixture: a JSON number here is already a
-// float64 by the time anything downstream re-serialises it.
+// float64 by the time anything downstream re-serializes it.
 func TestSubIsAStringAndSurvivesExactly(t *testing.T) {
 	t.Parallel()
 
@@ -93,7 +93,7 @@ func TestSubIsAStringAndSurvivesExactly(t *testing.T) {
 	}
 	if !strings.HasPrefix(string(raw), `"`) {
 		t.Errorf("sub is %s, which is a JSON %s. It must be a string: a number here is "+
-			"a float64 by the time it is re-serialised, and 107346492749283471920 comes "+
+			"a float64 by the time it is re-serialized, and 107346492749283471920 comes "+
 			"back as ...3475456 inside a correctly-signed assertion (MD21).",
 			raw, strings.Trim(string(raw), `"`))
 	}

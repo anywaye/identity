@@ -549,7 +549,7 @@ func seedCredentialRows(t *testing.T, ctx context.Context, conn *pgx.Conn) (tena
 
 	t.Cleanup(func() {
 		// On a context detached from the test's: this runs after the one-minute
-		// budget's context is cancelled, and a cleanup that inherits a cancelled
+		// budget's context is canceled, and a cleanup that inherits a canceled
 		// context silently deletes nothing. `accounts` cascades to `api_keys`; the
 		// users are deleted explicitly because nothing cascades to them.
 		bg := context.Background()

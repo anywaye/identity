@@ -257,7 +257,7 @@ func (c *Client) appleIdentity(ctx context.Context, p Provider, tokens Tokens) (
 // not sufficient on its own:
 //
 //  1. ParseSigned with an allowed-algorithm list is the algorithm-confusion
-//     defence: a token whose header says "none" or "HS256" is refused here,
+//     defense: a token whose header says "none" or "HS256" is refused here,
 //     before any key is consulted. Without the list, a token signed with a
 //     symmetric algorithm and this service's own public key as the HMAC
 //     secret would verify.

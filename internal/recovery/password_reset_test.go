@@ -412,7 +412,7 @@ func TestAResetClearsALockout(t *testing.T) {
 //
 // The plaintext has to be searched for three ways, because "it is not in
 // token_digest" would pass on a table that stored it in a column nobody thought to
-// check: the whole row serialised, the whole table, and the digest — which has to be
+// check: the whole row serialized, the whole table, and the digest — which has to be
 // FOUND, or the test would pass on a table that stored nothing at all.
 func TestAResetTokenIsStoredAsADigestAndThePlaintextIsNowhere(t *testing.T) {
 	h := newHarness(t, true)

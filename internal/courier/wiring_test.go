@@ -31,7 +31,7 @@ import (
 //	wire and asserts the body. It cannot assert anything about the
 //	`Idempotency-Key`, because a request it builds by hand leaves `IdempotencyKey`
 //	empty — so `SendMessage` MINTS a fresh random uuid per call, which is the
-//	correct behaviour for a caller that has nothing to derive from and means that
+//	correct behavior for a caller that has nothing to derive from and means that
 //	test is necessarily looking at a different key on every run.
 //
 //	`TestTheIdempotencyKeyIsAUuidCourierWillAccept` asserts the derivation is

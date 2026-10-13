@@ -957,7 +957,7 @@ func TestTheRequestRoutesCarryNoIdentifierToEnumerate(t *testing.T) {
 			t.Fatalf("the body of %s is not JSON: %v", path, err)
 		}
 		if len(raw) != 1 || raw["status"] != "accepted" {
-			t.Errorf("POST %s answered with %v. This body IS the account-enumeration defence on "+
+			t.Errorf("POST %s answered with %v. This body IS the account-enumeration defense on "+
 				"the route: one field, one value, whatever the row says. A second field is an "+
 				"oracle and no other test in the repository would fail", path, raw)
 		}
@@ -1492,7 +1492,7 @@ func renderProblem(t *testing.T, p Problem) string {
 	p.TraceID = ""
 	out, err := json.Marshal(p)
 	if err != nil {
-		t.Fatalf("re-marshalling a problem document: %v", err)
+		t.Fatalf("re-marshaling a problem document: %v", err)
 	}
 	return string(out)
 }

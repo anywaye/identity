@@ -377,7 +377,7 @@ func TestTheParameterNameIsTheOnlyThingErasedAndOnlyInsideASegment(t *testing.T)
 }
 
 func TestATrailingSlashIsNotADifference(t *testing.T) {
-	// Grounded in the router's own behaviour rather than in taste: chi routes
+	// Grounded in the router's own behavior rather than in taste: chi routes
 	// `/healthz/` to the `/healthz` handler, so the two are one route.
 	if got := normalisePath("/healthz/"); got != "/healthz" {
 		t.Errorf("normalisePath(\"/healthz/\") is %q, want /healthz", got)

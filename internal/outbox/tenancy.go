@@ -266,7 +266,7 @@ func newTenancyEvent(now time.Time, eventType string, accountID id.UUID, payload
 
 // newSubjectEvent is the shared construction for every event this service
 // publishes: a fresh envelope id, a subject, the injected time, and a payload
-// marshalled from a struct.
+// marshaled from a struct.
 //
 // The struct-and-marshal is not ceremony. Concatenating these fields into a JSON
 // string by hand is how a name containing a quote produces a payload that is not

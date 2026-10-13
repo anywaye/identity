@@ -18,7 +18,7 @@
 // `github.com/oapi-codegen/runtime`, so `go.mod` gains three modules. What it does
 // not do is reach the binary: `go list -deps ./cmd/identity` does not contain
 // `github.com/oapi-codegen/runtime`, because nothing under `cmd/` imports this
-// package. The generated client has a dependency; the shipped artefact does not.
+// package. The generated client has a dependency; the shipped artifact does not.
 // See `TestTheServiceBinaryDoesNotReachTheGeneratedClient`, which holds it.
 //
 // # WHAT IS HERE
@@ -34,7 +34,7 @@
 // # THE SECURITY INVARIANT
 //
 // **No credential ever reaches a string a human reads.** Not in a log, not in an
-// error message, not in a serialised form, not in a `fmt.Stringer`, not in a
+// error message, not in a serialized form, not in a `fmt.Stringer`, not in a
 // `%v`. This package holds the token for its whole life, and `error.Error()` and
 // `fmt.Sprintf("%v", …)` reach a log file, a crash report and a support ticket with
 // no configuration.
@@ -247,7 +247,7 @@ func (c *Client) Transport() Transport { return c.transport }
 // empty body on a success is not an error.
 //
 // `operation` is the `operationId` — the name of the generated method and therefore
-// what a reader recognises in a log line.
+// what a reader recognizes in a log line.
 //
 // The body is always closed here, which is the most common defect in a hand-written
 // HTTP client and the reason `bodyclose` is in kit's linter set. It is closed on the
@@ -409,8 +409,8 @@ func (c *Client) RegisterUser(ctx context.Context, body generated.RegisterUserJS
 // # WHY THIS EXISTS RATHER THAN TWO FIELDS ON RegisterRequest
 //
 // The pair is DELIBERATELY ABSENT from `openapi/v1.yaml`, on the same reasoning
-// the honeypot field is: a bot defence documented in the contract is a bot
-// defence the next bot reads around. `generated.RegisterRequest` is generated
+// the honeypot field is: a bot defense documented in the contract is a bot
+// defense the next bot reads around. `generated.RegisterRequest` is generated
 // FROM that document, so the pair cannot be a field on it, and a Go consumer
 // using `RegisterUser` alone would be refused by every registration this service
 // serves. That is a break in the committed client introduced by a protection,
@@ -420,7 +420,7 @@ func (c *Client) RegisterUser(ctx context.Context, body generated.RegisterUserJS
 //
 // # IT IS A REQUEST EDITOR, AND THAT IS THE GENERATOR'S OWN SEAM
 //
-// The pair is added to the marshalled body by a `RequestEditorFn`, so the request
+// The pair is added to the marshaled body by a `RequestEditorFn`, so the request
 // this builds is the documented request plus two fields, and the generated
 // client's status handling, body closing and error typing are reused rather than
 // re-implemented. A hand-written `http.NewRequest` here would be a second
@@ -435,7 +435,7 @@ func (c *Client) RegisterUserWithSignupTimestamp(
 	// request editor. An editor error surfaces from the generated client as a
 	// plain error with no operation name and no status, and a caller that cannot
 	// tell "I sent a body this client could not rewrite" from "the network
-	// failed" is debugging a bot defence instead of the bug.
+	// failed" is debugging a bot defense instead of the bug.
 	editor := withSignupTimestamp(pair)
 	if err := editor(ctx, probeRequestEditorInput(body)); err != nil {
 		return nil, &CallError{
@@ -453,7 +453,7 @@ func (c *Client) RegisterUserWithSignupTimestamp(
 	return &out, err
 }
 
-// probeRequestEditorInput builds a throwaway request carrying the marshalled
+// probeRequestEditorInput builds a throwaway request carrying the marshaled
 // body, so the editor can be run for its refusal before a real request exists.
 //
 // IT IS A PRE-FLIGHT, not a shortcut: the same editor runs again on the real
@@ -489,7 +489,7 @@ func probeRequestEditorInput(body generated.RegisterUserJSONRequestBody) *http.R
 // and the server's decoder is not the only thing reading this request: a body
 // this function could not parse must be an error here rather than a request sent
 // with a pair missing, because the server's answer to that is a 422 naming
-// nothing and the caller's only way to tell a wiring mistake from a bot defence
+// nothing and the caller's only way to tell a wiring mistake from a bot defense
 // is to read this function.
 //
 // The pair is read back out of the body and re-rendered, never logged and never
@@ -636,7 +636,7 @@ func (c *Client) CreateSession(ctx context.Context, body generated.LoginRequest)
 //
 // The error from `Close` on a fully-read body is not actionable: the connection is
 // being returned to the pool either way, and there is nothing a caller could do
-// with "the body could not be signalled closed". Discarding it is correct — but
+// with "the body could not be signaled closed". Discarding it is correct — but
 // discarding it with a bare `_ =` is a decision that should be written down once
 // rather than argued about at forty call sites, and `bodyclose`/`errcheck` are in
 // the fleet's linter set precisely so that "did anybody close it" is never a
@@ -1330,7 +1330,7 @@ func (c *Client) RevokeOIDCClient(ctx context.Context, accountId, clientId opena
 // **The response is the only place the plaintext token will ever exist.** It is not
 // stored, only a SHA-256 of it is, and there is no endpoint that re-reads one — so a
 // caller who loses this value mints another. The document makes the same point about
-// the `cafaye_` prefix being a feature: a secret that reaches a CI log is recognised
+// the `cafaye_` prefix being a feature: a secret that reaches a CI log is recognized
 // as a cafaye credential by its first seven characters.
 //
 // The generated `IssuedAPIKey` carries `Token` and has no redacting `String()`, so
@@ -1468,7 +1468,7 @@ func (c *Client) ListAccountAuditLog(ctx context.Context, accountId openapiTypes
 // is provisioned for the deployment instead.
 //
 // The `userId` is a PERSON rather than a member of an account, which is why there is
-// no `accountId` here and why no role in any account authorises it. **A `204` is a
+// no `accountId` here and why no role in any account authorizes it. **A `204` is a
 // promise about somebody else's sessions**: every session the account held is deleted
 // in the same transaction that stamps the column, and the owner signs in again if and
 // when it is re-enabled. There is no body to inspect and no `confirm` to send — the
@@ -1604,7 +1604,7 @@ func (c *Client) StartSocialLogin(ctx context.Context, provider generated.StartS
 	defer closeBody(res)
 
 	// THE 3xx IS HANDLED BEFORE ANY ERROR PATH, and the ordering is the whole of
-	// this method. A 302 is this operation's success, so it has to be recognised
+	// this method. A 302 is this operation's success, so it has to be recognized
 	// before the shared non-2xx branch below sees it — `ProblemFrom` would
 	// otherwise read a redirect as a malformed answer and report a proxy or a
 	// gateway, because a 302 carries no problem document. Same reason
@@ -1698,7 +1698,7 @@ func (c *Client) CompleteSocialLogin(
 
 	// `linked_provider` is absent from the sign-in body and `token` is absent from
 	// the link body, so this is a check on which key the document promised and not a
-	// heuristic. Anything carrying both is a response this build does not recognise,
+	// heuristic. Anything carrying both is a response this build does not recognize,
 	// and returning a session for it would be a guess.
 	var probe struct {
 		Token          *json.RawMessage `json:"token"`

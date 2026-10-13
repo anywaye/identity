@@ -340,7 +340,7 @@ func TestTheSchemaKnowsTheLinkPurposeAndStillRefusesOneItDoesNot(t *testing.T) {
 }
 
 // TestTheLinkWindowIsShortAndBounded is the arithmetic the mint route depends on,
-// and every assertion is about a CONSTANT rather than about behaviour — which is
+// and every assertion is about a CONSTANT rather than about behavior — which is
 // what makes them worth pinning, because a well-meaning "let the caller choose an
 // hour" would satisfy every other test in this file.
 func TestTheLinkWindowIsShortAndBounded(t *testing.T) {

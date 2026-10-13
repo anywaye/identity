@@ -11,7 +11,7 @@ import (
 //
 // NewHasher derives a dummy digest eagerly, which is right at startup and wrong
 // in a test: at the production 64 MiB it dominates the suite's runtime, and
-// these assertions are about digest format and verify/compare behaviour, not
+// these assertions are about digest format and verify/compare behavior, not
 // about cost. The cost-related assertion is
 // TestDefaultParamsAreNotWeakerThanTheLibraryDefaults, which uses DefaultParams
 // on purpose.

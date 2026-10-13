@@ -230,7 +230,7 @@ type loginRequest struct {
 // updateMeRequest is the body of PATCH /v1/me.
 //
 // display_name is a plain string, and an omitted one decodes as the empty
-// string — which clears. That is the behaviour the display-name packet shipped
+// string — which clears. That is the behavior the display-name packet shipped
 // and the OpenAPI document describes, and it is frozen now: a client written
 // against it depends on an omitted name clearing.
 //
@@ -1002,7 +1002,7 @@ func (o options) presentedToken(r *http.Request) string {
 // The scheme is compared case-insensitively because RFC 7235 says it is
 // case-insensitive, and a client sending "bearer" is not an attacker. Anything
 // else — a bare token, a Basic header, an empty bearer — is not a credential this
-// service accepts, and treating an unrecognised header as "no credential" keeps
+// service accepts, and treating an unrecognized header as "no credential" keeps
 // every malformed case on one path.
 func bearerToken(r *http.Request) string {
 	header := r.Header.Get("Authorization")

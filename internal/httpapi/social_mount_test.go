@@ -21,7 +21,7 @@ package httpapi
 //
 // # WHAT IS ASSERTED, AND WHY EACH LINE IS HERE
 //
-// Three properties, all behavioural, all on real requests:
+// Three properties, all behavioral, all on real requests:
 //
 //  1. With no Social configured, BOTH social routes answer 404 — through the
 //     router, as HTTP, not as an inspection of a route table. This is the rule

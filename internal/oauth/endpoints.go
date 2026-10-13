@@ -18,7 +18,7 @@ import (
 // https://accounts.google.com/.well-known/openid-configuration, and making them
 // configurable has not changed that argument: identity is an OIDC *provider*, and a
 // service that hard-codes its own RPs to what it resolves at boot is a service whose
-// behaviour depends on what a third party served it that morning. What these
+// behavior depends on what a third party served it that morning. What these
 // variables change is who the deployment trusts, not what it trusts by default.
 const (
 	// GoogleAuthorizeURL is where the browser is sent to obtain a code.
@@ -45,7 +45,7 @@ const (
 	// pinned at build time would be a deployment choice this service has no
 	// business making. The same reasoning as Google's and GitHub's pinned
 	// endpoints — identity is an OIDC provider, and a service that discovers
-	// its own RPs at boot is a service whose behaviour depends on what a third
+	// its own RPs at boot is a service whose behavior depends on what a third
 	// party served it that morning.
 	MicrosoftAuthorizeURL = "https://login.microsoftonline.com/common/oauth2/v2.0/authorize"
 	// MicrosoftTokenURL exchanges that code for a token.
@@ -59,7 +59,7 @@ const (
 	//
 	// The same argument as the other three providers' pinned endpoints: identity
 	// is an OIDC *provider*, and a service that discovers its own RPs at boot is
-	// a service whose behaviour depends on what a third party served it that
+	// a service whose behavior depends on what a third party served it that
 	// morning.
 	AppleAuthorizeURL = "https://appleid.apple.com/auth/authorize"
 	// AppleTokenURL exchanges that code for a token.

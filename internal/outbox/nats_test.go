@@ -1,7 +1,7 @@
 package outbox
 
 // The NATS publisher's tests run against an in-process NATS server with
-// JetStream enabled and a real outbox table, because the behaviour under test
+// JetStream enabled and a real outbox table, because the behavior under test
 // IS the wire: the subject a row is published on, the envelope that arrives,
 // and the row's columns after the broker acks or refuses. A mock would prove
 // the loop calls something; this proves what a consumer on the fleet's bus

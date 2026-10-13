@@ -717,7 +717,7 @@ func TestTheAuditLogBoundsAreEnforced(t *testing.T) {
 
 		// A cursor this build did not issue is REFUSED, and it is refused at the
 		// handler rather than left to the use case. That distinction is a real
-		// difference in behaviour and not a matter of which layer happens to check
+		// difference in behavior and not a matter of which layer happens to check
 		// first: a cursor the use case cannot decode and a limit the use case
 		// refuses are both errors, but only one of them can be reported as a bad
 		// FIELD on a query string, and an operator who has lost their place in a

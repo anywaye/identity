@@ -35,7 +35,7 @@ func appleTestKey(t *testing.T) (*ecdsa.PrivateKey, string) {
 	}
 	raw, err := x509.MarshalPKCS8PrivateKey(key)
 	if err != nil {
-		t.Fatalf("marshalling the test key: %v", err)
+		t.Fatalf("marshaling the test key: %v", err)
 	}
 	return key, string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: raw}))
 }

@@ -25,8 +25,6 @@ func TestTheBrowserCookieFinishesTheLoginToo(t *testing.T) {
 	s := newMFAServer(t)
 	email, token := s.signUp(t)
 	user := s.enrollAndConfirmFor(t, email, token)
-	token = s.token
-	token = s.token
 
 	rec := post(t, s.handler, "/v1/session", `{"email":"`+email+`","password":"`+matrixPassword+`"}`)
 	if rec.Code != http.StatusAccepted {
@@ -56,7 +54,6 @@ func TestNoChallengeIs401WhateverTheBodySays(t *testing.T) {
 	email, token := s.signUp(t)
 	user := s.enrollAndConfirmFor(t, email, token)
 	token = s.token
-	token = s.token
 
 	rec := s.post(t, "/v1/session/mfa", "", `{"code":"`+user.code(t, s.clock.Now())+`"}`)
 	if rec.Code != http.StatusUnauthorized {
@@ -78,7 +75,6 @@ func TestAWrongCodeIs401AndIsNotDistinguishableFromASpentOne(t *testing.T) {
 	s := newMFAServer(t)
 	email, token := s.signUp(t)
 	user := s.enrollAndConfirmFor(t, email, token)
-	token = s.token
 	token = s.token
 
 	// A FRESH period. The fixture signed this user in to establish the
@@ -262,7 +258,6 @@ func TestTheDestructiveRoutesRequireAFactor(t *testing.T) {
 		email, token := s.signUp(t)
 		user := s.enrollAndConfirmFor(t, email, token)
 		token = s.token
-		token = s.token
 
 		for _, body := range []string{`{}`, `{"code":""}`, `{"code":"000000"}`, `{"code":"not-a-code"}`} {
 			rec := s.del(t, "/v1/mfa", token, body)
@@ -314,7 +309,6 @@ func TestTheDestructiveRoutesRequireAFactor(t *testing.T) {
 		email, token := s.signUp(t)
 		user := s.enrollAndConfirmFor(t, email, token)
 		token = s.token
-		token = s.token
 
 		if rec := s.post(t, "/v1/mfa/recovery-codes", token, `{}`); rec.Code != http.StatusUnauthorized {
 			t.Errorf("regenerating with no code = %d, want 401", rec.Code)
@@ -351,7 +345,6 @@ func TestTheDestructiveRoutesRequireAFactor(t *testing.T) {
 		s := newMFAServer(t)
 		email, token := s.signUp(t)
 		user := s.enrollAndConfirmFor(t, email, token)
-		token = s.token
 		token = s.token
 
 		// A rotation without a factor is refused.

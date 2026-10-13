@@ -80,7 +80,7 @@ var (
 	// disabled it, and an operator sent to look for a missing user is being sent the
 	// wrong way. This surface is machine-credential-only precisely so that naming the
 	// state is free (DECISIONS.md D12); that ruling would be worth nothing if the
-	// answer collapsed into the neighbouring 404.
+	// answer collapsed into the neighboring 404.
 	//
 	// IT IS NOT `users.DisabledError`, for the reason ErrSubjectNotFound is not
 	// `users.ErrNotFound`: two statuses cannot sit behind one `errors.Is`, and the

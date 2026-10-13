@@ -92,7 +92,7 @@ type Service struct {
 	issuer   string
 	// pendingRotations says whether replacing a live secret is allowed at all.
 	//
-	// It is a field rather than a behaviour so the decision has one place: the
+	// It is a field rather than a behavior so the decision has one place: the
 	// route that starts an enrollment reads it to decide whether to require a
 	// factor, and the confirmation reads it to decide whether the old credential
 	// is still there. Two places asking "is this a first enrollment or a
@@ -223,7 +223,7 @@ func (s *Service) StartEnrollment(ctx context.Context, in StartEnrollmentInput) 
 	// pquerna/otp owns the generation, the base32 and the provisioning URI. The
 	// issuer and account name it is handed are the two strings an authenticator
 	// app displays, and the account name is the email because that is what a user
-	// recognises when they are looking at a list of accounts inside the app.
+	// recognizes when they are looking at a list of accounts inside the app.
 	key, err := totp.Generate(totp.GenerateOpts{
 		Issuer:      s.issuer,
 		AccountName: s.issuer,
@@ -486,7 +486,7 @@ func (s *Service) CreateChallenge(ctx context.Context, in CreateChallengeInput) 
 	// sessions.NewToken rather than a new minting routine: the same 256 bits from
 	// the same CSPRNG, the same base64url, and the same digest the store will
 	// look up. A second token format in this service is a second thing to
-	// recognise in a log and a second thing to get wrong.
+	// recognize in a log and a second thing to get wrong.
 	token, digest, err := sessions.NewToken()
 	if err != nil {
 		return NewChallenge{}, fmt.Errorf("minting an mfa challenge token: %w", err)
@@ -759,7 +759,7 @@ func (s *Service) matchFactor(ctx context.Context, credential Credential, code s
 
 	default:
 		// Neither shape. One query, no round trip, and the same answer as a wrong
-		// code of a recognised shape.
+		// code of a recognized shape.
 		return Claim{}, ErrInvalidFactor
 	}
 }
@@ -810,7 +810,7 @@ func (s *Service) Commit(ctx context.Context, q db.Querier, claim Claim, now tim
 // RegenerateRecoveryCodesInput is a request for a new set of recovery codes.
 type RegenerateRecoveryCodesInput struct {
 	UserID id.UUID
-	// Factor authorises the regeneration. It is not optional and there is no
+	// Factor authorizes the regeneration. It is not optional and there is no
 	// route that reaches this use case without one: handing out ten fresh codes is
 	// equivalent to handing out ten fresh ways into the account, so it takes the
 	// same proof that disabling does.
@@ -861,7 +861,7 @@ func (s *Service) RegenerateRecoveryCodes(ctx context.Context, in RegenerateReco
 // DisableInput is a request to turn the second factor off.
 type DisableInput struct {
 	UserID id.UUID
-	// Factor authorises the change. A password is NOT accepted here and there is no
+	// Factor authorizes the change. A password is NOT accepted here and there is no
 	// path through this service that would let one be: re-authentication for a
 	// destructive security action is the entire reason it exists, and a user who
 	// has MFA enabled but whose phone is at home cannot disable it with the

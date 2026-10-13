@@ -86,7 +86,7 @@ func (s *Store) Append(ctx context.Context, q db.Querier, e Entry) (Record, erro
 		// NOT WRAPPED INTO A SENTINEL, for the twin's reason: there is no unique
 		// constraint a caller can provoke on this table, so a mapping would be one
 		// that could only ever be wrong. The error reaches the caller as a 500 and the
-		// transaction rolls back, which is the behaviour that matters — the disable
+		// transaction rolls back, which is the behavior that matters — the disable
 		// does not happen.
 		return Record{}, fmt.Errorf("inserting a user audit record: %w", err)
 	}

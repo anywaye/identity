@@ -23,7 +23,7 @@ import (
 //	2. The four ways a link is dead are ONE value, over the real SQL. This is the
 //	   property the website depends on: because identity's failures are one
 //	   collapsed shape, a route that was MISSING rendered a perfectly live link as
-//	   "unrecognised", and a route that told the four apart would render a
+//	   "unrecognized", and a route that told the four apart would render a
 //	   stranger's guess as information.
 //	3. A preview writes nothing. No event row, no credential, and the link is
 //	   still claimable afterwards — which is the only statement that a preview is
@@ -135,7 +135,7 @@ func TestThePreviewRendersTheFirstFrameTheClaimScreenReads(t *testing.T) {
 // TestThePreviewWritesNothing is the one property that makes the route safe to
 // mount anonymously.
 //
-// IT IS BEHAVIOURAL RATHER THAN A COMMENT ABOUT WHAT THE CODE DOES NOT DO: the
+// IT IS BEHAVIORAL RATHER THAN A COMMENT ABOUT WHAT THE CODE DOES NOT DO: the
 // preview runs, then the SAME link is claimed and the claim has to succeed. A
 // preview that wrote an event row or spent the link would be a preview that made
 // the claim that follows it fail, and no amount of reading the implementation

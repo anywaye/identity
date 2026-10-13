@@ -5,7 +5,7 @@
 //
 // identity rate-limits nothing on its auth surface: signup, signin, the signup
 // timestamp mint and the two recovery request routes answer every request a
-// stranger sends, and the only defences are per-account (the login lockout),
+// stranger sends, and the only defenses are per-account (the login lockout),
 // per-address (the recovery cooldown, which is not a rate limiter), and
 // bot-shaped (the honeypot and the signed timestamp). None of them bounds what
 // one client address can do. A spray of one password across many addresses, a

@@ -95,7 +95,7 @@ func TestTheMintRefusesBeforeItWritesAnything(t *testing.T) {
 		// sentinel because two of the five refusals are `*users.FieldError`, and
 		// `errors.Is` on a pointer to a struct with no `Is` method is pointer
 		// identity: a table written as `want: &users.FieldError{...}` would compare
-		// two different allocations and fail while the behaviour was correct.
+		// two different allocations and fail while the behavior was correct.
 		want func(error) bool
 	}{
 		{

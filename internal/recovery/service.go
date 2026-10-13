@@ -451,7 +451,7 @@ func (s *Service) RedeemPasswordReset(ctx context.Context, in RedeemPasswordRese
 //
 // SO THERE IS NO BRANCH ON THE ROW AT ALL. Not "return nil quietly" either: a
 // `if user.IsVerified() { return nil }` would keep the 202 honest while leaving the
-// route's behaviour a function of the row's state, which is the shape the 409 came
+// route's behavior a function of the row's state, which is the shape the 409 came
 // from and is one line away from being an oracle again. A verified account is asked
 // for a link and is sent one, exactly as an unverified account is — the message
 // confirms a fact that is already true, `MarkEmailVerified`'s write is conditional,

@@ -1075,7 +1075,7 @@ func TestUpdateMeClearsTheDisplayNameWithAnEmptyString(t *testing.T) {
 }
 
 // An omitted field decodes as the empty string, which clears — the same
-// clearing the empty string asks for, and the behaviour the OpenAPI document
+// clearing the empty string asks for, and the behavior the OpenAPI document
 // describes. This route has exactly one field, so there is no "leave it
 // unchanged" to express: a caller here is always saying "this is my name now",
 // and the two things they can mean are "this" and "nothing".

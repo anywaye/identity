@@ -189,7 +189,7 @@ func titleFor(code string) string {
 	if title, ok := titles[code]; ok {
 		return title
 	}
-	// An unrecognised code still has to render a document a client will accept,
+	// An unrecognized code still has to render a document a client will accept,
 	// so it falls back to the most generic summary there is rather than to "".
 	return "Request failed"
 }
@@ -321,7 +321,7 @@ func noContent(w http.ResponseWriter) {
 }
 
 // bodyTooLarge says whether err is the sentinel http.MaxBytesError, which is how
-// a body past the cap is recognised without matching on a message string.
+// a body past the cap is recognized without matching on a message string.
 func bodyTooLarge(err error) bool {
 	var tooLarge *http.MaxBytesError
 	return errors.As(err, &tooLarge)

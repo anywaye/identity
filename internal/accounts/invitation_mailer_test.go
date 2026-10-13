@@ -12,7 +12,7 @@ package accounts
 //
 // The fakes below are the same shape as service_test.go's recordedEvents and
 // recordedRevocations: the use case's dependencies are interfaces precisely so a
-// test can program the one behaviour under test without standing up Postgres.
+// test can program the one behavior under test without standing up Postgres.
 
 import (
 	"context"

@@ -305,7 +305,7 @@ func (s *SocialService) signIn(
 		// before the write rather than letting the unique index decide is the point:
 		// `users.email` carries a unique index, so the write WOULD fail, and a
 		// service that let the database raise it would answer 500 for a condition
-		// it is required to recognise.
+		// it is required to recognize.
 		existing, err := s.auth.users.ByEmail(ctx, s.auth.read.Queryer(), identity.Email)
 		switch {
 		case err == nil:

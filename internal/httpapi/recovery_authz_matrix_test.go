@@ -143,7 +143,6 @@ func recoveryMatrixEndpoints() []recoveryMatrixEndpoint {
 // all of which would be worse for having one.
 func TestTheRecoveryAuthorizationMatrix(t *testing.T) {
 	for _, endpoint := range recoveryMatrixEndpoints() {
-		endpoint := endpoint
 		t.Run(endpoint.name, func(t *testing.T) {
 			for _, column := range []struct {
 				name string
@@ -157,7 +156,6 @@ func TestTheRecoveryAuthorizationMatrix(t *testing.T) {
 				{name: "session", credential: "a-session-token", want: endpoint.withSession},
 				{name: "scoped token", credential: scopedTokenForTheMatrix, want: endpoint.withToken},
 			} {
-				column := column
 				t.Run(column.name, func(t *testing.T) {
 					f := newFakeRecovery()
 					rec := sendWith(t, recoveryServer(t, f, newFakeAuth()),

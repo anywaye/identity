@@ -2,7 +2,7 @@ package main
 
 // The outbox publisher's boot wiring: what newApp starts, under what condition,
 // and what is left running when the condition is not met. The publisher's own
-// behaviour is tested in internal/outbox against an in-process broker; what is
+// behavior is tested in internal/outbox against an in-process broker; what is
 // tested here is the condition and the lifetime.
 
 import (
@@ -214,7 +214,7 @@ func TestNewAppWithNATSURLButNoStreamLeavesTheRowUnpublished(t *testing.T) {
 	}
 	envelope, err := json.Marshal(e)
 	if err != nil {
-		t.Fatalf("marshalling the envelope: %v", err)
+		t.Fatalf("marshaling the envelope: %v", err)
 	}
 	if _, err := pool.Exec(context.Background(),
 		`INSERT INTO outbox_events (id, type, source, subject, occurred_at, payload, envelope)
@@ -251,7 +251,7 @@ func TestNewAppWithNATSURLButNoStreamLeavesTheRowUnpublished(t *testing.T) {
 
 // The loop is tied to the process's context — the same one a.Run drains the
 // HTTP server on — so a SIGTERM stops both, and Close releases the broker
-// connection afterwards. The loop's own stop behaviour is the outbox package's
+// connection afterwards. The loop's own stop behavior is the outbox package's
 // TestServiceRunStopsOnContextCancellation; what is asserted here is that the
 // wiring gives it that context and shuts down in the right order: cancel, then
 // close, with the process still serving until the cancel.

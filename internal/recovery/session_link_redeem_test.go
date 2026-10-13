@@ -495,7 +495,7 @@ func TestALinkRedemptionAnswersIdenticallyForEveryWayOfBeingWrong(t *testing.T) 
 }
 
 // TestTheRedemptionWindowIsTheLoginWindowAndNotTheLinkWindow pins the one constant
-// this route had to choose, and it is a constant assertion rather than a behavioural
+// this route had to choose, and it is a constant assertion rather than a behavioral
 // one for the reason `TestTheLinkWindowIsShortAndBounded` is.
 //
 // A session link lives ten minutes; the session it mints lives weeks. Conflating the

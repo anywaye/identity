@@ -85,7 +85,7 @@ func (h *harness) now() time.Time { return h.clk.Now() }
 func (h *harness) code() string {
 	h.t.Helper()
 	if h.secret == "" {
-		h.t.Fatal("no secret: enrol first")
+		h.t.Fatal("no secret: enroll first")
 	}
 	code, err := Code(h.secret, h.now())
 	if err != nil {
@@ -665,7 +665,7 @@ func TestRegeneratingIsAtomicOrItDoesNotHappenAtAll(t *testing.T) {
 // the test would pass whether or not the codes were invalidated, which is the one
 // thing it exists to decide. Each refutation therefore starts from a clean counter.
 //
-// That is test scaffolding, not production behaviour, and it is why it clears
+// That is test scaffolding, not production behavior, and it is why it clears
 // through the store rather than through the service: no caller in this service
 // gets to clear the second factor's failure run except by successfully using a
 // factor, and a test that quietly acquired that power would be testing a door

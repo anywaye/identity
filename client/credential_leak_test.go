@@ -6,7 +6,7 @@ package client
 //
 // The brief is specific about what it must prove: construct a client holding a FAKE
 // token, and assert the fake string appears in no log record, no error, no
-// serialised form and no `fmt.Sprintf("%v", client)` — "across a full cycle
+// serialized form and no `fmt.Sprintf("%v", client)` — "across a full cycle
 // including an error response. The error path is where credentials leak: the error
 // is built from the response, and the response has the headers."
 //
@@ -229,7 +229,7 @@ func sweep(t *testing.T, when, token string, client *Client, err error) {
 				"printed as: %s\n\n"+
 				"This is the security invariant this package rests on: a credential must "+
 				"reach no string a human reads — not a log record, not an error message, "+
-				"not a serialised form, not a `fmt.Stringer`, not a `%%v` of the client. "+
+				"not a serialized form, not a `fmt.Stringer`, not a `%%v` of the client. "+
 				"The fix is in the redactor, not at the call site: every string this "+
 				"package builds out of anything a caller or a service supplied goes "+
 				"through Redactor.String.",
@@ -424,17 +424,17 @@ func TestTheResponseHeadersThisPackageKeepsAreCredentialFree(t *testing.T) {
 	}
 
 	problem := asProblem(t, err)
-	serialised, marshalErr := json.Marshal(problem.Document())
+	serialized, marshalErr := json.Marshal(problem.Document())
 	if marshalErr != nil {
-		t.Fatalf("marshalling the ProblemError: %v", marshalErr)
+		t.Fatalf("marshaling the ProblemError: %v", marshalErr)
 	}
 
-	if strings.Contains(string(serialised), fakeToken) {
-		t.Errorf("the ProblemError serialises to something containing the credential:\n%s\n\n"+
+	if strings.Contains(string(serialized), fakeToken) {
+		t.Errorf("the ProblemError serializes to something containing the credential:\n%s\n\n"+
 			"Every member of a problem document is passed through the redactor before it "+
 			"reaches the error type — including `detail`, including the per-field `errors`, "+
 			"and including the members this package did not know the contract had.",
-			truncate(string(serialised), 400))
+			truncate(string(serialized), 400))
 	}
 
 	// And the rendered form, which is what a logger prints.

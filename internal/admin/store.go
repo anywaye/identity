@@ -79,7 +79,7 @@ func (s *Store) Append(ctx context.Context, q db.Querier, e Entry) (Record, erro
 		// about this statement — there is no unique constraint a caller can
 		// provoke on this table — so mapping one would be a mapping that could
 		// only ever be wrong. The error reaches the caller as a 500 and the
-		// transaction rolls back, which is the behaviour that matters: the
+		// transaction rolls back, which is the behavior that matters: the
 		// mutation does not happen.
 		return Record{}, fmt.Errorf("inserting an audit record: %w", err)
 	}

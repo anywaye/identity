@@ -7,7 +7,7 @@ package client
 // embedded `*http.Client` and the request editor are safe for concurrent use
 // themselves.
 //
-// That is a claim about a struct with no synchronisation in it, which is exactly the
+// That is a claim about a struct with no synchronization in it, which is exactly the
 // kind of claim that stays true until somebody adds a cache, a counter or a memo and
 // does not think about it. The failure would then appear in a *caller's* test suite,
 // as a data race report pointing at this package, and the reader would have no way to

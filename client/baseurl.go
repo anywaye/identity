@@ -69,7 +69,7 @@ const ServiceBaseURLEnvVar = "CAFAYE_IDENTITY_BASE_URL"
 //
 // Derived rather than written out per service because six string literals would be a
 // second list of the six services next to the vendored documents, and this
-// repository is organised entirely around not having those.
+// repository is organized entirely around not having those.
 func BaseURLEnvVarFor(service string) string {
 	if !regexp.MustCompile(`^[a-z]+$`).MatchString(service) {
 		return ""

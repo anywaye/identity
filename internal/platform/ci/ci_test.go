@@ -287,7 +287,7 @@ func TestTheMigrationsAreAppliedAndNotJustChecked(t *testing.T) {
 // so every environment-gated test in this repository skips and the suite reports
 // green. internal/mfa's TestTheDatabaseTierAlreadyRan catches the absence of the
 // variable; this catches the workflow losing the check that the variable was
-// honoured — a later edit to ci.yml that drops the grep, or a `-short` flag, or a
+// honored — a later edit to ci.yml that drops the grep, or a `-short` flag, or a
 // test binary that prints nothing.
 func TestTheDatabaseTierCannotSkipQuietly(t *testing.T) {
 	var derives, refusesSkip, checksCount bool

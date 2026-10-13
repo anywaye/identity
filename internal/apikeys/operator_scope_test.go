@@ -101,7 +101,7 @@ func TestAnAccountOwnerMayStillMintEveryOtherScope(t *testing.T) {
 // A 422 naming `scopes` as invalid would send a developer to the vocabulary table to
 // look for a typo that is not there: the request is well-formed and every name in it
 // is one this build implements. What is wrong is the SURFACE. `ErrNotAuthorized` is
-// the neighbouring sentinel and it is deliberately not reused — a caller that
+// the neighboring sentinel and it is deliberately not reused — a caller that
 // distinguishes "you are not an owner" from "this page cannot hand that out" gets two
 // different actions, and conflating them would report an authorization problem where
 // the request was authorized and the grant was not.

@@ -101,7 +101,7 @@ func TestDisableAndEnableRoundTripThroughTheColumn(t *testing.T) {
 
 	// The address and the credential are untouched. A disabled account is not a
 	// deleted one and not a reset one: this service has no "disable also scrambles
-	// the password" behaviour, and a test that let one be introduced silently
+	// the password" behavior, and a test that let one be introduced silently
 	// would be describing a different feature.
 	if disabled.Email != created.Email {
 		t.Errorf("Email after Disable = %q, want it unchanged at %q", disabled.Email, created.Email)

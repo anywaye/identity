@@ -27,13 +27,13 @@ package main
 // # WHY THAT IS NOT A COP-OUT
 //
 // A source-reading check is weak, and it is weak in a specific way worth stating:
-// it holds the SHAPE of the wiring and not its behaviour. It cannot tell a correct
+// it holds the SHAPE of the wiring and not its behavior. It cannot tell a correct
 // `buildSocial` from a stub returning a non-nil value. What it does hold is that
 // the mount is WIRED AT ALL, which is the entire content of the defect — a claim
 // that was deleted on the strength of a statement about a call site that did not
 // exist.
 //
-// The behaviour is covered elsewhere and this file says where: the adapter is
+// The behavior is covered elsewhere and this file says where: the adapter is
 // exercised against a real registry and a real use case in
 // internal/httpapi/social_wiring_test.go, the router's two states are held in
 // social_mount_test.go, and the use case's five outcomes are held in

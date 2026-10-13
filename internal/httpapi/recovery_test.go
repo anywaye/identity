@@ -22,7 +22,7 @@ import (
 // Every test here drives the real router with a programmable double behind it,
 // because what is being asserted is translation: a status code, a content type, a
 // body shape, a cookie attribute, and — on two routes — the fact that the answer
-// is the same whether or not the address belongs to anybody. The behaviour those
+// is the same whether or not the address belongs to anybody. The behavior those
 // routes delegate is covered over a real database in
 // internal/recovery, and in recovery_routes_integration_test.go here.
 
@@ -222,7 +222,6 @@ func TestTheRequestRoutesAnswer202WithAConstantBody(t *testing.T) {
 		{path: "/v1/password-resets", field: "email"},
 		{path: "/v1/email-verifications", field: "email"},
 	} {
-		route := route
 		t.Run(route.path, func(t *testing.T) {
 			t.Parallel()
 
@@ -330,7 +329,6 @@ func TestEveryRecoveryRefusalMapsToItsOwnStatus(t *testing.T) {
 	}
 
 	for _, tt := range cases {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 

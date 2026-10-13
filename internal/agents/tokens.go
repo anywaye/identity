@@ -95,7 +95,7 @@ func (o Owner) RequireClaimed() error {
 }
 
 // Authenticate resolves an agent's presented bearer credential to its principal,
-// via OwnerByTokenDigest. It is the agent-surface analogue of currentCaller, and
+// via OwnerByTokenDigest. It is the agent-surface analog of currentCaller, and
 // it is on the service rather than in the HTTP layer so the transaction boundary
 // and the status rule live in one place.
 //

@@ -138,7 +138,6 @@ func mfaMatrixEndpoints() []mfaMatrixEndpoint {
 // something an anonymous caller can turn off, replace, reissue codes for, or read.
 func TestTheMFAAuthorizationMatrix(t *testing.T) {
 	for _, endpoint := range mfaMatrixEndpoints() {
-		endpoint := endpoint
 		t.Run(endpoint.name, func(t *testing.T) {
 			t.Run("anonymous", func(t *testing.T) {
 				s := newMFAServer(t)

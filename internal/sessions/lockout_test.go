@@ -199,7 +199,7 @@ func TestFailureWhileLockedDoesNotExtendTheLock(t *testing.T) {
 }
 
 // The state round-trips through the database, so the JSON tags are the wire
-// contract for whatever serialises it. Getting them wrong silently drops the
+// contract for whatever serializes it. Getting them wrong silently drops the
 // lockout state on a restart.
 func TestLockoutRoundTripsThroughItsTags(t *testing.T) {
 	t.Parallel()

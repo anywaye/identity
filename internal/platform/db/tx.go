@@ -58,7 +58,7 @@ func (r TxRunner) Do(ctx context.Context, fn func(ctx context.Context, q Querier
 		return ErrNilTxFunc
 	}
 	// Checked before Begin: opening a transaction for a request that has already
-	// been cancelled only ties up a connection until the pool reclaims it.
+	// been canceled only ties up a connection until the pool reclaims it.
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -83,7 +83,7 @@ func (r TxRunner) Do(ctx context.Context, fn func(ctx context.Context, q Querier
 //
 // The rollback runs on a context detached from the caller's. That is not
 // incidental: the common case for reaching here is that the caller's context was
-// cancelled — a client hung up mid-request — and a rollback issued on a dead
+// canceled — a client hung up mid-request — and a rollback issued on a dead
 // context fails, which would leave the transaction open on its connection. The
 // transaction is then discarded, which is the outcome being asked for either way.
 func runInTx(ctx context.Context, tx pgx.Tx, fn func(context.Context, Querier) error) (err error) {

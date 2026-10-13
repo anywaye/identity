@@ -309,7 +309,7 @@ func TestMembersListsEveryRowOfTheAccountUnderTheRealPolicies(t *testing.T) {
 // nothing is indistinguishable from an account with no members. That is the
 // same shape `tenancy.BeginUser` refuses the nil caller for — "a membership
 // read with no membership to find is not a thing anybody meant to ask for" — and
-// the HTTP layer renders an unrecognised error as a 500 with a trace id, which
+// the HTTP layer renders an unrecognized error as a 500 with a trace id, which
 // is the right answer for a route that was reached without its middleware.
 func TestMembersRefusesWithoutItsOwnAccountRatherThanAnsweringEmpty(t *testing.T) {
 	h := newRealAccountHarness(t)

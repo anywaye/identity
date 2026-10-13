@@ -74,7 +74,7 @@ func TestFakeClockSetMovesToAnArbitraryInstant(t *testing.T) {
 }
 
 // The fake is shared between the HTTP handlers and the test goroutine, so a data
-// race here is a real race in production code, not a test artefact.
+// race here is a real race in production code, not a test artifact.
 func TestFakeClockIsSafeForConcurrentUse(t *testing.T) {
 	t.Parallel()
 

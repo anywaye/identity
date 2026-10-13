@@ -41,7 +41,7 @@ func traceIDFrom(ctx context.Context) string {
 // An inbound id is reused so a trace survives a hop through gateway, a load
 // balancer or a proxy; anything unusable is replaced rather than rejected,
 // because refusing a request because its correlation header is untidy is not a
-// useful behaviour for a security boundary to have.
+// useful behavior for a security boundary to have.
 func traceMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		traceID := inboundTraceID(r)

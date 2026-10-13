@@ -210,7 +210,7 @@ func mustPKCS8(t *testing.T, priv *rsa.PrivateKey) []byte {
 	t.Helper()
 	der, err := marshalPKCS8Key(priv)
 	if err != nil {
-		t.Fatalf("marshalling the signing key: %v", err)
+		t.Fatalf("marshaling the signing key: %v", err)
 	}
 	return der
 }

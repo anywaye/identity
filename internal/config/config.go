@@ -104,7 +104,7 @@ var (
 	// supported state, and the difference is the reason it exists: spam
 	// protection is not a feature a deployment enables or skips. A process
 	// without the key would boot, serve its /v1 surface, and verify nothing —
-	// a signup form with no defence, discovered by a bot rather than by a boot
+	// a signup form with no defense, discovered by a bot rather than by a boot
 	// log. The check must not vanish where a feature is not configured, so
 	// there is no configuration in which this process starts without it.
 	ErrNoSignupSigningKey = errors.New("SIGNUP_SIGNING_KEY is not configured")
@@ -160,7 +160,7 @@ type Config struct {
 	OIDCSigningKey string
 	OIDCKeyID      string
 	// OIDCAllowInsecure permits an http issuer. It exists for `localhost` and for
-	// a compose stack, and it is a field rather than a behaviour because "this
+	// a compose stack, and it is a field rather than a behavior because "this
 	// deployment is local" is a fact about the deployment and guessing it from
 	// the hostname would be a security decision made by a string match.
 	OIDCAllowInsecure bool
@@ -283,7 +283,7 @@ type Config struct {
 	//
 	// IT IS ALWAYS PRESENT in a Config that Load accepts, and that is the whole
 	// of this field's contract: the one secret this service cannot boot without,
-	// because the signed timestamp is the second half of signup bot defence and
+	// because the signed timestamp is the second half of signup bot defense and
 	// a deployment that could turn it off would be a deployment whose signup
 	// form is undefended. It is read from the environment rather than a file so
 	// the secret is whatever the deployment's secret store already is, it is
@@ -332,7 +332,7 @@ type Config struct {
 	// unverified address can sign in there. Gating sign-in on verification
 	// would be a deviation from parity, and a worker who flipped the default
 	// would have broken the thing the fleet exists to match. So the default is
-	// off, and the behaviour is pinned by a test so a successor cannot flip it
+	// off, and the behavior is pinned by a test so a successor cannot flip it
 	// by accident.
 	//
 	// # WHAT THE FLAG IS FOR
@@ -775,7 +775,7 @@ func (c Config) SignupSigningKey() ([]byte, error) {
 //
 // A nil lookup means "no environment": the defaults apply. Values that are
 // present but invalid are errors rather than silent fallbacks, so a typo in a
-// deployment manifests as a startup failure and not as surprising behaviour.
+// deployment manifests as a startup failure and not as surprising behavior.
 func Load(lookup Lookup) (Config, error) {
 	if lookup == nil {
 		lookup = func(string) (string, bool) { return "", false }
@@ -1041,7 +1041,7 @@ func (c *Config) loadMFA(lookup Lookup) error {
 //
 // Every deployment in existence has this variable set and nothing else, and this
 // repository does not get to break their boots to fix a bug that only exists
-// because the bug predates the fix. So it is honoured, and an unmigrated
+// because the bug predates the fix. So it is honored, and an unmigrated
 // deployment's address-verification link keeps pointing wherever its single
 // template says — which, for the configuration this shape was introduced to
 // replace, is the password reset screen.
@@ -1636,7 +1636,7 @@ func (c *Config) loadOIDC(lookup Lookup) error {
 // every other secret belongs to a feature a deployment may not have turned on:
 // no MFA_ENCRYPTION_KEY means no second factor, no COURIER_TOKEN means no mail
 // path, no OIDC_* means the process is not a provider. SIGNUP_SIGNING_KEY
-// belongs to no feature. It is the second half of signup bot defence, and a
+// belongs to no feature. It is the second half of signup bot defense, and a
 // deployment that could boot without it would be a deployment whose signup
 // form is undefended — silently, because the honeypot still refuses the bots
 // that fill every field and the timestamp check is the only thing that stops

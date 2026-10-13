@@ -387,7 +387,7 @@ func TestEndToEndLoginDoesNotEnumerate(t *testing.T) {
 		p.TraceID = ""
 		out, err := json.Marshal(p)
 		if err != nil {
-			t.Fatalf("re-marshalling: %v", err)
+			t.Fatalf("re-marshaling: %v", err)
 		}
 		return string(out)
 	}
@@ -666,7 +666,7 @@ func TestEndToEndThemeSetGetSwitchAndClear(t *testing.T) {
 
 // THE THEME IS PER-USER: the row the handler reads is the caller's own, so one
 // user's choice is invisible to another's. This is the tenancy-adjacent
-// behaviour of the profile surface — two accounts, two credentials, and a
+// behavior of the profile surface — two accounts, two credentials, and a
 // preference that does not cross the boundary either way.
 func TestEndToEndThemeIsPerUser(t *testing.T) {
 	h, _, _ := newTestServer(t)

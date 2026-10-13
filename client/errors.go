@@ -214,7 +214,7 @@ type RateLimitedError struct{ problem }
 func (e *RateLimitedError) Error() string { return e.render("rate_limited") }
 
 // AccountLockedError is 423, identity's extension to core's reserved list, and the
-// one code whose correct client behaviour is to WAIT.
+// one code whose correct client behavior is to WAIT.
 //
 // A distinct type rather than a field on the base because the action differs: every
 // other 4xx here is "do not retry", and a client that treats 423 like 403 will hammer
@@ -283,7 +283,7 @@ func (e *UnknownProblemError) ProblemCode() string { return e.Code() }
 //     would be a lie about `type` and `title`.
 type CallError struct {
 	// Operation is the `operationId` the call was made through, which is the name of
-	// the generated method and therefore the thing a reader recognises.
+	// the generated method and therefore the thing a reader recognizes.
 	Operation string
 	// Status is the HTTP status, or 0 when there was no HTTP response.
 	Status int
@@ -547,8 +547,8 @@ var statusTypes = map[int]func(problem) error{
 // cannot be forgotten at a call site that decodes a problem some other way.
 //
 // A copy rather than an in-place edit, so the caller's decoded document is not
-// mutated. Member by member rather than by marshalling to JSON and redacting the
-// result, because marshalling would reorder, re-encode and lose the distinction
+// mutated. Member by member rather than by marshaling to JSON and redacting the
+// result, because marshaling would reorder, re-encode and lose the distinction
 // between an absent `errors` and an empty one.
 func sanitiseProblem(p generated.Problem, r Redactor) generated.Problem {
 	out := p

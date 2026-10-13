@@ -110,7 +110,7 @@ type Provider struct {
 // The endpoints are pinned rather than discovered from
 // https://accounts.google.com/.well-known/openid-configuration: identity is an
 // OIDC *provider*, and a service that hard-codes its own RPs to what it resolves
-// at boot is a service whose behaviour depends on what a third party served it
+// at boot is a service whose behavior depends on what a third party served it
 // that morning. Apple's and Microsoft's endpoints arrive the same way when those
 // packets land. What they are is in endpoints.go, next to the overrides that can
 // replace them.
@@ -214,7 +214,7 @@ func providerByName(name string) (Provider, bool) {
 // AuthCodeURL builds the URL the browser is redirected to.
 //
 // Every parameter here is required by the flow, and two of them are the CSRF
-// defence: `state` goes into a cookie this service reads back, and
+// defense: `state` goes into a cookie this service reads back, and
 // `redirect_uri` must byte-match the callback URL registered with the provider or
 // the exchange is refused. prompt/response_type/scope are the provider's own
 // requirements.

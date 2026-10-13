@@ -16,7 +16,7 @@ func TestARecoveryCodeIsAHumanSizedAmountOfEntropy(t *testing.T) {
 	}
 
 	if !IsRecoveryCode(code) {
-		t.Fatalf("%q is not recognised as a recovery code", code)
+		t.Fatalf("%q is not recognized as a recovery code", code)
 	}
 	// 16 base32 characters in four groups: eighty bits, on one line of a settings
 	// page and about the width of a phone's screen.

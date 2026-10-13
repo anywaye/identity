@@ -448,7 +448,7 @@ func TestRenderRefusesATokenlessLink(t *testing.T) {
 }
 
 // TestReadyAnswersTheDeploymentQuestionAndNotCouriersOwn is the assertion that
-// `recovery`'s `Mailer.Ready` contract is honoured: cheap, sends nothing, and
+// `recovery`'s `Mailer.Ready` contract is honored: cheap, sends nothing, and
 // answers with `recovery`'s own sentinel so the HTTP layer needs no new case.
 func TestReadyAnswersTheDeploymentQuestionAndNotCouriersOwn(t *testing.T) {
 	t.Run("an up courier is ready", func(t *testing.T) {
@@ -545,7 +545,7 @@ func TestTheMailerNeverPrintsACredentialOrAToken(t *testing.T) {
 		"client %#v":       mailer.client,
 		"log output":       log.String(),
 		"retryable":        Retryable(clientErr),
-		"serialised error": serialise(t, clientErr),
+		"serialized error": serialise(t, clientErr),
 	}
 
 	for what, thing := range things {
@@ -828,7 +828,7 @@ func serialise(t *testing.T, err error) string {
 	t.Helper()
 	encoded, marshalErr := json.Marshal(map[string]any{"error": err.Error()})
 	if marshalErr != nil {
-		t.Fatalf("marshalling the error: %v", marshalErr)
+		t.Fatalf("marshaling the error: %v", marshalErr)
 	}
 	return string(encoded)
 }

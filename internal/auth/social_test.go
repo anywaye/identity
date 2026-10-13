@@ -804,7 +804,7 @@ func TestTheFourOutcomesAreReachableAndAreTheOnesTheCodeNames(t *testing.T) {
 // next callback signs them in as the victim. Full account takeover, from an
 // address, with no credential.
 //
-// So the refusal is the whole of the defence, and it is asserted on three things:
+// So the refusal is the whole of the defense, and it is asserted on three things:
 // the error is ErrSocialEmailInUse (which internal/httpapi maps to 409), NO
 // connected account was written, and NO user was created. The last two are the
 // ones that matter — an implementation that detected the collision, created
@@ -1401,7 +1401,7 @@ func TestAFailingSealerRefusesBeforeAnyWrite(t *testing.T) {
 // unlikely. What is asserted is that the stored digest does not verify against any
 // known string — the hasher is the real one, so `Verify` is the real check — and
 // that it is a real argon2id digest of the expected shape rather than a placeholder
-// anybody could recognise.
+// anybody could recognize.
 //
 // The shape assertion matters because the alternative implementation named in the
 // comment ("password") would satisfy a "cannot log in" test by accident only if it
@@ -1575,7 +1575,7 @@ func TestALookupFailureIsNotMistakenForANewIdentity(t *testing.T) {
 // returns a `LoginResult` rather than a type of its own.
 //
 // A social sign-in that minted a session for an account with a confirmed second
-// factor would be the single largest hole this file could have. The defence is
+// factor would be the single largest hole this file could have. The defense is
 // structural — `startLogin` is the same function a password login goes through, so
 // there is no field of this result from which a session can be had without the
 // second factor having been presented.

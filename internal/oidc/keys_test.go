@@ -220,7 +220,7 @@ func pemFor(t *testing.T, bits int, encoding pemEncoding) string {
 	case pkcs8:
 		der, err := x509.MarshalPKCS8PrivateKey(key)
 		if err != nil {
-			t.Fatalf("marshalling PKCS#8: %v", err)
+			t.Fatalf("marshaling PKCS#8: %v", err)
 		}
 		block = &pem.Block{Type: "PRIVATE KEY", Bytes: der}
 	default:

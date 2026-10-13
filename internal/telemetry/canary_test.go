@@ -54,7 +54,7 @@ import (
 //
 // IT IS THE REAL SDK, WITH A REAL EXPORTER. `tracetest.SpanRecorder` is the
 // OpenTelemetry SDK's own span recorder — the same objects the OTLP exporter
-// serialises. Asserting on a hand-built map would prove the TEST's idea of the
+// serializes. Asserting on a hand-built map would prove the TEST's idea of the
 // payload is correct, which is not the property under test.
 
 // canary is the string planted in every field that could carry content.

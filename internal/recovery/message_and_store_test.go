@@ -25,7 +25,6 @@ func TestNoSubjectCarriesAToken(t *testing.T) {
 	const token = "Zz3vK7mXpR2tY8wB4cN6dF0gH1jK5lM9oP3qS7uV2wX4yZ8"
 
 	for kind := range messageBodies {
-		kind := kind
 		t.Run(string(kind), func(t *testing.T) {
 			t.Parallel()
 
@@ -55,7 +54,6 @@ func TestNoSubjectCarriesAToken(t *testing.T) {
 // place is a deadline they ignore.
 func TestEveryMessageNamesTheAddressAndTheDeadline(t *testing.T) {
 	for kind := range messageBodies {
-		kind := kind
 		t.Run(string(kind), func(t *testing.T) {
 			t.Parallel()
 

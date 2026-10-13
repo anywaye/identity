@@ -17,9 +17,9 @@ import (
 
 // THE MFA WIRING.
 //
-// What matters here is not the behaviour — internal/auth and internal/httpapi own
+// What matters here is not the behavior — internal/auth and internal/httpapi own
 // that — but that newApp CONNECTS the pieces correctly, because there is one way
-// for this to be wrong that no behavioural test elsewhere would catch:
+// for this to be wrong that no behavioral test elsewhere would catch:
 //
 //	A PROCESS WITH A DATABASE AND NO MFA_ENCRYPTION_KEY MUST STILL REFUSE A
 //	SECOND-FACTOR LOGIN, AND MUST NOT LET A USER ENROLL ONE IT CANNOT VERIFY.

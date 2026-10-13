@@ -364,7 +364,7 @@ func TestConnectedAccountsHasExactlyOneApplicationUniqueIndex(t *testing.T) {
 }
 
 // A provider uid is whatever the provider says it is, so its length is the only
-// bound available. The CHECK is the last line of defence for an index entry.
+// bound available. The CHECK is the last line of defense for an index entry.
 func TestStoreCreateEnforcesTheProviderUIDLength(t *testing.T) {
 	pool := dbtest.Schema(t)
 	store := NewStore(pool)

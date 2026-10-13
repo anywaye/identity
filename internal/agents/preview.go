@@ -16,7 +16,7 @@ import (
 // The website's claim screen renders its first frame from `GET
 // /v1/agents/claim/{token}`: the agent's name, when it registered, and the device
 // document it described itself with. Without it, the screen's whole opening is a
-// 404 that reads as "unrecognised" — including for a link that is perfectly live
+// 404 that reads as "unrecognized" — including for a link that is perfectly live
 // — because identity's failures are one collapsed shape and a missing route is
 // indistinguishable from a bad token once the answer is a 404.
 //
@@ -110,7 +110,7 @@ func (s *Service) PreviewClaim(ctx context.Context, in PreviewInput) (ClaimPrevi
 			// never entered. It is here because the S direction — a future store
 			// change that drops the conjunct — should surface as the collapse it
 			// already is rather than as a 500 from the route's mapper, which maps
-			// everything it does not recognise to `unexpected`.
+			// everything it does not recognize to `unexpected`.
 			if errors.Is(err, ErrAlreadyClaimed) {
 				return ErrNotFound
 			}

@@ -756,10 +756,8 @@ func TestAuthorizationMatrix(t *testing.T) {
 	f.register(t, &f.elsewhere)
 
 	for _, endpoint := range matrixEndpoints() {
-		endpoint := endpoint
 		t.Run(endpoint.name, func(t *testing.T) {
 			for _, column := range f.columns() {
-				column := column
 				t.Run(column.name, func(t *testing.T) {
 					// A fresh account per (endpoint, column), because one of the
 					// cases destroys it.
@@ -978,7 +976,7 @@ func (f *matrixFixture) registerAgent() string {
 	// and is actually a clock the fixture never wired.
 	//
 	// Passing WithClock here instead would be the tidier fix and would change the
-	// instant every OTHER row in this matrix is judged at, which is a behaviour
+	// instant every OTHER row in this matrix is judged at, which is a behavior
 	// change to sixteen passing rows made in service of one new one. Using the
 	// clock the handler actually reads is the smaller change, and the comment is
 	// what stops the next reader from "tidying" it back.

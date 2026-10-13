@@ -51,7 +51,7 @@ func TestAccountCreatedEnvelope(t *testing.T) {
 	}
 
 	// The payload is the promise to consumers, so it is asserted field by field
-	// rather than as a marshalled blob.
+	// rather than as a marshaled blob.
 	var data struct {
 		AccountID string `json:"account_id"`
 		Name      string `json:"name"`

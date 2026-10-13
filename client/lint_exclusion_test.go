@@ -239,7 +239,7 @@ func TestTheLintExclusionFileItselfIsLinted(t *testing.T) {
 //
 // The parser is deliberately narrow and says so: it looks for `- path:` entries
 // under `linters: exclusions: rules:` and returns what it found. A shape it does
-// not recognise is a failure below rather than an empty result, because a reader
+// not recognize is a failure below rather than an empty result, because a reader
 // that finds nothing agrees with a config that excludes nothing and the two are
 // indistinguishable.
 func lintExclusionPaths(t *testing.T, root string) []string {
@@ -397,7 +397,7 @@ func golangciLintEnabled(t *testing.T) []string {
 // parser was the bug. `encoding/json` is stdlib, so it costs this repository no
 // dependency, which is the same reason openapi_reader_test.go hand-parses YAML.
 //
-// A shape it does not recognise yields an empty list, and the test above fails on
+// A shape it does not recognize yields an empty list, and the test above fails on
 // that explicitly rather than passing quietly.
 func parseEnabledLinters(raw string) []string {
 	var document struct {

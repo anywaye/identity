@@ -213,7 +213,7 @@ func TestResolveBaseURLPrefersTheExplicitOptionEvenWhenItIsBlank(t *testing.T) {
 // and not six literals.
 //
 // Six string literals would be a second list of the six services next to the
-// documents, and this repository is organised entirely around not having those.
+// documents, and this repository is organized entirely around not having those.
 func TestBaseURLEnvVarForDerivesRatherThanLists(t *testing.T) {
 	for _, tc := range []struct{ service, want string }{
 		{"identity", "CAFAYE_IDENTITY_BASE_URL"},

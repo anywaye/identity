@@ -276,9 +276,9 @@ func TestTheStaffDirectorySearchReturnsTheMinimalProjection(t *testing.T) {
 		"password_digest", "password", "token", "api_key", "recovery",
 		"mfa", "totp", "secret", "digest", "session", "challenge", "disabled",
 	}
-	serialised := rec.Body.String()
+	serialized := rec.Body.String()
 	for _, field := range forbidden {
-		if strings.Contains(serialised, `"`+field+`"`) {
+		if strings.Contains(serialized, `"`+field+`"`) {
 			t.Errorf("the directory response carries %q, which is not Parlor's to read", field)
 		}
 	}
@@ -622,7 +622,7 @@ func TestTheStaffMutationsRefusalsAreTheStatusesThisServicePromises(t *testing.T
 // the surface's place in this repository's tables
 // ---------------------------------------------------------------------------
 
-// TestTheDriftWalkSeesTheStaffSurface is the behavioural instance of
+// TestTheDriftWalkSeesTheStaffSurface is the behavioral instance of
 // router_walk_test.go's bug, for the four routes this packet mounts.
 //
 // They hang off `auth` — the use cases are `auth.Service`'s — so no walk

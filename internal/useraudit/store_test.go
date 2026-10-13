@@ -18,7 +18,7 @@ package useraudit
 //
 // EVERY ASSERTION ABOUT A ROW GOES AROUND THE STORE, issuing its SQL directly against
 // the pool. A test that read the row back through Append would be restating the
-// method's own behaviour; the point of these is to prove what happens when something
+// method's own behavior; the point of these is to prove what happens when something
 // that is NOT this package touches the table.
 
 import (

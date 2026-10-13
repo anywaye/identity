@@ -333,7 +333,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		s.serveJWKS(w)
 	case "/authorize":
 		// Answered rather than 404 so a test that accidentally follows the
-		// redirect gets a body it can recognise instead of chi's plain text.
+		// redirect gets a body it can recognize instead of chi's plain text.
 		w.Header().Set("Content-Type", "text/html")
 		_, _ = w.Write([]byte("<html><body>authorize</body></html>"))
 	default:

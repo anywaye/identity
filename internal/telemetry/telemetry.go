@@ -11,7 +11,7 @@
 //	   denial-of-service vector aimed at our own auth surface.
 //
 //	2. The allowlist that decides what a span may carry. `Record` is the only
-//	   path from a value to a span, and anything it does not recognise does not
+//	   path from a value to a span, and anything it does not recognize does not
 //	   land.
 //
 // THE SECOND HALF IS THE POINT, and it looks like over-caution until you picture
@@ -550,7 +550,7 @@ func Resource(lookup func(string) string) *resource.Resource {
 //	                                deployment, not a degraded mode.
 //	unset                          -> the collector that ships with the stack.
 //
-// `OTEL_EXPORTER_OTLP_ENDPOINT` is honoured as a fallback so identity also works
+// `OTEL_EXPORTER_OTLP_ENDPOINT` is honored as a fallback so identity also works
 // with generic OTel tooling, and the cafaye name wins when both are set. That
 // precedence is written down here rather than discovered later: a contract with
 // an undocumented precedence order is a bug report.

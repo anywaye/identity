@@ -321,7 +321,7 @@ func TestEveryLoginRedirectParameterIsCarriedAndEveryCarriedOneIsNamed(t *testin
 	}
 
 	// Everything the struct can carry, filled in with a value a reader can
-	// recognise. If a field is added to LoginRedirectParams and not added here, it
+	// recognize. If a field is added to LoginRedirectParams and not added here, it
 	// is absent from `carried` and the second loop below fails.
 	carried := LoginRedirectParams{
 		RequestID:   "11111111-2222-3333-4444-555555555555",

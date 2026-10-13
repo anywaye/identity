@@ -12,7 +12,7 @@ import (
 )
 
 // The loop is exercised against a fake Claimer and a recording Publisher rather
-// than a database: the interesting behaviour is what it does when a publish
+// than a database: the interesting behavior is what it does when a publish
 // fails, and that is far easier to arrange deterministically here than through
 // a transport.
 
@@ -252,7 +252,7 @@ func TestServiceRunOnceReportsAClaimFailure(t *testing.T) {
 	}
 }
 
-// The batch is always released, even when the loop is cancelled mid-publish. A
+// The batch is always released, even when the loop is canceled mid-publish. A
 // leaked claim holds a transaction and a row lock until the pool reaps it.
 func TestServiceReleasesTheBatchWhenTheContextIsCancelled(t *testing.T) {
 	t.Parallel()
@@ -281,7 +281,7 @@ func TestServiceReleasesTheBatchWhenTheContextIsCancelled(t *testing.T) {
 		t.Error("the batch was not released after cancellation")
 	}
 	if batch.committed {
-		t.Error("a cancelled batch was committed")
+		t.Error("a canceled batch was committed")
 	}
 }
 
@@ -305,7 +305,7 @@ func TestServiceRunStopsOnContextCancellation(t *testing.T) {
 			t.Errorf("Run = %v, want nil or context.Canceled", err)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("Run did not return within 5s of its context being cancelled")
+		t.Fatal("Run did not return within 5s of its context being canceled")
 	}
 }
 

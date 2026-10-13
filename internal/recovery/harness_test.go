@@ -24,7 +24,7 @@ import (
 //
 // Every test in this package that exercises a flow runs the real store over a real
 // Postgres, because the properties being asserted are properties of the WIRE and
-// of the tables: a token spent once, an expiry honoured, a verification cleared by
+// of the tables: a token spent once, an expiry honored, a verification cleared by
 // the statement that moved an address. A double would answer exactly what the test
 // told it to, and the whole value of these tests is that they would fail if the SQL
 // were wrong.
@@ -351,7 +351,7 @@ func (h *harness) storedTokenRow(tokenID id.UUID) map[string]any {
 			h.t.Fatalf("reading the token row: %v", err)
 		}
 		for i, f := range fields {
-			out[string(f.Name)] = values[i]
+			out[f.Name] = values[i]
 		}
 	}
 	if len(out) == 0 {

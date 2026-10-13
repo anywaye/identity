@@ -296,7 +296,6 @@ func TestTenancyIdentityOwnsItsFiveTables(t *testing.T) {
 	// into SQL - it is passed to `set role`, which takes a string, and both values
 	// are literals in this file.
 	for _, role := range []string{"identity_app", "identity"} {
-		role := role
 		t.Run("three-way denial as "+role, func(t *testing.T) {
 			ctx, conn := connect(t)
 
@@ -625,7 +624,7 @@ func TestTenancyCatalogProofReadsThePublicRowNotAClone(t *testing.T) {
 //	ERROR: new row violates row-level security policy for table "account_audit_log"
 //	(SQLSTATE 42501)
 //
-// which is the correct behaviour and the first evidence in this repository that the
+// which is the correct behavior and the first evidence in this repository that the
 // boundary is live: before 00016 that INSERT succeeded. Each row therefore gets its
 // own `begin_account` inside the same transaction — `is_local = true` means the value
 // is transaction-scoped rather than connection-scoped, so overwriting it per row is

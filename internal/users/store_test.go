@@ -128,7 +128,7 @@ func TestStoreCreateRefusesAnUnnormalizedEmail(t *testing.T) {
 	pool := dbtest.Pool(t)
 	store := NewStore(pool)
 
-	// The CHECK constraint is the last line of defence. CreateParams carrying an
+	// The CHECK constraint is the last line of defense. CreateParams carrying an
 	// unnormalized address is a caller bug, and the failure should be the
 	// database's constraint violation, not a silently corrected row.
 	_, err := store.Create(context.Background(), pool, CreateParams{

@@ -99,7 +99,7 @@ type Agents interface {
 	RefreshClaimLink(ctx context.Context, in agents.RefreshClaimInput) (agents.RefreshedClaim, error)
 
 	// Authenticate resolves a presented agent bearer credential to its principal,
-	// the agent-surface analogue of currentCaller. A route wraps this in
+	// the agent-surface analog of currentCaller. A route wraps this in
 	// agentCredentialOnly.
 	Authenticate(ctx context.Context, presented string, now time.Time) (agents.Owner, error)
 
@@ -385,7 +385,7 @@ type agentClaimPreviewResponse struct {
 // The use case is a read — `PreviewClaim` has no access to the credential
 // machinery at all — so the worst this handler can do is tell somebody about an
 // agent whose own registration they already hold a 256-bit secret for. The proof
-// is behavioural rather than a comment: the integration test claims a live link
+// is behavioral rather than a comment: the integration test claims a live link
 // AFTER the preview has read it and asserts the link still works, which is the
 // only statement that a preview cannot be spending anything.
 func (o options) handleAgentClaimPreview(w http.ResponseWriter, r *http.Request) {

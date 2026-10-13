@@ -103,7 +103,7 @@ import (
 )
 
 // The two files read here, relative to this package. Both are committed, both are
-// what a customer reads, and neither is a build artefact.
+// what a customer reads, and neither is a build artifact.
 const (
 	readmePath   = "../../README.md"
 	manifestPath = "../../cafaye.yml"
@@ -327,7 +327,7 @@ func parseRouteCell(spans []string, number int) (map[operationKey]string, map[st
 //
 // Shape, not content: a leading `/`, or a first word beginning with one of the
 // eight method names. The second half is deliberately a PREFIX test — `GETTY /x`
-// has to be recognised as a malformed route rather than as a non-route cell, or
+// has to be recognized as a malformed route rather than as a non-route cell, or
 // the one typo this reader exists to catch is the one it waves through.
 func isRouteShaped(span string) bool {
 	if strings.HasPrefix(span, "/") {
@@ -337,7 +337,7 @@ func isRouteShaped(span string) bool {
 	upper := strings.ToUpper(first)
 	// The map's VALUES are the canonical uppercase spellings; its keys are the
 	// lowercase ones the YAML reader matches document keys against. Comparing
-	// against the keys here would make this test recognise no method at all, and it
+	// against the keys here would make this test recognize no method at all, and it
 	// would do so silently — the file would parse as two route rows and the floor
 	// below is the only thing that would notice.
 	for _, method := range openAPIOperationKeys {
@@ -450,7 +450,7 @@ func TestTheReadmeDeclaredAbsencesAreStillAbsent(t *testing.T) {
 // The checks above are only worth what the router walk feeding them is worth, and a
 // walk that cannot see a route reports agreement about a service smaller than the
 // one that runs. That has happened TWICE in this repository, to this file's own
-// neighbouring check: the admin surface and then the recovery surface were each
+// neighboring check: the admin surface and then the recovery surface were each
 // mounted with the `options` literal left un-updated, and
 // `TestEveryServedRouteIsDocumentedOrNamed` passed while three and then eight
 // undocumented operations were live. `registerXRoutes` returns early when its

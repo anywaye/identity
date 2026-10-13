@@ -43,7 +43,7 @@ func (s *Store) Append(ctx context.Context, q db.Querier, e Envelope) error {
 
 	envelope, err := json.Marshal(e)
 	if err != nil {
-		return fmt.Errorf("outbox: marshalling the envelope: %w", err)
+		return fmt.Errorf("outbox: marshaling the envelope: %w", err)
 	}
 
 	// ON CONFLICT DO NOTHING, not an upsert. The envelope id is the consumers'
@@ -235,7 +235,7 @@ func (b *pgBatch) Commit(ctx context.Context) error {
 
 // Release rolls the claim back so the events are available again.
 //
-// It runs against a fresh context when the caller's is already cancelled — which
+// It runs against a fresh context when the caller's is already canceled — which
 // is exactly when a publisher is shutting down — because a rollback issued on a
 // dead context would fail and leave the connection until the pool reaped it. If
 // even that fails the transaction is discarded, which is still the outcome

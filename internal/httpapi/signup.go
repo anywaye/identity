@@ -6,7 +6,7 @@ package httpapi
 //
 // # WHY IDENTITY MINTS AND THE CLIENT CANNOT SIGN
 //
-// The signed timestamp is the second half of signup bot defence (the honeypot is
+// The signed timestamp is the second half of signup bot defense (the honeypot is
 // the first — see registerRequest's comment). A bot that leaves the trap empty
 // sails through the honeypot; the timestamp is what stops it. The pair is an
 // HMAC-SHA256 over the timestamp, keyed with a server secret (SIGNUP_SIGNING_KEY)
@@ -126,25 +126,18 @@ func (o options) registerSignupRoutes(r chiRouter) {
 }
 
 // ---------------------------------------------------------------------------
-// request and response shapes
-// ---------------------------------------------------------------------------
-
-// signupTimestampResponse is the 200 from the mint.
-//
-// IT IS signup.Pair ITSELF, rendered as JSON: `{"timestamp":…, "signature":…}`.
-// The same two fields travel back on POST /v1/users, and one type for both
-// directions is the whole of the point — a minted pair and a presented pair
-// cannot be told apart by anything but their values, so there is no "minted"
-// flag for a forger to set and no second type to drift from the first.
-type signupTimestampResponse = signup.Pair
-
-// ---------------------------------------------------------------------------
 // handlers
 // ---------------------------------------------------------------------------
 
 // handleMintSignupTimestamp hands out a fresh pair.
 //
 //	POST /v1/signup-timestamp  →  200 {timestamp, signature}
+//
+// The 200 IS signup.Pair ITSELF, rendered as JSON. The same two fields travel
+// back on POST /v1/users, and one type for both directions is the whole of
+// the point — a minted pair and a presented pair cannot be told apart by
+// anything but their values, so there is no "minted" flag for a forger to set
+// and no second type to drift from the first.
 //
 // # IT TAKES NO BODY AND NO CREDENTIAL, AND THAT IS THE CONTRACT
 //
@@ -164,5 +157,5 @@ type signupTimestampResponse = signup.Pair
 // for one form submission, which is the whole of the blast radius.
 func (o options) handleMintSignupTimestamp(w http.ResponseWriter, r *http.Request) {
 	pair := o.signup.Mint(o.clk.Now())
-	writeJSON(w, http.StatusOK, signupTimestampResponse(pair))
+	writeJSON(w, http.StatusOK, pair)
 }

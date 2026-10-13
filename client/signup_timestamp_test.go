@@ -4,14 +4,14 @@ package client
 //
 // # WHY THERE IS A TEST FILE FOR THIS AND NOT A COMMENT ON THE METHOD
 //
-// The pair is DELIBERATELY ABSENT from `openapi/v1.yaml` — a bot defence in the
-// contract is a bot defence the next bot reads around — so the generated request
+// The pair is DELIBERATELY ABSENT from `openapi/v1.yaml` — a bot defense in the
+// contract is a bot defense the next bot reads around — so the generated request
 // body cannot carry it. That leaves two failure modes, and both of them are
 // invisible:
 //
 //  1. the wrapper adds the pair and adds it WRONG. A body with the pair
 //     misspelled, or a timestamp rendered as a string, is refused by the server
-//     with the same generic `422` a bot defence gives, and a caller debugging it
+//     with the same generic `422` a bot defense gives, and a caller debugging it
 //     has no way to tell a wiring mistake from a bot. So the wire bytes are
 //     asserted here, not just the status.
 //  2. the wrapper stops adding the pair. A registration then succeeds or fails
@@ -162,7 +162,7 @@ func TestRegisterUserWithSignupTimestampCarriesThePairOnTheWire(t *testing.T) {
 // look vestigial.
 //
 // IT IS NOT VESTIGIL. `POST /v1/users` refuses a body with no pair — that is the
-// defence — so `RegisterUser` against a real deployment always yields a
+// defense — so `RegisterUser` against a real deployment always yields a
 // `*ValidationError`. It is kept because it is the documented operation's method
 // and a client whose method set changes without a document change is its own kind
 // of drift; a caller that needs a registration to succeed uses the pair method.
@@ -270,7 +270,7 @@ func TestTheMintAndTheRegisterAreTwoRoundTrips(t *testing.T) {
 // IT IS A TABLE over the shapes that make the rewrite impossible, and every row
 // expects an ERROR rather than a request. A body this function cannot parse must
 // never reach the network with the pair silently missing: the server would answer
-// the generic `422`, and the caller would be debugging a bot defence instead of
+// the generic `422`, and the caller would be debugging a bot defense instead of
 // the bug that is actually there.
 //
 // IT WAS WRITTEN BECAUSE A ROW IN IT PANICKED. `json.Unmarshal` of `null` into a
@@ -398,7 +398,7 @@ func TestThePairEditorNeverPutsTheSignatureInAnError(t *testing.T) {
 // real one — and this test is the reason a reader can be sure that is not a
 // double-send. A transport that saw a request despite the pre-flight failing
 // would be a request carrying no pair, which the server answers with the generic
-// `422`: the caller would be handed a refusal about a bot defence for a body
+// `422`: the caller would be handed a refusal about a bot defense for a body
 // mistake, and the refusal would be indistinguishable from the real thing.
 func TestThePreflightRefusesBeforeAnyRequestGoesOut(t *testing.T) {
 	t.Parallel()

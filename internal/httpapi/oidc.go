@@ -257,7 +257,7 @@ func (o options) handleOIDCJWKS(w http.ResponseWriter, _ *http.Request) {
 // is stored and before a browser is redirected anywhere:
 //
 //   - an unknown scope, or a request with no openid. The library's own
-//     ValidateAuthReqScopes silently DELETES a scope it does not recognise and
+//     ValidateAuthReqScopes silently DELETES a scope it does not recognize and
 //     carries on, which is the wrong answer for a provider whose job is to be
 //     legible to another program: the product would get a token with no claim in
 //     it and nothing saying so.
@@ -526,7 +526,7 @@ const OIDCFlowCookieName = "__Host-oidc-flow"
 // signing in.
 //
 // `state` does not help, and the reason is worth stating precisely: state is the
-// CLIENT's defence against CSRF against the client's own callback, and the
+// CLIENT's defense against CSRF against the client's own callback, and the
 // attacker here IS the client, so they know their own state. `prompt=login` and
 // `max_age` — the two levers a client has for demanding interaction — are both
 // refused by checkAuthorizeParams, so there is nothing else to fall back on.
@@ -665,7 +665,7 @@ func (o options) completeOIDCLogin(w http.ResponseWriter, r *http.Request, reque
 	// the state. So the user is sent back to the form with a new one and a
 	// sentence saying what happened, instead of being shown a problem document on
 	// an origin the login UI does not own. A user whose tab expired thirty seconds
-	// ago should not have to recognise a JSON document as the price of signing in.
+	// ago should not have to recognize a JSON document as the price of signing in.
 	sealed, err := r.Cookie(oidcStateCookieName(requestID))
 	if err != nil || !oauth.VerifyState(OIDCStateProvider, sealed.Value, r.Form.Get("state")) {
 		o.failOIDCInteraction(w, r, requestID, oidcInteraction{
@@ -1088,7 +1088,7 @@ func oidcStateCookieName(requestID string) string {
 // So a request originating from an attacker's page carries the cookie and cannot
 // know what is in it, and `oauth.VerifyState` fails for every value the attacker
 // chose. Under `Lax` the same attacker did not carry the cookie; the outcome for
-// them is identical. **The CSRF defence is the unguessable value in a cookie the
+// them is identical. **The CSRF defense is the unguessable value in a cookie the
 // attacker's origin cannot read, and neither of those two facts changed.** What
 // changed is only that the cookie now travels one hop further, to the origin that
 // is supposed to have it.

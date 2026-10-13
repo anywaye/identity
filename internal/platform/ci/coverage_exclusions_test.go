@@ -85,7 +85,7 @@ var generatedHeader = regexp.MustCompile(`(?m)^// Code generated .* DO NOT EDIT\
 // Parsed as a line and then field-scanned, rather than as a regex over the whole
 // file, for the reason kit gives for the same file: a reason is a sentence, and a
 // parser that splits on whitespace cannot be given one. The grammar is small and
-// anything it does not recognise is an error rather than a skip — the failure
+// anything it does not recognize is an error rather than a skip — the failure
 // mode of a permissive reader is a file that has quietly stopped excluding
 // anything while still reading as a declaration.
 var entryLine = regexp.MustCompile(`^excluded\s+coverage\s+(\S+)(.*)$`)
@@ -144,7 +144,7 @@ func TestTheCoverageExclusionIsOnlyGeneratedCode(t *testing.T) {
 
 	for _, entry := range entries {
 		// (2) the entry resolves. Rule 4, borrowed from ESLint's
-		// reportUnusedDisableDirectives and the whole defence of the other three:
+		// reportUnusedDisableDirectives and the whole defense of the other three:
 		// a generator that moves leaves the entry behind, and without this the
 		// list is a ratchet that only turns one way.
 		matched := goFilesUnder(t, root, entry.prefix)

@@ -393,7 +393,7 @@ func (o options) writeAPIKeyError(w http.ResponseWriter, r *http.Request, err er
 // It is separate from APIKeys because it is a READ of a credential rather than a
 // management of one, and from APIKeyCaller because that one answers "who is
 // calling" while this one answers "what may this token do" — and a token asking
-// the second question about itself is the case that has no analogue in the first.
+// the second question about itself is the case that has no analog in the first.
 type Introspector interface {
 	Introspect(ctx context.Context, token string, now time.Time) (apikeys.Claims, error)
 }

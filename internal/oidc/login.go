@@ -29,7 +29,7 @@ const PathAuthorizeCallback = PathAuthorize + "/callback"
 // which application is asking for a password is the setup for a credential
 // phishing page, and the `client_id` cannot do the job: it is 43 characters of
 // base64url chosen for entropy, so displaying it tells a user nothing they could
-// recognise or check against the product they meant to sign in to.
+// recognize or check against the product they meant to sign in to.
 //
 // IT TRAVELS IN THE REDIRECT NOW, not in a page this service renders, and that
 // is why the comment above the field says the login UI must escape it: see

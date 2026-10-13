@@ -141,8 +141,8 @@ func run() error {
 		return err
 	}
 	defer func() {
-		// A separate context: `ctx` is already cancelled by the time this runs,
-		// because a SIGTERM is what usually got us here, and a cancelled context
+		// A separate context: `ctx` is already canceled by the time this runs,
+		// because a SIGTERM is what usually got us here, and a canceled context
 		// cannot be used to wait for a flush. Bounded by the SDK's own timeout,
 		// because a telemetry flush must not be able to hold up a shutdown.
 		flushCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -307,7 +307,7 @@ func newApp(ctx context.Context, cfg config.Config, logger *slog.Logger) (*app, 
 	// ONE HASHER FOR THE WHOLE PROCESS, and it is built here rather than inside
 	// buildAuth because two surfaces need one: a password reset hashes a new
 	// password through the same code a registration does, and the constructor
-	// derives an argon2id digest for the login's timing equaliser — so a second
+	// derives an argon2id digest for the login's timing equalizer — so a second
 	// Hasher would derive a second dummy digest and cost a hundred milliseconds of
 	// memory-hard work at boot for nothing.
 	hasher := users.NewHasher()
@@ -684,7 +684,7 @@ func buildAuth(
 		// rather than beside them.
 		useraudit.NewStore(pool),
 		// Built once by newApp and shared with the recovery surface, because the
-		// constructor derives a dummy digest in the login's timing equaliser and a
+		// constructor derives a dummy digest in the login's timing equalizer and a
 		// second Hasher would derive a second one for the same purpose.
 		hasher,
 		// The real clock. Every window in the service reads time through this, which
@@ -1284,7 +1284,7 @@ func (a *app) Addr() string {
 	return a.listener.Addr().String()
 }
 
-// Run serves until ctx is cancelled (SIGTERM, SIGINT, or a test's context),
+// Run serves until ctx is canceled (SIGTERM, SIGINT, or a test's context),
 // then drains in-flight requests before returning.
 func (a *app) Run(ctx context.Context) error {
 	if a.listener == nil {
@@ -1304,7 +1304,7 @@ func (a *app) Run(ctx context.Context) error {
 		a.logger.Info("shutdown requested", "in_flight_drain", a.timeout)
 	}
 
-	// Shutdown gets a fresh context: the cancelled one cannot be used to wait.
+	// Shutdown gets a fresh context: the canceled one cannot be used to wait.
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), a.timeout)
 	defer cancel()
 

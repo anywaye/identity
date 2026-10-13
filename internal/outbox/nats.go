@@ -127,13 +127,13 @@ func NewNATSPublisher(url string) (*NATSPublisher, error) {
 // wait is bounded by DefaultPublishTimeout: a publish that is not acknowledged
 // within the budget is a failure, not a wait — the error is what the loop
 // records in last_error and what leaves the row claimable for the next pass,
-// and the row is never marked published on this path. A cancelled context (a
+// and the row is never marked published on this path. A canceled context (a
 // shutdown) aborts an in-flight publish the same way, because the budget is
 // derived from the caller's context.
 func (p *NATSPublisher) Publish(ctx context.Context, e Envelope) error {
 	payload, err := json.Marshal(e)
 	if err != nil {
-		return fmt.Errorf("outbox: marshalling the envelope: %w", err)
+		return fmt.Errorf("outbox: marshaling the envelope: %w", err)
 	}
 
 	// The budget is applied here, inside Publish, so every caller is protected

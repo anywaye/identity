@@ -65,7 +65,7 @@ func TestDiscoveryCarriesEveryRequiredField(t *testing.T) {
 
 	encoded, err := json.Marshal(doc)
 	if err != nil {
-		t.Fatalf("marshalling the discovery document: %v", err)
+		t.Fatalf("marshaling the discovery document: %v", err)
 	}
 	var fields map[string]any
 	if err := json.Unmarshal(encoded, &fields); err != nil {

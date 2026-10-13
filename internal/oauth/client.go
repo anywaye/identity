@@ -406,7 +406,7 @@ func identity(uid, email, name string) (Identity, error) {
 // getJSON performs one authorized GET and decodes the body into dst.
 //
 // Every failure is ErrProviderUnavailable, including a 401. A 401 here means the
-// token the token endpoint just issued is not honoured by the identity endpoint,
+// token the token endpoint just issued is not honored by the identity endpoint,
 // which is a provider inconsistency and not anything the person at the browser did
 // — so it is an outage, not a refusal.
 func (c *Client) getJSON(ctx context.Context, endpoint, accessToken string, dst any) error {

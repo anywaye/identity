@@ -664,7 +664,7 @@ func TestMalformedAccountIDIsNotFound(t *testing.T) {
 // Note what is NOT in this table: `{"role": 7}`. A JSON value of the wrong type
 // is a 400 in this service, grouped with a syntax error by decodeBody, and that
 // grouping was decided and reviewed in identity-02 — see its comment. A tenancy
-// endpoint does not get a third opinion, so the behaviour is asserted here
+// endpoint does not get a third opinion, so the behavior is asserted here
 // rather than left to be rediscovered.
 func TestRoleBodyErrorsAreFieldErrors(t *testing.T) {
 	accountID := id.MustNew()

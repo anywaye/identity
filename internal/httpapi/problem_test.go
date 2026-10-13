@@ -96,7 +96,7 @@ func TestProblemCarriesFieldErrorsForValidation(t *testing.T) {
 	for _, fe := range got.Errors {
 		encoded, err := json.Marshal(fe)
 		if err != nil {
-			t.Fatalf("marshalling a field error: %v", err)
+			t.Fatalf("marshaling a field error: %v", err)
 		}
 		if strings.Contains(string(encoded), "message") {
 			t.Errorf("a field error carries a message: %s; core's example has only field and code", encoded)

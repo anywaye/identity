@@ -533,7 +533,7 @@ func TestResolveExpiry(t *testing.T) {
 			want: created.Add(DefaultTTL),
 		},
 		{
-			name: "a requested lifetime is honoured",
+			name: "a requested lifetime is honored",
 			give: durationPtr(24 * time.Hour),
 			want: created.Add(24 * time.Hour),
 		},

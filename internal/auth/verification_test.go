@@ -15,7 +15,7 @@ package auth
 // The five tests below are the contract:
 //
 //  1. OFF (the default): an unverified account signs in. This is the parity
-//     behaviour, PINNED — a successor must not be able to flip the default by
+//     behavior, PINNED — a successor must not be able to flip the default by
 //     accident.
 //  2. ON: an unverified account is refused with its own error, and mints
 //     nothing.

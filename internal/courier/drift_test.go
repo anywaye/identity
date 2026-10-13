@@ -13,7 +13,7 @@ import (
 )
 
 // These are the test-only helpers the leak sweep and the drift checks need, kept
-// in one file so `mailer_test.go` is about behaviour rather than about plumbing.
+// in one file so `mailer_test.go` is about behavior rather than about plumbing.
 
 // sprint formats a value under one verb.
 //

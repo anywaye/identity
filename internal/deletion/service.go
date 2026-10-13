@@ -336,7 +336,7 @@ func (s *Service) Delete(ctx context.Context, in DeleteInput) error {
 // soleOwnedError builds the refusal, naming every account.
 //
 // The account NAME and its SLUG are both in the message because they are the two
-// things a person can act on: the name is what they will recognise from the
+// things a person can act on: the name is what they will recognize from the
 // product's UI, and the slug is what they will find in an API response. An id is
 // in neither category for a human, and this refusal is read by one.
 func soleOwnedError(sole []accounts.Account) error {

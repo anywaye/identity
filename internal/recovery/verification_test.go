@@ -119,7 +119,7 @@ func TestAnExpiredVerificationTokenIsRefused(t *testing.T) {
 // branch named that exact threat and then took it.
 //
 // THE ASSERTION IS NOT ONLY "no error". A `if user.IsVerified() { return nil }`
-// would satisfy an error-only check while leaving the route's behaviour a function
+// would satisfy an error-only check while leaving the route's behavior a function
 // of the row, which is the shape the 409 came from. So this also asserts the
 // message was SENT: a proved address is treated exactly as an unproved one, all the
 // way through the mint and the delivery.

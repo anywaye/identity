@@ -132,7 +132,7 @@ func (o options) registerRecoveryRoutes(r chiRouter) {
 // acceptedResponse is the body of every "we have been asked to send a message"
 // route, and it is a CONSTANT.
 //
-// That is the whole of the account-enumeration defence on those routes, and it is
+// That is the whole of the account-enumeration defense on those routes, and it is
 // a constant rather than a template with a field that happens to render the same
 // either way: a field is a field, and the next person to add one — a `expires_at`,
 // an `email`, a `sent` boolean — reintroduces the oracle in a single line without

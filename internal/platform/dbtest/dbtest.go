@@ -418,7 +418,7 @@ func SchemaWithOwner(t *testing.T) (app, owner *pgxpool.Pool) {
 		// deployment performs.
 		//
 		// ON DELETE SET NULL, exactly as the migration has it: a matching action
-		// is what keeps the two schemas' behaviour identical rather than merely
+		// is what keeps the two schemas' behavior identical rather than merely
 		// similar, and "similar" is the word for a harness that agrees with a
 		// deferred failure.
 		`CREATE TABLE ` + schema + `.oidc_refresh_tokens (LIKE public.oidc_refresh_tokens INCLUDING ALL)`,

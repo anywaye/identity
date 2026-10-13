@@ -347,7 +347,7 @@ func TestTheOIDCLoginInteractionChallengesAnMFAUser(t *testing.T) {
 }
 
 // TestTheOIDCLoginInteractionSignsInAnAccountWithNoSecondFactor is the
-// compatibility half: a user with no MFA gets exactly the behaviour the page had
+// compatibility half: a user with no MFA gets exactly the behavior the page had
 // before this packet, and the redirect goes to the PRODUCT rather than to the
 // login UI.
 func TestTheOIDCLoginInteractionSignsInAnAccountWithNoSecondFactor(t *testing.T) {

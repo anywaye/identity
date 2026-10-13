@@ -45,7 +45,7 @@ package httpapi
 // Lax still permits, and because a Lax cookie is a cookie the attacker's origin
 // cannot WRITE. The two interaction cookies did have to become `SameSite=None` to
 // survive the cross-site POST (see oidcInteractionSameSite), and they are not the
-// ones this defence rests on.
+// ones this defense rests on.
 
 import (
 	"net/http"

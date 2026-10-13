@@ -272,7 +272,7 @@ func TestAVerificationLinkIsNotThePasswordResetLinkAndEachRedeemsAtItsOwnEndpoin
 //
 // It drives today's configuration — one `RECOVERY_LINK_TEMPLATE`, no per-purpose
 // variables — and asserts that both messages come out with the SAME link. That is
-// the backwards-compatible behaviour, pinned rather than merely permitted: it is
+// the backwards-compatible behavior, pinned rather than merely permitted: it is
 // what every deployment configured before this packet has, and it is the state
 // identity-24 found.
 //
@@ -414,7 +414,7 @@ func TestEveryPurposeThisAdapterCanDeliverHasAVariableToConfigureItsLink(t *test
 	})
 	if err == nil {
 		t.Fatal("a link template for the session link was accepted, and no message this " +
-			"adapter can deliver carries it; the setting would be honoured nowhere")
+			"adapter can deliver carries it; the setting would be honored nowhere")
 	}
 	if !strings.Contains(err.Error(), string(recovery.PurposeSessionLink)) {
 		t.Errorf("the refusal does not name the purpose it is about: %v", err)

@@ -203,7 +203,7 @@ func TestStoreExpiredAuthCodeIsNotRedeemable(t *testing.T) {
 // The assertion is on the COUNT of successes, not on which goroutine won, so it
 // holds for every interleaving. There is no sleep and no retry: a barrier puts
 // both goroutines in front of the statement at the same time, and the database
-// serialises them.
+// serializes them.
 func TestStoreAuthCodeCannotBeRedeemedTwiceConcurrently(t *testing.T) {
 	t.Parallel()
 

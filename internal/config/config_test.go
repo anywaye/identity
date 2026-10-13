@@ -383,7 +383,7 @@ func TestConfigSlogLevel(t *testing.T) {
 //
 // The reference this fleet matches does not gate sign-in on a verified
 // address, so a deployment that sets nothing behaves exactly as it did before
-// the flag existed. The behaviour half — an unverified account actually
+// the flag existed. The behavior half — an unverified account actually
 // signing in — is pinned in internal/auth/verification_test.go; this test
 // pins the parsing, including the direction that matters most: a value that
 // is present but unreadable is a startup failure, because a deployment that

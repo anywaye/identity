@@ -800,7 +800,7 @@ func TestADatabaseDumpYieldsNoWorkingSecondFactor(t *testing.T) {
 	}
 }
 
-// TestTheDatabaseTierActuallyRan is the last line of defence against a green gate
+// TestTheDatabaseTierActuallyRan is the last line of defense against a green gate
 // that verified nothing.
 //
 // It FAILS rather than skips when TEST_DATABASE_URL is unset, because in this

@@ -17,7 +17,7 @@ import (
 // called without a database. The end-to-end suite drives the real service over
 // real SQL.
 //
-// Every use case has an error field, because the interesting handler behaviour
+// Every use case has an error field, because the interesting handler behavior
 // is the mapping from a domain error to a status code and that cannot be produced
 // by a real database on demand.
 type fakeTenancy struct {

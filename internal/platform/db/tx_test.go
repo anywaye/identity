@@ -132,7 +132,7 @@ func TestTxRunnerReportsACommitFailure(t *testing.T) {
 	}
 }
 
-// An already-cancelled context is refused before a transaction is opened, so the
+// An already-canceled context is refused before a transaction is opened, so the
 // caller does not hold a connection for a request that is not going to happen.
 func TestTxRunnerRefusesADeadContext(t *testing.T) {
 	t.Parallel()
@@ -143,10 +143,10 @@ func TestTxRunnerRefusesADeadContext(t *testing.T) {
 	cancel()
 
 	if err := runner.Do(ctx, func(context.Context, Querier) error { return nil }); !errors.Is(err, context.Canceled) {
-		t.Errorf("Do on a cancelled context = %v, want context.Canceled", err)
+		t.Errorf("Do on a canceled context = %v, want context.Canceled", err)
 	}
 	if runner.pool.pool.began {
-		t.Error("a transaction was begun for an already-cancelled context")
+		t.Error("a transaction was begun for an already-canceled context")
 	}
 }
 

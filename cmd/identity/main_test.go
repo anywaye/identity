@@ -27,7 +27,7 @@ const testTimeout = 5 * time.Second
 // carries: 32 bytes, the shape the environment takes.
 //
 // It is a constant rather than a generated value because these tests assert on
-// behaviour and logs, not on the key — but a missing key would change the
+// behavior and logs, not on the key — but a missing key would change the
 // outcome from a running process to a startup failure, which is not what any
 // test here is about. The same value, base64url, is what the child process in
 // TestMainHandlesSIGTERM is given.
@@ -142,7 +142,7 @@ func TestRunServesRequestsAndStopsWhenTheContextIsCancelled(t *testing.T) {
 			t.Errorf("Run() after cancel = %v, want nil", err)
 		}
 	case <-time.After(testTimeout):
-		t.Fatal("Run() did not return after the context was cancelled")
+		t.Fatal("Run() did not return after the context was canceled")
 	}
 
 	// The socket must be released so the orchestrator can rebind immediately.

@@ -220,7 +220,7 @@ func (k *SigningKey) JWKS() ([]byte, error) {
 
 	document, err := json.Marshal(set)
 	if err != nil {
-		return nil, fmt.Errorf("oidc: marshalling the key set: %w", err)
+		return nil, fmt.Errorf("oidc: marshaling the key set: %w", err)
 	}
 	return document, nil
 }

@@ -50,7 +50,7 @@ import (
 // session minted through the real use case.
 //
 // The login goes through the service rather than the store so that the session row
-// is one this service would recognise: a test that inserted a session by hand
+// is one this service would recognize: a test that inserted a session by hand
 // would be asserting about a row it built itself.
 type integrationFixture struct {
 	svc   *Service
@@ -176,7 +176,7 @@ func TestDisablingEndsTheLiveSessionInTheSameTransaction(t *testing.T) {
 //
 // This asserts against the sessions TABLE rather than through Authenticate,
 // because Authenticate's refusal could equally be produced by a check that reads
-// disabled_at — a defence-in-depth branch that works and leaves every session row
+// disabled_at — a defense-in-depth branch that works and leaves every session row
 // in the database. That is a different property and a worse one: the rows would
 // still be there for anything else reading that table.
 func TestDisablingDeletesEverySessionRowRatherThanFlaggingThem(t *testing.T) {

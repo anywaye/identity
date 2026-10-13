@@ -138,7 +138,7 @@ func (w *claimWorld) claim(t *testing.T, h human, accountID, link string) *httpt
 
 	payload, err := json.Marshal(claimAgentRequest{Token: link})
 	if err != nil {
-		t.Fatalf("marshalling the claim body: %v", err)
+		t.Fatalf("marshaling the claim body: %v", err)
 	}
 	return requestAs(t, w.handler, h.session, http.MethodPost,
 		"/v1/accounts/"+accountID+"/agents/claim", string(payload))

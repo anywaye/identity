@@ -254,7 +254,7 @@ func (c protocolClient) RestrictAdditionalAccessTokenScopes() func([]string) []s
 
 // IsScopeAllowed is the client's own scope list, which is what lets a custom
 // scope — `accounts` — survive the library's ValidateAuthReqScopes, which drops
-// anything it does not recognise.
+// anything it does not recognize.
 func (c protocolClient) IsScopeAllowed(scope string) bool { return c.client.AllowsScope(scope) }
 
 // IDTokenUserinfoClaimsAssertion is true, so the id_token carries the email and

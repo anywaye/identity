@@ -292,7 +292,7 @@ func TestRetryabilityIsAPropertyOfTheRefusal(t *testing.T) {
 // from inventing a field.
 //
 // courier's document declares `additionalProperties: false` over a closed list, so
-// one extra key is a 422 and the send does not happen. The marshalled body is
+// one extra key is a 422 and the send does not happen. The marshaled body is
 // therefore compared against the document's list, and `url` is required for
 // `password_reset` — which means an empty `URL` is refused HERE rather than
 // discovered as a 422 from a network round trip.
@@ -338,7 +338,7 @@ func TestTheRequestIsExactlyCouriersVocabulary(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			raw, err := json.Marshal(tc.request)
 			if err != nil {
-				t.Fatalf("marshalling the request: %v", err)
+				t.Fatalf("marshaling the request: %v", err)
 			}
 			var got map[string]any
 			if err := json.Unmarshal(raw, &got); err != nil {
@@ -557,10 +557,10 @@ func TestTheRequestIsBoundedAndTheWaitIsTheUsers(t *testing.T) {
 	if !Retryable(err) {
 		t.Error("a timeout was reported as not retryable; courier releases a failed key, so it is")
 	}
-	// A cancelled caller must still be recognisable, because the difference between
+	// A canceled caller must still be recognisable, because the difference between
 	// "the user gave up" and "courier is slow" is what an operator reads.
 	if !isError(err, context.DeadlineExceeded) {
-		t.Error("the error does not match context.DeadlineExceeded, so a cancelled caller is indistinguishable")
+		t.Error("the error does not match context.DeadlineExceeded, so a canceled caller is indistinguishable")
 	}
 }
 

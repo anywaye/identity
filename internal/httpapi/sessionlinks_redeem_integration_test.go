@@ -326,7 +326,7 @@ func TestTheRedeemedSessionLastsExactlyAsLongAsAPasswordLoginMints(t *testing.T)
 //
 // THE COOKIE LINE IS TAKEN FROM THE RAW HEADER rather than from a parsed
 // `http.Cookie`, and that is the load-bearing choice in this helper: a parsed cookie
-// normalises attribute order, drops what it does not recognise and re-renders
+// normalises attribute order, drops what it does not recognize and re-renders
 // `Expires` in its own format, so a difference in any of those would have been erased
 // before the comparison ran. What the browser is asked to store is the bytes.
 //

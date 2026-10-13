@@ -367,7 +367,7 @@ func throwawaySigningKey(t *testing.T) *oidc.SigningKey {
 	}
 	der, err := x509.MarshalPKCS8PrivateKey(priv)
 	if err != nil {
-		t.Fatalf("marshalling the signing key: %v", err)
+		t.Fatalf("marshaling the signing key: %v", err)
 	}
 	encoded := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})
 	key, err := oidc.LoadSigningKey(string(encoded), "cafaye-no-html-test")

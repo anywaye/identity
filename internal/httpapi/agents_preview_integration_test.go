@@ -19,7 +19,7 @@ import (
 // — the drift walk and the census already hold that — but that they answer the
 // SHAPE their callers read and nothing beyond it.
 //
-// THREE PROPERTIES ARE BEHAVIOURAL RATHER THAN STRUCTURAL, and each of them is
+// THREE PROPERTIES ARE BEHAVIORAL RATHER THAN STRUCTURAL, and each of them is
 // the reason the route is safe to mount at all:
 //
 //	the preview's 404 is the claim route's own collapse, over real SQL, so a
@@ -256,7 +256,7 @@ func TestThePreviewCannotTellTheFourWaysALinkIsDeadApart(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // TestThePreviewClaimsNothingAndMintsNothing is the property that makes an
-// anonymous read safe, and it is behavioural on both halves.
+// anonymous read safe, and it is behavioral on both halves.
 //
 // THE MINT HALF: the agent's `agent_tokens` and `agent_events` rows are counted
 // before and after. A preview that minted would be a preview that manufactured

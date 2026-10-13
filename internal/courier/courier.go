@@ -130,7 +130,7 @@ const (
 // The two bounds, and they are different numbers for a reason.
 //
 // `DefaultTimeout` bounds a SEND. A send is courier opening a database
-// transaction, reading a preference, consulting a suppression list, dialling an
+// transaction, reading a preference, consulting a suppression list, dialing an
 // SMTP relay and writing an outbox row, all inside one request, so this is
 // genuinely the user's wait and not an internal hop. Five seconds is long enough
 // for a TLS handshake and a relay queue and short enough that a browser is not
@@ -503,7 +503,7 @@ var (
 	// not read as an accepted send.
 	//
 	// IT IS ITS OWN SENTINEL AND NOT `ErrUnavailable` because the two demand
-	// OPPOSITE behaviour. A 503 is a courier that told us it could not do the work,
+	// OPPOSITE behavior. A 503 is a courier that told us it could not do the work,
 	// and a retry is the answer. A malformed 200 is courier, or something in front
 	// of it, answering 200 without having identified a send — and retrying it would
 	// mail a second copy of a message the first attempt may already have sent.
@@ -546,7 +546,7 @@ func New(cfg Config) (*Client, error) {
 	}
 
 	// The credential, twice, in closures: `authorize` puts it on the wire and
-	// `scrub` recognises it in anything coming back. There is no third place it
+	// `scrub` recognizes it in anything coming back. There is no third place it
 	// exists in this package.
 	token := cfg.Token
 	credential := "Bearer " + token
@@ -746,7 +746,7 @@ func (c *Client) do(
 // transportError normalises the failures that happen before a status exists.
 //
 // The three are kept apart because each says something different to an operator: a
-// deadline that elapsed is courier being slow, a cancelled context is the caller
+// deadline that elapsed is courier being slow, a canceled context is the caller
 // giving up, and anything else is a connection that did not happen at all.
 func (c *Client) transportError(ctx context.Context, err error) error {
 	switch {

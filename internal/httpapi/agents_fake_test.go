@@ -17,9 +17,9 @@ import (
 // double is what makes the claim route visible to all four; the route it stands in
 // for is served by `agents.Service` in a real process.
 //
-// The assertions are deliberately few. A double that asserted real behaviour would
+// The assertions are deliberately few. A double that asserted real behavior would
 // be a second implementation of the use case, and the use case's own tests in
-// internal/agents are where the behaviour is proved. What this one owes the suite
+// internal/agents are where the behavior is proved. What this one owes the suite
 // is that calling it is visible: it records what it was asked to do and hands back
 // a claim that looks like the one production produces.
 type fakeAgents struct {
@@ -122,7 +122,7 @@ func (f *fakeAgents) failPreview(err error) { f.previewErr = err }
 // These make the fake satisfy the whole Agents interface, which is what lets the
 // router walks (servedRoutes, mountedFamilyRoutes, walkOptions) MOUNT the
 // registration and token routes and therefore require their document entries and
-// enumeration-audit rows. Their behaviour is deliberately thin: the use cases have
+// enumeration-audit rows. Their behavior is deliberately thin: the use cases have
 // their own tables in internal/agents, and this double's only obligation here is
 // that the surface is WIRED, not that it is correct.
 //

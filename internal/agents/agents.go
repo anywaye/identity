@@ -138,7 +138,7 @@ func MayTransition(from, to string) bool {
 //
 // The SAME prefix apikeys uses and the reason is the same one: it is recognition.
 // A secret that leaks into a transcript, a CI log or a support ticket is
-// recognised as a cafaye credential by its first seven characters, which turns
+// recognized as a cafaye credential by its first seven characters, which turns
 // "somebody has to guess which of these strings is a working key" into a grep.
 //
 // IT IS DELIBERATELY NOT A DISTINCT PREFIX. A second prefix — `cafaye_agent_` —

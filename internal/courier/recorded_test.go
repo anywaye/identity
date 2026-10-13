@@ -62,12 +62,12 @@ import (
 // courier will be in once its JWT-verifier packet lands, and which is the state
 // courier's own test suite runs in.
 //
-// So this file proves the client's wire behaviour against a real courier. Whether a
+// So this file proves the client's wire behavior against a real courier. Whether a
 // DEPLOYMENT can send mail is courier's verifier packet, and `RecoveryMailer`
 // refuses to start quietly without a credential regardless.
 
 // The fixtures, one per recorded interaction. The bodies are verbatim, including
-// courier's key order, because a re-serialised problem document would be a fixture
+// courier's key order, because a re-serialized problem document would be a fixture
 // of this file's own JSON encoder rather than of courier's response.
 type recordedCase struct {
 	name    string

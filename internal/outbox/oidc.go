@@ -27,7 +27,7 @@ const (
 	// OpenID Connect relying party.
 	EventOIDCClientCreated = "identity.oidc_client.created"
 
-	// EventOIDCClientRevoked is emitted when a registration stops being honoured.
+	// EventOIDCClientRevoked is emitted when a registration stops being honored.
 	// The row is kept rather than deleted: an audit of which credentials existed
 	// is worth more than a tidier table, and `revoked_at` is what makes the
 	// difference readable afterwards.

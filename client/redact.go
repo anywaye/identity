@@ -2,7 +2,7 @@ package client
 
 // THE SECURITY INVARIANT: NO CREDENTIAL EVER REACHES A STRING A HUMAN READS.
 //
-// # WHY THIS FILE IS THE CENTRE OF THE PACKET
+// # WHY THIS FILE IS THE CENTER OF THE PACKET
 //
 // This package is the one place in a consumer's application that touches every
 // credential it has. It holds a token, and a Go `error`'s `Error()` string is the
@@ -13,7 +13,7 @@ package client
 //
 // The rule is therefore not "be careful when building messages". It is that **no
 // string this package constructs out of anything a caller or a service supplied
-// passes through the redactor first**, and that the redactor's behaviour is a test
+// passes through the redactor first**, and that the redactor's behavior is a test
 // rather than a review comment.
 //
 // # THE CREDENTIAL IS HELD IN A CLOSURE, AND THAT IS NOT A STYLE CHOICE
@@ -44,7 +44,7 @@ package client
 // A string comes back whole, or comes back as one marker. There is no partial
 // redaction, and that is the load-bearing decision.
 //
-// The obvious implementation — replace the substrings you recognise, return the
+// The obvious implementation — replace the substrings you recognize, return the
 // rest — is wrong in a way that gets worse the more carefully it is written,
 // because it invites a reader to add one more pattern, and the day that pattern has
 // a gap in it is the day a credential ships. A scrubber that returns "the rest" is a
@@ -56,7 +56,7 @@ package client
 // # WHAT MATCHES
 //
 //  1. Exact values this package was given. The client knows the one or two
-//     credentials it holds and can recognise them character for character. This
+//     credentials it holds and can recognize them character for character. This
 //     catches a service echoing a caller's own token back inside a problem
 //     `detail`.
 //
@@ -84,7 +84,7 @@ import (
 )
 
 // Redacted is the replacement for any string that matched. It is exported because
-// a consumer has to be able to recognise it — a log line containing this marker is
+// a consumer has to be able to recognize it — a log line containing this marker is
 // a log line about redaction, and a caller who wants to assert on it needs the exact
 // string.
 //

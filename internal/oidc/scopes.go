@@ -103,7 +103,7 @@ func FirstUnsupported(scopes []string) string {
 // must be one this service implements, and `openid` must be among them.
 //
 // Two rules, both refusals rather than corrections. The library's own
-// ValidateAuthReqScopes silently DELETES a scope it does not recognise and
+// ValidateAuthReqScopes silently DELETES a scope it does not recognize and
 // carries on, which is the wrong answer for a provider whose whole job is to be
 // legible to another program: a client that asked for `phone` would get a token
 // with no phone claim and no indication that anything was dropped. The check

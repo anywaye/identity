@@ -41,7 +41,7 @@ type fakeVerifyCall struct {
 
 // newFakeSignup returns a fakeSignup under a fixed test key. The key is a
 // constant rather than a generated value because these tests assert on the
-// handler's behaviour, not on the key — and a key that changed per run would
+// handler's behavior, not on the key — and a key that changed per run would
 // change nothing about what the handler does with the pair.
 func newFakeSignup() *fakeSignup {
 	return &fakeSignup{

@@ -593,7 +593,7 @@ func renderTestLink(t *testing.T, purpose recovery.Purpose, token string) string
 //     Before you start, check the port is free (`lsof -nP -iTCP:4014 -sTCP:LISTEN`)
 //     and pick one nothing is on. The one hardcoded in this recipe and in
 //     `skipWithoutCourier` is a default to edit, not a default to trust.
-//   - The defence that does not depend on the port: after the run, confirm the
+//   - The defense that does not depend on the port: after the run, confirm the
 //     rows are in the database you started. `select subject, data->>'email' from
 //     outbox_events` is the whole check, and it is the only one that distinguishes
 //     "a real courier accepted these bytes" from "a real courier accepted these
@@ -631,7 +631,7 @@ func renderTestLink(t *testing.T, purpose recovery.Purpose, token string) string
 //	# do.
 //	cat > /tmp/courier-e2e.exs <<'ELIXIR'
 //	defmodule E2EPrincipal do
-//	  @behaviour Courier.Principal.Resolver
+//	  @behavior Courier.Principal.Resolver
 //
 //	  def resolve(conn) do
 //	    case Plug.Conn.get_req_header(conn, "authorization") do
@@ -689,7 +689,7 @@ func renderTestLink(t *testing.T, purpose recovery.Purpose, token string) string
 //
 // # WHAT THIS FILE MUST NOT BECOME
 //
-// A place that asserts identity's own behaviour. Everything here is about the wire
+// A place that asserts identity's own behavior. Everything here is about the wire
 // and about courier's answers. A test that could pass with courier replaced by a
 // fixture belongs in `client_test.go` or `fakecourier_test.go`, where a failure is
 // fast and hermetic, and this file is for the one claim a fixture cannot make about

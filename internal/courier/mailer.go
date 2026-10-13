@@ -479,7 +479,7 @@ func resolveLinkTemplates(raw map[recovery.Purpose]string) (LinkTemplates, error
 		}
 		return nil, fmt.Errorf("courier: a link template was configured for the %q purpose, "+
 			"which no message this adapter can deliver carries: courier has no template "+
-			"for it, so the setting would be honoured nowhere", purpose)
+			"for it, so the setting would be honored nowhere", purpose)
 	}
 	return out, nil
 }

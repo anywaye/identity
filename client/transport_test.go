@@ -3,7 +3,7 @@ package client
 // THE TRANSPORT IS THE GENERATED ONE, AND THE BINARY IS NOT.
 //
 // Two claims this file makes executable, both of which are claims about supply chain
-// rather than about behaviour — which is exactly why they are claims rather than
+// rather than about behavior — which is exactly why they are claims rather than
 // comments. `TestTheServiceBinaryDoesNotReachTheGeneratedClient` is the load-bearing
 // one: DECISIONS.md D6 records that oapi-codegen's generated code imports
 // `github.com/oapi-codegen/runtime`, and that MD6's claim of "no new dependency at
@@ -35,7 +35,7 @@ const generatedModule = "github.com/oapi-codegen/runtime"
 //
 // The service builds one static binary from `./cmd/identity`, and this is the service
 // that issues every credential in the platform. Whether the oapi-codegen runtime
-// reaches that artefact is the difference between "three modules in `go.mod`" — which
+// reaches that artifact is the difference between "three modules in `go.mod`" — which
 // is a fact about the module graph, and which D2 records honestly — and "three
 // modules in the thing every cafaye service ships", which would be a supply-chain
 // change to the whole platform.
@@ -80,7 +80,7 @@ func TestTheServiceBinaryDoesNotReachTheGeneratedClient(t *testing.T) {
 		if strings.TrimSpace(dependency) == generatedModule {
 			t.Errorf("%s reaches ./cmd/identity, so the service's binary now carries "+
 				"oapi-codegen's runtime.\n\n"+
-				"That is a supply-chain change to the artefact every cafaye service ships, "+
+				"That is a supply-chain change to the artifact every cafaye service ships, "+
 				"made by a client nobody asked for. DECISIONS.md D6 records that this "+
 				"package does not reach the binary; if that has stopped being true, D2 is "+
 				"wrong and the fix is to find the import that reached for it, not to edit "+

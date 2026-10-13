@@ -383,7 +383,7 @@ func (f *fakeEvents) Append(_ context.Context, q db.Querier, e outbox.Envelope) 
 }
 
 // fakeUnitOfWork runs fn against a marker querier and records whether it would
-// commit. It cannot really roll back, so tests that need the rollback behaviour
+// commit. It cannot really roll back, so tests that need the rollback behavior
 // use the integration suite; this double exists to prove the two writes share one
 // transaction and one context.
 type fakeUnitOfWork struct {
@@ -1624,7 +1624,7 @@ func TestRevokeSessionCarriesTheCallersUserId(t *testing.T) {
 // Revoking the session the request itself arrived on is ALLOWED, and the
 // consequence is that the caller is signed out. The alternative the packet offered
 // — a 409 — is rejected in `Service.RevokeSession`'s own comment; this test is the
-// behaviour half of that decision, and the reason it is here rather than in the
+// behavior half of that decision, and the reason it is here rather than in the
 // handler tests is that the decision belongs to the use case.
 func TestRevokingTheCurrentSessionIsAllowedAndSignsYouOut(t *testing.T) {
 	t.Parallel()

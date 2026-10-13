@@ -123,7 +123,7 @@ func (o options) registerMFARoutes(r chiRouter) {
 	}
 	// EVERY ONE OF THESE IS SESSION-ONLY, and there is no scope for the second
 	// factor in the machine vocabulary. A token that could read whether an account
-	// has a second factor, enrol one, rotate one or turn one off is a credential
+	// has a second factor, enroll one, rotate one or turn one off is a credential
 	// whose theft is a DOWNGRADE rather than a break-in: the attacker does not have
 	// to get in, they turn the lock off. The refusal is one middleware rather than
 	// five checks — see sessionCredentialOnly.
@@ -161,7 +161,7 @@ type mfaStatusResponse struct {
 
 // startEnrollmentRequest is the body of POST /v1/mfa/enrollments.
 //
-// Code authorises a ROTATION and is not needed for a first enrollment. It is not
+// Code authorizes a ROTATION and is not needed for a first enrollment. It is not
 // nullable-with-a-meaning: the use case decides which case it is from the rows, so
 // a client that sends one for a first enrollment is not wrong, only redundant.
 type startEnrollmentRequest struct {

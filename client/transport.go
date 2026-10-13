@@ -119,7 +119,7 @@ type Transport interface {
 	Liveness(ctx context.Context, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	Readiness(ctx context.Context, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	// MintSignupTimestamp is the signup form's mint: a fresh `timestamp` +
-	// `signature` pair, the second half of signup bot defence. It is public and
+	// `signature` pair, the second half of signup bot defense. It is public and
 	// unauthenticated like the probes — a browser arriving at the form holds
 	// nothing but the address it was sent to — and it takes no body.
 	MintSignupTimestamp(ctx context.Context, reqEditors ...generated.RequestEditorFn) (*http.Response, error)

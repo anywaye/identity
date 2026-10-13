@@ -411,7 +411,7 @@ func TestTheFourRefusalsAreOneDocument(t *testing.T) {
 		p.Instance = ""
 		out, err := json.Marshal(p)
 		if err != nil {
-			t.Fatalf("re-marshalling: %v", err)
+			t.Fatalf("re-marshaling: %v", err)
 		}
 		return string(out)
 	}

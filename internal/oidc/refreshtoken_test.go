@@ -123,7 +123,7 @@ func TestARefreshTokenRotates(t *testing.T) {
 	// took the thief's token and left the legitimate client's working. The two
 	// statements are now written in the order that keeps each one about its own
 	// fact — the replacement rotates while nothing has been revoked, and the
-	// spent root is recognised as a reuse — rather than the order in which the
+	// spent root is recognized as a reuse — rather than the order in which the
 	// namespace happened to be filled in.
 	if _, err := f.store.RotateRefreshToken(f.ctx, f.q(), replacementDigest, storeTestNow.Add(2*time.Minute)); err != nil {
 		t.Errorf("rotating the replacement = %v, want it accepted", err)
@@ -172,7 +172,7 @@ func TestAReusedRefreshTokenRevokesItsFamily(t *testing.T) {
 	// The replacement is a token nobody ever presented to anybody, and it is
 	// dead too. Without this, detecting theft takes the token away from the
 	// thief and leaves the legitimate client's next refresh working, which is a
-	// defence measured in milliseconds.
+	// defense measured in milliseconds.
 	if _, err := f.store.RotateRefreshToken(f.ctx, f.q(), replacementDigest, storeTestNow.Add(3*time.Minute)); !errors.Is(err, ErrRefreshTokenRevoked) {
 		t.Errorf("the replacement after a reuse = %v, want ErrRefreshTokenRevoked", err)
 	}

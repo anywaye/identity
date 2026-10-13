@@ -32,7 +32,7 @@ import (
 //     is the one thing that cannot happen by accident — a client that rotates
 //     correctly never does it — so it is treated as theft rather than as a
 //     retry, and every token descended from the same login is revoked. Rotation
-//     without reuse detection is a delay, not a defence: it makes the thief work
+//     without reuse detection is a delay, not a defense: it makes the thief work
 //     twice and then lets them keep the fruit.
 
 // RefreshToken is one issued refresh token.

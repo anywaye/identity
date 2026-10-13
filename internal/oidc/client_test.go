@@ -125,7 +125,7 @@ func TestValidateRedirectURIs(t *testing.T) {
 		},
 		{
 			// A wildcard would make the exact-match check in ValidateAuthReqRedirectURI
-			// meaningless, which is the whole of the open-redirect defence.
+			// meaningless, which is the whole of the open-redirect defense.
 			name: "a wildcard is not", give: []string{"https://*.example.com/cb"}, wantCode: CodeInvalidFormat,
 		},
 		{name: "empty", give: []string{""}, wantCode: CodeInvalidFormat},
@@ -159,7 +159,7 @@ func TestValidateRedirectURIs(t *testing.T) {
 // refused `refresh_token`, and the reason was `internal/oidc/client.go`'s "no
 // refresh token store exists". Packet TG-C2 built the store, so the constraint
 // the test named stopped being true. What the row was NOT guarding was the
-// behaviour — there was no grant to exercise, so nothing downstream was pinned
+// behavior — there was no grant to exercise, so nothing downstream was pinned
 // by it. The refusal that still holds for the right reasons is the two rows
 // below it, and they are unchanged: `client_credentials` has no service
 // identity, and the JWT profile has no client private key.

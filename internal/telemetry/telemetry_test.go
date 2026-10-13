@@ -36,7 +36,7 @@ func recording(t *testing.T) (*tracetest.SpanRecorder, func()) {
 // day somebody adds `identity.email` to a span.
 //
 // This list IS the security control, so it is asserted on directly rather than
-// inferred from the behaviour of the code that reads it. A name that merely
+// inferred from the behavior of the code that reads it. A name that merely
 // SOUNDS safe is the risk: `identity.email` or `identity.subject` are exactly
 // the attributes a future debugging change adds, and they must not be addable by
 // accident.
@@ -183,7 +183,7 @@ func TestTheAllowlistIsTheTransitiveIntersection(t *testing.T) {
 }
 
 // TestAnAttributeOutsideTheAllowlistIsDropped is the choke point refusing what it
-// does not recognise.
+// does not recognize.
 //
 // This is the test that fails the day someone adds `span.SetAttributes` on
 // identity.email: telemetry.Record is the only path to a span, so an unlisted
@@ -251,7 +251,7 @@ func TestAnAllowedNameWithAnImpossibleValueIsDropped(t *testing.T) {
 		// class stops the rest.
 		"db.system": "postgresql?account_id=acc_01J9",
 		// A route carrying an email. There is no `@` in the character class,
-		// which is the one piece of content-smuggling defence that is lexical.
+		// which is the one piece of content-smuggling defense that is lexical.
 		"http.route": "/v1/accounts/someone@example.com",
 		// A float reaching a trace attribute is nearly always a value that was
 		// meant for a metric, and it carries unbounded precision into a label.
@@ -340,7 +340,7 @@ func TestTheErrorVocabularyIsCoreExactly(t *testing.T) {
 // escape hatch.
 //
 // `_OTHER` exists so instrumentation is never FORCED to invent a class. This
-// proves the forcing does not happen by accident either: an unrecognised class
+// proves the forcing does not happen by accident either: an unrecognized class
 // collapses to `_OTHER` AND reports that it did, rather than being trusted into
 // the export. An alert on `_OTHER` is an alert that this service has not
 // classified its own errors, and a collapse that happened silently is how
@@ -532,7 +532,7 @@ func TestMustSpanNamePanicsOnAConstantThatCannotBeRight(t *testing.T) {
 //
 // `<SERVICE>_OTEL_ENDPOINT` is the only contract between a service and an
 // observability backend. Bring-your-own is a SUPPORTED deployment, not a
-// degraded mode, so the variable is honoured over the default and the standard
+// degraded mode, so the variable is honored over the default and the standard
 // OTel variable is a fallback with a DOCUMENTED precedence — a contract with an
 // undocumented precedence order is a bug report.
 func TestTheEndpointContractIsOneVariable(t *testing.T) {

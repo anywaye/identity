@@ -498,7 +498,7 @@ func TestOIDCRevocationStopsIssuedTokens(t *testing.T) {
 	}
 }
 
-// The login form's state is the CSRF defence on the one interaction where a user
+// The login form's state is the CSRF defense on the one interaction where a user
 // types a password for a third party. A cross-site POST would complete an
 // authorization request the user never chose.
 //
@@ -864,7 +864,7 @@ func octxTime() time.Time { return time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
 //
 // FOUR COOKIES, AND THE POINT IS THE TWO THAT DID NOT MOVE. Widening the flow
 // cookie would let it ride a cross-site POST for no reason, and would put the
-// cookie the login-CSRF defence rests on into a position the defence was not argued
+// cookie the login-CSRF defense rests on into a position the defense was not argued
 // for. Widening the session cookie would attach a credential to every cross-site
 // request to this origin. Both are the change somebody makes by "the interaction
 // cookies are None, let us be consistent", and consistency is the wrong word here.
@@ -909,7 +909,7 @@ func TestTheInteractionCookiesAreNoneAndTheFlowAndSessionCookiesAreNot(t *testin
 	if flow.SameSite != http.SameSiteLaxMode {
 		t.Errorf("the flow cookie is SameSite=%v, want Lax. It is only ever read on a "+
 			"TOP-LEVEL GET, which is the one case Lax still permits, and it is the "+
-			"cookie D5's login-CSRF defence rests on.", flow.SameSite)
+			"cookie D5's login-CSRF defense rests on.", flow.SameSite)
 	}
 	if !flow.Secure || !flow.HttpOnly {
 		t.Errorf("the flow cookie is Secure=%t HttpOnly=%t, want both true", flow.Secure, flow.HttpOnly)
@@ -964,7 +964,7 @@ func TestTheInteractionCookiesAreNoneAndTheFlowAndSessionCookiesAreNot(t *testin
 
 // The scope set is closed, and a product asking for something identity cannot
 // produce gets a 400 naming it rather than a token with the field quietly
-// missing. The library's own validator deletes an unrecognised scope and carries
+// missing. The library's own validator deletes an unrecognized scope and carries
 // on, which is the failure this pre-check exists to stop.
 func TestOIDCUnknownScope(t *testing.T) {
 	t.Parallel()
@@ -1295,7 +1295,7 @@ func TestOIDCLoginSkipsTheFormForASignedInUser(t *testing.T) {
 	}
 }
 
-// The nonce is the client's own replay defence and the provider's obligation to
+// The nonce is the client's own replay defense and the provider's obligation to
 // echo it. A token without it, or with somebody else's, is a token a client
 // cannot safely accept.
 func TestOIDCNonceIsEchoedUnchanged(t *testing.T) {
@@ -1304,7 +1304,7 @@ func TestOIDCNonceIsEchoedUnchanged(t *testing.T) {
 	f := newOIDCFixture(t)
 	client := f.registerClient(t)
 
-	const nonce = "a-nonce-a-client-generated-and-would-recognise"
+	const nonce = "a-nonce-a-client-generated-and-would-recognize"
 	verifier, challenge := codeVerifier(t)
 	loginURL := f.authorize(t, client, challenge, "state-nonce", nonce, nil)
 	rec := f.login(t, loginURL, client.Email, client.Password)

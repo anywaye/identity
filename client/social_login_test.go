@@ -321,7 +321,7 @@ func TestTheCallbackWrapperRefusesToGuessAtAShapeItDoesNotRecognise(t *testing.T
 }
 
 // TestAnEmailCollisionComesBackAsA409AndNotASession is the security property the
-// whole surface is built around, asserted on the client's own behaviour.
+// whole surface is built around, asserted on the client's own behavior.
 //
 // The service refuses the sign-in when a provider returns an address a local
 // account already holds, and says so with a 409. The wrapper's obligation is
