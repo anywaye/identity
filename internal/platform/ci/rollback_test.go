@@ -309,6 +309,17 @@ func TestTheRollbackScriptNamesTheRoleItProvisionsFromTheCaller(t *testing.T) {
 			"hardcoded first draft failed at 00016 on a bare cluster with \"postgres_app is not a LOGIN\n" +
 			"role\", and then failed to start at all on a cluster where `identity` already existed.")
 	}
+	// The caller is the URL's USER, not its `user:password` credentials. Without
+	// the strip a DSN like `postgres://postgres:postgres@…` names the caller
+	// `postgres:postgres` and provisions a quoted `"postgres:postgres_app"` role
+	// the migration never asks for — measured as a red at 00016 on a cluster
+	// where the needed `<user>_app` role did not already exist from elsewhere.
+	if !strings.Contains(body, "CALLER=\"${CALLER%%:*}\"") {
+		t.Errorf("bin/rollback does not strip the password off the caller it reads from the URL.\n" +
+			"The text before the first `@` in `user:password@host` is still `user:password`, so\n" +
+			"APP_ROLE derives a colon-named role no migration asks for and 00016 fails with\n" +
+			"\"<user>_app is not a LOGIN role on this cluster\".")
+	}
 	if !strings.Contains(body, "rolcanlogin") {
 		t.Errorf("bin/rollback creates its role without checking whether it can LOGIN.\n" +
 			"protect_table's own check is `rolname = ... and rolcanlogin`, and a role that exists but\n" +

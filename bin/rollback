@@ -84,8 +84,21 @@ DB="identity_rollback_check"
 # bookkeeping: 00016's Up calls `cafaye.protect_table('account_users')` with no
 # second argument, and `protect_table`'s default is `current_user || '_app'` —
 # so the role the migration needs is named after WHOEVER IS CONNECTED.
+#
+# THE USER, NOT THE CREDENTIALS. A DSN carries `user:password@host`, so the
+# text before the first `@` is still `user:password`. Without the third line
+# below the caller of `postgres://postgres:postgres@…` is the seven-letter
+# string `postgres:postgres` and the role provisioned is the quoted identifier
+# `"postgres:postgres_app"` — which 00016 never asks for, so the check dies at
+# 00016 with `postgres_app is not a LOGIN role`. Measured in CI's own shape:
+# the old rollback step connected as the password-carrying suite DSN and only
+# passed because the `_app` role it should have provisioned already existed
+# from the workflow's own provisioning step — the bogus colon-named role was
+# created and dropped on every run, silently. A user cannot contain `:` or `@`
+# unencoded in a URL, so stripping at the first `:` keeps exactly the user.
 CALLER="${URL#*://}"
 CALLER="${CALLER%%@*}"
+CALLER="${CALLER%%:*}"
 APP_ROLE="${CALLER}_app"
 
 SCRATCH="${URL%/*}/$DB"
