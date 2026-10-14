@@ -459,11 +459,23 @@ jobs:
         # Straight-line CREATEs, and that is sound because the container is
         # fresh on every run: there is no previous run's role to collide with,
         # and a collision would fail loudly rather than provision quietly.
+        #
+        # CREATEDB AND CREATEROLE ON THE OWNER, AND NOTHING ELSE. `internal/migrate`
+        # builds and drops a scratch database per test as the suite user, and
+        # bin/rollback's own error text records that a fleet cluster's service
+        # role holds CREATEROLE — the local role this job mirrors carries both.
+        # Neither attribute bypasses row-level security (only SUPERUSER and
+        # BYPASSRLS do, and bin/provision-testdb still refuses those), so this
+        # is the fleet topology, not a privilege the suite was given to make a
+        # test pass. The `_app` role stays minimal: nothing connects as it that
+        # needs either.
         run: |
           set -euo pipefail
           psql "$TEST_DATABASE_ADMIN_URL" -X -q --set ON_ERROR_STOP=1 --no-psqlrc \
             -c "create role identity login password 'identity'" \
             -c "create role identity_app login password 'identity'"
+          psql "$TEST_DATABASE_ADMIN_URL" -X -q --set ON_ERROR_STOP=1 --no-psqlrc \
+            -c "alter role identity with createdb createrole"
           psql "$TEST_DATABASE_ADMIN_URL" -X -q --set ON_ERROR_STOP=1 --no-psqlrc \
             -c "create database identity owner identity"
           echo "provisioned identity and identity_app as NOSUPERUSER login roles, and the identity database they own"
