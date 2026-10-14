@@ -9,7 +9,7 @@ Also green: `gofmt -l .` (nothing), `go vet ./...`, and `go test -race` over
 
 ## What landed
 
-The endpoint `caf agent register` calls, and the bearer-token lifecycle, on the
+The endpoint `cafe agent register` calls, and the bearer-token lifecycle, on the
 agent principals W1-P1 put in place.
 
 - **`POST /v1/agents`** — public, unauthenticated, rate-limited

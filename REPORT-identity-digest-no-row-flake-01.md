@@ -233,7 +233,7 @@ one).
 - The new unit test was checked **with and without** a database: it runs and passes either
   way, so it is not a skip that could become a vacuous green on a machine without Postgres.
 - **Not run:** `bin/coverage-floor` (needs a coverage profile over the whole suite; not one
-  of the four gates and not part of this packet) and `caf contract lint`.
+  of the four gates and not part of this packet) and `cafe contract lint`.
 
 ## 9. Findings outside the packet
 

@@ -34,8 +34,8 @@ Two routes the clients already call and identity did not mount:
    `useAgentClaimPreview`) to render its first frame. Because identity's failures
    are one collapsed shape, a **live** claim link answered the same 404 a wrong
    one does, and the screen's own allow-list comment says so in as many words.
-2. `GET /v1/agents/home` — `caf agent whoami` calls it
-   (`cafaye/caf/internal/agent/endpoint.go:26`, `store.go:274`).
+2. `GET /v1/agents/home` — `cafe agent whoami` calls it
+   (`cafaye/cafe/internal/agent/endpoint.go:26`, `store.go:274`).
 
 ## What landed
 
@@ -53,7 +53,7 @@ its status and the account that claimed it by row id. It needs no service call:
 
 **The two decisions worth a reader's time** are recorded in DECISIONS.md D22:
 why the preview is a method and not a flag, and why the home is *not*
-`agentClaimedOnly` (`caf agent whoami` is the verb an **unclaimed** agent runs to
+`agentClaimedOnly` (`cafe agent whoami` is the verb an **unclaimed** agent runs to
 find out whether anybody has claimed it, and a 403 there would answer "you are
 not claimed" by refusing to say who is asking).
 

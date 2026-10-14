@@ -377,7 +377,7 @@ untested under concurrency for the reason in (3).
 documents "validate against OpenAPI 3.1" per AGENTS.md, and
 `internal/platform/ci` checks the workflow, but I read that requirement as the
 repository's CI's job and my own checks are the reader in
-`openapi_reader_test.go` plus the tripwires. If `caf contract lint` is the real
+`openapi_reader_test.go` plus the tripwires. If `cafe contract lint` is the real
 validator, my YAML has not been through it. The `parameters` block under the audit
 `get` operation is placed *after* `tags`/`operationId`, which is legal OpenAPI
 (key order is not significant) but is not the order the other operations in the

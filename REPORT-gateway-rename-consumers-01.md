@@ -12,7 +12,7 @@ and `pantry` have live workers and I did not open a worktree in either.
 |---|---|---|
 | `identity` | **62 references renamed**, gate green at its exact baseline | `85d5db5` |
 | `parlor` | **compose contract + e2e tier + the gate that greps it**, gate green at its exact baseline | `99018db` |
-| `caf` | **3 references renamed**, gate green at its exact baseline | `f98fe72` |
+| `cafe` | **3 references renamed**, gate green at its exact baseline | `f98fe72` |
 | `cafaye-ts` | **untouched, and that is the correct answer** — proven below | — |
 | `courier` | untouched, 4 sites enumerated in a handoff | — |
 | `docs` | untouched, ~110 sites scoped in a handoff | — |
@@ -43,7 +43,7 @@ so a stale copy of a string is a loud failure rather than a quiet half-sweep.
 |---|---|---|---|---|
 | `identity` | 91 | 62 | 27 | 2 (`guard-02` packet id ×2) |
 | `parlor` | ~180 (excl. logs) | ~90 | ~85 | `../guard` paths, `path: guard` |
-| `caf` | 22 | 3 | 19 | — |
+| `cafe` | 22 | 3 | 19 | — |
 | `cafaye-ts` | 27 | **0** | 20 | 7 vendored/generated, proven |
 | `courier` | 193 | 0 (handed off) | ~189 | 4 service, hand-written up |
 | `docs` | ~207 | 0 (handed off) | ~40 | ~110 service, some blocked |
@@ -157,7 +157,7 @@ nothing.
 
 ## Measurements
 
-Every gate was run before and after on the same machine. `identity` and `caf`
+Every gate was run before and after on the same machine. `identity` and `cafe`
 against a real migrated PostgreSQL; `parlor` including its own
 `validate-ci.sh` self-test.
 
@@ -187,7 +187,7 @@ exit                 0                   0
 Plus `shellcheck -S warning` clean on all five changed shell files, `bash -n`
 clean on all five, `tsc --noEmit` clean.
 
-**`caf`** — `./bin/prime`, baseline obtained by `git stash` so it is a real
+**`cafe`** — `./bin/prime`, baseline obtained by `git stash` so it is a real
 before, not a remembered one:
 
 ```
@@ -195,7 +195,7 @@ before (stashed to master): 15 packages, 727 top-level, 876 subtest, 0 failures,
 after:                      15 packages, 727 top-level, 876 subtest, 0 failures, 8 skips, exit 0
 ```
 
-caf's gate prints its own countable row for the skips: `live tier: 0 of 7
+cafe's gate prints its own countable row for the skips: `live tier: 0 of 7
 executed; not enabled, so the 7 live tests skipped rather than ran`, gated behind
 `CAF_LIVE_DOCKER=1`, `CAF_LIVE_RYUK=1`, `CAF_LIVE_KAMAL=1`. They did not run and
 are not claimed to have. That is 7 of the 8 skips; the eighth is not live-tier.

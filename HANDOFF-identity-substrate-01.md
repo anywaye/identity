@@ -37,7 +37,7 @@ does exactly that and takes about a minute.
 Not a refinement of mine. The highest-value thing left, and I did not have time:
 
 > **Check whether the other eight account-scoped services carry the same copy of
-> identity's bug.** If `caf lock`'s third reason is right — that copying a template is
+> identity's bug.** If `cafe lock`'s third reason is right — that copying a template is
 > invisible by construction — then each of them is another occurrence, and none of them
 > has a gate.
 

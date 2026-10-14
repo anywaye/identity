@@ -32,12 +32,12 @@ cafaye-rb   cafaye-ts   docs   guard   muse
 ```
 
 All five have a `cafaye.yml`. None ignores `caf.dev.compose.yaml`. None currently
-*has* one — because nobody has run `caf dev` in them on this machine.
+*has* one — because nobody has run `cafe dev` in them on this machine.
 
 That is the whole shape of the failure, stated as a finding: **the table is a
 survey of files that happened to be on one laptop.** A repository becomes visible
 in it only when somebody runs the local stack command there, which leaves a file
-behind. Six repositories are one `caf dev` run from being in exactly the state the
+behind. Six repositories are one `cafe dev` run from being in exactly the state the
 table calls a defect, and a list cannot tell you about a repository nobody has
 visited. My derivation finds 10 defective repositories; the table found 5.
 
@@ -72,26 +72,26 @@ FAIL generated-stack: 11 problem(s) across the fleet.   (exit 1)
 
 ---
 
-## 2. How I proved `caf dev` really does produce the file everywhere
+## 2. How I proved `cafe dev` really does produce the file everywhere
 
-The brief forbade running `caf dev`, so I did not. Instead the claim rests on two
+The brief forbade running `cafe dev`, so I did not. Instead the claim rests on two
 measurements that do not require it:
 
-1. **The write is unconditional.** `caf/internal/cli/dev.go:186` calls
+1. **The write is unconditional.** `cafe/internal/cli/dev.go:186` calls
    `writeCompose`; the `len(stack.Services) == 0` early return is at **`:194`**,
    eight lines later. So a manifest that declares no services still gets a file.
-   This is why `caf`, `docs` and the libraries are in scope and not just the six
+   This is why `cafe`, `docs` and the libraries are in scope and not just the six
    repos with a stack.
-2. **Every manifest in the fleet loads.** `go run ./cmd/caf contract lint` on each
-   one: `exit=0` for `cafaye-rb`, `cafaye-ts`, `docs`, `guard`, `muse`, `caf`,
+2. **Every manifest in the fleet loads.** `go run ./cmd/cafe contract lint` on each
+   one: `exit=0` for `cafaye-rb`, `cafaye-ts`, `docs`, `guard`, `muse`, `cafe`,
    `parlor`, `site`, `courier`, `darkroom`, `identity`, `pantry`, `billing`. (`core`
    exits 1, but on a *fixture* manifest under `harness/tests/fixtures/` — its own
    `cafaye.yml` reports `OK`.)
 
 So "has a valid `cafaye.yml`" is not a guess about which files might appear. It is
-the same predicate `caf dev` itself uses: `dev.Load` returns `ErrNoManifest` when
+the same predicate `cafe dev` itself uses: `dev.Load` returns `ErrNoManifest` when
 there is no `cafaye.yml` at the root
-(`caf/internal/dev/project.go:26`).
+(`cafe/internal/dev/project.go:26`).
 
 ---
 
@@ -107,10 +107,10 @@ lines say it is build output.
 **Did anything reference it?** **No.**
 
 ```
-$ git -C core grep -n 'caf\.dev\.compose'      → exit 1, no matches
-$ grep -rn 'caf\.dev' core/.github/            → no matches
-$ grep -rn 'caf\.dev' core/tests core/harness core/bin → no matches
-$ grep -rIn 'caf\.dev\.compose' --exclude-dir=.git core/ → only the file's own bytes
+$ git -C core grep -n 'cafe\.dev\.compose'      → exit 1, no matches
+$ grep -rn 'cafe\.dev' core/.github/            → no matches
+$ grep -rn 'cafe\.dev' core/tests core/harness core/bin → no matches
+$ grep -rIn 'cafe\.dev\.compose' --exclude-dir=.git core/ → only the file's own bytes
 ```
 
 No script, no test, no workflow, no document has ever named that path in `core`.
@@ -142,7 +142,7 @@ check-ignore -v` reports — so this is the rule that fires, not an intention.
 `core` keeps its file on disk (`git rm --cached`, not `git rm`), and `git status`
 is clean with it present — which is the point.
 
-Already compliant, verified and untouched: `billing`, `caf`, `parlor`, `site`.
+Already compliant, verified and untouched: `billing`, `cafe`, `parlor`, `site`.
 `docker-compose.yml` is tracked and still tracked in `courier`, `darkroom` and
 `identity`; I asserted this per worktree rather than trusting the diff.
 
@@ -156,8 +156,8 @@ defect in five repositories the list did not contain, and I found them by asking
 the filesystem rather than by looking harder at a list.
 
 **It is `kit/tests/generated_stack_check.py`, wired into `tests/validate.sh`,
-and it is `kit` rather than `core` or `caf` for a reason worth stating:** `core`
-documents in `fleet.yml` that it "cannot read a sibling repository", and `caf` is
+and it is `kit` rather than `core` or `cafe` for a reason worth stating:** `core`
+documents in `fleet.yml` that it "cannot read a sibling repository", and `cafe` is
 a single-repo CLI whose tests run in its own tree. `kit` already owns the
 cross-repo gate (`fleet_check.py`, D4: "a defect in the standard is invisible to a
 gate that reads only the standard"), already owns the `FLEET-ABSENT:` skip marker,
@@ -177,7 +177,7 @@ will ask. Two reasons, both enforced where they live:
   acceptable.
 
 **Scope is derived, not listed:** a root `cafaye.yml`, read off the filesystem —
-the same predicate `caf dev` uses. `is_worktree` excludes worktrees, matching
+the same predicate `cafe dev` uses. `is_worktree` excludes worktrees, matching
 `fleet_check.py` and `staleness.py`, so three callers enumerate the fleet one way.
 
 ### Proofs, each a planted divergence
@@ -240,7 +240,7 @@ this repository already has names for.
   `self_test` phase alone is *n* whole gates in sequence and this repository's own
   AGENTS.md records it hitting a 90-minute bound. Reporting a bound as a pass is
   the silent skip that file forbids, so I ran what I could bound and named it.
-- **No `caf dev`, no docker, no generated file.** Every command was `timeout`-bounded.
+- **No `cafe dev`, no docker, no generated file.** Every command was `timeout`-bounded.
 
 ## 7. Two process notes for the manager
 

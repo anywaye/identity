@@ -69,7 +69,7 @@ incremental commit on top of it.
 
 ## Not done / handoff notes
 
-- `caf contract lint` not run (core repo not in scope here); document validates
+- `cafe contract lint` not run (core repo not in scope here); document validates
   against the repo's own reader + examples tests.
 - No Docker build run: packaging is asserted by `packaging_test.go` only.
 - D19 notes two open items: console read of `user_audit_log` (needs a `List` +
