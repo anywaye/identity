@@ -49,7 +49,7 @@ import (
 // courier.
 //
 // THIS IS THE LIST, written out rather than read from the workflow, and the
-// duplication is the assertion: `TestTheExemptionListIsExactlyTheseThreeNames`
+// duplication is the assertion: `TestTheExemptionListIsExactlyTheseFourNames`
 // fails when the two disagree. A test that read the workflow for its expectations
 // would agree with it by construction and prove nothing — which is the same reason
 // `.golangci.yml`'s exclusion is stated in the test that holds it.
@@ -57,15 +57,22 @@ var e2eSkipExceptions = []string{
 	"TestAPasswordResetGoesOutThroughARealCourier",
 	"TestAVerificationLinkReachesCouriersWelcomeTemplate",
 	"TestTheTwoEmailChangeMessagesReachARealCourier",
+	"TestAnInvitationGoesOutThroughARealCourier",
 }
 
-// TestTheExemptionListIsExactlyTheseThreeNames is the pin, and it fails in both
+// TestTheExemptionListIsExactlyTheseFourNames is the pin, and it fails in both
 // directions on purpose.
 //
-// A fourth name is somebody widening the rule. A second name is somebody removing
+// A fifth name is somebody widening the rule. A third name is somebody removing
 // the proof — or renaming a test and forgetting the list, which is the same failure
 // seen from the other side and is the one a renamed test produces on its own.
-func TestTheExemptionListIsExactlyTheseThreeNames(t *testing.T) {
+//
+// FOURTH NAME'S PEDIGREE, because a list that grows needs its growth dated: the
+// invitation mailer's live proof arrived in the w80-invitation packet with no
+// update to this list, and the ci-tools packet found it as an undeclared skip the
+// tier step refused. Same file, same `requireLiveCourier`, same absent second
+// service — the cause the workflow's comment states, unchanged.
+func TestTheExemptionListIsExactlyTheseFourNames(t *testing.T) {
 	declared := skipExceptionsInWorkflow(t)
 
 	if len(declared) == 0 {

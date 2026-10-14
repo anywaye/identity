@@ -350,7 +350,18 @@ jobs:
       # its own principal resolver — the same seam that .github/workflows/ci.yml's
       # own header records as missing from kit's reusable workflow, and the reason
       # the database tier needs the separate `gate` job at all. So on this runner
-      # those three tests skip, loudly, naming what they would have proven.
+      # those four tests skip, loudly, naming what they would have proven.
+      #
+      # FOUR, not three: the invitation mailer's live proof
+      # (`TestAnInvitationGoesOutThroughARealCourier`) arrived after the list was
+      # pinned at three and skips for the identical cause — same file, same
+      # `requireLiveCourier`, no live courier on the runner. The ci-tools packet
+      # surfaced it: with the sibling checkout supplied, the drift check runs and
+      # the suite reaches the tier step, where the fourth skip reported as
+      # undeclared. The cause is unchanged and the package is unchanged; the list
+      # grew by one name with the same reason, in the same deliberate edit to both
+      # this file and `internal/platform/ci/skip_exceptions_test.go` that the pin
+      # demands. A fifth skip anywhere still fails the job.
       #
       # THE ALTERNATIVES WERE CONSIDERED, because "make the rule smaller" is easy to
       # say and easy to abuse:
@@ -366,7 +377,7 @@ jobs:
       #     not what is happening: the assertion stays, this list is subtracted from
       #     it, and a NEW skip anywhere still fails the job.
       #
-      # IT IS EXACTLY THREE NAMES AND IT IS HELD. `internal/platform/ci` reads this
+      # IT IS EXACTLY FOUR NAMES AND IT IS HELD. `internal/platform/ci` reads this
       # list and fails if a name is added to it, removed from it, or does not name a
       # test in this tree — so the exemption cannot widen by accident, and cannot be
       # emptied to hide a real skip either. It is the same shape as every other
@@ -376,6 +387,7 @@ jobs:
         TestAPasswordResetGoesOutThroughARealCourier
         TestAVerificationLinkReachesCouriersWelcomeTemplate
         TestTheTwoEmailChangeMessagesReachARealCourier
+        TestAnInvitationGoesOutThroughARealCourier
 
     steps:
       - uses: actions/checkout@v7
