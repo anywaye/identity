@@ -48,6 +48,38 @@ if [ "$#" -gt 0 ]; then
 fi
 
 go mod download
+
+# ---------------------------------------------------------------------
+# WARM THE GENERATOR'S MODULE GRAPH OUT OF BAND — library shape.
+#
+# identity is a LIBRARY: other services import `github.com/cafaye/identity/client`,
+# so the generator cannot be a `require` in go.mod
+# (`TestTheGeneratorIsNotAModuleDependency`). `client/generate.go` therefore pins
+# the tool as `go run <module>@<version>`, which resolves in a throwaway module
+# context whose transitive graph lives nowhere in this tree. `go mod download`
+# above fills only this module's graph, so on a fresh runner whose cache never
+# saw the generator, `go generate ./client/` and the regeneration test's
+# `go run <module>@<version>` would die — a gate that cannot run where the
+# cache is cold.
+#
+# This step warms the cache out of band: it reads the `module@version` from the
+# `//go:generate` line (never retyped), creates a throwaway module that requires
+# it, runs `go mod download all`, and discards the temp dir. `GOMODCACHE` is
+# shared between the throwaway module and `go run`, so the later `go run` hits
+# the cache offline. Proven by `go env GOMODCACHE` being the same in both
+# contexts and by `GOPROXY=off go run <module>@<version>` succeeding after this
+# step and failing without it.
+if grep -q '^//go:generate.*@v' client/generate.go 2>/dev/null; then
+  _gen_line=$(grep '^//go:generate' client/generate.go | head -n1)
+  _gen_modver=$(printf '%s\n' "$_gen_line" | sed -n 's|.*go run \([^[:space:]]*@v[^[:space:]]*\).*|\1|p')
+  if [ -n "$_gen_modver" ]; then
+    _warm_tmp=$(mktemp -d)
+    (cd "$_warm_tmp" && go mod init tmp >/dev/null 2>&1 && go get "$_gen_modver" >/dev/null 2>&1 && go mod download all >/dev/null 2>&1) || true
+    rm -rf "$_warm_tmp"
+  fi
+  unset _gen_line _gen_modver _warm_tmp
+fi
+
 go build ./...
 
 if [ "$fast" -eq 1 ]; then
