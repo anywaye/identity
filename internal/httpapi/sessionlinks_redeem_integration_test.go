@@ -34,6 +34,7 @@ package httpapi
 // the claim it is enabling are two things a reader can check independently.
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -518,7 +519,7 @@ func TestARedeemedSessionSignsTheBrowserIn(t *testing.T) {
 	if len(cookies) != 1 {
 		t.Fatalf("the redemption set %d cookies, want 1", len(cookies))
 	}
-	req := httptest.NewRequest(http.MethodGet, "/v1/me", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/me", nil)
 	req.AddCookie(cookies[0])
 	me := httptest.NewRecorder()
 	f.handler.ServeHTTP(me, req)

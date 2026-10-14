@@ -44,6 +44,7 @@ package httpapi
 // intended one.
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -94,7 +95,7 @@ func TestTheSocialRoutesAreAbsentWithoutAProvider(t *testing.T) {
 	mux := newMux(nil, options{auth: newFakeAuth()})
 
 	for _, route := range socialRoutes {
-		req := httptest.NewRequest(http.MethodGet, route.url+"?code=real&state=real", nil)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, route.url+"?code=real&state=real", nil)
 		req.AddCookie(&http.Cookie{Name: OAuthStateCookieName, Value: "real"})
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
@@ -122,7 +123,7 @@ func TestBothSocialRoutesMountTogether(t *testing.T) {
 	mux := newMux(nil, options{auth: newFakeAuth(), social: newFakeSocial()})
 
 	for _, route := range socialRoutes {
-		req := httptest.NewRequest(http.MethodGet, route.url, nil)
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, route.url, nil)
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 

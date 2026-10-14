@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -341,7 +342,7 @@ func (f *oidcFixture) exchange(t *testing.T, client registered, code, verifier, 
 		"redirect_uri":  []string{redirectURI},
 		"code_verifier": []string{verifier},
 	}
-	req := httptest.NewRequest(http.MethodPost, oidc.PathToken, strings.NewReader(form.Encode()))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, oidc.PathToken, strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Authorization", "Basic "+basicAuth(client.ClientID, client.ClientSecret))
 
@@ -439,7 +440,7 @@ func (f *oidcFixture) doWithSession(t *testing.T, session, method, target, body 
 		reader = strings.NewReader("")
 	}
 
-	req := httptest.NewRequest(method, target, reader)
+	req := httptest.NewRequestWithContext(context.Background(), method, target, reader)
 	if form != nil {
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	} else if body != "" {

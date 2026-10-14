@@ -279,7 +279,7 @@ version 15:
 | `go test -race -count=1 ./...` | **green, 23 packages** |
 | `bin/coverage-floor` | **74.2%** against a 70% floor |
 | `golangci-lint run ./...` | 69 findings, **identical set before and after** — all pre-existing, none in the code this packet wrote |
-| `caf contract lint .` (resolved core) | `OK cafaye.yml` |
+| `cafe contract lint .` (resolved core) | `OK cafaye.yml` |
 | `oapi-codegen` regeneration gate | green — `TestTheCommittedGeneratedFileIsWhatThePinnedGeneratorProduces` runs the pinned v2.8.0 and compares |
 | `openid/openid.yaml` validation | green — loaded by the same kin-openapi validator through oapi-codegen |
 

@@ -10,6 +10,7 @@ package client
 // puts it on the wrong request would pass an assertion about its own return value.
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -131,7 +132,7 @@ func TestClassifyCredentialRefusesValuesThatCouldBreakAHeader(t *testing.T) {
 // request its holder did not intend. Putting a `cafaye_` value there would publish a
 // machine credential onto the browser surface.
 func TestAttachCredentialPutsAnAPITokenInTheHeaderAndNotInACookie(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/v1/me", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/me", nil)
 
 	if err := AttachCredential(req, apiCredential); err != nil {
 		t.Fatalf("attaching: %v", err)
@@ -161,7 +162,7 @@ func TestAttachCredentialPutsAnAPITokenInTheHeaderAndNotInACookie(t *testing.T) 
 // against identity (which takes the cookie) and against the other five services
 // (which take a bearer and nothing else) with no choice at the call site.
 func TestAttachCredentialPutsASessionInBoth(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/v1/me", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/me", nil)
 
 	if err := AttachCredential(req, sessionCredential); err != nil {
 		t.Fatalf("attaching: %v", err)
@@ -184,7 +185,7 @@ func TestAttachCredentialPutsASessionInBoth(t *testing.T) {
 }
 
 func TestAttachCredentialNeverOverwritesWhatTheCallerSet(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/v1/me", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/me", nil)
 	req.Header.Set("Authorization", "Bearer caller-supplied")
 	req.Header.Set("Cookie", "__Host-session=caller-supplied")
 

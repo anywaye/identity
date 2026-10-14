@@ -282,7 +282,7 @@ func TestTheRealWiringMountsBothRoutes(t *testing.T) {
 		{"callback", socialLoginPrefix + "/" + oauth.ProviderGitHub + "/callback"},
 	} {
 		rec := httptest.NewRecorder()
-		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, route.url, nil))
+		mux.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, route.url, nil))
 
 		// The start route reaches the registry and redirects (302). The callback
 		// reaches the state check and refuses (400). Both prove the route resolved.
@@ -331,7 +331,7 @@ func TestTheRealWiringResolvesTheConfiguredProviderThroughTheStartRoute(t *testi
 	// is deliberately not used because it writes an HTML anchor. So this one drives
 	// the router directly and reads the recorder, the way oidc_test.go reads a 302.
 	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, socialLoginPrefix+"/"+oauth.ProviderGitHub, nil))
+	mux.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, socialLoginPrefix+"/"+oauth.ProviderGitHub, nil))
 
 	if rec.Code != http.StatusFound {
 		t.Fatalf("GET the start route = %d, want 302. A %d means the provider did not resolve, "+
@@ -355,7 +355,7 @@ func TestTheRealWiringResolvesTheConfiguredProviderThroughTheStartRoute(t *testi
 	// An unconfigured provider is the same 404 as a nonexistent one, on the real
 	// registry rather than on a double.
 	refused := httptest.NewRecorder()
-	mux.ServeHTTP(refused, httptest.NewRequest(http.MethodGet, socialLoginPrefix+"/"+oauth.ProviderGoogle, nil))
+	mux.ServeHTTP(refused, httptest.NewRequestWithContext(context.Background(), http.MethodGet, socialLoginPrefix+"/"+oauth.ProviderGoogle, nil))
 	if refused.Code != http.StatusNotFound {
 		t.Errorf("GET the start route for an unconfigured provider = %d, want 404. This registry "+
 			"holds github only, and google is the same miss as a name that does not exist — the "+
@@ -381,7 +381,7 @@ func TestTheRealWiringRefusesToMintASessionOnARefusedProvider(t *testing.T) {
 	}
 
 	target := socialLoginPrefix + "/" + oauth.ProviderGitHub + "/callback?code=real&state=" + state
-	req := httptest.NewRequest(http.MethodGet, target, nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, target, nil)
 	req.AddCookie(&http.Cookie{Name: OAuthStateCookieName, Value: state})
 
 	rec := httptest.NewRecorder()

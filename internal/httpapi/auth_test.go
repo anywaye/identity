@@ -319,7 +319,7 @@ func send(t *testing.T, h http.Handler, method, target, body string) *httptest.R
 	} else {
 		reader = strings.NewReader(body)
 	}
-	req := httptest.NewRequest(method, target, reader)
+	req := httptest.NewRequestWithContext(context.Background(), method, target, reader)
 	if body != "" {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -817,7 +817,7 @@ func TestLoginRecordsRequestMetadata(t *testing.T) {
 	t.Parallel()
 
 	f := newFakeAuth()
-	req := httptest.NewRequest(http.MethodPost, "/v1/session",
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/v1/session",
 		strings.NewReader(`{"email":"kaka@example.com","password":"correct horse battery"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "integration-test/1.0")
@@ -848,7 +848,7 @@ func TestLoginToleratesAnUnparseableRemoteAddr(t *testing.T) {
 	t.Parallel()
 
 	f := newFakeAuth()
-	req := httptest.NewRequest(http.MethodPost, "/v1/session",
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/v1/session",
 		strings.NewReader(`{"email":"kaka@example.com","password":"correct horse battery"}`))
 	req.RemoteAddr = "not-an-address"
 
@@ -871,7 +871,7 @@ func TestMeAcceptsTheCookie(t *testing.T) {
 	t.Parallel()
 
 	f := newFakeAuth()
-	req := httptest.NewRequest(http.MethodGet, "/v1/me", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/me", nil)
 	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: "a-session-token"})
 
 	rec := httptest.NewRecorder()
@@ -897,7 +897,7 @@ func TestMeAcceptsABearerToken(t *testing.T) {
 	t.Parallel()
 
 	f := newFakeAuth()
-	req := httptest.NewRequest(http.MethodGet, "/v1/me", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/me", nil)
 	req.Header.Set("Authorization", "Bearer a-session-token")
 
 	rec := httptest.NewRecorder()
@@ -963,7 +963,7 @@ func TestMeRejectsEveryMissingOrBrokenCredential(t *testing.T) {
 				f.authErr = auth.ErrUnauthenticated
 			}
 
-			req := httptest.NewRequest(http.MethodGet, "/v1/me", nil)
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/me", nil)
 			tt.prepare(req)
 
 			rec := httptest.NewRecorder()
@@ -987,7 +987,7 @@ func TestMePrefersTheAuthorizationHeaderOverTheCookie(t *testing.T) {
 	t.Parallel()
 
 	f := newFakeAuth()
-	req := httptest.NewRequest(http.MethodGet, "/v1/me", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/me", nil)
 	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: "cookie-token"})
 	req.Header.Set("Authorization", "Bearer header-token")
 
@@ -1010,7 +1010,7 @@ func TestUpdateMeSetsTheDisplayName(t *testing.T) {
 	t.Parallel()
 
 	f := newFakeAuth()
-	req := httptest.NewRequest(http.MethodPatch, "/v1/me", strings.NewReader(`{"display_name":"Kaka"}`))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPatch, "/v1/me", strings.NewReader(`{"display_name":"Kaka"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: "a-session-token"})
 
@@ -1045,7 +1045,7 @@ func TestUpdateMeClearsTheDisplayNameWithAnEmptyString(t *testing.T) {
 	t.Parallel()
 
 	f := newFakeAuth()
-	req := httptest.NewRequest(http.MethodPatch, "/v1/me", strings.NewReader(`{"display_name":""}`))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPatch, "/v1/me", strings.NewReader(`{"display_name":""}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: "a-session-token"})
 
@@ -1083,7 +1083,7 @@ func TestUpdateMeClearsTheDisplayNameWhenTheFieldIsOmitted(t *testing.T) {
 	t.Parallel()
 
 	f := newFakeAuth()
-	req := httptest.NewRequest(http.MethodPatch, "/v1/me", strings.NewReader(`{}`))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPatch, "/v1/me", strings.NewReader(`{}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: "a-session-token"})
 
@@ -1114,7 +1114,7 @@ func TestUpdateMeTrimsTheDisplayName(t *testing.T) {
 	t.Parallel()
 
 	f := newFakeAuth()
-	req := httptest.NewRequest(http.MethodPatch, "/v1/me", strings.NewReader(`{"display_name":"  Kaka  "}`))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPatch, "/v1/me", strings.NewReader(`{"display_name":"  Kaka  "}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: "a-session-token"})
 
@@ -1140,7 +1140,7 @@ func TestUpdateMeSetsTheTheme(t *testing.T) {
 			t.Parallel()
 
 			f := newFakeAuth()
-			req := httptest.NewRequest(http.MethodPatch, "/v1/me", strings.NewReader(`{"theme":"`+want+`"}`))
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodPatch, "/v1/me", strings.NewReader(`{"theme":"`+want+`"}`))
 			req.Header.Set("Content-Type", "application/json")
 			req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: "a-session-token"})
 
@@ -1185,7 +1185,7 @@ func TestUpdateMeRejectsAnInvalidTheme(t *testing.T) {
 			t.Parallel()
 
 			f := newFakeAuth()
-			req := httptest.NewRequest(http.MethodPatch, "/v1/me", strings.NewReader(`{"theme":"`+give+`"}`))
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodPatch, "/v1/me", strings.NewReader(`{"theme":"`+give+`"}`))
 			req.Header.Set("Content-Type", "application/json")
 			req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: "a-session-token"})
 
@@ -1220,7 +1220,7 @@ func TestUpdateMeRejectsANonStringTheme(t *testing.T) {
 	t.Parallel()
 
 	f := newFakeAuth()
-	req := httptest.NewRequest(http.MethodPatch, "/v1/me", strings.NewReader(`{"theme":42}`))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPatch, "/v1/me", strings.NewReader(`{"theme":42}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: "a-session-token"})
 
@@ -1249,7 +1249,7 @@ func TestUpdateMeClearsTheThemeWhenTheFieldIsOmitted(t *testing.T) {
 	dark := "dark"
 	f.user.Preferences.Theme = &dark
 
-	req := httptest.NewRequest(http.MethodPatch, "/v1/me", strings.NewReader(`{"display_name":"Kaka"}`))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPatch, "/v1/me", strings.NewReader(`{"display_name":"Kaka"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: "a-session-token"})
 
@@ -1283,7 +1283,7 @@ func TestUpdateMeRejectsAnonymous(t *testing.T) {
 	t.Parallel()
 
 	f := newFakeAuth()
-	req := httptest.NewRequest(http.MethodPatch, "/v1/me", strings.NewReader(`{"display_name":"Kaka"}`))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPatch, "/v1/me", strings.NewReader(`{"display_name":"Kaka"}`))
 	req.Header.Set("Content-Type", "application/json")
 
 	rec := httptest.NewRecorder()
@@ -1303,7 +1303,7 @@ func TestUpdateMeRejectsOverLength(t *testing.T) {
 
 	f := newFakeAuth()
 	long := strings.Repeat("a", 65)
-	req := httptest.NewRequest(http.MethodPatch, "/v1/me", strings.NewReader(`{"display_name":"`+long+`"}`))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPatch, "/v1/me", strings.NewReader(`{"display_name":"`+long+`"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: "a-session-token"})
 
@@ -1329,7 +1329,7 @@ func TestMeReturnsTheDisplayNameWhenSet(t *testing.T) {
 	name := "Kaka"
 	f.user.DisplayName = &name
 
-	req := httptest.NewRequest(http.MethodGet, "/v1/me", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/me", nil)
 	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: "a-session-token"})
 
 	rec := httptest.NewRecorder()
@@ -1354,7 +1354,7 @@ func TestMeOmitsTheDisplayNameWhenUnset(t *testing.T) {
 	f := newFakeAuth()
 	// f.user.DisplayName is nil — the default.
 
-	req := httptest.NewRequest(http.MethodGet, "/v1/me", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/me", nil)
 	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: "a-session-token"})
 
 	rec := httptest.NewRecorder()
@@ -1388,7 +1388,7 @@ func TestMeReturnsTheThemeWhenSet(t *testing.T) {
 	dark := "dark"
 	f.user.Preferences.Theme = &dark
 
-	req := httptest.NewRequest(http.MethodGet, "/v1/me", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/me", nil)
 	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: "a-session-token"})
 
 	rec := httptest.NewRecorder()
@@ -1413,7 +1413,7 @@ func TestMeOmitsTheThemeWhenUnset(t *testing.T) {
 	f := newFakeAuth()
 	// f.user.Preferences.Theme is nil — the default.
 
-	req := httptest.NewRequest(http.MethodGet, "/v1/me", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/me", nil)
 	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: "a-session-token"})
 
 	rec := httptest.NewRecorder()
@@ -1443,7 +1443,7 @@ func TestLogoutClearsTheCookieAndRevokes(t *testing.T) {
 	t.Parallel()
 
 	f := newFakeAuth()
-	req := httptest.NewRequest(http.MethodDelete, "/v1/session", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "/v1/session", nil)
 	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: "a-session-token"})
 
 	rec := httptest.NewRecorder()
@@ -1484,7 +1484,7 @@ func TestLogoutWorksForABearerClient(t *testing.T) {
 	t.Parallel()
 
 	f := newFakeAuth()
-	req := httptest.NewRequest(http.MethodDelete, "/v1/session", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "/v1/session", nil)
 	req.Header.Set("Authorization", "Bearer a-session-token")
 
 	rec := httptest.NewRecorder()
@@ -1526,7 +1526,7 @@ func TestLogoutWithAStaleTokenStillClearsTheCookie(t *testing.T) {
 	f := newFakeAuth()
 	f.logoutErr = auth.ErrUnauthenticated
 
-	req := httptest.NewRequest(http.MethodDelete, "/v1/session", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "/v1/session", nil)
 	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: "expired"})
 
 	rec := httptest.NewRecorder()

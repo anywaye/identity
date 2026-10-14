@@ -433,7 +433,7 @@ Not done, and not quietly omitted:
   validation, no method spanning two operations.** MD6 named four responsibilities and
   the client has those four. The one exception is `Transport()`, the escape hatch for
   an operation added after generation, named so its cost is visible.
-- **No `caf contract lint`, no npm, no CI restructure.** `.github/workflows/ci.yml`
+- **No `cafe contract lint`, no npm, no CI restructure.** `.github/workflows/ci.yml`
   gained four names in the existing "security tests ran, by name" step and nothing
   else; `internal/platform/ci` passes all 18 of its tests.
 - **`openapi/v1.yaml` is byte-identical to `e500262`** except during a red proof, which

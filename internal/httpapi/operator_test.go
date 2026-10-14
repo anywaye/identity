@@ -21,6 +21,7 @@ package httpapi
 // is `users:disable`, which no account route grants and which carries no account.
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -118,7 +119,7 @@ func newOperatorFixtureWithGrant(t *testing.T, scopes []string) *operatorFixture
 func (f *operatorFixture) send(t *testing.T, action, credential string) *httptest.ResponseRecorder {
 	t.Helper()
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/users/"+f.subject.String()+"/"+action, nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/v1/users/"+f.subject.String()+"/"+action, nil)
 	if credential != "" {
 		req.Header.Set("Authorization", "Bearer "+credential)
 	}
@@ -632,7 +633,7 @@ func TestAMalformedOperatorSubjectIsRefusedBeforeTheUseCase(t *testing.T) {
 			t.Run(action+"/"+tc.name, func(t *testing.T) {
 				f := newOperatorFixture(t)
 
-				req := httptest.NewRequest(http.MethodPost, strings.Replace(tc.path, "/disable", "/"+action, 1), nil)
+				req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, strings.Replace(tc.path, "/disable", "/"+action, 1), nil)
 				req.Header.Set("Authorization", "Bearer "+f.apiKey)
 				rec := httptest.NewRecorder()
 				f.handler.ServeHTTP(rec, req)

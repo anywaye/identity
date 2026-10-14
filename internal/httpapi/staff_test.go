@@ -21,6 +21,7 @@ package httpapi
 // staff authority — and that refusal is a check with a name.
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -65,7 +66,7 @@ func newStaffFixture(t *testing.T, staff bool) *staffFixture {
 func sendStaff(t *testing.T, h http.Handler, method, target, credential string) *httptest.ResponseRecorder {
 	t.Helper()
 
-	req := httptest.NewRequest(method, target, nil)
+	req := httptest.NewRequestWithContext(context.Background(), method, target, nil)
 	if credential != "" {
 		req.Header.Set("Authorization", "Bearer "+credential)
 	}

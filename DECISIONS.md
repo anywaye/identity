@@ -2006,7 +2006,7 @@ about what "an agent acting alone gets nothing" (D4) means in code.
   missing is a human's click, which a new credential does not fix. A 401 would
   send a client hunting a login problem that does not exist.
 - **The code is the fleet's identifier, not this service's to invent.** The
-  `caf` CLI already switches on the string in a 403 body and swaps in its own
+  `cafe` CLI already switches on the string in a 403 body and swaps in its own
   operator-facing sentence, so the contract is settled by its consumers. What
   this service owes it is the 403, the code, and a `detail` that names the
   remedy — the hint matters more than the code, because a refusal that says
@@ -2030,7 +2030,7 @@ about what "an agent acting alone gets nothing" (D4) means in code.
 ## D20: the agent handle is globally unique, registration never says "taken", and the claim screen base is configured per deployment
 
 **Raised** 2026-10-09 by packet `W1-P2`, the public agent registration and
-scoped-token lifecycle that `caf agent register` calls. Three decisions the
+scoped-token lifecycle that `cafe agent register` calls. Three decisions the
 packet had to make for `internal/agents` and `POST /v1/agents`, none of them
 settled by W1-P1 — 00031's "WHAT IS NOT HERE" listed `username` by name and
 said this packet would decide it.
@@ -2119,7 +2119,7 @@ route sits behind.
 
 ### The home is `agentCredentialOnly` and not `agentClaimedOnly`
 
-- **A "who am I" that refuses to say who you are is not an answer.** `caf agent
+- **A "who am I" that refuses to say who you are is not an answer.** `cafe agent
   whoami` is the verb an agent that registered ITSELF runs — there is no other
   way for it to learn whether a human has claimed it, and the CLI's own comment
   says the remote answer's word is free precisely because a stale local

@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -16,7 +17,7 @@ func TestProblemMatchesTheCoreEnvelope(t *testing.T) {
 	t.Parallel()
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/v1/users?debug=1", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/v1/users?debug=1", nil)
 	req = req.WithContext(withTraceID(req.Context(), "0af7651916cd43dd8448eb211c80319c"))
 
 	writeProblem(rec, req, newProblem(http.StatusUnauthorized, CodeUnauthorized))
@@ -68,7 +69,7 @@ func TestProblemCarriesFieldErrorsForValidation(t *testing.T) {
 	t.Parallel()
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/v1/users", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/v1/users", nil)
 
 	p := newProblem(http.StatusUnprocessableEntity, CodeValidationFailed).
 		withDetail("the request body has 2 invalid fields").
@@ -208,7 +209,7 @@ func TestProblemDetailIsNotFilledFromAnInternalError(t *testing.T) {
 	t.Parallel()
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/v1/me", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/me", nil)
 
 	p := newProblem(http.StatusInternalServerError, CodeInternal)
 	if p.Detail != "" {

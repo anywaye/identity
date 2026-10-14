@@ -154,7 +154,7 @@ func newAdminWorld(t *testing.T) *adminWorld {
 func (w *adminWorld) send(t *testing.T, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
 
-	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), method, path, strings.NewReader(body))
 	if body != "" {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -543,7 +543,7 @@ func TestAnAdminActionNeverWritesACredential(t *testing.T) {
 	// 4. The problem document, on a route that fails. A 500 writes through
 	// `unexpected`, which is the path where a careless
 	// `fmt.Sprintf("%+v", …)` of the caller would land.
-	badReq := httptest.NewRequest(http.MethodGet, w2.auditPath()+"?limit=99999", nil)
+	badReq := httptest.NewRequestWithContext(context.Background(), http.MethodGet, w2.auditPath()+"?limit=99999", nil)
 	badReq.Header.Set("Authorization", "Bearer "+w2.tokenSecret)
 	badRec := httptest.NewRecorder()
 	w2.handler.ServeHTTP(badRec, badReq)

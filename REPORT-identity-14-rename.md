@@ -254,7 +254,7 @@ empty list says 'we checked and there are none', which is true today but is a
 claim that has to be revisited"*). **No manifest in the workspace names an
 `identity.*` event under `consumes`, and none names a two-segment event at all.**
 A fleet-wide grep for `account.created` outside this repository finds it only in
-**core's** catalog, **core's** examples, **core's** tests and `caf`'s contract
+**core's** catalog, **core's** examples, **core's** tests and `cafe`'s contract
 fixtures — all already in the three-segment form. There is no subscription,
 route, SDK constant or dashboard filter keyed on the old spelling.
 **No other repository needs a follow-up for this rename, and I have not edited

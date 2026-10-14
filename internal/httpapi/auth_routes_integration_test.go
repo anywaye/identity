@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -141,7 +142,7 @@ func TestEndToEndRegisterLoginMeLogout(t *testing.T) {
 
 	// /v1/me with the cookie.
 	meRec := httptest.NewRecorder()
-	meReq := httptest.NewRequest(http.MethodGet, "/v1/me", nil)
+	meReq := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/me", nil)
 	meReq.AddCookie(c)
 	h.ServeHTTP(meRec, meReq)
 
@@ -158,7 +159,7 @@ func TestEndToEndRegisterLoginMeLogout(t *testing.T) {
 
 	// /v1/me with the bearer token.
 	bearerRec := httptest.NewRecorder()
-	bearerReq := httptest.NewRequest(http.MethodGet, "/v1/me", nil)
+	bearerReq := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/me", nil)
 	bearerReq.Header.Set("Authorization", "Bearer "+login.Token)
 	h.ServeHTTP(bearerRec, bearerReq)
 
@@ -168,7 +169,7 @@ func TestEndToEndRegisterLoginMeLogout(t *testing.T) {
 
 	// Log out.
 	logoutRec := httptest.NewRecorder()
-	logoutReq := httptest.NewRequest(http.MethodDelete, "/v1/session", nil)
+	logoutReq := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "/v1/session", nil)
 	logoutReq.AddCookie(c)
 	h.ServeHTTP(logoutRec, logoutReq)
 
@@ -181,7 +182,7 @@ func TestEndToEndRegisterLoginMeLogout(t *testing.T) {
 	for _, surface := range []string{"cookie", "bearer"} {
 		t.Run("the revoked token no longer works via "+surface, func(t *testing.T) {
 			rec := httptest.NewRecorder()
-			req := httptest.NewRequest(http.MethodGet, "/v1/me", nil)
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/me", nil)
 			if surface == "cookie" {
 				req.AddCookie(c)
 			} else {
@@ -420,7 +421,7 @@ func TestEndToEndNoResponseCarriesTheDigest(t *testing.T) {
 		t.Fatalf("the login body is not JSON: %v", err)
 	}
 
-	meReq := httptest.NewRequest(http.MethodGet, "/v1/me", nil)
+	meReq := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/me", nil)
 	meReq.Header.Set("Authorization", "Bearer "+login.Token)
 	meRec := httptest.NewRecorder()
 	h.ServeHTTP(meRec, meReq)
@@ -504,7 +505,7 @@ func TestEndToEndDeletedUserCannotAuthenticate(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/v1/me", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/me", nil)
 	req.Header.Set("Authorization", "Bearer "+login.Token)
 	h.ServeHTTP(rec, req)
 
@@ -813,7 +814,7 @@ func meWithToken(t *testing.T, h http.Handler, token string) *httptest.ResponseR
 	t.Helper()
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/v1/me", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/me", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	h.ServeHTTP(rec, req)
 	return rec
@@ -825,7 +826,7 @@ func patchMeWithToken(t *testing.T, h http.Handler, token, body string) *httptes
 	t.Helper()
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPatch, "/v1/me", strings.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPatch, "/v1/me", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
 	h.ServeHTTP(rec, req)

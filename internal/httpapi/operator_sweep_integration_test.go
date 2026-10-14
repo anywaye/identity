@@ -178,7 +178,7 @@ func TestADisableRevokesTheAccessTokensAtThisLayer(t *testing.T) {
 		t.Fatalf("the subject's session does not authenticate before the disable: %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/users/"+subject.String()+"/disable", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/v1/users/"+subject.String()+"/disable", nil)
 	req.Header.Set("Authorization", "Bearer "+operatorToken)
 	rec := httptest.NewRecorder()
 	s.handler.ServeHTTP(rec, req)

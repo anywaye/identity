@@ -194,7 +194,7 @@ func TestARequestProducesAnExportThatCrossesTheWire(t *testing.T) {
 
 	a := newDiscardApp(t, probeOnlyConfig())
 	rec := httptest.NewRecorder()
-	a.srv.Handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	a.srv.Handler.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/healthz", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /healthz = %d, want 200", rec.Code)
 	}
@@ -249,7 +249,7 @@ func TestATraceparentArrivingOverTheWireIsContinued(t *testing.T) {
 
 	const callersTrace = "4bf92f3577b34da6a3ce929d0e0e4736"
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/healthz", nil)
 	req.Header.Set("traceparent", "00-"+callersTrace+"-00f067aa0ba902b7-01")
 	newDiscardApp(t, probeOnlyConfig()).srv.Handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -290,7 +290,7 @@ func TestAMalformedTraceparentOverTheWireIsStillServed(t *testing.T) {
 	flush := installForTest(t)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/healthz", nil)
 	req.Header.Set("traceparent", "definitely-not-a-traceparent")
 	newDiscardApp(t, probeOnlyConfig()).srv.Handler.ServeHTTP(rec, req)
 
@@ -332,7 +332,7 @@ func TestAServerErrorCrossesTheWireWithTheFleetsErrorClass(t *testing.T) {
 	handler := httpapi.New([]httpapi.Check{failing}, httpapi.WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
 
 	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	handler.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/readyz", nil))
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("GET /readyz = %d, want 503. A readiness probe whose dependency fails "+
 			"has to answer 503, or there is nothing here to record.", rec.Code)
@@ -379,7 +379,7 @@ func TestTelemetryOffDialsNothing(t *testing.T) {
 
 	a := newDiscardApp(t, probeOnlyConfig())
 	rec := httptest.NewRecorder()
-	a.srv.Handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	a.srv.Handler.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/healthz", nil))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /healthz = %d, want 200. A service that is not exporting telemetry "+
@@ -411,7 +411,7 @@ func TestAPerSignalSwitchOffAlsoDialsNothing(t *testing.T) {
 
 			a := newDiscardApp(t, probeOnlyConfig())
 			rec := httptest.NewRecorder()
-			a.srv.Handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+			a.srv.Handler.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/healthz", nil))
 
 			if rec.Code != http.StatusOK {
 				t.Fatalf("GET /healthz = %d, want 200", rec.Code)

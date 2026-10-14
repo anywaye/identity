@@ -211,7 +211,7 @@ func (f *adminFixture) adminSend(t *testing.T, method, path, body, credential st
 	} else {
 		reader = strings.NewReader(body)
 	}
-	req := httptest.NewRequest(method, path, reader)
+	req := httptest.NewRequestWithContext(context.Background(), method, path, reader)
 	if body != "" {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -503,7 +503,7 @@ func TestATokenWithNoAccountIsRefused(t *testing.T) {
 			)
 
 			path := strings.Replace(route.path(&adminFixture{accountID: accountID}), "{", "", 1)
-			req := httptest.NewRequest(route.method, path, strings.NewReader(route.body))
+			req := httptest.NewRequestWithContext(context.Background(), route.method, path, strings.NewReader(route.body))
 			if route.body != "" {
 				req.Header.Set("Content-Type", "application/json")
 			}
@@ -1075,7 +1075,7 @@ func TestTheAdminRoutesAreAbsentWithoutTheService(t *testing.T) {
 		// No WithAdmin.
 	)
 
-	req := httptest.NewRequest(http.MethodGet, "/v1/accounts/"+id.MustNew().String()+"/admin/audit-log", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/accounts/"+id.MustNew().String()+"/admin/audit-log", nil)
 	req.Header.Set("Authorization", "Bearer "+apiKeySecret)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)

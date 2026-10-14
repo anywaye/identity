@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -168,7 +169,7 @@ func (f *oidcMFAFixture) send(t *testing.T, method, target, body string, form ur
 		contentType = "application/json"
 	}
 
-	req := httptest.NewRequest(method, target, reader)
+	req := httptest.NewRequestWithContext(context.Background(), method, target, reader)
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
 	}
