@@ -260,7 +260,19 @@ func TestEveryExcludedDirectoryIsNamedInTheDeclaration(t *testing.T) {
 	generatedDirs := map[string]bool{}
 	mixedDirs := map[string]bool{}
 	for _, path := range goFilesUnder(t, root) {
-		dir := path[:strings.LastIndex(path, "/")]
+		// A Go file at the REPOSITORY ROOT belongs to no directory, so it can be
+		// neither a generated directory nor a mixed one — there is nothing for
+		// the declaration to name. `tools.go` is the file that made this case
+		// real: a build-tagged blank import whose whole purpose is to be at the
+		// root, where `go mod tidy` reads it. Before it existed the walk assumed
+		// every path held a `/` and panicked on the first one that did not
+		// (`strings.LastIndex` returns -1), which is a test failing on a tree it
+		// should have walked past.
+		slash := strings.LastIndex(path, "/")
+		if slash < 0 {
+			continue
+		}
+		dir := path[:slash]
 		raw, err := os.ReadFile(filepath.Join(root, path))
 		if err != nil {
 			// Same rule-4 case as above, reported once and in the same words. A
