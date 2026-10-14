@@ -16,9 +16,12 @@
 //
 // measured against a cluster built the way this job builds one. The gap is
 // invisible locally and fatal in CI, which is the worst shape a gap can have,
-// so it is checked here: the role is DERIVED from the workflow's own
-// `POSTGRES_USER` rather than repeated, so renaming the service's database in
-// docker-compose.yml cannot quietly un-provision it.
+// so it is checked here: the role is DERIVED from the gate job's own
+// TEST_DATABASE_URL rather than repeated, so renaming the suite's database
+// user cannot quietly un-provision it. (It used to be derived from the service
+// container's POSTGRES_USER, back when the suite connected as that role —
+// which is also what made the suite a superuser and the gate red in CI — so
+// the derivation follows the DSN, the thing goose actually connects as.)
 //
 // Neither of these checks opens a database. They read files, which is what makes
 // them run in bin/prime; the property that actually needs a server is bin/rollback's,
@@ -65,33 +68,40 @@ func migrationsInTree(t *testing.T) []string {
 
 var migrationOrderRE = regexp.MustCompile(`^[0-9]{5}_[a-z0-9_]+\.sql$`)
 
-// serviceUser is the role the postgres service container creates as its
-// superuser, read out of the workflow rather than assumed. Everything else here
-// is derived from this one string, which is what keeps a rename from silently
-// disarming the check.
-var postgresUserRE = regexp.MustCompile(`(?m)^\s*POSTGRES_USER:\s*(\S+)\s*$`)
+// dsnUserRE reads the role the suite connects as out of the gate job's
+// TEST_DATABASE_URL: `postgres://user:…@…`. The user ends at the first `:`.
+var dsnUserRE = regexp.MustCompile(`^\s*TEST_DATABASE_URL:\s*postgres(?:ql)?://([^:/@\s'"]+)`)
 
-func serviceUser(t *testing.T) string {
+// suiteUser is the role the suite — and therefore `goose up` — connects as,
+// read out of the gate job's TEST_DATABASE_URL rather than assumed.
+//
+// It is the DSN user and NOT the service container's POSTGRES_USER, and the
+// distinction is the fix this file now records. The container bootstraps its
+// superuser under whatever name the image gives it, and the suite must never
+// connect as that role: a superuser bypasses row-level security even with
+// FORCE, so bin/provision-testdb refuses one (m156/m158) — and the gate died
+// in CI with POSTGRES_USER=identity for exactly that reason, with goose and
+// the rollback check green above it. `protect_table` defaults its login role
+// to `current_user || '_app'` where current_user is who goose connects as, so
+// the role the migrations need is named after the DSN user, and deriving it
+// from POSTGRES_USER is wrong by construction now that the two differ.
+func suiteUser(t *testing.T) string {
 	t.Helper()
 
-	lines := workflowLines(t)
-	for i, line := range lines {
-		m := postgresUserRE.FindStringSubmatch(line)
+	for i, line := range workflowLines(t) {
+		m := dsnUserRE.FindStringSubmatch(line)
 		if m == nil {
 			continue
 		}
-		// A service container's environment is not the job's environment, so
-		// `$POSTGRES_USER` in a `run:` block is the empty string. That is
-		// asserted separately; here we want the literal.
-		if strings.HasPrefix(m[1], "$") {
-			t.Fatalf(".github/workflows/ci.yml line %d sets POSTGRES_USER to %s, an expression "+
-				"this check cannot resolve — write the role name out.", i+1, m[1])
+		if m[1] == "" {
+			t.Fatalf(".github/workflows/ci.yml line %d sets TEST_DATABASE_URL with no user; "+
+				"the login role the migrations need cannot be derived.", i+1)
 		}
 		return m[1]
 	}
-	t.Fatal(".github/workflows/ci.yml sets no POSTGRES_USER, so the service container's role is\n" +
-		"unknown and the login role the migrations need cannot be derived. If the container moved\n" +
-		"to an env: block this check has to learn where.")
+	t.Fatal(".github/workflows/ci.yml sets no TEST_DATABASE_URL, so the role the suite connects\n" +
+		"as is unknown and the login role the migrations need cannot be derived. If the DSN moved\n" +
+		"to another variable this check has to learn where.")
 	return ""
 }
 
@@ -116,13 +126,13 @@ func firstLineMatching(t *testing.T, label string, lines []string, needle string
 // to must exist, and must exist BEFORE the migrations run, on the job whose
 // cluster has no init script.
 //
-// The name is derived from POSTGRES_USER, not written out, so this fails if the
-// service's database is renamed and the provisioning is not renamed with it. The
-// reverse is also true and is why the assertion is a `<` and not two separate
-// existence checks.
+// The name is derived from the suite DSN's user, not written out, so this
+// fails if the suite DSN is renamed and the provisioning is not renamed with
+// it. The reverse is also true and is why the assertion is a `<` and not two
+// separate existence checks.
 func TestTheLoginRoleTheMigrationsProtectTablesForIsProvisionedBeforeTheyAreApplied(t *testing.T) {
 	lines := workflowLines(t)
-	role := serviceUser(t) + "_app"
+	role := suiteUser(t) + "_app"
 
 	provisionedAt := firstLineMatching(t, "provisioning "+role, lines, "create role "+role+" ")
 	gooseUpAt := firstLineMatching(t, "goose up", lines, "goose -dir migrations postgres \"$DATABASE_URL\" up")
@@ -152,11 +162,11 @@ func TestTheLoginRoleTheMigrationsProtectTablesForIsProvisionedBeforeTheyAreAppl
 // TestTheProvisionedRoleIsCreatedFromTheJobDatabaseNotTheServiceEnvironment
 // guards a mistake this file's own header names: a service container's
 // environment is not the job's environment. `$POSTGRES_USER` inside a `run:`
-// block expands to nothing, so a step written with it creates a role literally
-// called `_app` and reports success.
+// block is the container's bootstrap superuser, not the suite role, so a step
+// written with it creates a role literally called `_app` and reports success.
 func TestTheProvisionedRoleIsCreatedFromTheJobDatabaseNotTheServiceEnvironment(t *testing.T) {
 	lines := workflowLines(t)
-	role := serviceUser(t) + "_app"
+	role := suiteUser(t) + "_app"
 
 	at := firstLineMatching(t, "provisioning "+role, lines, "create role "+role+" ")
 	if at == 0 {
@@ -298,6 +308,17 @@ func TestTheRollbackScriptNamesTheRoleItProvisionsFromTheCaller(t *testing.T) {
 			"hardcoded role name is provisioning a role the migration will not ask for. Measured: the\n" +
 			"hardcoded first draft failed at 00016 on a bare cluster with \"postgres_app is not a LOGIN\n" +
 			"role\", and then failed to start at all on a cluster where `identity` already existed.")
+	}
+	// The caller is the URL's USER, not its `user:password` credentials. Without
+	// the strip a DSN like `postgres://postgres:postgres@…` names the caller
+	// `postgres:postgres` and provisions a quoted `"postgres:postgres_app"` role
+	// the migration never asks for — measured as a red at 00016 on a cluster
+	// where the needed `<user>_app` role did not already exist from elsewhere.
+	if !strings.Contains(body, "CALLER=\"${CALLER%%:*}\"") {
+		t.Errorf("bin/rollback does not strip the password off the caller it reads from the URL.\n" +
+			"The text before the first `@` in `user:password@host` is still `user:password`, so\n" +
+			"APP_ROLE derives a colon-named role no migration asks for and 00016 fails with\n" +
+			"\"<user>_app is not a LOGIN role on this cluster\".")
 	}
 	if !strings.Contains(body, "rolcanlogin") {
 		t.Errorf("bin/rollback creates its role without checking whether it can LOGIN.\n" +
