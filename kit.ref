@@ -1,4 +1,4 @@
 # The kit ref this repository runs. One line: a 40-character commit
 # sha, or a v<semver> tag. NEVER a branch.
 # Move it with:  bin/dev pin <ref>   (it prints the stack diff first)
-e69f5df53e618bb95960fa33400e35762714c5e3
+e20d20664e6f1dc0bfb1023874367d2be43370d5
