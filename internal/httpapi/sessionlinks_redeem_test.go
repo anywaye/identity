@@ -23,6 +23,7 @@ package httpapi
 // the cookie and the body shape being produced at all.
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -42,7 +43,7 @@ import (
 func (f *sessionLinkFixture) redeem(t *testing.T, body, credential string) *httptest.ResponseRecorder {
 	t.Helper()
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/session-links/redeem", strings.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/v1/session-links/redeem", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	if credential != "" {
 		req.Header.Set("Authorization", "Bearer "+credential)
@@ -109,7 +110,7 @@ func TestARedemptionReturnsASessionAndTheSessionCookie(t *testing.T) {
 func TestTheRedemptionPassesTheTokenAndTheRequestContextToTheUseCase(t *testing.T) {
 	f := newSessionLinkFixture(t)
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/session-links/redeem",
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/v1/session-links/redeem",
 		strings.NewReader(`{"token":"a-link-token"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "a-browser-that-names-itself")

@@ -19,6 +19,7 @@ package httpapi
 // is caught by the second and third.
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -153,7 +154,7 @@ func TestAnAccountScopedCredentialCannotDisableAUser(t *testing.T) {
 			)
 
 			for _, action := range []string{"disable", "enable"} {
-				req := httptest.NewRequest(http.MethodPost,
+				req := httptest.NewRequestWithContext(context.Background(), http.MethodPost,
 					"/v1/users/"+subject.String()+"/"+action, nil)
 				req.Header.Set("Authorization", "Bearer "+apiKeySecret)
 				rec := httptest.NewRecorder()
@@ -207,7 +208,7 @@ func TestTheAdminSurfaceStillCannotReachAPerson(t *testing.T) {
 	// 404 rather than a 403 because the route does not exist — and that IS the
 	// assertion: there is no admin route about a person, and a deployment operator's
 	// credential is the only one that reaches one.
-	req := httptest.NewRequest(http.MethodPost, "/v1/accounts/"+id.MustNew().String()+"/admin/users/"+id.MustNew().String()+"/disable", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/v1/accounts/"+id.MustNew().String()+"/admin/users/"+id.MustNew().String()+"/disable", nil)
 	req.Header.Set("Authorization", "Bearer "+apiKeySecret)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
@@ -243,7 +244,7 @@ func TestTheOperatorSurfaceNeedsNoAdminService(t *testing.T) {
 		// No WithAdmin, no WithTenancy, no WithRecovery.
 	)
 
-	req := httptest.NewRequest(http.MethodPost,
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost,
 		"/v1/users/"+id.MustNew().String()+"/disable", nil)
 	req.Header.Set("Authorization", "Bearer "+apiKeySecret)
 	rec := httptest.NewRecorder()

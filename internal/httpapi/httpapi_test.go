@@ -51,7 +51,7 @@ func do(t *testing.T, handler http.Handler, method, target string) response {
 	t.Helper()
 
 	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, httptest.NewRequest(method, target, nil))
+	handler.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), method, target, nil))
 
 	res := response{Code: rec.Code, Body: rec.Body.String(), ContentType: rec.Header().Get("Content-Type")}
 	switch {
@@ -328,7 +328,7 @@ func TestResponseBodyIsASingleJSONObject(t *testing.T) {
 	t.Parallel()
 
 	rec := httptest.NewRecorder()
-	New([]Check{failingCheck("postgres")}).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	New([]Check{failingCheck("postgres")}).ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/readyz", nil))
 
 	body, err := io.ReadAll(rec.Body)
 	if err != nil {

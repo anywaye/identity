@@ -119,7 +119,7 @@ func serveOne(t *testing.T, a *app, method, target string) (int, string) {
 	t.Helper()
 
 	rec := httptest.NewRecorder()
-	a.srv.Handler.ServeHTTP(rec, httptest.NewRequest(method, target, nil))
+	a.srv.Handler.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), method, target, nil))
 	return rec.Code, strings.TrimSpace(rec.Body.String())
 }
 

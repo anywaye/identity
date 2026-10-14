@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -122,7 +123,7 @@ func newSessionLinkFixtureResolving(t *testing.T, scopes []string, resolves bool
 func (f *sessionLinkFixture) mint(t *testing.T, body, credential string) *httptest.ResponseRecorder {
 	t.Helper()
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/session-links", strings.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/v1/session-links", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	if credential != "" {
 		req.Header.Set("Authorization", "Bearer "+credential)

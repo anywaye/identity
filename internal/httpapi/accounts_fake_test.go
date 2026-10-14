@@ -228,7 +228,7 @@ func request(t *testing.T, h http.Handler, method, target, body string) *httptes
 func requestAs(t *testing.T, h http.Handler, token, method, target, body string) *httptest.ResponseRecorder {
 	t.Helper()
 
-	req := httptest.NewRequest(method, target, strings.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), method, target, strings.NewReader(body))
 	if body != "" {
 		req.Header.Set("Content-Type", "application/json")
 	}

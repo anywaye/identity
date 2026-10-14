@@ -25,6 +25,7 @@ package httpapi
 // service that ignored it.
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -249,7 +250,7 @@ func TestAScopedApiKeyCannotListSessions(t *testing.T) {
 		WithAPIKeyCaller(newFakeAPIKeyCaller(users.User{ID: id.MustNew()}, apikeys.Key{ID: id.MustNew(), AccountID: id.MustNew()})),
 	)
 
-	req := httptest.NewRequest(http.MethodGet, "/v1/sessions", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/sessions", nil)
 	req.Header.Set("Authorization", "Bearer cafaye_a-key")
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
@@ -458,7 +459,7 @@ func TestAScopedApiKeyCannotRevokeASession(t *testing.T) {
 		WithAPIKeyCaller(newFakeAPIKeyCaller(users.User{ID: id.MustNew()}, apikeys.Key{ID: id.MustNew(), AccountID: id.MustNew()})),
 	)
 
-	req := httptest.NewRequest(http.MethodDelete, "/v1/sessions/"+id.MustNew().String(), nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "/v1/sessions/"+id.MustNew().String(), nil)
 	req.Header.Set("Authorization", "Bearer cafaye_a-key")
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
@@ -540,10 +541,10 @@ func TestTheSessionRoutesAcceptEitherCredentialSurface(t *testing.T) {
 
 			var req *http.Request
 			if via == "cookie" {
-				req = httptest.NewRequest(http.MethodGet, "/v1/sessions", nil)
+				req = httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/sessions", nil)
 				req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: w.auth.token})
 			} else {
-				req = httptest.NewRequest(http.MethodGet, "/v1/sessions", nil)
+				req = httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/sessions", nil)
 				req.Header.Set("Authorization", "Bearer "+w.auth.token)
 			}
 

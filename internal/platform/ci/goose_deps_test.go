@@ -21,6 +21,7 @@ package ci
 // compiles into /app/service — not on go.mod.
 
 import (
+	"context"
 	"os/exec"
 	"strings"
 	"testing"
@@ -49,7 +50,7 @@ var gooseDialectDeps = []string{
 // must contain pgx — a `go list` that printed nothing, or a path typo, would
 // satisfy "no dialect drivers" vacuously.
 func TestTheServiceBinaryCarriesNoDatabaseDriverButPgx(t *testing.T) {
-	command := exec.Command("go", "list", "-deps", "./cmd/identity")
+	command := exec.CommandContext(context.Background(), "go", "list", "-deps", "./cmd/identity")
 	// A test's working directory is its own package directory, and the path
 	// above is relative to the repository root — so the command runs there, the
 	// same way bin/prime's own `go list` lines do.

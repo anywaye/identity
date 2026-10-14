@@ -83,6 +83,7 @@ package ci
 // reports those teaches a reader to ignore it.
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -285,7 +286,7 @@ func TestNoResponseNamesADocument(t *testing.T) {
 		"/nothing-here",
 	} {
 		for _, method := range []string{http.MethodGet, http.MethodPost} {
-			req := httptest.NewRequest(method, target, nil)
+			req := httptest.NewRequestWithContext(context.Background(), method, target, nil)
 			rec := httptest.NewRecorder()
 			handler.ServeHTTP(rec, req)
 

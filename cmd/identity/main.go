@@ -149,7 +149,7 @@ const (
 // own already invokes. Neither is a second implementation — they converge on the
 // same call.
 //
-// An unrecognised NON-FLAG argument is an error rather than a silent serve. A
+// An unrecognized NON-FLAG argument is an error rather than a silent serve. A
 // typo (`identity migration`) that started a server would look like it worked
 // until somebody asked why the schema was still empty. Flags are left alone and
 // fall through to serve, because `-healthcheck` is handled above and a future

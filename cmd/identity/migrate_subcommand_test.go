@@ -9,7 +9,7 @@ package main
 //     service's migrate entrypoint by a path it already knows, with no
 //     override — `/app/bin/migrate` for identity — so the path is not a
 //     preference this repository can change unilaterally. The binary has to
-//     recognise it, and the only thing that differs between the two
+//     recognize it, and the only thing that differs between the two
 //     invocations is the name the process was started under.
 //  2. THAT THE IMAGE SHIPS IT. The runtime stage is distroless with no shell,
 //     so `/app/bin/migrate` cannot be a script, and building the image to prove

@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -29,7 +30,7 @@ func TestTraceHeaderIsAlwaysPresent(t *testing.T) {
 			t.Parallel()
 
 			rec := httptest.NewRecorder()
-			New(nil).ServeHTTP(rec, httptest.NewRequest(tt.method, tt.target, nil))
+			New(nil).ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), tt.method, tt.target, nil))
 
 			got := rec.Header().Get(TraceHeader)
 			if got == "" {
@@ -48,7 +49,7 @@ func TestInboundTraceIDIsReused(t *testing.T) {
 
 	const inbound = "0af7651916cd43dd8448eb211c80319c"
 
-	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/healthz", nil)
 	req.Header.Set(TraceHeader, inbound)
 
 	rec := httptest.NewRecorder()
@@ -81,7 +82,7 @@ func TestUnusableInboundTraceIDIsReplaced(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/healthz", nil)
 			req.Header.Set(TraceHeader, tt.give)
 
 			rec := httptest.NewRecorder()
@@ -108,7 +109,7 @@ func TestUnusableInboundTraceIDIsReplaced(t *testing.T) {
 func TestProblemTraceIDMatchesTheResponseHeader(t *testing.T) {
 	t.Parallel()
 
-	req := httptest.NewRequest(http.MethodGet, "/v1/me", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/me", nil)
 	req.Header.Set(TraceHeader, "0af7651916cd43dd8448eb211c80319c")
 
 	rec := httptest.NewRecorder()
@@ -150,7 +151,7 @@ func TestInboundTraceIDRejectsWhatItShould(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/healthz", nil)
 			req.Header.Set(TraceHeader, tt.give)
 
 			if got := inboundTraceID(req); got != tt.want {

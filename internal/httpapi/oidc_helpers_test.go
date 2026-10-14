@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -75,20 +76,20 @@ func mustParseID(t *testing.T, raw string) id.UUID {
 // newRequestWithBearer builds a request carrying a bearer token and no cookie,
 // for the calls where a session would change the answer.
 func newRequestWithBearer(method, target, token string) *http.Request {
-	req := httptest.NewRequest(method, target, nil)
+	req := httptest.NewRequestWithContext(context.Background(), method, target, nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	return req
 }
 
 // newRequestNoCookie builds a request with no credential at all.
 func newRequestNoCookie(method, target string) *http.Request {
-	return httptest.NewRequest(method, target, nil)
+	return httptest.NewRequestWithContext(context.Background(), method, target, nil)
 }
 
 // newRequestForm builds a urlencoded POST, which is what the login page and the
 // token endpoint both take.
 func newRequestForm(method, target string, form url.Values) *http.Request {
-	req := httptest.NewRequest(method, target, strings.NewReader(form.Encode()))
+	req := httptest.NewRequestWithContext(context.Background(), method, target, strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	return req
 }

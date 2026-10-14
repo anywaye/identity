@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -91,7 +92,7 @@ func serve(t *testing.T, handler http.Handler, method, target string, header htt
 	installProviderForTest(t, sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(fresh)))
 	installPropagationForTest()
 
-	req := httptest.NewRequest(method, target, nil)
+	req := httptest.NewRequestWithContext(context.Background(), method, target, nil)
 	for name, values := range header {
 		for _, value := range values {
 			req.Header.Add(name, value)
@@ -551,7 +552,7 @@ func TestAMalformedTraceparentStartsANewTraceAndIsNeverA4xx(t *testing.T) {
 			router, _ := recordingRouter(t)
 
 			rec := httptest.NewRecorder()
-			req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/healthz", nil)
 			req.Header.Set("traceparent", value)
 			router.ServeHTTP(rec, req)
 
@@ -594,7 +595,7 @@ func TestTelemetryIsNeverInTheReadinessPath(t *testing.T) {
 	handler, _ := recordingRouter(t)
 
 	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	handler.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/readyz", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("/readyz returned %d with no checks configured, want 200", rec.Code)
 	}

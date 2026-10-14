@@ -98,7 +98,7 @@ func TestTheRouteDeletesTheCallersOwnAccount(t *testing.T) {
 
 	svc := &fakeDeletion{}
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodDelete, "/v1/me", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "/v1/me", nil)
 	req.Header.Set("Authorization", "Bearer "+liveToken)
 	deletionRouter(t, svc).ServeHTTP(rec, req)
 
@@ -139,7 +139,7 @@ func TestTheRouteIsRefusedWithAConflictThatNamesTheAccount(t *testing.T) {
 
 	svc := &fakeDeletion{err: deletion.ErrSolelyOwnedAccounts}
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodDelete, "/v1/me", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "/v1/me", nil)
 	req.Header.Set("Authorization", "Bearer "+liveToken)
 	deletionRouter(t, svc).ServeHTTP(rec, req)
 
@@ -202,7 +202,7 @@ func TestAnUnexpectedFailureIsNotLeaked(t *testing.T) {
 	svc := &fakeDeletion{err: errors.New("deleting a user: ERROR: update or delete on table " +
 		"\"users\" violates foreign key constraint \"account_invitations_invited_by_fkey\"")}
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodDelete, "/v1/me", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "/v1/me", nil)
 	req.Header.Set("Authorization", "Bearer "+liveToken)
 	deletionRouter(t, svc).ServeHTTP(rec, req)
 
@@ -227,7 +227,7 @@ func TestAnAnonymousCallerGetsTheOne401AndNothingElse(t *testing.T) {
 
 	svc := &fakeDeletion{}
 	rec := httptest.NewRecorder()
-	deletionRouter(t, svc).ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/v1/me", nil))
+	deletionRouter(t, svc).ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "/v1/me", nil))
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
@@ -262,7 +262,7 @@ func TestTheDeletionIsIdempotentFromTheCallersPointOfView(t *testing.T) {
 	svc := &fakeDeletion{onDelete: func() { auth.authErr = authsvc.ErrUnauthenticated }}
 	rec := httptest.NewRecorder()
 
-	req := httptest.NewRequest(http.MethodDelete, "/v1/me", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "/v1/me", nil)
 	req.Header.Set("Authorization", "Bearer "+liveToken)
 	New(nil, WithAuth(auth), WithDeletion(svc), WithClock(deletionClock())).ServeHTTP(rec, req)
 	if rec.Code != http.StatusNoContent {
@@ -270,7 +270,7 @@ func TestTheDeletionIsIdempotentFromTheCallersPointOfView(t *testing.T) {
 	}
 
 	second := httptest.NewRecorder()
-	req2 := httptest.NewRequest(http.MethodDelete, "/v1/me", nil)
+	req2 := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "/v1/me", nil)
 	req2.Header.Set("Authorization", "Bearer "+liveToken)
 	New(nil, WithAuth(auth), WithDeletion(svc), WithClock(deletionClock())).ServeHTTP(second, req2)
 

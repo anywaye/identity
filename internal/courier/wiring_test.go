@@ -379,7 +379,7 @@ func TestTheResetLinkComesFromConfigurationAndNotFromARequest(t *testing.T) {
 		// that ignores it — which is what the assertion below proves, so the header
 		// has to actually be set for the assertion to be about anything.
 		attacker := "identity.attacker.example"
-		probe := httptest.NewRequest(http.MethodPost, "/v1/password-resets", nil)
+		probe := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/v1/password-resets", nil)
 		probe.Host = attacker
 		probe.Header.Set("X-Forwarded-Host", attacker)
 

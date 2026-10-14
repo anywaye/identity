@@ -860,7 +860,7 @@ func (f *matrixFixture) send(t *testing.T, endpoint matrixEndpoint, column actor
 		body = endpoint.body(f)
 	}
 
-	req := httptest.NewRequest(endpoint.method, endpoint.path(f.accountID, f.memberID, f.clientID, f.keyID, f.pendingInvitationID), strings.NewReader(body))
+	req := httptest.NewRequestWithContext(context.Background(), endpoint.method, endpoint.path(f.accountID, f.memberID, f.clientID, f.keyID, f.pendingInvitationID), strings.NewReader(body))
 	if body != "" {
 		req.Header.Set("Content-Type", "application/json")
 	}

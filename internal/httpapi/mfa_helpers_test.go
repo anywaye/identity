@@ -118,7 +118,7 @@ func sendWith(t *testing.T, h http.Handler, method, path, token, challenge, body
 	} else {
 		reader = strings.NewReader(body)
 	}
-	req := httptest.NewRequest(method, path, reader)
+	req := httptest.NewRequestWithContext(context.Background(), method, path, reader)
 	if body != "" {
 		req.Header.Set("Content-Type", "application/json")
 	}

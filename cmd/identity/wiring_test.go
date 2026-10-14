@@ -225,7 +225,7 @@ func serveBody(t *testing.T, a *app, method, target, body string, headers map[st
 	} else {
 		reader = strings.NewReader(body)
 	}
-	req := httptest.NewRequest(method, target, reader)
+	req := httptest.NewRequestWithContext(context.Background(), method, target, reader)
 	if body != "" {
 		req.Header.Set("Content-Type", "application/json")
 	}
