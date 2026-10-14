@@ -132,7 +132,7 @@ func TestTheCommittedGeneratedFileIsWhatThePinnedGeneratorProduces(t *testing.T)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "go", "run",
-		generatorModule+"@"+generatorVersion,
+		generatorModule,
 		"--config", configPath,
 		"-generate", "models,client",
 		filepath.Join(root, "openapi", "v1.yaml"),
@@ -148,7 +148,9 @@ func TestTheCommittedGeneratedFileIsWhatThePinnedGeneratorProduces(t *testing.T)
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("the pinned generator (%s@%s) did not run: %v\n"+
 			"This test cannot pass by skipping: a drift gate that does not run is not a gate.\n"+
-			"stdout:\n%s\nstderr:\n%s",
+			"stdout:\n%s\nstderr:\n%s\n"+
+			"The generator resolves inside this module (pinned through tools.go); "+
+			"on a fresh runner `go mod download` must have filled the cache.",
 			generatorModule, generatorVersion, err, stdout.String(), stderr.String())
 	}
 
@@ -268,7 +270,7 @@ func TestTheGateFailsWhenTheCommittedFileIsWrong(t *testing.T) {
 // TestThePinIsTheOneTheGeneratorDirectiveUses keeps the duplicated pin honest.
 //
 // This is the test that makes the duplication above safe. If somebody moves the
-// generator to v2.9.0 in generate.go and forgets this file, the gate would keep
+// generator to v2.9.0 in go.mod and forgets this file, the gate would keep
 // checking v2.8.0 forever and report a confident, wrong answer — worse than no
 // gate, because it is green.
 func TestThePinIsTheOneTheGeneratorDirectiveUses(t *testing.T) {
@@ -279,29 +281,53 @@ func TestThePinIsTheOneTheGeneratorDirectiveUses(t *testing.T) {
 		t.Fatalf("reading client/generate.go: %v", err)
 	}
 
-	// The module is captured on its own and the trailing flags are ignored, rather
-	// than anchoring to end of line: the directive carries `--config` and
-	// `-generate` after the module, and a regex that demanded end-of-line would
-	// silently stop matching the day anybody added a flag — which would fail this
-	// test with "carries no line", a message that points at the wrong thing.
-	directive := regexp.MustCompile(`(?m)^//go:generate\s+go run\s+(\S+@v[0-9][^\s]*)\s`)
+	// The directive must NOT carry a version: the generator resolves inside this
+	// module (pinned through tools.go) rather than in a throwaway module context.
+	// A `//go:generate go run <module>@<version>` ignores this module's go.mod,
+	// so it cannot be moved by `go get` — which is exactly why it also cannot
+	// run on a fresh CI runner whose cache never saw it.
+	if regexp.MustCompile(`(?m)^//go:generate\s+go run\s+\S+@v[0-9]`).Match(raw) {
+		t.Fatalf("client/generate.go's //go:generate line pins a version with @v — " +
+			"it must run as `go run <module>` with no @<version>, so the tool resolves " +
+			"inside this module (whose graph `go mod tidy` recorded through tools.go " +
+			"and `go mod download` fills).")
+	}
+
+	directive := regexp.MustCompile(`(?m)^//go:generate\s+go run\s+(\S+)\s`)
 	match := directive.FindSubmatch(raw)
 	if match == nil {
-		t.Fatalf("client/generate.go carries no `//go:generate go run <module>@<version>` line.\n" +
+		t.Fatalf("client/generate.go carries no `//go:generate go run <module>` line.\n" +
 			"Without one there is no generation wiring, and this package's " +
 			"generated file cannot be reproduced at all.")
 	}
 
-	gotModule, gotVersion, _ := strings.Cut(string(match[1]), "@")
+	gotModule := string(match[1])
 	if gotModule != generatorModule {
 		t.Errorf("client/generate.go generates from %q and this gate checks %q.\n"+
 			"The gate would verify a file the documented command does not produce.",
 			gotModule, generatorModule)
 	}
+
+	// The version lives in go.mod, not on the generate line. Read it there.
+	// go.mod records the MODULE (github.com/oapi-codegen/oapi-codegen/v2), not
+	// the cmd subpackage, across the two requires (direct via tools.go, runtime
+	// via generated code).
+	modRaw, err := os.ReadFile(filepath.Join(root, "go.mod"))
+	if err != nil {
+		t.Fatalf("reading go.mod: %v", err)
+	}
+	generatorMod := "github.com/oapi-codegen/oapi-codegen/v2"
+	wantModuleVersion := regexp.MustCompile(`(?m)^\s*` + regexp.QuoteMeta(generatorMod) + `\s+(v[^\s]+)`).FindSubmatch(modRaw)
+	if wantModuleVersion == nil {
+		t.Fatalf("go.mod carries no require for %q, so the generator version is unknown.\n"+
+			"Restore tools.go's blank import and `go mod tidy` rather than typing a version on the generate line.",
+			generatorMod)
+	}
+	gotVersion := string(wantModuleVersion[1])
 	if gotVersion != generatorVersion {
-		t.Errorf("client/generate.go pins the generator at %q and this gate runs %q.\n"+
-			"Raise both in the same commit: the `//go:generate` line is what a developer "+
-			"runs, and generatorVersion is what proves the committed file matches it. "+
+		t.Errorf("go.mod pins the generator at %q and this gate runs %q.\n"+
+			"Raise both in the same commit: go.mod (through tools.go) is what a developer's `go generate` resolves, "+
+			"and generatorVersion is what proves the committed file matches it. "+
 			"A gate that checked a version nobody generates with would be a green lie.",
 			gotVersion, generatorVersion)
 	}
