@@ -187,40 +187,31 @@ jobs:
         # one pull serve both.
         image: postgres:17-alpine
         env:
-          # THESE CREDENTIALS NO LONGER MATCH docker-compose.yml, and the comment
-          # that used to claim they did was deleted with the claim.
+          # THE BOOTSTRAP ROLE IS `postgres`, AND THE SUITE NEVER CONNECTS AS
+          # IT. The official image makes POSTGRES_USER the cluster's bootstrap
+          # superuser, and a superuser bypasses row-level security even with
+          # FORCE — so a suite connected as that role proves nothing about the
+          # tenancy boundary, and bin/provision-testdb refuses to run against
+          # one (m156/m158). This job used to set POSTGRES_USER=identity here,
+          # and the gate died in exactly that refusal: goose, the rollback
+          # check and every earlier step green, bin/prime red with no suite.log
+          # (CI run 38578538549).
           #
-          # Since packet identity-27 identity joins kit's SHARED development
-          # cluster, where the role is provisioned by `KIT_POSTGRES_DATABASES` and
-          # takes the CLUSTER's password (`${KIT_POSTGRES_PASSWORD:-cafaye}`) —
-          # every role in a dev cluster takes one password by design, because
-          # isolation there is by privilege and never by secret. So the local DSN
-          # is `identity:cafaye@...` and the one below is `identity:identity@...`.
+          # So the container bootstraps the default superuser and nothing else:
+          # no suite database, no suite role. The step below provisions those —
+          # `identity` and `identity_app` as NOSUPERUSER login roles, and the
+          # `identity` database they own — over TEST_DATABASE_ADMIN_URL, before
+          # `goose up`. The password is literal and test-only, the same way the
+          # suite DSN below is: this container is scoped to one job and carries
+          # no second database to isolate anything from.
           #
-          # They diverge HERE ON PURPOSE and the divergence is safe, in three
-          # specific ways rather than as a matter of taste:
-          #
-          #   1. This is a service container scoped to one job. There is no shared
-          #      cluster on a runner and no second service to be isolated from, so
-          #      the per-role CONNECTION LIMIT that forced
-          #      `KIT_POSTGRES_ROLE_CONNECTIONS: 50` locally does not exist here —
-          #      and that limit is the one thing that would otherwise make this
-          #      file's `POSTGRES_USER` dangerous.
-          #   2. `POSTGRES_USER: identity` here is SAFE for the same reason it is
-          #      not safe in docker-compose.yml: on a single-database container the
-          #      superuser has nothing to escalate to. It becomes a breach the
-          #      moment a second service's database exists on the server.
-          #   3. It is test-only and the password is literal in a public
-          #      repository, so it is a throwaway value by construction rather
-          #      than by promise.
-          #
-          # If this container is ever pointed at a shared server, rule 2 stops
-          # holding and this block becomes the same defect docker-compose.yml
-          # documents at length. The image reference below and the reasoning for
-          # it are unchanged by any of this.
-          POSTGRES_USER: identity
-          POSTGRES_PASSWORD: identity
-          POSTGRES_DB: identity
+          # If this container is ever pointed at a shared server, the reasoning
+          # above stops holding: a superuser password in a shared cluster is a
+          # breach, not a throwaway. The image reference below and the reasoning
+          # for it are unchanged by any of this.
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
         ports:
           - 5432:5432
         # What makes the tier deterministic rather than lucky: GitHub holds the
@@ -230,7 +221,7 @@ jobs:
         # This is a health check, not a sleep: nothing in this file waits a fixed
         # number of seconds for anything.
         options: >-
-          --health-cmd "pg_isready -U identity -d identity"
+          --health-cmd "pg_isready -U postgres -d postgres"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 20
@@ -243,6 +234,13 @@ jobs:
       # because this is a service container on the runner's own network.
       TEST_DATABASE_URL: postgres://identity:identity@localhost:5432/identity?sslmode=disable
       DATABASE_URL: postgres://identity:identity@localhost:5432/identity?sslmode=disable
+      # The container's bootstrap superuser, for provisioning only: creating the
+      # NOSUPERUSER suite roles and database in the step below, the scratch
+      # databases bin/rollback builds, and bin/provision-testdb's admin
+      # connection inside bin/prime. The suite connects as `identity` above and
+      # must never hold this URL's privileges — a suite on a superuser bypasses
+      # row-level security even with FORCE, which is why the gate refuses one.
+      TEST_DATABASE_ADMIN_URL: postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable
       # The coverage floor, enforced below. The same number is in
       # `coverage-exclusions` and is passed to kit above; all three are checked
       # against each other by `TestTheCoverageFloorInTheDeclarationIsTheFloorsFloor`
@@ -418,27 +416,30 @@ jobs:
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
       # ---------------------------------------------------------------------
-      # THE ROLE THE MIGRATIONS POLICY AGAINST, PROVISIONED BEFORE THEY RUN.
+      # THE SUITE ROLES, PROVISIONED AS NOSUPERUSER BEFORE THE MIGRATIONS RUN.
       # ---------------------------------------------------------------------
-      - name: provision the role the migrations protect tables for
-        # THIS STEP WAS MISSING, AND ITS ABSENCE IS WHY `apply the migrations`
-        # BELOW FAILED ON THIS WORKFLOW. `migrations/00016_account_isolation.sql`
-        # ends its Up with `select cafaye.protect_table('account_users')`, and
-        # `protect_table` defaults its login role to `current_user || '_app'`
-        # and REFUSES to create a policy for a role that cannot log in. So the
-        # migration asks for a role named `identity_app`.
+      - name: provision the NOSUPERUSER suite roles the gate refuses to run without
+        # THIS STEP WAS THE SUPERUSER, AND ITS ABSENCE OF A DISTINCTION IS WHY
+        # `bin/prime` DIED IN CI. The service container above bootstraps exactly
+        # one role — the superuser `postgres` — and no database the suite may
+        # use. The suite connects as `identity`, and bin/provision-testdb REFUSES
+        # a superuser or BYPASSRLS owner (m156/m158): either attribute bypasses
+        # row-level security even with FORCE, so a suite run as such a role
+        # proves nothing about the tenancy boundary. The previous shape of this
+        # job set POSTGRES_USER=identity, which made `identity` the bootstrap
+        # superuser, and the gate died in that refusal with goose, the rollback
+        # check and every earlier step green and no suite.log written.
         #
-        # `docker compose up` has always created it — kit's cluster init reads
-        # `KIT_POSTGRES_DATABASES` and provisions `<service>_app` beside each
-        # `<service>` — which is why nobody noticed: on a laptop the migration
-        # takes the path it takes in production. THIS JOB RUNS A PLAIN
-        # `postgres:17-alpine` SERVICE CONTAINER, WHICH HAS NO INIT SCRIPT AND NO
-        # `KIT_POSTGRES_DATABASES`, so the only role on the cluster is the one
-        # `POSTGRES_USER` made. Measured, not predicted: applying these
-        # migrations to a cluster built exactly like this one fails at 00016 with
-        #
-        #     ERROR: cafaye.protect_table(account_users, identity_app):
-        #            identity_app is not a LOGIN role on this cluster.
+        # So this step creates, as the container's superuser over
+        # TEST_DATABASE_ADMIN_URL, the two login roles and the database the
+        # suite needs — `identity` and `identity_app`, both NOSUPERUSER (a plain
+        # CREATE ROLE grants neither SUPERUSER nor BYPASSRLS), and the
+        # `identity` database they own — BEFORE `goose up` below.
+        # `migrations/00016_account_isolation.sql` ends its Up with
+        # `select cafaye.protect_table('account_users')`, and `protect_table`
+        # defaults its login role to `current_user || '_app'` and REFUSES to
+        # create a policy for a role that cannot log in, so the `_app` role has
+        # to exist before the migrations run.
         #
         # The role is ENVIRONMENT, NOT SCHEMA, so it is provisioned here, in
         # docker-compose.yml, by kit's cluster init and in bin/rollback — never
@@ -447,17 +448,25 @@ jobs:
         # purpose, and would leave a role no `goose down` could remove.
         #
         # `TestTheLoginRoleTheMigrationsProtectTablesForIsProvisionedBeforeTheyAreApplied`
-        # derives the name from the service container's `POSTGRES_USER` rather
-        # than repeating it, so this block and the migrations cannot drift apart
-        # unnoticed. The name is written out here because a service container's
-        # environment is NOT this job's environment — `$POSTGRES_USER` inside a
-        # `run:` block is the empty string, and the first draft of this step used
-        # it, which would have created a role called `_app`.
+        # derives the name from the suite DSN's user rather than repeating it,
+        # so this block and the migrations cannot drift apart unnoticed. The
+        # name is written out here because a service container's environment is
+        # NOT this job's environment — `$POSTGRES_USER` inside a `run:` block
+        # is the container's bootstrap superuser, not the suite role, and the
+        # first draft of the earlier step that used it would have created a role
+        # called `_app`.
+        #
+        # Straight-line CREATEs, and that is sound because the container is
+        # fresh on every run: there is no previous run's role to collide with,
+        # and a collision would fail loudly rather than provision quietly.
         run: |
           set -euo pipefail
-          psql "$DATABASE_URL" -X -q --set ON_ERROR_STOP=1 --no-psqlrc \
+          psql "$TEST_DATABASE_ADMIN_URL" -X -q --set ON_ERROR_STOP=1 --no-psqlrc \
+            -c "create role identity login password 'identity'" \
             -c "create role identity_app login password 'identity'"
-          echo "provisioned identity_app: the role 00016's policies are written for"
+          psql "$TEST_DATABASE_ADMIN_URL" -X -q --set ON_ERROR_STOP=1 --no-psqlrc \
+            -c "create database identity owner identity"
+          echo "provisioned identity and identity_app as NOSUPERUSER login roles, and the identity database they own"
 
       - name: apply the migrations
         # The step whose position in this file is the point. Without it the suite
@@ -481,9 +490,15 @@ jobs:
         # applied, is a red that names the migration. `IDENTITY_ROLLBACK_REQUIRED=1`
         # is redundant on a job that has just handed this step a URL, and
         # deliberate: it means this step can never exit 0 by standing down.
+        #
+        # The URL is the container's superuser, not the suite DSN: the check
+        # creates and drops scratch databases and a `<caller>_app` login role,
+        # which needs CREATEDB and CREATEROLE the NOSUPERUSER suite role does
+        # not hold. The caller-derived role is then `postgres_app`, which the
+        # script provisions itself — the same way it provisions any caller's.
         run: |
           set -euo pipefail
-          IDENTITY_ROLLBACK_URL="$DATABASE_URL" IDENTITY_ROLLBACK_REQUIRED=1 ./bin/rollback
+          IDENTITY_ROLLBACK_URL="$TEST_DATABASE_ADMIN_URL" IDENTITY_ROLLBACK_REQUIRED=1 ./bin/rollback
 
       # ---------------------------------------------------------------------
       # THE GATE. The command a developer runs, unmodified.

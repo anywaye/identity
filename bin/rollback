@@ -102,15 +102,18 @@ DB_URL="$SCRATCH"
 # That is not a rollback finding. It is the harness wearing a cluster's clothes:
 # the role belongs to the ENVIRONMENT, which is why no migration creates it —
 # `KIT_POSTGRES_DATABASES: identity` provisions it, docker-compose.yml gets it
-# from that, and .github/workflows/ci.yml now provisions it in one step of its
-# own. So this file provisions it too, and does NOT pretend to own the service
-# role: the first draft created `identity` fresh as a superuser, which meant
-# that on the very cluster where `identity` already existed and owned the
-# service database, the drop in the pre-clean failed (a role cannot be dropped
-# while it owns anything), the create then failed, and the harness refused to
-# run. Connecting AS the caller and creating only `<caller>_app` is the same
-# topology CI has — superuser `identity`, login `identity_app`, owner
-# `identity` — and it cannot collide with a role that is already there.
+# from that, and .github/workflows/ci.yml now provisions `identity` and
+# `identity_app` as NOSUPERUSER roles in a step of its own (the container
+# bootstraps only the superuser `postgres`, which is also who this script
+# connects as in CI — see the rollback step). So this file provisions it too,
+# and does NOT pretend to own the service role: the first draft created
+# `identity` fresh as a superuser, which meant that on the very cluster where
+# `identity` already existed and owned the service database, the drop in the
+# pre-clean failed (a role cannot be dropped while it owns anything), the
+# create then failed, and the harness refused to run. Connecting AS the caller
+# and creating only `<caller>_app` is the same topology CI has — a superuser
+# caller, a login `<caller>_app` — and it cannot collide with a role that is
+# already there.
 #
 # IF THE ROLE ALREADY EXISTS it is left alone and NOT dropped on the way out.
 # On CI it was created by the step above and something else may be using it; a
