@@ -9,6 +9,7 @@ import (
 	"github.com/cafaye/identity/internal/outbox"
 	"github.com/cafaye/identity/internal/platform/db"
 	"github.com/cafaye/identity/internal/platform/dbtest"
+	"github.com/cafaye/identity/internal/platform/id"
 	"github.com/cafaye/identity/internal/tenancy"
 	"github.com/cafaye/identity/internal/users"
 )
@@ -411,19 +412,35 @@ func TestProvisionUnderTheRealPolicies(t *testing.T) {
 // TestTwoPeopleWithTheSameLocalPartBothRegisterUnderTheRealPolicies is the
 // personal-slug uniqueness under the real policies: two people whose email
 // local parts are the same must both be able to register.
+//
+// It does NOT use dbtest.Reset and does NOT count all personal accounts
+// globally. Both would be sensitive to any concurrent insertion by another
+// package sharing the same public DB (Pool) — a truncation race with Reset or
+// a parallel insertion would appear as an extra row and mis-diagnose as a slug
+// collision (3 > 2 while a blocked insert cannot produce more rows). The
+// property under test is that the two registrations in THIS test both succeed
+// and are distinct, so the count is scoped to the accounts this test created.
 func TestTwoPeopleWithTheSameLocalPartBothRegisterUnderTheRealPolicies(t *testing.T) {
-	dbtest.Reset(t)
 	h := newRealAccountHarness(t)
 	runner := tenancy.TxRunner{TxRunner: db.TxRunner{Pool: h.pool}}
 
+	var createdIDs []id.UUID
+	var wantUIDs []id.UUID
+	var wantSlugs []string
+	var wantNames []string
 	for i := 0; i < 2; i++ {
 		email := "kaka-" + dbtest.UniqueEmail(t)[len("kaka-"):]
 		uid := addUserWithEmail(t, h.q, email)
+		wantUIDs = append(wantUIDs, uid)
+		wantSlugs = append(wantSlugs, PersonalSlug(email, uid))
+		wantNames = append(wantNames, PersonalName(email))
+		var created Account
 		if err := runner.Do(t.Context(), func(ctx context.Context, tx db.Querier) error {
-			created, err := h.svc.Provision(ctx, tx, uid, email)
+			c, err := h.svc.Provision(ctx, tx, uid, email)
 			if err != nil {
 				return err
 			}
+			created = c
 			// The same reason TestProvisionUnderTheRealPolicies gives: the
 			// membership write is account-scoped and the account is new.
 			if err := tenancy.BeginAccount(ctx, tx, created.ID); err != nil {
@@ -434,13 +451,68 @@ func TestTwoPeopleWithTheSameLocalPartBothRegisterUnderTheRealPolicies(t *testin
 		}); err != nil {
 			t.Fatalf("provisioning a personal account for %s: %v", email, err)
 		}
+		createdIDs = append(createdIDs, created.ID)
+		// The derivation itself: the stored slug is PersonalSlug(email, userID)
+		// (line ~402 of the same file asserts the derivation in
+		// TestProvisionUnderTheRealPolicies). If this fails the slug was
+		// derived from the wrong argument or on the wrong path, and a collision
+		// would be the wrong diagnosis.
+		if created.Slug != wantSlugs[i] {
+			t.Errorf("provisioned slug %q, want PersonalSlug %q for user %s", created.Slug, wantSlugs[i], uid)
+		}
+		if created.Name != wantNames[i] {
+			t.Errorf("provisioned name %q, want PersonalName %q", created.Name, wantNames[i])
+		}
+		if !created.Personal {
+			t.Errorf("provisioned account %s is not marked personal", created.ID)
+		}
 	}
 
+	// The two slugs must be distinct even though the local parts share the
+	// same "kaka-" prefix — the userID suffix is what separates them.
+	if wantSlugs[0] == wantSlugs[1] {
+		t.Fatalf("two users with the same local part produced the same slug %q — PersonalSlug is not unique per user", wantSlugs[0])
+	}
+
+	// Count only the accounts this test created, so a concurrent insertion by
+	// another package (or a leaked row from TestProvisionUnderTheRealPolicies,
+	// which also uses Pool and leaves one personal account) cannot appear as a
+	// third row. The previous global `WHERE personal` was the isolation bug.
 	var personal int
-	if err := h.q.QueryRow(t.Context(), `SELECT count(*) FROM accounts WHERE personal`).Scan(&personal); err != nil {
+	if err := h.q.QueryRow(t.Context(), `SELECT count(*) FROM accounts WHERE personal AND id = ANY($1)`, createdIDs).Scan(&personal); err != nil {
 		t.Fatalf("counting: %v", err)
 	}
 	if personal != 2 {
-		t.Errorf("%d personal accounts exist, want 2 — the second registration collided on the slug", personal)
+		// Dump the rows at the point of failure, not just the count, as the
+		// brief requires — the shape names the origin (duplicate slug for same
+		// user is (a), row with another user's id is (b), numeric suffix is a
+		// retry leaving predecessor behind).
+		rows, _ := h.q.Query(t.Context(), `SELECT id, slug, personal, created_at FROM accounts WHERE id = ANY($1) ORDER BY created_at`, createdIDs)
+		if rows != nil {
+			defer rows.Close()
+			for rows.Next() {
+				var id, slug string
+				var pers bool
+				var at string
+				_ = rows.Scan(&id, &slug, &pers, &at)
+				t.Logf("personal row: id=%s slug=%q personal=%v created_at=%s", id, slug, pers, at)
+			}
+		}
+		t.Errorf("%d personal accounts exist among the 2 just created, want 2 — the second registration collided on the slug", personal)
+	}
+
+	// Also verify the memberships exist for the two owners (the other half
+	// of "both register") — through the service so the RLS policy is
+	// exercised (a raw `SELECT count(*) FROM account_users WHERE ...` as
+	// the app role with no identity reads zero rows).
+	for i := range createdIDs {
+		m, err := h.svc.Member(t.Context(), createdIDs[i], wantUIDs[i])
+		if err != nil {
+			t.Errorf("owner membership for account %s user %s: %v", createdIDs[i], wantUIDs[i], err)
+			continue
+		}
+		if m.Role != RoleOwner {
+			t.Errorf("account %s user %s role = %q, want %q", createdIDs[i], wantUIDs[i], m.Role, RoleOwner)
+		}
 	}
 }
