@@ -181,7 +181,7 @@ func TestNATSPublisherPublishesTheEnvelopeOnTheSubjectOfTheType(t *testing.T) {
 		t.Fatalf("published_at = %v before the pass, want NULL", *state.published)
 	}
 
-	pub, err := NewNATSPublisher(nc.ConnectedUrl())
+	pub, err := NewNATSPublisher(nc.ConnectedUrl(), discardLogger())
 	if err != nil {
 		t.Fatalf("NewNATSPublisher: %v", err)
 	}
@@ -281,7 +281,7 @@ func TestNATSPublisherFailureLeavesTheRowClaimable(t *testing.T) {
 		t.Fatalf("Append: %v", err)
 	}
 
-	pub, err := NewNATSPublisher(nc.ConnectedUrl())
+	pub, err := NewNATSPublisher(nc.ConnectedUrl(), discardLogger())
 	if err != nil {
 		t.Fatalf("NewNATSPublisher: %v", err)
 	}
@@ -337,7 +337,7 @@ func TestNATSPublisherRefusalLeavesTheRowClaimable(t *testing.T) {
 		t.Fatalf("Append: %v", err)
 	}
 
-	pub, err := NewNATSPublisher(nc.ConnectedUrl())
+	pub, err := NewNATSPublisher(nc.ConnectedUrl(), discardLogger())
 	if err != nil {
 		t.Fatalf("NewNATSPublisher: %v", err)
 	}
@@ -380,7 +380,7 @@ func TestNATSPublisherADuplicateCarriesTheSameEnvelopeID(t *testing.T) {
 		t.Fatalf("Append: %v", err)
 	}
 
-	pub, err := NewNATSPublisher(nc.ConnectedUrl())
+	pub, err := NewNATSPublisher(nc.ConnectedUrl(), discardLogger())
 	if err != nil {
 		t.Fatalf("NewNATSPublisher: %v", err)
 	}
@@ -447,7 +447,7 @@ func TestNewNATSPublisherRefusesAnUnparseableURL(t *testing.T) {
 	// The control character is what makes url.Parse fail; an unknown scheme
 	// would be dialed and refused at the TCP layer, which RetryOnFailedConnect
 	// deliberately swallows.
-	if _, err := NewNATSPublisher("nats://\x7finvalid"); err == nil {
+	if _, err := NewNATSPublisher("nats://\x7finvalid", discardLogger()); err == nil {
 		t.Error("NewNATSPublisher accepted an unparseable URL, want a refusal")
 	}
 }

@@ -600,7 +600,7 @@ func newApp(ctx context.Context, cfg config.Config, logger *slog.Logger) (*app, 
 	// accumulation as the no-broker case, and the boot log says which of the
 	// two it is.
 	if cfg.NATSEnabled() && events != nil {
-		publisher, err := outbox.NewNATSPublisher(cfg.NATSURL)
+		publisher, err := outbox.NewNATSPublisher(cfg.NATSURL, logger)
 		if err != nil {
 			return nil, fmt.Errorf("building the NATS publisher: %w", err)
 		}

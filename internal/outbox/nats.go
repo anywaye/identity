@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -100,13 +101,47 @@ type NATSPublisher struct {
 // them. Refusing to boot without a bus would couple the auth surface to the
 // bus's availability, turning an event delay into an authentication outage.
 //
+// nats.go reconnects a dropped connection by default — but only within its
+// reconnect budget, which defaults to 60 attempts at a 2-second wait: about
+// two minutes (60 × 2s = 120s). When the budget is exhausted the client
+// closes the connection, and `nats: connection closed` is what every later
+// publish sees. It is terminal. That budget contradicts the paragraph above,
+// which is the reason this is a defect rather than a tuning question: a
+// durable outbox exists so the broker can be away for as long as it likes; a
+// two-minute budget means it can be away for two minutes. MaxReconnects(-1)
+// is nats.go's "never give up", and it is what that paragraph requires — a
+// publisher whose durable store is the table must not have a deadline on the
+// broker's return.
+//
+// The connection state is said once. The WARN per failed publish is right —
+// it names the row and the error — and what was missing is the one line that
+// says the connection closed and will be retried, so an operator reading the
+// log can tell "the broker is away" from "this pod is broken". A
+// DisconnectErrHandler/ClosedHandler pair is where that belongs; a line per
+// retry is how a real defect gets buried, so there is no ReconnectErrHandler
+// and no per-publish log here.
+//
 // What this DOES refuse is a url that does not parse: a typo is a deployment
 // that believes it has a bus and does not, and that belongs at boot where an
 // operator reads it, not at the first event where nobody does.
-func NewNATSPublisher(url string) (*NATSPublisher, error) {
+func NewNATSPublisher(url string, logger *slog.Logger) (*NATSPublisher, error) {
+	if logger == nil {
+		logger = slog.New(slog.DiscardHandler)
+	}
 	nc, err := nats.Connect(url,
 		nats.RetryOnFailedConnect(true),
 		nats.Timeout(DefaultNATSConnectTimeout),
+		nats.MaxReconnects(-1),
+		nats.DisconnectErrHandler(func(_ *nats.Conn, err error) {
+			logger.Warn("nats connection disconnected; will retry", "error", err)
+		}),
+		nats.ClosedHandler(func(c *nats.Conn) {
+			if err := c.LastError(); err != nil {
+				logger.Warn("nats connection closed", "error", err)
+			} else {
+				logger.Info("nats connection closed")
+			}
+		}),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("outbox: connecting to the NATS broker: %w", err)
