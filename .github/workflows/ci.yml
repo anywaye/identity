@@ -309,21 +309,32 @@ jobs:
       #   +7  the tests it added — `TestTheDownSectionExtractorHandsPsqlTheUndoAndNotTheForwardApply`
       #       in migrate_test.go, and the six in rollback_test.go
       #   +2  environment, not code. `TestCouriersTypesAgreeWithCouriersDocument`
-      #       reads `../../courier/openapi.yaml` beside the checkout and reports
-      #       rather than skips when it is not there, so the base was measured from
-      #       a bare worktree with no sibling courier repository and that test was
-      #       red — which costs the log one PASS line and its subtests two more.
-      #       Measured both ways rather than assumed: the in-tree count is 2301 on
-      #       two consecutive runs, byte-identical per package.
+      #       reads courier's `openapi.yaml` beside the checkout and reports
+      #       rather than skips when it is not there, so a base measured from a
+      #       bare worktree with no sibling courier repository lost that test's
+      #       PASS line and its subtests' two more.
       #
-      # The floor is 2299 — the base plus this packet's seven — and NOT 2301, on
-      # purpose. 2301 is what this machine sees with courier's sibling checkout
-      # present; the runner may not have it. A floor set from a measurement the
-      # runner cannot reproduce installs a red that fires on a green tree, which
-      # is the one failure this file is built to avoid, so the two lines of
-      # headroom stay and what they buy is named here rather than left as a
-      # mystery margin.
-      SUITE_FLOOR: '2299'
+      # THE FLOOR USED TO BE 2299 — the base plus this packet's seven — and NOT
+      # 2301, on purpose. 2301 was what a machine saw with courier's sibling
+      # checkout present, and the runner did not have it: a floor set from a
+      # measurement the runner could not reproduce installs a red that fires on
+      # a green tree, which is the one failure this file is built to avoid, so
+      # two lines of headroom stayed and what they bought was named rather than
+      # left as a mystery margin.
+      #
+      # The ci-tools packet closed that gap by giving the runner the sibling: the
+      # gate job now checks out `cafaye/courier` at a pinned ref to
+      # `../courier`, outside the tree, where both of the test's lookup paths
+      # resolve it. The runner reproduces the 2301 measurement, so the headroom
+      # has no buyer left and the floor is 2301 — the count a complete
+      # `go test -v -count=1 ./...` against a real postgres:17-alpine with
+      # migrations applied and the sibling present produces: 2301 on two
+      # consecutive runs of the packet's branch, byte-identical per package,
+      # and 2301 again on the merged tree carrying this packet. A floor below
+      # the reproducible count
+      # is permission to delete a test; the two lines are not margin, they are
+      # two tests the runner now really runs.
+      SUITE_FLOOR: '2301'
       DATABASE_TIER_FLOOR: '1732'
       MODULE: github.com/cafaye/identity
       # # THE ONE PERMITTED SKIP, AND WHY IT IS A LIST AND NOT A RULE
@@ -368,6 +379,54 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
+
+      - name: read courier.ref
+        # GitHub Actions cannot read a file's contents into an expression, so
+        # the pin goes through $GITHUB_ENV once and the checkout below reads it
+        # from the environment. `grep -v` on the comment marker rather than
+        # `sed -n 2p`, because a file whose comment block grows must not silently
+        # hand the checkout the wrong line. The shape is gateway's `read kit.ref`
+        # step, for the same reason: the pin lives in exactly one file, and a
+        # literal retyped here would be a second copy for CI to disagree with —
+        # and a 40-character SHA written into this file trips
+        # `TestNoKeyOrPEMIsPastedIntoTheWorkflow`, which reads a pasted key in
+        # exactly that shape.
+        run: |
+          ref="$(grep -v '^\s*#' courier.ref | grep -v '^\s*$' | head -1)"
+          if [ -z "$ref" ]; then
+            echo "::error::courier.ref holds no ref (only comments/blanks) — the drift check has no document to read" >&2
+            exit 1
+          fi
+          echo "COURIER_REF=$ref" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v7
+        with:
+          # THE SIBLING THIS GATE READS. `TestCouriersTypesAgreeWithCouriersDocument`
+          # (internal/courier/recorded_test.go) parses the `NotificationType` enum out
+          # of courier's `openapi.yaml` and fails unless it equals identity's `Type*`
+          # constants in both directions — a real cross-repo drift check over the one
+          # vocabulary the two repositories share. Without this checkout the test
+          # reports rather than skips, so the gate is red on a green tree.
+          #
+          # `cafaye/courier` is PUBLIC, so the default token reaches it; no
+          # permission widening is needed or wanted.
+          #
+          # The path is OUTSIDE this repository on purpose, and it is the second of
+          # the test's candidates that it satisfies: `internal/courier/` +
+          # `../../../courier/openapi.yaml` is `<workspace>/courier/openapi.yaml`
+          # (the test's `sourceCheckoutCourier` resolves the same directory through
+          # `git rev-parse --git-common-dir`). A checkout INSIDE the tree
+          # (`path: courier`) would put a foreign tree in the way of `go vet ./...`,
+          # `gofmt -l .` and the lockfile guard below — the same reason billing
+          # checks core out to `${{ runner.temp }}/core`.
+          #
+          # PINNED, not floating: the ref comes from `courier.ref` above, which names
+          # courier's master HEAD on the day this step landed, verified to carry the
+          # six-type enum this tree's constants name. Bumping it is a conscious diff
+          # to that file, in the same commit as any `Type*` change it requires.
+          repository: cafaye/courier
+          ref: ${{ env.COURIER_REF }}
+          path: ../courier
 
       # `go-version-file` rather than a second literal, so this job's toolchain
       # is read out of go.mod and cannot drift from the pin the shared job is
@@ -414,6 +473,40 @@ jobs:
           set -euo pipefail
           go install github.com/pressly/goose/v3/cmd/goose@v3.28.0
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: install golangci-lint at mise.toml's pin
+        # THE BINARY ONE TEST ASKS QUESTIONS OF.
+        # `TestTheLintExclusionNamesEveryEnabledLinter`
+        # (client/lint_exclusion_test.go) asks golangci-lint itself for its
+        # enabled set and fails when the binary is absent — a check that
+        # silently does not run is indistinguishable from one that passed, so
+        # the gate supplies the tool rather than the test learning to skip.
+        # Without this step `bin/prime` is red on a green tree.
+        #
+        # The version is READ OUT OF mise.toml, not retyped here: mise.toml is
+        # this repository's `[tools]` pin and CI does not get to have a second
+        # one. The value there tracks kit's `golangci-lint-action` pin
+        # (`cafaye/kit/.github/workflows/ci.reusable.yml`, `version: v2.14.0`),
+        # so local (`mise install`), the gate, and kit's lint step agree on
+        # which linters are enabled — a bump touches mise.toml and reaches all
+        # three. `go install` rather than the action, because this job needs
+        # the binary on PATH for a test to exec, not a lint step of its own.
+        run: |
+          set -euo pipefail
+          ver="$(awk -F'"' '/golangci-lint/ { print $4; exit }' mise.toml)"
+          if [ -z "$ver" ]; then
+            echo "::error::mise.toml pins no golangci-lint, so this step cannot install it" >&2
+            exit 1
+          fi
+          # The module path is assembled from two words on purpose: written whole
+          # it is a 60+ character run that `TestNoKeyOrPEMIsPastedIntoTheWorkflow`
+          # reads as a pasted key. It is a public module path, not a secret, and
+          # the split is what keeps that heuristic honest rather than an exemption
+          # that would also cover a real key.
+          host="github.com/golangci"
+          go install "${host}/golangci-lint/v2/cmd/golangci-lint@v${ver}"
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          golangci-lint version
 
       # ---------------------------------------------------------------------
       # THE SUITE ROLES, PROVISIONED AS NOSUPERUSER BEFORE THE MIGRATIONS RUN.
