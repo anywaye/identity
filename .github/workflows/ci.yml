@@ -322,19 +322,31 @@ jobs:
       # two lines of headroom stayed and what they bought was named rather than
       # left as a mystery margin.
       #
-      # The ci-tools packet closed that gap by giving the runner the sibling: the
-      # gate job now checks out `cafaye/courier` at a pinned ref to
-      # `../courier`, outside the tree, where both of the test's lookup paths
-      # resolve it. The runner reproduces the 2301 measurement, so the headroom
-      # has no buyer left and the floor is 2301 — the count a complete
-      # `go test -v -count=1 ./...` against a real postgres:17-alpine with
-      # migrations applied and the sibling present produces: 2301 on two
-      # consecutive runs of the packet's branch, byte-identical per package,
-      # and 2301 again on the merged tree carrying this packet. A floor below
-      # the reproducible count
-      # is permission to delete a test; the two lines are not margin, they are
-      # two tests the runner now really runs.
-      SUITE_FLOOR: '2301'
+      # The ci-tools packet closed that gap AND re-measured, because both numbers
+      # had gone stale in a second way: 2292/2301 were measured on the
+      # registry-identity-down-05 branch, and master has grown hundreds of tests
+      # since — NATS reconnect, the invitation mailer, the admin surface. A floor
+      # from another branch is the same defect as a floor from another packet,
+      # one merge later.
+      #
+      # The floor is 3441: a complete `go test -v -count=1 ./...` on the merged
+      # tree (master at 2c3cc07 plus this packet's two guard tests) against a real
+      # postgres:17-alpine with all 35 migrations applied, the courier sibling
+      # present, and golangci-lint 2.14.0 on PATH — the exact dependencies the
+      # gate job now supplies, so the runner reproduces this measurement. The
+      # database tier in the same run is 3027 against its floor of 1732, and the
+      # four skips are exactly the four names in E2E_SKIP_EXCEPTIONS.
+      #
+      # `-p 1` is in the command this was measured with, and deliberately so: the
+      # NATS reconnect test flakes under a parallel package load it does not
+      # control (red twice under `go test ./...`, green alone and green serial),
+      # and a floor must be measured from a run that is green for what it ran.
+      # `-p` serializes packages; it changes neither which tests run nor how many
+      # PASS lines they print — the same reason `-race` stays out of the
+      # measurement command. CI still runs the suite at default parallelism; a
+      # count is the same either way, and a floor measured from a run nobody can
+      # reproduce is a floor nobody can check.
+      SUITE_FLOOR: '3441'
       DATABASE_TIER_FLOOR: '1732'
       MODULE: github.com/cafaye/identity
       # # THE ONE PERMITTED SKIP, AND WHY IT IS A LIST AND NOT A RULE
