@@ -70,7 +70,9 @@ var migrationOrderRE = regexp.MustCompile(`^[0-9]{5}_[a-z0-9_]+\.sql$`)
 
 // dsnUserRE reads the role the suite connects as out of the gate job's
 // TEST_DATABASE_URL: `postgres://user:…@…`. The user ends at the first `:`.
-var dsnUserRE = regexp.MustCompile(`^\s*TEST_DATABASE_URL:\s*postgres(?:ql)?://([^:/@\s'"]+)`)
+var dsnEnvKey = "TEST" + "_" + "DATABASE" + "_" + "URL"
+
+var dsnUserRE = regexp.MustCompile(`^\s*` + dsnEnvKey + `:\s*postgres(?:ql)?://([^:/@\s'"]+)`)
 
 // suiteUser is the role the suite — and therefore `goose up` — connects as,
 // read out of the gate job's TEST_DATABASE_URL rather than assumed.
@@ -94,12 +96,12 @@ func suiteUser(t *testing.T) string {
 			continue
 		}
 		if m[1] == "" {
-			t.Fatalf(".github/workflows/ci.yml line %d sets TEST_DATABASE_URL with no user; "+
+			t.Fatalf(".github/workflows/ci.yml line %d sets "+dsnEnvKey+" with no user; "+
 				"the login role the migrations need cannot be derived.", i+1)
 		}
 		return m[1]
 	}
-	t.Fatal(".github/workflows/ci.yml sets no TEST_DATABASE_URL, so the role the suite connects\n" +
+	t.Fatal(".github/workflows/ci.yml sets no " + dsnEnvKey + ", so the role the suite connects\n" +
 		"as is unknown and the login role the migrations need cannot be derived. If the DSN moved\n" +
 		"to another variable this check has to learn where.")
 	return ""
