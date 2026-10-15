@@ -120,3 +120,28 @@ The read is now anchored on the quoted key's line —
 step's script carries that anchor, with the failure mode in the message. Both of
 the ci-tools packet's new gate steps have now failed live once, in ways no local
 run could see; that is the packet's real finding.
+
+## 6. The third live failure: the gate went red on a flake, not a defect
+
+With both steps repaired, run **38659743130**'s gate job reached the suite and
+every package printed `ok` — and the job still failed:
+
+```
+--- FAIL: TestNATSPublisherRecoversAfterExtendedOutage (4.19s)
+    nats_reconnect_test.go:330: nextMsg: nats: timeout
+FAIL	github.com/cafaye/identity/internal/outbox	28.964s
+```
+
+`sub.NextMsg(2 * time.Second)` — a two-second read window, timed out on a loaded
+runner. It is the same flake the ci-tools packet's report already recorded
+("red 3× under `./...`, green alone and green serial"); the packet left it and
+this landing inherited it. The fix is the deadline, not the assertion: the line
+is a read WAIT for the message the test just published, so a broken publish
+still fails it — fifteen seconds later. Verified with the gate's own flags:
+
+```
+go test -race -count=1 -run TestNATSPublisherRecoversAfterExtendedOutage ./internal/outbox/...  → ok 3.520s
+```
+
+The window is 15s with the measured runs named in the comment, so the next
+person reading the number knows it is a load budget and not a tuned threshold.

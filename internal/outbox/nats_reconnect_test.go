@@ -325,7 +325,16 @@ func TestNATSPublisherRecoversAfterExtendedOutage(t *testing.T) {
 	if err := pub.Publish(ctx, e4); err != nil {
 		t.Fatalf("Publish after reconnect: %v", err)
 	}
-	msg, err := sub.NextMsg(2 * time.Second)
+	// FIFTEEN SECONDS, not two, and the two was a measured flake rather than a
+	// tightness anyone wanted: this is a read WAIT, so the assertion ("the
+	// message is delivered on the new server") is unchanged — only the deadline
+	// a loaded machine gets. Two seconds timed out under the gate's real shape
+	// (the whole suite, -race, one package binary per CPU: run 38659743130's
+	// gate job failed here with `nextMsg: nats: timeout`), and the packet that
+	// added this test measured the same red three times locally under
+	// `go test ./...` while the test passed alone and passed serial. A broken
+	// publish still fails this line; it fails it fifteen seconds later.
+	msg, err := sub.NextMsg(15 * time.Second)
 	if err != nil {
 		t.Fatalf("nextMsg: %v", err)
 	}
