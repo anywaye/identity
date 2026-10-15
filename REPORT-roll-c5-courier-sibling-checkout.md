@@ -87,3 +87,36 @@ comment records the live `actions/checkout@v7` error this step exists because of
   packet that can also carry the job to green.
 - No other job's steps were touched; the two `uses: actions/checkout@v7` steps
   that check out THIS repository (inside the workspace) are fine as they are.
+
+## 5. The second live failure, and it was found the same way
+
+With the checkout repaired, the gate job ran further and died in the ci-tools
+packet's other new step — the linter install. Run **38659303106**, job `gate`:
+
+```
+##[error]mise.toml pins no golangci-lint, so this step cannot install it
+```
+
+on a mise.toml that pins `"golangci-lint" = "2.14.0"`. The step's read was
+
+```
+ver="$(awk -F'"' '/golangci-lint/ { print $4; exit }' mise.toml)"
+```
+
+and mise.toml's comment block above the pin NAMES golangci-lint — so the awk's
+first match was the comment line `# golangci-lint is the binary …`, which carries
+no double quote, `$4` came back empty, and the step refused on a file that pins
+the tool. Reproduced locally by running the program verbatim:
+
+```
+$ awk -F'"' '/golangci-lint/ { print "line:", $0; print "field4:[" $4 "]"; exit }' mise.toml
+line: # golangci-lint is the binary `TestTheLintExclusionNamesEveryEnabledLinter`
+field4:[]
+```
+
+The read is now anchored on the quoted key's line —
+`'/^"golangci-lint"/'`, which resolves `2.14.0` — and
+`TestTheGateInstallsTheLinterBeforeTheSuite` grew a fourth assertion that the
+step's script carries that anchor, with the failure mode in the message. Both of
+the ci-tools packet's new gate steps have now failed live once, in ways no local
+run could see; that is the packet's real finding.

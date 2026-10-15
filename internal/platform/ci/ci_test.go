@@ -478,6 +478,25 @@ func TestTheGateInstallsTheLinterBeforeTheSuite(t *testing.T) {
 		t.Error("mise.toml pins no golangci-lint, so the install step reads a version " +
 			"from a line that is not there and every run fails loudly instead of testing anything")
 	}
+
+	// THE READ MUST ANCHOR ON THE QUOTED KEY, and this was a live failure, not a
+	// hypothetical: the step's awk was `/golangci-lint/` unanchored, mise.toml's
+	// comment block above the pin names golangci-lint, so the awk read the
+	// comment line, `$4` came back empty, and the gate job refused before the
+	// suite ever ran (run 38659303106). `miseToolPin` above already requires the
+	// key to be written `"golangci-lint"`, so anchoring is always satisfiable.
+	anchored := false
+	for _, script := range stepScripts(t, "gate") {
+		if strings.Contains(script, `^"golangci-lint"`) {
+			anchored = true
+		}
+	}
+	if !anchored {
+		t.Error("the golangci-lint install step reads mise.toml with an unanchored pattern.\n" +
+			"mise.toml's comments name the tool, so an unanchored match reads a comment, " +
+			"the version comes back empty, and the step refuses with 'mise.toml pins no " +
+			"golangci-lint' on a file that pins one. Anchor on the quoted key's line.")
+	}
 }
 
 // miseToolPin is the version mise.toml names for one tool: the `"name" = "x"`

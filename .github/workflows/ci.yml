@@ -527,7 +527,12 @@ jobs:
         # the binary on PATH for a test to exec, not a lint step of its own.
         run: |
           set -euo pipefail
-          ver="$(awk -F'"' '/golangci-lint/ { print $4; exit }' mise.toml)"
+          # ANCHORED on the quoted key, and that is load-bearing: mise.toml's
+          # comment block above the pin NAMES golangci-lint, so an unanchored
+          # `/golangci-lint/` matches the comment first, `$4` is empty, and the
+          # step refuses with "mise.toml pins no golangci-lint" — the run of
+          # 38659303106 died exactly there. The guard test pins the anchor.
+          ver="$(awk -F'"' '/^"golangci-lint"/ { print $4; exit }' mise.toml)"
           if [ -z "$ver" ]; then
             echo "::error::mise.toml pins no golangci-lint, so this step cannot install it" >&2
             exit 1
