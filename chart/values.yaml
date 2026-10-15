@@ -107,15 +107,16 @@ service:
   port: 8080
 
 # How the service is reached from outside the cluster: an Ingress,
-# gated on `ingress.enabled`, which is FALSE by default.
+# gated on `ingress.enabled`.
 #
-# A chart that suddenly routes traffic is a defect: the substrate's
-# first sync happens before any operator has set a host, and an
-# Ingress with no host is a silent misroute — the class of defect
-# kit's /up healthcheck was. The services the fleet exposes (gateway,
-# parlor) turn the knob on in their values commit; identity and
-# courier stay internal — identity is reached through the gateway,
-# and its sign-in form is parlor's page, not a public surface.
+# identity's OIDC public face (discovery at
+# `/.well-known/openid-configuration` and `/.well-known/jwks.json`)
+# is served on its own host `auth.cafaye.com` — the issuer verifiers
+# fetch and cache. The app-API surface (`/v1/*`) stays internal and
+# is reached through the gateway (`api.cafaye.com`); the sign-in form
+# is parlor's page. `ingress.host` is the OIDC host, `ingress.path`
+# is `/` so discovery and JWKS answer at the issuer origin, with
+# `pathType: Prefix` matching gateway and parlor's own Ingress.
 #
 # The edge is Traefik, k3s's default ingress controller, with
 # cert-manager in front of it (DEPLOYMENT.md:28 — "Ingress + TLS |
@@ -126,9 +127,9 @@ service:
 # this block only NAMES it — the same "names the secret and never
 # contains a credential" discipline the imagePullSecrets block uses.
 ingress:
-  enabled: false
+  enabled: true
   className: traefik
-  host: ""
+  host: "auth.cafaye.com"
   clusterIssuer: letsencrypt-prod
   tls: true
   path: /
