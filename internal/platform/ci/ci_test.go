@@ -359,52 +359,57 @@ func TestTheLockfileGuardExists(t *testing.T) {
 }
 
 // TestTheGateChecksOutCourierBesideTheTree is the assertion the ci-tools packet
-// exists for.
+// exists for, reshaped after the packet's first landing failed the gate job.
 //
 // `TestCouriersTypesAgreeWithCouriersDocument` (internal/courier/recorded_test.go)
 // reads courier's `openapi.yaml` from beside the checkout and REPORTS rather than
 // skips when it is not there, so a gate job without the sibling checkout is red
-// on a green tree. The checkout is a `uses:` step rather than a `run:` block, so
-// it is read out of the raw lines rather than out of stepScripts: three claims,
-// each of which a later edit could quietly drop — the repository, the ref, and
-// the path outside the tree.
+// on a green tree. The checkout used to be a `uses: actions/checkout` step with
+// `path: ../courier`, and `actions/checkout@v7` REFUSES any `path` outside
+// `$GITHUB_WORKSPACE` — the run of 38657748356 died before the gate started:
+//
+//	##[error]Repository path '/home/runner/work/identity/courier' is not under
+//	'/home/runner/work/identity/identity'
+//
+// So the checkout is a `run:` step now, and the three claims this test exists to
+// hold are read where they now live — the repository and the pin in the step's
+// script, the beside-the-tree location in the step's `env:` (which stepScripts
+// does not carry; the raw lines do).
 func TestTheGateChecksOutCourierBesideTheTree(t *testing.T) {
 	lines := workflowLines(t)
 
-	repository := false
-	for _, line := range lines {
-		if strings.TrimSpace(line) == "repository: cafaye/courier" {
+	repository, pinned := false, false
+	for _, script := range stepScripts(t, "gate") {
+		if strings.Contains(script, "git clone") && strings.Contains(script, "cafaye/courier") {
 			repository = true
+			// The clone must land on the commit the pin names, not on
+			// whatever branch the clone happened to leave checked out.
+			if strings.Contains(script, "COURIER_REF") {
+				pinned = true
+			}
 		}
 	}
 	if !repository {
-		t.Error("no step checks out cafaye/courier, so " +
+		t.Error("no gate step clones cafaye/courier, so " +
 			"TestCouriersTypesAgreeWithCouriersDocument reports instead of checking")
 	}
-
-	pinned := false
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "ref:") && !strings.Contains(trimmed, "master") &&
-			!strings.Contains(trimmed, "main") && !strings.Contains(trimmed, "latest") {
-			pinned = true
-		}
-	}
 	if !pinned {
-		t.Error("the courier checkout names no pinned ref. A floating branch makes this " +
-			"gate depend on courier's unreleased work; the ref lives in courier.ref")
+		t.Error("the courier checkout does not check out $COURIER_REF — the pin read from " +
+			"courier.ref above. A clone left on its default branch makes this gate depend " +
+			"on courier's unreleased work")
 	}
 
 	beside := false
 	for _, line := range lines {
-		if strings.TrimSpace(line) == "path: ../courier" {
+		if strings.Contains(line, "COURIER_DIR:") && strings.Contains(line, "../courier") {
 			beside = true
 		}
 	}
 	if !beside {
-		t.Error("the courier checkout is not at path ../courier, outside the tree. " +
-			"Inside the tree it sits in the way of `go vet ./...`, `gofmt -l .` and " +
-			"the lockfile guard; outside it both of the test's lookup paths resolve it")
+		t.Error("the courier checkout is not directed beside the tree (COURIER_DIR ending " +
+			"../courier, outside the workspace). Inside the tree it sits in the way of " +
+			"`go vet ./...`, `gofmt -l .` and the lockfile guard; beside the tree " +
+			"sourceCheckoutCourier resolves it")
 	}
 
 	ref := courierRef(t)

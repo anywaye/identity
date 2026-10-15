@@ -423,34 +423,44 @@ jobs:
           fi
           echo "COURIER_REF=$ref" >> "$GITHUB_ENV"
 
-      - uses: actions/checkout@v7
-        with:
-          # THE SIBLING THIS GATE READS. `TestCouriersTypesAgreeWithCouriersDocument`
-          # (internal/courier/recorded_test.go) parses the `NotificationType` enum out
-          # of courier's `openapi.yaml` and fails unless it equals identity's `Type*`
-          # constants in both directions — a real cross-repo drift check over the one
-          # vocabulary the two repositories share. Without this checkout the test
-          # reports rather than skips, so the gate is red on a green tree.
-          #
-          # `cafaye/courier` is PUBLIC, so the default token reaches it; no
-          # permission widening is needed or wanted.
-          #
-          # The path is OUTSIDE this repository on purpose, and it is the second of
-          # the test's candidates that it satisfies: `internal/courier/` +
-          # `../../../courier/openapi.yaml` is `<workspace>/courier/openapi.yaml`
-          # (the test's `sourceCheckoutCourier` resolves the same directory through
-          # `git rev-parse --git-common-dir`). A checkout INSIDE the tree
-          # (`path: courier`) would put a foreign tree in the way of `go vet ./...`,
-          # `gofmt -l .` and the lockfile guard below — the same reason billing
-          # checks core out to `${{ runner.temp }}/core`.
-          #
-          # PINNED, not floating: the ref comes from `courier.ref` above, which names
-          # courier's master HEAD on the day this step landed, verified to carry the
-          # six-type enum this tree's constants name. Bumping it is a conscious diff
-          # to that file, in the same commit as any `Type*` change it requires.
-          repository: cafaye/courier
-          ref: ${{ env.COURIER_REF }}
-          path: ../courier
+      - name: check out courier beside the tree, at the pin
+        # THE SIBLING THIS GATE READS. `TestCouriersTypesAgreeWithCouriersDocument`
+        # (internal/courier/recorded_test.go) parses the `NotificationType` enum out
+        # of courier's `openapi.yaml` and fails unless it equals identity's `Type*`
+        # constants in both directions — a real cross-repo drift check over the one
+        # vocabulary the two repositories share. Without this checkout the test
+        # reports rather than skips, so the gate is red on a green tree.
+        #
+        # WHY `git clone` AND NOT `actions/checkout`. The sibling has to live at
+        # `<workspace>/../courier`: `sourceCheckoutCourier` resolves the main
+        # checkout's parent through `git rev-parse --git-common-dir`, and a
+        # checkout INSIDE the tree puts a foreign tree in the way of
+        # `go vet ./...`, `gofmt -l .` and the lockfile guard below — the same
+        # reason billing checks core out to `${{ runner.temp }}/core`.
+        #
+        # That path is outside `$GITHUB_WORKSPACE`, and `actions/checkout@v7`
+        # REFUSES any `path` outside the workspace. The run of 38657748356 failed
+        # at exactly that, before the gate ever started:
+        #
+        #   ##[error]Repository path '/home/runner/work/identity/courier' is not
+        #   under '/home/runner/work/identity/identity'
+        #
+        # `git` has no such guard, so the checkout is a `run:` step this workflow
+        # owns rather than a `uses:` step the action owns.
+        #
+        # `cafaye/courier` is PUBLIC, so an unauthenticated clone reaches it; no
+        # credential and no permission widening is needed or wanted.
+        #
+        # PINNED, not floating: the ref comes from `courier.ref` above, which names
+        # courier's master HEAD on the day this step landed, verified to carry the
+        # six-type enum this tree's constants name. Bumping it is a conscious diff
+        # to that file, in the same commit as any `Type*` change it requires.
+        env:
+          COURIER_DIR: ${{ github.workspace }}/../courier
+        run: |
+          set -euo pipefail
+          git clone --quiet https://github.com/cafaye/courier "$COURIER_DIR"
+          git -C "$COURIER_DIR" checkout --quiet --detach "$COURIER_REF"
 
       # `go-version-file` rather than a second literal, so this job's toolchain
       # is read out of go.mod and cannot drift from the pin the shared job is
