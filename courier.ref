@@ -1,0 +1,14 @@
+# The courier ref this repository's gate reads. One line: a 40-character commit
+# sha. NEVER a branch — a floating ref would make identity's gate depend on
+# courier's unreleased work, so a type courier added yesterday reds a tree that
+# changed nothing.
+# The gate job checks this ref out to `../courier`, outside the tree, where
+# `TestCouriersTypesAgreeWithCouriersDocument` (internal/courier/recorded_test.go)
+# parses the `NotificationType` enum out of its `openapi.yaml` and fails unless
+# it equals this tree's `Type*` constants in both directions.
+# Move it with the vocabulary diff in front of you: the pinned commit's enum must
+# name exactly the six types in `identityTypes` (welcome, password_reset,
+# team_invitation, account_security, email_change_current, email_change_new),
+# and a bump that adds a type lands in the same commit as the `Type*` constant
+# it requires.
+5c29dfb2d5e32dd6e96db4000f25fb69adaf23fd

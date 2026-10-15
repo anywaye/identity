@@ -358,6 +358,143 @@ func TestTheLockfileGuardExists(t *testing.T) {
 		"nothing here would say so")
 }
 
+// TestTheGateChecksOutCourierBesideTheTree is the assertion the ci-tools packet
+// exists for.
+//
+// `TestCouriersTypesAgreeWithCouriersDocument` (internal/courier/recorded_test.go)
+// reads courier's `openapi.yaml` from beside the checkout and REPORTS rather than
+// skips when it is not there, so a gate job without the sibling checkout is red
+// on a green tree. The checkout is a `uses:` step rather than a `run:` block, so
+// it is read out of the raw lines rather than out of stepScripts: three claims,
+// each of which a later edit could quietly drop — the repository, the ref, and
+// the path outside the tree.
+func TestTheGateChecksOutCourierBesideTheTree(t *testing.T) {
+	lines := workflowLines(t)
+
+	repository := false
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "repository: cafaye/courier" {
+			repository = true
+		}
+	}
+	if !repository {
+		t.Error("no step checks out cafaye/courier, so " +
+			"TestCouriersTypesAgreeWithCouriersDocument reports instead of checking")
+	}
+
+	pinned := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "ref:") && !strings.Contains(trimmed, "master") &&
+			!strings.Contains(trimmed, "main") && !strings.Contains(trimmed, "latest") {
+			pinned = true
+		}
+	}
+	if !pinned {
+		t.Error("the courier checkout names no pinned ref. A floating branch makes this " +
+			"gate depend on courier's unreleased work; the ref lives in courier.ref")
+	}
+
+	beside := false
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "path: ../courier" {
+			beside = true
+		}
+	}
+	if !beside {
+		t.Error("the courier checkout is not at path ../courier, outside the tree. " +
+			"Inside the tree it sits in the way of `go vet ./...`, `gofmt -l .` and " +
+			"the lockfile guard; outside it both of the test's lookup paths resolve it")
+	}
+
+	ref := courierRef(t)
+	if matched, _ := regexp.MatchString(`^[0-9a-f]{40}$`, ref); !matched {
+		t.Errorf("courier.ref names %q, which is not a 40-character commit SHA. "+
+			"A branch there is a floating gate; a tag there is a second name for a commit.", ref)
+	}
+}
+
+// courierRef is the one line courier.ref carries under its comments: the commit
+// the gate checks out. Read the same way the workflow reads it — first
+// non-comment, non-blank line — so the two cannot disagree about which line is
+// the pin.
+func courierRef(t *testing.T) string {
+	t.Helper()
+
+	raw, err := os.ReadFile(filepath.Join(repoRoot(t), "courier.ref"))
+	if err != nil {
+		t.Fatalf("reading courier.ref: %v. Without it the gate has no courier to check out", err)
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		return trimmed
+	}
+	t.Fatal("courier.ref holds no ref (only comments/blanks) — the gate cannot find courier")
+	return ""
+}
+
+// TestTheGateInstallsTheLinterBeforeTheSuite is the other half of the ci-tools
+// packet.
+//
+// `TestTheLintExclusionNamesEveryEnabledLinter` (client/lint_exclusion_test.go)
+// asks golangci-lint itself for its enabled set and FAILS when the binary is
+// absent, so a gate job without the install is red on a green tree. The version
+// is read out of mise.toml rather than retyped, so the pin lives in exactly one
+// file; the install has to precede the gate, because bin/prime is what runs the
+// test that needs it.
+func TestTheGateInstallsTheLinterBeforeTheSuite(t *testing.T) {
+	install, suite := -1, -1
+	for i, script := range stepScripts(t, "gate") {
+		if install < 0 && strings.Contains(script, "golangci-lint") &&
+			strings.Contains(script, "go install") && strings.Contains(script, "mise.toml") {
+			install = i
+		}
+		if suite < 0 && strings.Contains(script, gateCommand) {
+			suite = i
+		}
+	}
+
+	if install < 0 {
+		t.Error("no step installs golangci-lint from mise.toml's pin, so " +
+			"TestTheLintExclusionNamesEveryEnabledLinter fails on a missing binary")
+	}
+	if suite < 0 {
+		t.Fatalf("no step runs %s, so there is no gate to order against", gateCommand)
+	}
+	if install >= 0 && install > suite {
+		t.Errorf("golangci-lint is installed in gate step %d and the gate runs in step %d.\n"+
+			"An install after the suite is a tool the tests never saw.", install+1, suite+1)
+	}
+
+	if pin := miseToolPin(t, "golangci-lint"); pin == "" {
+		t.Error("mise.toml pins no golangci-lint, so the install step reads a version " +
+			"from a line that is not there and every run fails loudly instead of testing anything")
+	}
+}
+
+// miseToolPin is the version mise.toml names for one tool: the `"name" = "x"`
+// line under `[tools]`. Empty when the tool is not pinned there.
+func miseToolPin(t *testing.T, tool string) string {
+	t.Helper()
+
+	raw, err := os.ReadFile(filepath.Join(repoRoot(t), "mise.toml"))
+	if err != nil {
+		t.Fatalf("reading mise.toml: %v", err)
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, `"`+tool+`"`) {
+			if m := regexp.MustCompile(`"([^"]+)"\s*$`).FindStringSubmatch(trimmed); m != nil {
+				return m[1]
+			}
+		}
+	}
+	return ""
+}
+
 // TestTheTwoFloorsAreDistinct asserts the suite floor is strictly above the
 // database-tier floor, which is a weaker claim than it looks and catches a
 // specific copy-paste: the two are declared next to each other, and setting them
