@@ -155,20 +155,31 @@ func TestValuesCarryTheFactsADeploymentEdits(t *testing.T) {
 		}
 	})
 
-	t.Run("the ingress is off by default and names the cluster issuer", func(t *testing.T) {
+	t.Run("the ingress routes auth.cafaye.com with TLS via letsencrypt-prod", func(t *testing.T) {
 		ingress := mustChildMap(t, values, "ingress")
-		if enabled := mustChild(t, ingress, "enabled"); enabled != "false" {
-			t.Errorf("ingress.enabled is %q, want %q — a chart that "+
-				"suddenly routes traffic is a defect: the substrate's "+
-				"first sync happens before any operator has set a host, "+
-				"and an Ingress with no host is a silent misroute",
-				enabled, "false")
+		if enabled := mustChild(t, ingress, "enabled"); enabled != "true" {
+			t.Errorf("ingress.enabled is %q, want %q — identity's OIDC discovery and JWKS must be reachable on auth.cafaye.com; the issuer is baked into every token and verifiers fetch it at the issuer origin",
+				enabled, "true")
+		}
+		if host := mustChild(t, ingress, "host"); host != "auth.cafaye.com" {
+			t.Errorf("ingress.host is %q, want %q — the OIDC issuer host that verifiers fetch for discovery and JWKS",
+				host, "auth.cafaye.com")
 		}
 		if issuer := mustChild(t, ingress, "clusterIssuer"); issuer != "letsencrypt-prod" {
 			t.Errorf("ingress.clusterIssuer is %q, want %q — the "+
 				"ClusterIssuer the substrate's install step 7 declares "+
 				"(DEPLOYMENT.md, \"The ACME solver\"); the chart names it "+
 				"and never creates it", issuer, "letsencrypt-prod")
+		}
+		if tls := mustChild(t, ingress, "tls"); tls != "true" {
+			t.Errorf("ingress.tls is %q, want %q — the OIDC issuer is https and the Ingress must request a certificate via cert-manager",
+				tls, "true")
+		}
+		if path := mustChild(t, ingress, "path"); path != "/" {
+			t.Errorf("ingress.path is %q, want %q — discovery and JWKS live at /.well-known/*, so the Ingress must route /", path, "/")
+		}
+		if pathType := mustChild(t, ingress, "pathType"); pathType != "Prefix" {
+			t.Errorf("ingress.pathType is %q, want %q — matching gateway and parlor's Ingress (Prefix on /)", pathType, "Prefix")
 		}
 	})
 

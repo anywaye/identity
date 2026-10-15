@@ -79,12 +79,13 @@ routes to nothing.
 
 ## Reaching the service
 
-The chart installs no Ingress until a values commit says so:
-`ingress.enabled` is `false`, and with it false `helm template` emits
-no Ingress at all — a chart that suddenly routes traffic is a
-defect. The services the fleet exposes (gateway, parlor) turn it
-on in their values commit; **identity stays internal** — it is
-reached through the gateway, and its sign-in form is parlor's page
+The chart installs an Ingress on `auth.cafaye.com` for identity's
+OIDC public face — discovery (`/.well-known/openid-configuration`)
+and JWKS (`/.well-known/jwks.json`) answer at the issuer origin.
+`ingress.enabled` is `true`, `host` is `auth.cafaye.com`, `path` is
+`/` with `pathType: Prefix` matching gateway and parlor. The app-API
+surface (`/v1/*`) stays internal and is reached through the gateway
+(`api.cafaye.com`); the sign-in form is parlor's page
 (`OIDC_LOGIN_UI_URL` says where), not a public surface.
 
 `className` is traefik, k3s's default (DEPLOYMENT.md:28). The
