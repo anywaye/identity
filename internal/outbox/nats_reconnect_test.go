@@ -24,7 +24,7 @@ import (
 // helper is retried by the caller where it matters.
 func freePort(t *testing.T) int {
 	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+	l, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("freePort: %v", err)
 	}
@@ -97,7 +97,7 @@ func waitForStatus(t *testing.T, nc *nats.Conn, want nats.Status, timeout time.D
 }
 
 // TestNewNATSPublisherDoesNotFailWhenBrokerIsDownAtBoot proves the boot
-// behaviour is unchanged: a broker that is down when the process starts is NOT
+// behavior is unchanged: a broker that is down when the process starts is NOT
 // a startup failure. With RetryOnFailedConnect the client enters RECONNECTING
 // and NewNATSPublisher returns nil error so the outbox table can accumulate.
 func TestNewNATSPublisherDoesNotFailWhenBrokerIsDownAtBoot(t *testing.T) {
@@ -159,7 +159,7 @@ func TestNATSPublisherMaxReconnectIsInfinite(t *testing.T) {
 // test would take two minutes, so the reconnect loop is accelerated to 10ms
 // for the test via a direct nats.Connect with the same MaxReconnects(-1) the
 // publisher uses — the injectable reconnect path the packet allows when a real
-// broker would be too slow. The behaviour is identical: infinite vs 60, only
+// broker would be too slow. The behavior is identical: infinite vs 60, only
 // the wait is shorter.
 //
 // Steps: broker up → publish succeeds → broker down (longer than 60 fast
@@ -273,6 +273,7 @@ func TestNATSPublisherRecoversAfterExtendedOutage(t *testing.T) {
 		js2, _ := nc2.JetStream()
 		if _, err := js2.AddStream(&nats.StreamConfig{Name: "TEST2", Subjects: []string{"identity.>"}}); err != nil {
 			// May already exist if store reused; ignore.
+			_ = err
 		}
 		nc2.Close()
 	}
@@ -359,7 +360,7 @@ func TestNATSPublisherRecoversAfterExtendedOutage(t *testing.T) {
 // TestNATSPublisherWithBoundedBudgetGivesUp is the RED control: with the old
 // 60-attempt budget, a broker away for longer than the budget leaves the
 // connection closed and rows never draining. This test uses a small budget
-// (5 attempts at 10ms = 50ms) to show the same terminal behaviour quickly.
+// (5 attempts at 10ms = 50ms) to show the same terminal behavior quickly.
 // It proves the old code's defect rather than the new code's fix.
 func TestNATSPublisherWithBoundedBudgetGivesUp(t *testing.T) {
 	port := freePort(t)
