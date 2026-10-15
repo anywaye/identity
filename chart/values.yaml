@@ -18,9 +18,42 @@
 # is a deploy that changes when somebody else pushes, and the loop
 # exists so that what runs is exactly what the values commit said.
 # Set it at release time; the default is the chart's own version.
+# The digest below is the other half of the name, and it is the half the
+# Deployment renders when it is present — a digest cannot move, a tag can.
 image:
   repository: ghcr.io/cafaye/identity
   tag: "0.1.0"
+  # THE DIGEST — THE ONE PART OF THE NAME THAT CANNOT MOVE, AND THE HALF THE
+  # POD ACTUALLY PULLS. Written by kit's publish workflow on every
+  # `push: true` run: `chart.reusable.yml`'s `pin the image by digest` step
+  # takes the digest from the image job's build output and rewrites this
+  # line BEFORE `helm package`. It is the only value in this file a
+  # workflow edits, and the reason is one measurement: the tag is
+  # overwritten on every master push, so a chart pinned by TAG rendered a
+  # textually IDENTICAL Deployment after every build — Argo's diff
+  # reported `Synced`, rolled nothing, and `imagePullPolicy: IfNotPresent`
+  # re-served the node's stale copy on every restart. MEASURED (kit's
+  # roll-c5-image-digest, on gateway): the registry held `sha256:c264…37165`
+  # while the node ran `sha256:8e60…e79b`, six hours after the fix was
+  # published, and a refresh reported `Synced` with no diff. A digest
+  # cannot move, so a new build is a textual diff Argo rolls — and the
+  # chart VERSION does not, which is what lets the substrate Application
+  # keep one targetRevision.
+  #
+  # WHAT THE COMMITTED VALUE IS: this repository's CURRENT published image,
+  # read off the registry, so a fresh clone renders the pin. It is
+  # REPLACED by the publish workflow on every push — the committed value
+  # pins the last published image, and a publish that left it in place
+  # would push a chart naming the previous build.
+  #
+  # EMPTY IS THE SUPPORTED ABSENCE: with no digest the Deployment renders
+  # `repository:tag`, exactly as it did before this field existed, which
+  # is what a `push: false` run or a direct caller of the chart workflow
+  # packages. Anything that is not `sha256:<64 hex>` is a THIRD state and
+  # is REFUSED by the template rather than rendered — see
+  # templates/deployment.yaml, and kit's step, which refuses it at the
+  # write.
+  digest: "sha256:e2a064627b6b5a7f1165c3ef1ec8753958b9810fb92b2a3aea1326990592174d"
   pullPolicy: IfNotPresent
 
 # The read-only pull secret on the box, created once, out of band:

@@ -67,7 +67,18 @@ var KeptFiles = []string{
 // []any — the three shapes the chart's files use.
 type yamlMap = map[string]any
 
-// parseFile reads one YAML file into a generic tree.
+// parseFile reads one YAML file into a generic tree. The subset it
+// understands, and every way it refuses to under-read, are stated on
+// parseBytes, which does the work.
+func parseFile(path string) (yamlMap, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return parseBytes(path, data)
+}
+
+// parseBytes parses one YAML document from bytes into a generic tree.
 //
 // The subset, stated because anything outside it is an error rather than
 // a guess:
@@ -87,17 +98,16 @@ type yamlMap = map[string]any
 //     templates are Helm first and YAML second;
 //   - `#` comments and blank lines are skipped.
 //
-// Every way this could come back with less than the file holds — a
-// missing file, a key the caller asked for and did not find, a list
-// index out of range — is an error. A reader that finds nothing agrees
-// with another reader that finds nothing, and that is how a check over
-// nothing goes green.
-func parseFile(path string) (yamlMap, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-
+// Every way this could come back with less than the document holds — a
+// key the caller asked for and did not find, a list index out of range —
+// is an error. A reader that finds nothing agrees with another reader
+// that finds nothing, and that is how a check over nothing goes green.
+//
+// It is a separate entry point from parseFile because the render test
+// holds a rendered Deployment in memory: a reader that can only take a
+// path cannot read the output of a template, and the whole claim of that
+// test is about the rendered text.
+func parseBytes(path string, data []byte) (yamlMap, error) {
 	var lines []yamlLine
 	for _, raw := range strings.Split(string(data), "\n") {
 		line := stripComment(raw)

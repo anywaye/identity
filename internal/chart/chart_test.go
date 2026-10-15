@@ -272,16 +272,41 @@ func TestTheDeploymentServesThePortTheDockerfileExposesAndReadyz(t *testing.T) {
 		}
 	})
 
-	t.Run("the image tag comes from values and is never hardcoded", func(t *testing.T) {
-		image := mustChild(t, container, "image")
-		if !strings.Contains(image, ".Values.image.tag") {
-			t.Errorf("container image %q does not reference "+
-				".Values.image.tag — a tag baked into the template is a "+
-				"deploy that changes when somebody else pushes, and the "+
-				"values commit is the only write path", image)
+	t.Run("the image is named from values, by digest when there is one", func(t *testing.T) {
+		// Read off the raw template, not through the parsed container
+		// above: the image line is a conditional, and the file reader
+		// SKIPS Helm action lines, so navigating to containers[0].image
+		// sees only the last branch it parsed — the tag path — while the
+		// digest path sits in the lines it skipped. A test written that
+		// way would pass on a template that had dropped the digest
+		// branch entirely, which is the measured defect in miniature: a
+		// values file carrying a pin the template renders never and a
+		// green test reporting agreement. What this asserts is that both
+		// branches are in the file and nothing is baked in; what
+		// render_test.go's renders assert is that both produce the right
+		// string.
+		data, err := os.ReadFile(filepath.Join(root, "templates", "deployment.yaml"))
+		if err != nil {
+			t.Fatalf("read templates/deployment.yaml: %v", err)
 		}
-		if strings.Contains(image, "latest") {
-			t.Errorf("container image %q contains \"latest\"", image)
+		tmpl := string(data)
+		for _, want := range []string{
+			`image: "{{ .Values.image.repository }}@{{ .Values.image.digest }}"`,
+			`image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"`,
+			// The refusal. A well-formed digest is what every render
+			// case uses, so a template that had stopped refusing would
+			// pass all of them; this is the line that says it still
+			// does, in the same kit grammar (sha256: plus 64 lowercase
+			// hex) the pin-the-image-by-digest step refuses against.
+			"regexMatch `^sha256:[0-9a-f]{64}$` .Values.image.digest",
+		} {
+			if !strings.Contains(tmpl, want) {
+				t.Errorf("templates/deployment.yaml does not carry %q — "+
+					"the Deployment names its image from values in both "+
+					"directions (repository@digest when values carry one, "+
+					"the committed repository:tag when they do not), and "+
+					"refuses a digest that is neither", want)
+			}
 		}
 	})
 }

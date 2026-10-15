@@ -30,7 +30,25 @@ spec:
         - name: {{ .Values.imagePullSecrets }}
       containers:
         - name: identity
+          # THE IMAGE, AND WHICH HALF OF THE NAME REACHES THE POD. A digest
+          # when values.yaml carries one, the committed tag when it does not.
+          # This branch is an ADOPTION the generator does not yet emit — kit's
+          # chart workflow writes `image.digest` into values.yaml before
+          # `helm package`, and a template that never read it ignored the pin
+          # it was handed (kit's chart.reusable.yml, the `pin the image by
+          # digest` step, says so in its own words: "a deployment that does
+          # not render image.digest ignores a value it never reads"). The
+          # generator's half is the caf-side packet that makes this the
+          # emitted form; the reasoning lives in values.yaml, and the proof
+          # that both branches render is internal/chart's render test.
+          {{- if .Values.image.digest }}
+          {{- if not (regexMatch `^sha256:[0-9a-f]{64}$` .Values.image.digest) }}
+          {{- fail (printf "chart: image.digest is %q, not sha256:<64 hex>. The registry's manifest digest is the only shape a pin can take: a value that is not one would render repository@nonsense, which looks like a pin and fails at image-pull with nothing naming the field. Kit's pin-the-image-by-digest step refuses this value before it is ever written; this template refuses it here because it cannot stop the write. The tag path is the supported absence — no digest at all — and this is not that." .Values.image.digest) }}
+          {{- end }}
+          image: "{{ .Values.image.repository }}@{{ .Values.image.digest }}"
+          {{- else }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          {{- end }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http
