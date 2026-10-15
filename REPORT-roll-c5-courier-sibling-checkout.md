@@ -121,7 +121,7 @@ step's script carries that anchor, with the failure mode in the message. Both of
 the ci-tools packet's new gate steps have now failed live once, in ways no local
 run could see; that is the packet's real finding.
 
-## 6. The third live failure: the gate went red on a flake, not a defect
+## 6. The third live failure: a lost message wearing a timeout's clothes
 
 With both steps repaired, run **38659743130**'s gate job reached the suite and
 every package printed `ok` — and the job still failed:
@@ -132,16 +132,34 @@ every package printed `ok` — and the job still failed:
 FAIL	github.com/cafaye/identity/internal/outbox	28.964s
 ```
 
-`sub.NextMsg(2 * time.Second)` — a two-second read window, timed out on a loaded
-runner. It is the same flake the ci-tools packet's report already recorded
-("red 3× under `./...`, green alone and green serial"); the packet left it and
-this landing inherited it. The fix is the deadline, not the assertion: the line
-is a read WAIT for the message the test just published, so a broken publish
-still fails it — fifteen seconds later. Verified with the gate's own flags:
+`sub.NextMsg(2 * time.Second)` — a two-second read window, timed out. The first
+fix tried was the deadline (2s → 15s), and **that fix was wrong, with the CI run
+still failing on it being the proof**: run **38661133906** failed at the same
+line after the full **15 seconds**, `TestNATSPublisherRecoversAfterExtendedOutage
+(17.20s)`. A deadline cannot find a message that was never routed. That is what
+the two runs together said, and it is worth stating plainly because the wrong
+fix looked reasonable and shipped once.
+
+**The mechanism, measured.** `nc.SubscribeSync` returns once the `SUB` is in the
+connection's write buffer — nats.go's `subscribeLocked` appends the protocol and
+kicks the flusher, with no round trip to the server. The publish in this test
+goes out on the PUBLISHER's connection, and two connections have no ordering
+between them. A publish the server processes before the `SUB` is not delivered
+to that subscription and is lost for good. A throwaway probe in the package (not
+committed) made it a number on a loopback server:
 
 ```
-go test -race -count=1 -run TestNATSPublisherRecoversAfterExtendedOutage ./internal/outbox/...  → ok 3.520s
+flush=false: 65/300 messages lost
+flush=true:   0/300 messages lost
 ```
 
-The window is 15s with the measured runs named in the comment, so the next
-person reading the number knows it is a load budget and not a tuned threshold.
+**The fix.** `verifyNC.Flush()` after the `SubscribeSync`, and the same flush in
+`nats_test.go`'s `subscribe` helper, which publishes through the same
+cross-connection shape and had the same latent race without ever being red.
+`Flush` round-trips a `PING`/`PONG`, so it returns only after the server has
+processed every command sent before it — the `SUB` among them. The 15-second
+`NextMsg` stays, honestly relabelled: with delivery guaranteed it is a wait
+budget for a loaded runner, not a threshold.
+
+Verified with the gate's flags: `go test -race -count=1 ./internal/outbox/...`
+→ `ok 20.780s`.

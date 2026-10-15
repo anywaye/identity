@@ -320,20 +320,29 @@ func TestNATSPublisherRecoversAfterExtendedOutage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("subscribe: %v", err)
 	}
+	// FLUSH BEFORE PUBLISHING — this is the fix for the flake that was red in CI
+	// twice, and the two deadlines it was tried with (2s, then 15s) are why the
+	// flake was worth chasing instead of smoothing: no deadline can find a
+	// message the server never routed. SubscribeSync returns once the SUB is in
+	// verifyNC's write buffer; it does NOT wait for the server to process it,
+	// and the publish below goes out on the PUBLISHER's connection, which has
+	// no ordering with this one. A publish processed before the SUB is not
+	// delivered here and is lost for good — measured with a throwaway probe on
+	// a loopback server: 65 of 300 messages lost without the flush, 0 of 300
+	// with it. Flush round-trips a PING/PONG, so it returns only after the
+	// server has processed every command sent before it.
+	if err := verifyNC.Flush(); err != nil {
+		t.Fatalf("flush after subscribe: %v", err)
+	}
 	// Publish one more to catch.
 	e4 := mustUserCreated(t, dbtest.UniqueEmail(t))
 	if err := pub.Publish(ctx, e4); err != nil {
 		t.Fatalf("Publish after reconnect: %v", err)
 	}
-	// FIFTEEN SECONDS, not two, and the two was a measured flake rather than a
-	// tightness anyone wanted: this is a read WAIT, so the assertion ("the
-	// message is delivered on the new server") is unchanged — only the deadline
-	// a loaded machine gets. Two seconds timed out under the gate's real shape
-	// (the whole suite, -race, one package binary per CPU: run 38659743130's
-	// gate job failed here with `nextMsg: nats: timeout`), and the packet that
-	// added this test measured the same red three times locally under
-	// `go test ./...` while the test passed alone and passed serial. A broken
-	// publish still fails this line; it fails it fifteen seconds later.
+	// Fifteen seconds, not two: with the flush above the message is guaranteed
+	// to be routed, so this is purely a wait budget for a loaded runner (the
+	// CI gate runs the whole suite under -race at default package parallelism),
+	// not a threshold anything meaningful sits under.
 	msg, err := sub.NextMsg(15 * time.Second)
 	if err != nil {
 		t.Fatalf("nextMsg: %v", err)

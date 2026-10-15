@@ -74,6 +74,17 @@ func addStream(t *testing.T, nc *nats.Conn, subjects ...string) {
 // subscribe collects everything published on subject. A core subscription
 // receives JetStream-published messages: the stream is a subscriber itself and
 // the broker fans out to both, so this is what a consumer on the real bus sees.
+//
+// THE FLUSH IS NOT DECORATION. Subscribe returns once the SUB is in this
+// connection's write buffer; it does NOT wait for the server to process it
+// (nats.go's subscribeLocked appends the protocol and kicks the flusher). The
+// publishes these tests wait on come from the PUBLISHER's connection, and two
+// connections have no ordering between them — so a publish that reaches the
+// server before the SUB does is not delivered to this subscription, and it is
+// lost for good. Measured with a throwaway probe against a loopback server:
+// 65 of 300 messages lost without the flush, 0 of 300 with it. Flush
+// round-trips a PING/PONG, which returns only after the server has processed
+// every command sent before it — the SUB among them.
 func subscribe(t *testing.T, nc *nats.Conn, subject string) chan *nats.Msg {
 	t.Helper()
 
@@ -81,6 +92,9 @@ func subscribe(t *testing.T, nc *nats.Conn, subject string) chan *nats.Msg {
 	sub, err := nc.Subscribe(subject, func(m *nats.Msg) { msgs <- m })
 	if err != nil {
 		t.Fatalf("subscribing to %s: %v", subject, err)
+	}
+	if err := nc.Flush(); err != nil {
+		t.Fatalf("flushing after subscribing to %s: %v", subject, err)
 	}
 	t.Cleanup(func() { _ = sub.Unsubscribe() })
 
