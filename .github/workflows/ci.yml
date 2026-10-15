@@ -329,13 +329,28 @@ jobs:
       # from another branch is the same defect as a floor from another packet,
       # one merge later.
       #
-      # The floor is 3441: a complete `go test -v -count=1 ./...` on the merged
-      # tree (master at 2c3cc07 plus this packet's two guard tests) against a real
-      # postgres:17-alpine with all 35 migrations applied, the courier sibling
-      # present, and golangci-lint 2.14.0 on PATH — the exact dependencies the
-      # gate job now supplies, so the runner reproduces this measurement. The
-      # database tier in the same run is 3027 against its floor of 1732, and the
-      # four skips are exactly the four names in E2E_SKIP_EXCEPTIONS.
+      # The floor is 3442: a complete `go test -v -count=1 ./...` on the merged
+      # tree (master at 2c3cc07 plus this packet's two guard tests, plus the
+      # TestTheGateChecksOutKitBesideTheTree guard that landed with this
+      # packet's fix) against a real postgres:17-alpine with all 35
+      # migrations applied, the courier and kit siblings present, and
+      # golangci-lint 2.14.0 on PATH — the exact dependencies the gate job now
+      # supplies, so the runner reproduces this measurement. The database tier
+      # in the same run is 3027 against its floor of 1732, and the four skips
+      # are exactly the four names in E2E_SKIP_EXCEPTIONS.
+      #
+      # THE KIT SIBLING IS A MEASUREMENT DEPENDENCY, AND THE RUN OF 38666728941
+      # IS WHAT IT COSTS TO MISS ONE. 3441 was measured on a machine with kit
+      # beside the tree (a `wt/kit` symlink), where
+      # TestEverySubstrateFunctionThisRepositoryInstallsIsKitsBytes RUNS and
+      # PASSes. The runner had no kit, the test SKIPPED, and the count came
+      # back 3440 — below the floor, with a fifth undeclared skip waiting
+      # behind the first red. A floor the runner cannot reproduce is a red
+      # that fires on a green tree, which is the one failure this file is
+      # built to avoid. So the gate now checks kit out at `kit.ref` beside the
+      # tree (the courier shape), and the floor is 3442 rather than 3441
+      # because the guard test that holds that checkout is itself a test in
+      # this suite.
       #
       # `-p 1` is in the command this was measured with, and deliberately so: the
       # NATS reconnect test flakes under a parallel package load it does not
@@ -346,7 +361,7 @@ jobs:
       # measurement command. CI still runs the suite at default parallelism; a
       # count is the same either way, and a floor measured from a run nobody can
       # reproduce is a floor nobody can check.
-      SUITE_FLOOR: '3441'
+      SUITE_FLOOR: '3442'
       DATABASE_TIER_FLOOR: '1732'
       MODULE: github.com/cafaye/identity
       # # THE ONE PERMITTED SKIP, AND WHY IT IS A LIST AND NOT A RULE
@@ -461,6 +476,64 @@ jobs:
           set -euo pipefail
           git clone --quiet https://github.com/cafaye/courier "$COURIER_DIR"
           git -C "$COURIER_DIR" checkout --quiet --detach "$COURIER_REF"
+
+      - name: read kit.ref
+        # The same shape as the courier.ref read above, for the same reason:
+        # the pin lives in exactly one file, and a literal retyped here would
+        # be a second copy for CI to disagree with — and a 40-character SHA
+        # written into this file trips TestNoKeyOrPEMIsPastedIntoTheWorkflow,
+        # which reads a pasted key in exactly that shape.
+        run: |
+          ref="$(grep -v '^\s*#' kit.ref | grep -v '^\s*$' | head -1)"
+          if [ -z "$ref" ]; then
+            echo "::error::kit holds no ref (only comments/blanks) — the substrate check has no pin to read" >&2
+            exit 1
+          fi
+          echo "KIT_REF=$ref" >> "$GITHUB_ENV"
+
+      - name: check out kit beside the tree, at the pin
+        # THE SECOND SIBLING THIS GATE READS, AND THE REASON IS THE SHAPE OF
+        # THE CHECK. TestEverySubstrateFunctionThisRepositoryInstallsIsKitsBytes
+        # (internal/platform/ci/substrate_copy_test.go) reads kit's
+        # `templates/database/tenancy/substrate.sql` and compares the ten
+        # function bodies identity's migrations embed against kit's bytes —
+        # the drift check for the substrate copy, the same kind of cross-repo
+        # check as courier's document drift above. findKitSubstrate resolves
+        # this repository's root and walks up THREE levels, so kit has to be
+        # the sibling at `<workspace>/../kit` for the comparison to happen at
+        # all.
+        #
+        # WITHOUT THIS CHECKOUT THE TEST SKIPS, AND THAT IS TWO REDS BEHIND
+        # ONE ABSENCE. The suite count drops by one and goes below its floor
+        # (the run of 38666728941: 3440 PASS lines against a floor of 3441),
+        # and the skip is undeclared, so the skip rule below fires on a fifth
+        # name the moment the floor red is fixed any other way. A skip is
+        # honest; a floor the runner cannot reproduce is not — it is a red
+        # that fires on a green tree, which is the one failure this file is
+        # built to avoid.
+        #
+        # WHY `git clone` AND NOT `actions/checkout`: the sibling has to
+        # live outside `$GITHUB_WORKSPACE`, and actions/checkout@v7 REFUSES
+        # any `path` outside it — the same reason the courier checkout above
+        # is a `run:` step. `cafaye/kit` is PUBLIC, so an unauthenticated
+        # clone reaches it; no credential and no permission widening is
+        # needed or wanted.
+        #
+        # BESIDE THE TREE, NOT INSIDE IT: a checkout inside would put a
+        # foreign tree in the way of `go vet ./...`, `gofmt -l .` and the
+        # lockfile guard, exactly as the courier comment above records.
+        #
+        # PINNED, not floating: the ref comes from `kit.ref` above, which
+        # names kit's master HEAD on the day this step landed. Bumping it is
+        # a conscious diff to that file, in the same commit as any change to
+        # the embedded substrate it requires — the migration-side half of
+        # the comparison this test makes.
+        env:
+          KIT_DIR: ${{ github.workspace }}/../kit
+        run: |
+          set -euo pipefail
+          git clone --quiet https://github.com/cafaye/kit "$KIT_DIR"
+          git -C "$KIT_DIR" checkout --quiet --detach "$KIT_REF"
 
       # `go-version-file` rather than a second literal, so this job's toolchain
       # is read out of go.mod and cannot drift from the pin the shared job is

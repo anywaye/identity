@@ -419,6 +419,85 @@ func TestTheGateChecksOutCourierBesideTheTree(t *testing.T) {
 	}
 }
 
+// TestTheGateChecksOutKitBesideTheTree is the assertion that holds the
+// workflow to the kit checkout the suite floor depends on.
+//
+// TestEverySubstrateFunctionThisRepositoryInstallsIsKitsBytes
+// (internal/platform/ci/substrate_copy_test.go) reads kit's
+// `templates/database/tenancy/substrate.sql` and compares the ten function
+// bodies identity's migrations embed against it — the drift check for the
+// substrate copy. findKitSubstrate walks up three levels from this
+// repository's root, so kit has to be the sibling at `../kit` for the
+// comparison to happen at all. Without the checkout the test SKIPS, the
+// suite count drops below its floor, and the skip is undeclared — the run
+// of 38666728941 was exactly that: 3440 PASS lines against a floor of 3441,
+// with a fifth skip waiting behind the first red.
+func TestTheGateChecksOutKitBesideTheTree(t *testing.T) {
+	lines := workflowLines(t)
+
+	repository, pinned := false, false
+	for _, script := range stepScripts(t, "gate") {
+		if strings.Contains(script, "git clone") && strings.Contains(script, "cafaye/kit") {
+			repository = true
+			// The clone must land on the commit the pin names, not on
+			// whatever branch the clone happened to leave checked out.
+			if strings.Contains(script, "KIT_REF") {
+				pinned = true
+			}
+		}
+	}
+	if !repository {
+		t.Error("no gate step clones cafaye/kit, so " +
+			"TestEverySubstrateFunctionThisRepositoryInstallsIsKitsBytes skips and the suite floor goes red on a green tree")
+	}
+	if !pinned {
+		t.Error("the kit checkout does not check out $KIT_REF — the pin read from " +
+			"kit.ref above. A clone left on its default branch makes this gate depend " +
+			"on kit's unreleased work")
+	}
+
+	beside := false
+	for _, line := range lines {
+		if strings.Contains(line, "KIT_DIR:") && strings.Contains(line, "../kit") {
+			beside = true
+		}
+	}
+	if !beside {
+		t.Error("the kit checkout is not directed beside the tree (KIT_DIR ending " +
+			"../kit, outside the workspace). Inside the tree it sits in the way of " +
+			"`go vet ./...`, `gofmt -l .` and the lockfile guard; beside the tree " +
+			"findKitSubstrate resolves it")
+	}
+
+	ref := kitRef(t)
+	if matched, _ := regexp.MatchString(`^[0-9a-f]{40}$|^v[0-9]+\.[0-9]+\.[0-9]+$`, ref); !matched {
+		t.Errorf("kit.ref names %q, which is neither a 40-character commit SHA nor a v<semver> tag. "+
+			"A branch there is a floating gate; kit.ref's own comment allows exactly those two shapes", ref)
+	}
+}
+
+// kitRef is the one line kit.ref carries under its comments: the commit (or
+// v<semver> tag) the gate checks out. Read the same way the workflow reads it
+// — first non-comment, non-blank line — so the two cannot disagree about
+// which line is the pin.
+func kitRef(t *testing.T) string {
+	t.Helper()
+
+	raw, err := os.ReadFile(filepath.Join(repoRoot(t), "kit.ref"))
+	if err != nil {
+		t.Fatalf("reading kit.ref: %v. Without it the gate has no kit to check out", err)
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		return trimmed
+	}
+	t.Fatal("kit.ref holds no ref (only comments/blanks) — the gate cannot find kit")
+	return ""
+}
+
 // courierRef is the one line courier.ref carries under its comments: the commit
 // the gate checks out. Read the same way the workflow reads it — first
 // non-comment, non-blank line — so the two cannot disagree about which line is
