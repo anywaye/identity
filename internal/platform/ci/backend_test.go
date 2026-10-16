@@ -22,6 +22,7 @@
 package ci
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -110,7 +111,7 @@ func TestBackendValidationRefusesWhatKitDoesNotShip(t *testing.T) {
 // reason: a file that cannot be parsed cannot gate anything.
 func TestThePipelineIsShellSound(t *testing.T) {
 	path := filepath.Join(repoRoot(t), "ci", "pipeline.sh")
-	out, err := exec.Command("bash", "-n", path).CombinedOutput()
+	out, err := exec.CommandContext(context.Background(), "bash", "-n", path).CombinedOutput()
 	if err != nil {
 		t.Errorf("bash -n %s: %v\n%s. A pipeline with a syntax error gates nothing.", path, err, out)
 	}
