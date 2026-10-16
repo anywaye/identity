@@ -43,10 +43,6 @@ export WORKSPACE
 log() { printf '\n== %s\n' "$1"; }
 
 log "pipeline: $REPO_NAME at $REPO_DIR"
-if git rev-parse --git-dir >/dev/null 2>&1; then
-  git fetch --quiet origin "$BRANCH" 2>/dev/null || true
-  git reset --hard FETCH_HEAD --quiet 2>/dev/null || true
-fi
 
 # ===========================================================================
 # THE GATE. `bin/prime` — the entrypoint `.github/workflows/ci.yml`'s `gate`
