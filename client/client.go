@@ -726,6 +726,24 @@ func (c *Client) CompleteSecondFactor(ctx context.Context, body generated.Comple
 	return &out, err
 }
 
+// MintSessionToken exchanges the caller's session for one account-scoped access
+// token. Corresponds to `POST /v1/session/tokens`.
+//
+// **The account is named here and verified by the service**, and the token that
+// comes back is bound to exactly that account — it is what a consumer that
+// scopes by a single account (billing is the first) verifies off the published
+// JWKS. A 404 means the caller is not a member of the named account (or it does
+// not exist — one sentence for both, so this method cannot walk account ids).
+// Session-only: a caller with an api key attached gets a 403, because a machine
+// credential must not mint a token that asserts a person's identity.
+func (c *Client) MintSessionToken(ctx context.Context, body generated.MintSessionTokenRequest) (*generated.MintedSessionToken, error) {
+	var out generated.MintedSessionToken
+	err := call(c, "mintSessionToken", func() (*http.Response, error) {
+		return c.transport.MintSessionToken(ctx, body)
+	}, &out)
+	return &out, err
+}
+
 // GetMFAStatus reports whether the caller has a second factor. Corresponds to
 // `GET /v1/mfa`.
 func (c *Client) GetMFAStatus(ctx context.Context) (*generated.MFAStatus, error) {

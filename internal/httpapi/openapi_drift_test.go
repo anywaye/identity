@@ -649,7 +649,15 @@ func TestTheDocumentIsOpenAPI31AndCarriesAVersion(t *testing.T) {
 	// existing response changed. The preview is the one operation here whose
 	// `security` is `[]`: the claim link in the path is the credential, so there
 	// is no bearer to attach. See DECISIONS.md D22.
-	const want = "1.14.0"
+	//
+	// 1.15.0 is the session-token exchange (`POST /v1/session/tokens`): the
+	// account-scoped token a single-account consumer (billing, first) verifies,
+	// minted by NAMING the account and having the membership checked before the
+	// signature — the resolution of the cross-repo disagreement billing's
+	// REPORT-billing-21-authorization.md records. One operation and two schemas
+	// (`MintSessionTokenRequest`, `MintedSessionToken`); non-breaking, and the
+	// route is session-only like the rest of the surface.
+	const want = "1.15.0"
 	if doc.InfoVersion != want {
 		t.Errorf("%s declares info.version %q, not %q. core's sync rule is that the /v1 "+
 			"prefix says which contract and this says which build of it, and a non-breaking "+

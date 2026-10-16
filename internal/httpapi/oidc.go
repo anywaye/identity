@@ -71,6 +71,13 @@ type OIDC interface {
 	LoginRedirect(params oidc.LoginRedirectParams) string
 	// CompleteLogin records that a user authenticated against a request.
 	CompleteLogin(ctx context.Context, requestID string, subject id.UUID) error
+	// MintAccountToken signs a short-lived access token bound to one account —
+	// the session-to-token exchange, for services that scope by a single
+	// account. The membership check is the CALLER's (the HTTP layer resolves it
+	// through the tenancy use cases before this is reached); this only signs
+	// what it is told, so a double here exercises the handler's authorization
+	// decision and the real provider's claim set is asserted in `internal/oidc`.
+	MintAccountToken(subject, accountID id.UUID, audience string, now time.Time) (oidc.MintedToken, error)
 }
 
 // OIDCClients is the client registration use cases, for the admin routes.

@@ -1659,6 +1659,33 @@ type MintSessionLinkRequest struct {
 	UserID openapi_types.UUID `json:"user_id"`
 }
 
+// MintSessionTokenRequest The account to bind the token to and the service it is for. Both are
+// required; neither has a default, because a default here is a tenancy
+// key nobody chose.
+type MintSessionTokenRequest struct {
+	// AccountID The one account this token will be bound to. The caller must be a
+	// member of it — the membership is checked before anything is signed,
+	// and a non-member gets the same 404 a nonexistent account gets.
+	AccountID openapi_types.UUID `json:"account_id"`
+
+	// Audience The service the token is for — `billing`, `darkroom` — copied into
+	// the token's `aud` claim. A SHAPE and not a closed list: this service
+	// does not hold the fleet's roster, and each receiver pins its own
+	// audience and refuses anything else.
+	Audience string `json:"audience"`
+}
+
+// MintedSessionToken defines model for MintedSessionToken.
+type MintedSessionToken struct {
+	// ExpiresAt The token's `exp`, told to the caller so it can schedule the re-mint without parsing what it is about to hand on.
+	ExpiresAt time.Time `json:"expires_at"`
+
+	// Token The compact JWS. Signed with the key the JWKS publishes, so any
+	// verifier that trusts this provider's key set can check it without
+	// calling this service.
+	Token string `json:"token"`
+}
+
 // OIDCClient One OpenID Connect registration. `client_secret` and `secret_digest` are
 // both absent and always will be: the secret exists once, in the 201, and
 // the digest is what the row holds.
@@ -2618,6 +2645,9 @@ type RedeemSessionLinkJSONRequestBody = RedeemSessionLinkRequest
 
 // CompleteSecondFactorJSONRequestBody defines body for CompleteSecondFactor for application/json ContentType.
 type CompleteSecondFactorJSONRequestBody = CompleteSecondFactorRequest
+
+// MintSessionTokenJSONRequestBody defines body for MintSessionToken for application/json ContentType.
+type MintSessionTokenJSONRequestBody = MintSessionTokenRequest
 
 // RegisterUserJSONRequestBody defines body for RegisterUser for application/json ContentType.
 type RegisterUserJSONRequestBody = RegisterRequest
@@ -5930,6 +5960,82 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/session/mfa (the `CompleteSecondFactor` operationId).
 	CompleteSecondFactor(ctx context.Context, body CompleteSecondFactorJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// MintSessionTokenWithBody Exchange a session for one account-scoped access token
+	//
+	// A short-lived RS256 access token, signed with the key the JWKS
+	// publishes, bound to **one account** the caller names — for services
+	// that scope by a single account and verify tokens off this provider's
+	// key set. Billing is the first consumer, and the reason this endpoint
+	// exists is on the record: billing's verifier requires a singular
+	// `account_id` claim, this service's profile-scope access tokens carry
+	// `accounts`, an array, and both sides were self-consistent and
+	// incompatible (billing's `REPORT-billing-21-authorization.md`, DECISION
+	// NEEDED). The resolution is that **the account is named by a party
+	// allowed to name it**: a server-side caller, holding the user's session,
+	// says which account its user is acting in; the membership is verified
+	// here; and the answer is signed. Nothing anywhere picks `accounts[0]`.
+	//
+	// The token's claims are `iss`, `aud` (the requested audience), `sub`,
+	// `iat`, `exp`, `jti` and `account_id` — minimal by design, and
+	// deliberately WITHOUT the `accounts` array: one token, one account, no
+	// second answer to the same question. It is verifiable without calling
+	// this service and dies with the session at the longest. Nothing is
+	// stored: there is no row to revoke, because revocation is the session's
+	// and the session surface already owns it.
+	//
+	// **Session only.** A scoped api key is refused with `403`, like the rest
+	// of the session surface: a credential bound to one account minting a
+	// token that asserts a human's identity is a machine credential
+	// impersonating its owner.
+	//
+	// A 404 for a named account means one thing and one thing only — **the
+	// caller is not a member of it, or it does not exist** — and the two are
+	// deliberately the same sentence, so this endpoint cannot be used to walk
+	// account ids.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/session/tokens (the `MintSessionToken` operationId).
+	MintSessionTokenWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// MintSessionToken Exchange a session for one account-scoped access token
+	//
+	// A short-lived RS256 access token, signed with the key the JWKS
+	// publishes, bound to **one account** the caller names — for services
+	// that scope by a single account and verify tokens off this provider's
+	// key set. Billing is the first consumer, and the reason this endpoint
+	// exists is on the record: billing's verifier requires a singular
+	// `account_id` claim, this service's profile-scope access tokens carry
+	// `accounts`, an array, and both sides were self-consistent and
+	// incompatible (billing's `REPORT-billing-21-authorization.md`, DECISION
+	// NEEDED). The resolution is that **the account is named by a party
+	// allowed to name it**: a server-side caller, holding the user's session,
+	// says which account its user is acting in; the membership is verified
+	// here; and the answer is signed. Nothing anywhere picks `accounts[0]`.
+	//
+	// The token's claims are `iss`, `aud` (the requested audience), `sub`,
+	// `iat`, `exp`, `jti` and `account_id` — minimal by design, and
+	// deliberately WITHOUT the `accounts` array: one token, one account, no
+	// second answer to the same question. It is verifiable without calling
+	// this service and dies with the session at the longest. Nothing is
+	// stored: there is no row to revoke, because revocation is the session's
+	// and the session surface already owns it.
+	//
+	// **Session only.** A scoped api key is refused with `403`, like the rest
+	// of the session surface: a credential bound to one account minting a
+	// token that asserts a human's identity is a machine credential
+	// impersonating its owner.
+	//
+	// A 404 for a named account means one thing and one thing only — **the
+	// caller is not a member of it, or it does not exist** — and the two are
+	// deliberately the same sentence, so this endpoint cannot be used to walk
+	// account ids.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/session/tokens (the `MintSessionToken` operationId).
+	MintSessionToken(ctx context.Context, body MintSessionTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListSessions List the caller's own sessions
 	//
@@ -10265,6 +10371,102 @@ func (c *Client) CompleteSecondFactor(ctx context.Context, body CompleteSecondFa
 	return c.Client.Do(req)
 }
 
+// MintSessionTokenWithBody Exchange a session for one account-scoped access token
+//
+// A short-lived RS256 access token, signed with the key the JWKS
+// publishes, bound to **one account** the caller names — for services
+// that scope by a single account and verify tokens off this provider's
+// key set. Billing is the first consumer, and the reason this endpoint
+// exists is on the record: billing's verifier requires a singular
+// `account_id` claim, this service's profile-scope access tokens carry
+// `accounts`, an array, and both sides were self-consistent and
+// incompatible (billing's `REPORT-billing-21-authorization.md`, DECISION
+// NEEDED). The resolution is that **the account is named by a party
+// allowed to name it**: a server-side caller, holding the user's session,
+// says which account its user is acting in; the membership is verified
+// here; and the answer is signed. Nothing anywhere picks `accounts[0]`.
+//
+// The token's claims are `iss`, `aud` (the requested audience), `sub`,
+// `iat`, `exp`, `jti` and `account_id` — minimal by design, and
+// deliberately WITHOUT the `accounts` array: one token, one account, no
+// second answer to the same question. It is verifiable without calling
+// this service and dies with the session at the longest. Nothing is
+// stored: there is no row to revoke, because revocation is the session's
+// and the session surface already owns it.
+//
+// **Session only.** A scoped api key is refused with `403`, like the rest
+// of the session surface: a credential bound to one account minting a
+// token that asserts a human's identity is a machine credential
+// impersonating its owner.
+//
+// A 404 for a named account means one thing and one thing only — **the
+// caller is not a member of it, or it does not exist** — and the two are
+// deliberately the same sentence, so this endpoint cannot be used to walk
+// account ids.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/session/tokens (the `MintSessionToken` operationId).
+func (c *Client) MintSessionTokenWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewMintSessionTokenRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// MintSessionToken Exchange a session for one account-scoped access token
+//
+// A short-lived RS256 access token, signed with the key the JWKS
+// publishes, bound to **one account** the caller names — for services
+// that scope by a single account and verify tokens off this provider's
+// key set. Billing is the first consumer, and the reason this endpoint
+// exists is on the record: billing's verifier requires a singular
+// `account_id` claim, this service's profile-scope access tokens carry
+// `accounts`, an array, and both sides were self-consistent and
+// incompatible (billing's `REPORT-billing-21-authorization.md`, DECISION
+// NEEDED). The resolution is that **the account is named by a party
+// allowed to name it**: a server-side caller, holding the user's session,
+// says which account its user is acting in; the membership is verified
+// here; and the answer is signed. Nothing anywhere picks `accounts[0]`.
+//
+// The token's claims are `iss`, `aud` (the requested audience), `sub`,
+// `iat`, `exp`, `jti` and `account_id` — minimal by design, and
+// deliberately WITHOUT the `accounts` array: one token, one account, no
+// second answer to the same question. It is verifiable without calling
+// this service and dies with the session at the longest. Nothing is
+// stored: there is no row to revoke, because revocation is the session's
+// and the session surface already owns it.
+//
+// **Session only.** A scoped api key is refused with `403`, like the rest
+// of the session surface: a credential bound to one account minting a
+// token that asserts a human's identity is a machine credential
+// impersonating its owner.
+//
+// A 404 for a named account means one thing and one thing only — **the
+// caller is not a member of it, or it does not exist** — and the two are
+// deliberately the same sentence, so this endpoint cannot be used to walk
+// account ids.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/session/tokens (the `MintSessionToken` operationId).
+func (c *Client) MintSessionToken(ctx context.Context, body MintSessionTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewMintSessionTokenRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ListSessions List the caller's own sessions
 //
 // Every live session this account holds, newest first, so a person can see
@@ -12944,6 +13146,46 @@ func NewCompleteSecondFactorRequestWithBody(server string, contentType string, b
 	}
 
 	operationPath := fmt.Sprintf("/v1/session/mfa")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewMintSessionTokenRequest calls the generic MintSessionToken builder with application/json body
+func NewMintSessionTokenRequest(server string, body MintSessionTokenJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewMintSessionTokenRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewMintSessionTokenRequestWithBody constructs an http.Request for the MintSessionToken method, with any body, and a specified content type
+func NewMintSessionTokenRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/session/tokens")
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -16431,6 +16673,82 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/session/mfa (the `CompleteSecondFactor` operationId).
 	CompleteSecondFactorWithResponse(ctx context.Context, body CompleteSecondFactorJSONRequestBody, reqEditors ...RequestEditorFn) (*CompleteSecondFactorResponse, error)
+
+	// MintSessionTokenWithBodyWithResponse Exchange a session for one account-scoped access token
+	//
+	// A short-lived RS256 access token, signed with the key the JWKS
+	// publishes, bound to **one account** the caller names — for services
+	// that scope by a single account and verify tokens off this provider's
+	// key set. Billing is the first consumer, and the reason this endpoint
+	// exists is on the record: billing's verifier requires a singular
+	// `account_id` claim, this service's profile-scope access tokens carry
+	// `accounts`, an array, and both sides were self-consistent and
+	// incompatible (billing's `REPORT-billing-21-authorization.md`, DECISION
+	// NEEDED). The resolution is that **the account is named by a party
+	// allowed to name it**: a server-side caller, holding the user's session,
+	// says which account its user is acting in; the membership is verified
+	// here; and the answer is signed. Nothing anywhere picks `accounts[0]`.
+	//
+	// The token's claims are `iss`, `aud` (the requested audience), `sub`,
+	// `iat`, `exp`, `jti` and `account_id` — minimal by design, and
+	// deliberately WITHOUT the `accounts` array: one token, one account, no
+	// second answer to the same question. It is verifiable without calling
+	// this service and dies with the session at the longest. Nothing is
+	// stored: there is no row to revoke, because revocation is the session's
+	// and the session surface already owns it.
+	//
+	// **Session only.** A scoped api key is refused with `403`, like the rest
+	// of the session surface: a credential bound to one account minting a
+	// token that asserts a human's identity is a machine credential
+	// impersonating its owner.
+	//
+	// A 404 for a named account means one thing and one thing only — **the
+	// caller is not a member of it, or it does not exist** — and the two are
+	// deliberately the same sentence, so this endpoint cannot be used to walk
+	// account ids.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/session/tokens (the `MintSessionToken` operationId).
+	MintSessionTokenWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MintSessionTokenResponse, error)
+
+	// MintSessionTokenWithResponse Exchange a session for one account-scoped access token
+	//
+	// A short-lived RS256 access token, signed with the key the JWKS
+	// publishes, bound to **one account** the caller names — for services
+	// that scope by a single account and verify tokens off this provider's
+	// key set. Billing is the first consumer, and the reason this endpoint
+	// exists is on the record: billing's verifier requires a singular
+	// `account_id` claim, this service's profile-scope access tokens carry
+	// `accounts`, an array, and both sides were self-consistent and
+	// incompatible (billing's `REPORT-billing-21-authorization.md`, DECISION
+	// NEEDED). The resolution is that **the account is named by a party
+	// allowed to name it**: a server-side caller, holding the user's session,
+	// says which account its user is acting in; the membership is verified
+	// here; and the answer is signed. Nothing anywhere picks `accounts[0]`.
+	//
+	// The token's claims are `iss`, `aud` (the requested audience), `sub`,
+	// `iat`, `exp`, `jti` and `account_id` — minimal by design, and
+	// deliberately WITHOUT the `accounts` array: one token, one account, no
+	// second answer to the same question. It is verifiable without calling
+	// this service and dies with the session at the longest. Nothing is
+	// stored: there is no row to revoke, because revocation is the session's
+	// and the session surface already owns it.
+	//
+	// **Session only.** A scoped api key is refused with `403`, like the rest
+	// of the session surface: a credential bound to one account minting a
+	// token that asserts a human's identity is a machine credential
+	// impersonating its owner.
+	//
+	// A 404 for a named account means one thing and one thing only — **the
+	// caller is not a member of it, or it does not exist** — and the two are
+	// deliberately the same sentence, so this endpoint cannot be used to walk
+	// account ids.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/session/tokens (the `MintSessionToken` operationId).
+	MintSessionTokenWithResponse(ctx context.Context, body MintSessionTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*MintSessionTokenResponse, error)
 
 	// ListSessionsWithResponse List the caller's own sessions
 	//
@@ -23536,6 +23854,124 @@ func (r CompleteSecondFactorResponse) ContentType() string {
 	return ""
 }
 
+// MintSessionTokenResponse200Headers the declared response headers of an HTTP 200 response for MintSessionToken
+type MintSessionTokenResponse200Headers struct {
+	XTraceID string
+}
+
+// MintSessionTokenResponse401Headers the declared response headers of an HTTP 401 response for MintSessionToken
+type MintSessionTokenResponse401Headers struct {
+	XTraceID string
+}
+
+// MintSessionTokenResponse403Headers the declared response headers of an HTTP 403 response for MintSessionToken
+type MintSessionTokenResponse403Headers struct {
+	XTraceID string
+}
+
+// MintSessionTokenResponse404Headers the declared response headers of an HTTP 404 response for MintSessionToken
+type MintSessionTokenResponse404Headers struct {
+	XTraceID string
+}
+
+// MintSessionTokenResponse422Headers the declared response headers of an HTTP 422 response for MintSessionToken
+type MintSessionTokenResponse422Headers struct {
+	XTraceID string
+}
+
+// MintSessionTokenResponse500Headers the declared response headers of an HTTP 500 response for MintSessionToken
+type MintSessionTokenResponse500Headers struct {
+	XTraceID string
+}
+
+type MintSessionTokenResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *MintedSessionToken
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthenticated
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Problem
+	// ApplicationProblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationProblemJSON404 *Problem
+	// ApplicationProblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationProblemJSON422 *ValidationFailed
+	// ApplicationProblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationProblemJSON500 *InternalError
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *MintSessionTokenResponse200Headers
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *MintSessionTokenResponse401Headers
+	// Headers403 the parsed response headers for an HTTP 403 response
+	Headers403 *MintSessionTokenResponse403Headers
+	// Headers404 the parsed response headers for an HTTP 404 response
+	Headers404 *MintSessionTokenResponse404Headers
+	// Headers422 the parsed response headers for an HTTP 422 response
+	Headers422 *MintSessionTokenResponse422Headers
+	// Headers500 the parsed response headers for an HTTP 500 response
+	Headers500 *MintSessionTokenResponse500Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r MintSessionTokenResponse) GetJSON200() *MintedSessionToken {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r MintSessionTokenResponse) GetApplicationProblemJSON401() *Unauthenticated {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r MintSessionTokenResponse) GetApplicationProblemJSON403() *Problem {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r MintSessionTokenResponse) GetApplicationProblemJSON404() *Problem {
+	return r.ApplicationProblemJSON404
+}
+
+// GetApplicationProblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r MintSessionTokenResponse) GetApplicationProblemJSON422() *ValidationFailed {
+	return r.ApplicationProblemJSON422
+}
+
+// GetApplicationProblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r MintSessionTokenResponse) GetApplicationProblemJSON500() *InternalError {
+	return r.ApplicationProblemJSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r MintSessionTokenResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r MintSessionTokenResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r MintSessionTokenResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r MintSessionTokenResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // ListSessionsResponse200Headers the declared response headers of an HTTP 200 response for ListSessions
 type ListSessionsResponse200Headers struct {
 	XTraceID string
@@ -27863,6 +28299,94 @@ func (c *ClientWithResponses) CompleteSecondFactorWithResponse(ctx context.Conte
 		return nil, err
 	}
 	return ParseCompleteSecondFactorResponse(rsp)
+}
+
+// MintSessionTokenWithBodyWithResponse Exchange a session for one account-scoped access token
+//
+// A short-lived RS256 access token, signed with the key the JWKS
+// publishes, bound to **one account** the caller names — for services
+// that scope by a single account and verify tokens off this provider's
+// key set. Billing is the first consumer, and the reason this endpoint
+// exists is on the record: billing's verifier requires a singular
+// `account_id` claim, this service's profile-scope access tokens carry
+// `accounts`, an array, and both sides were self-consistent and
+// incompatible (billing's `REPORT-billing-21-authorization.md`, DECISION
+// NEEDED). The resolution is that **the account is named by a party
+// allowed to name it**: a server-side caller, holding the user's session,
+// says which account its user is acting in; the membership is verified
+// here; and the answer is signed. Nothing anywhere picks `accounts[0]`.
+//
+// The token's claims are `iss`, `aud` (the requested audience), `sub`,
+// `iat`, `exp`, `jti` and `account_id` — minimal by design, and
+// deliberately WITHOUT the `accounts` array: one token, one account, no
+// second answer to the same question. It is verifiable without calling
+// this service and dies with the session at the longest. Nothing is
+// stored: there is no row to revoke, because revocation is the session's
+// and the session surface already owns it.
+//
+// **Session only.** A scoped api key is refused with `403`, like the rest
+// of the session surface: a credential bound to one account minting a
+// token that asserts a human's identity is a machine credential
+// impersonating its owner.
+//
+// A 404 for a named account means one thing and one thing only — **the
+// caller is not a member of it, or it does not exist** — and the two are
+// deliberately the same sentence, so this endpoint cannot be used to walk
+// account ids.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/session/tokens (the `MintSessionToken` operationId).
+func (c *ClientWithResponses) MintSessionTokenWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MintSessionTokenResponse, error) {
+	rsp, err := c.MintSessionTokenWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseMintSessionTokenResponse(rsp)
+}
+
+// MintSessionTokenWithResponse Exchange a session for one account-scoped access token
+//
+// A short-lived RS256 access token, signed with the key the JWKS
+// publishes, bound to **one account** the caller names — for services
+// that scope by a single account and verify tokens off this provider's
+// key set. Billing is the first consumer, and the reason this endpoint
+// exists is on the record: billing's verifier requires a singular
+// `account_id` claim, this service's profile-scope access tokens carry
+// `accounts`, an array, and both sides were self-consistent and
+// incompatible (billing's `REPORT-billing-21-authorization.md`, DECISION
+// NEEDED). The resolution is that **the account is named by a party
+// allowed to name it**: a server-side caller, holding the user's session,
+// says which account its user is acting in; the membership is verified
+// here; and the answer is signed. Nothing anywhere picks `accounts[0]`.
+//
+// The token's claims are `iss`, `aud` (the requested audience), `sub`,
+// `iat`, `exp`, `jti` and `account_id` — minimal by design, and
+// deliberately WITHOUT the `accounts` array: one token, one account, no
+// second answer to the same question. It is verifiable without calling
+// this service and dies with the session at the longest. Nothing is
+// stored: there is no row to revoke, because revocation is the session's
+// and the session surface already owns it.
+//
+// **Session only.** A scoped api key is refused with `403`, like the rest
+// of the session surface: a credential bound to one account minting a
+// token that asserts a human's identity is a machine credential
+// impersonating its owner.
+//
+// A 404 for a named account means one thing and one thing only — **the
+// caller is not a member of it, or it does not exist** — and the two are
+// deliberately the same sentence, so this endpoint cannot be used to walk
+// account ids.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/session/tokens (the `MintSessionToken` operationId).
+func (c *ClientWithResponses) MintSessionTokenWithResponse(ctx context.Context, body MintSessionTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*MintSessionTokenResponse, error) {
+	rsp, err := c.MintSessionToken(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseMintSessionTokenResponse(rsp)
 }
 
 // ListSessionsWithResponse List the caller's own sessions
@@ -35473,6 +35997,130 @@ func ParseCompleteSecondFactorResponse(rsp *http.Response) (*CompleteSecondFacto
 			headers.XTraceID = value
 		}
 		response.Headers503 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseMintSessionTokenResponse parses an HTTP response from a MintSessionTokenWithResponse call
+func ParseMintSessionTokenResponse(rsp *http.Response) (*MintSessionTokenResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &MintSessionTokenResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest MintedSessionToken
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthenticated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ValidationFailed
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON500 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers MintSessionTokenResponse200Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 401:
+		var headers MintSessionTokenResponse401Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers401 = &headers
+	case rsp.StatusCode == 403:
+		var headers MintSessionTokenResponse403Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers403 = &headers
+	case rsp.StatusCode == 404:
+		var headers MintSessionTokenResponse404Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers404 = &headers
+	case rsp.StatusCode == 422:
+		var headers MintSessionTokenResponse422Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers422 = &headers
+	case rsp.StatusCode == 500:
+		var headers MintSessionTokenResponse500Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers500 = &headers
 	}
 
 	return response, nil

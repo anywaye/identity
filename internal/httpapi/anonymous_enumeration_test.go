@@ -285,6 +285,17 @@ func anonymousFamilyAudit() []auditRoute {
 				"there is a space to guess",
 		},
 		{
+			name: "exchange a session for an account-scoped token", method: http.MethodPost, pattern: "/v1/session/tokens",
+			identifier: "account_id, audience",
+			probe:      `{"account_id":"00000000-0000-4000-8000-000000000000","audience":"billing"}`,
+			anonymous:  http.StatusUnauthorized,
+			discloses: "nothing about any ACCOUNT, and the refusal comes BEFORE the body is read: an " +
+				"unauthenticated caller is answered 401 whatever account it names, so the route " +
+				"cannot be used to walk ids anonymously either. The membership question is only " +
+				"ever asked of an authenticated caller, and that answer is the 404 this operation's " +
+				"documentation describes",
+		},
+		{
 			name: "ask for a reset link", method: http.MethodPost, pattern: "/v1/password-resets",
 			identifier: "email", probe: `{"email":"nobody@example.com"}`,
 			anonymous: http.StatusAccepted,
@@ -1191,6 +1202,13 @@ func newAuditFixture(t *testing.T, opts ...Option) *auditFixture {
 	allOpts := []Option{
 		WithAuth(authServiceFor(pool, clk)),
 		WithTenancy(tenancy),
+		// The OIDC provider, for the session-to-token exchange: the route is
+		// mounted only where there is a provider AND a tenancy service, and a
+		// fixture without it would answer the audit's own probe with the router's
+		// 404 while the row says 401 — the drift this census exists to catch,
+		// reproduced inside the fixture. The double is the one the rest of the
+		// package's OIDC tests use; nothing the probe reaches is real.
+		WithOIDC(newFakeOIDC()),
 		WithRecovery(recovery.NewService(
 			db.TxRunner{Pool: pool},
 			db.Direct{Pool: pool},

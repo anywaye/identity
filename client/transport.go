@@ -72,6 +72,11 @@ type Transport interface {
 	ListSessions(ctx context.Context, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	DeleteSessionByID(ctx context.Context, sessionId openapiTypes.UUID, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	CompleteSecondFactor(ctx context.Context, body generated.CompleteSecondFactorJSONRequestBody, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
+	// The session-to-token exchange, beside the login it is the second half
+	// of: a session in, one account-scoped access token out. Session-only in
+	// the document, so a caller with an api key attached gets a 403 — said on
+	// `Client.MintSessionToken`.
+	MintSessionToken(ctx context.Context, body generated.MintSessionTokenJSONRequestBody, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	GetMFAStatus(ctx context.Context, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	DisableMFA(ctx context.Context, body generated.DisableMFAJSONRequestBody, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	StartMFAEnrollment(ctx context.Context, body generated.StartMFAEnrollmentJSONRequestBody, reqEditors ...generated.RequestEditorFn) (*http.Response, error)

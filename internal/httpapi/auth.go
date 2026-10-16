@@ -334,6 +334,16 @@ func (o options) registerRoutes(r chiRouter) {
 	// browser session and a machine holding one has no use for it.
 	r.Post("/v1/session/mfa", o.sessionCredentialOnly(o.handleCompleteSecondFactor))
 
+	// THE SESSION-TOKEN EXCHANGE, mounted beside the session surface it belongs
+	// to and conditional on the two things it needs: a provider to sign with
+	// and a tenancy service to verify the named account against. With either
+	// absent the route is not mounted at all — a deployment with no signing key
+	// cannot mint, and that is a 404 rather than a 500 on every request, the
+	// same rule as every other conditional surface on this router.
+	if o.oidc != nil && o.tenancy != nil {
+		o.registerSessionTokenRoutes(r)
+	}
+
 	// The account routes need both services: a session to resolve the caller from
 	// and a tenancy service to resolve their role in it. With only one of the two
 	// they are not mounted at all, which is the same rule as above — a

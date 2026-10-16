@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/url"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -105,6 +106,10 @@ type fakeOIDC struct {
 	// requested records the request ids the login interaction was asked about, so a
 	// test can prove the id in the path is the one that reached the use case.
 	requested []string
+	// minted records every session-token exchange's arguments, for the tests that
+	// assert who was signed for and for which account.
+	minted  []mintRequest
+	mintErr error
 }
 
 func newFakeOIDC() *fakeOIDC {
@@ -149,3 +154,22 @@ func (f *fakeOIDC) LoginRedirect(params oidc.LoginRedirectParams) string {
 }
 
 func (f *fakeOIDC) CompleteLogin(context.Context, string, id.UUID) error { return f.completeErr }
+
+// mintRequest is one call to MintAccountToken, recorded so a handler test can
+// assert WHO was signed for and for which account — which is the whole of the
+// authorization decision the exchange makes.
+type mintRequest struct {
+	subject   id.UUID
+	accountID id.UUID
+	audience  string
+	at        time.Time
+}
+
+func (f *fakeOIDC) MintAccountToken(subject, accountID id.UUID, audience string, now time.Time) (oidc.MintedToken, error) {
+	f.minted = append(f.minted, mintRequest{subject: subject, accountID: accountID, audience: audience, at: now})
+	if f.mintErr != nil {
+		return oidc.MintedToken{}, f.mintErr
+	}
+	expiresAt := now.Add(oidc.AccountTokenTTL)
+	return oidc.MintedToken{Token: "fake-minted-token", ExpiresAt: expiresAt}, nil
+}

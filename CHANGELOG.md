@@ -6,6 +6,45 @@ All notable changes to identity are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added (packet billing-local-stack: the session-to-token exchange)
+
+**`POST /v1/session/tokens` — a session in, one account-scoped access token out.**
+The account is NAMED by the caller and the membership is verified before anything
+is signed, so no consumer has to pick an account out of a token that carries
+several.
+
+**The problem it solves, with the receipts to prove it was real.** Services that
+scope by one account and verify RS256 tokens off the published JWKS are told a
+singular `account_id` by the platform's conventions; this service's profile-scope
+access tokens have always carried `accounts`, an array — with the reason on the
+record in `internal/oidc/profiles.go` (a person is a member of several accounts
+and a token naming one of them arbitrarily is wrong for the others). Both sides
+were self-consistent and incompatible, and the consequence was not theoretical:
+walked on the whole local stack, parlor's billing screens took a real signed-in
+user to billing and were answered `401` on every `/v1` call, because
+`accounts[0]`-style guessing is exactly the cross-tenant bug billing-12 spent a
+packet finding. Billing's `REPORT-billing-21-authorization.md` recorded the
+disagreement as a DECISION NEEDED; this is the resolution, and the route is
+session-only on purpose — a machine credential minting a token that asserts a
+human's identity is the escalation path `sessionCredentialOnly` exists for.
+
+**What was added.** One operation (`mintSessionToken`, `openapi/v1.yaml` 1.15.0)
+with two schemas (`MintSessionTokenRequest`, `MintedSessionToken`); the provider
+mint (`internal/oidc/mint.go`, 15-minute TTL, minimal claims: `iss`, `aud`,
+`sub`, `iat`, `exp`, `jti`, `account_id` — and deliberately NOT the `accounts`
+array); the handler with its three refusals (a body that is missing or malformed
+a field, an account the caller is not in — 404 with the same sentence a
+nonexistent account gets, and the 403 the session-only middleware answers a
+scoped api key with); the route is mounted only where there is both a provider
+and a tenancy service. README's tables, the anonymous-enumeration audit, the
+regenerated `client` (Transport method and `Client.MintSessionToken` wrapper)
+and the transport coverage were added with it.
+
+**What did not change.** No existing operation, response or credential
+behaviour. Nothing reads the token except the receiver, which pins its own
+audience and iss — billing names `billing` as the audience and nothing else
+about the token is this service's business.
+
 ### Changed (packet OPS-P1: identity is Business Source Licence 1.1, and it was "all rights reserved")
 
 **The grant.** [LICENSE](LICENSE) is now a Business Source Licence 1.1 with

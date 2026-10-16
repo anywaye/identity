@@ -143,7 +143,20 @@ info:
   # live link as unrecognised. Two operations and two new response schemas
   # (`AgentClaimPreview`, `AgentHome`). No existing operation moved and no
   # existing response changed. See DECISIONS.md D22.
-  version: 1.14.0
+  #
+  # 1.15.0 IS THE SESSION-TOKEN EXCHANGE: one new operation,
+  # `POST /v1/session/tokens`, and one new request schema and response schema.
+  # It mints a short-lived RS256 access token bound to ONE account the caller
+  # names and is a member of, for consumers that scope by a single account
+  # (billing is the first: its verifier requires a singular `account_id`, and
+  # identity's profile-scope tokens carry `accounts`, an array — the
+  # disagreement recorded in billing's REPORT-billing-21-authorization.md as a
+  # DECISION NEEDED). The account is named by a party allowed to name it and
+  # verified here before anything is signed; nothing picks an entry out of the
+  # array. It is additive: no existing operation moved and no existing response
+  # changed. Session-only, like the rest of the session surface: an api key is
+  # refused with 403.
+  version: 1.15.0
   summary: Authentication, sessions, multi-factor authentication, account recovery, accounts, tenancy, scoped API tokens, the admin surface, the operator surface, the agent principal and OIDC registrations.
   description: |
     `identity` is the cafaye platform's security boundary: it is what every other
@@ -1724,6 +1737,101 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+
+  /v1/session/tokens:
+    post:
+      tags: [sessions]
+      operationId: mintSessionToken
+      summary: Exchange a session for one account-scoped access token
+      description: |
+        A short-lived RS256 access token, signed with the key the JWKS
+        publishes, bound to **one account** the caller names — for services
+        that scope by a single account and verify tokens off this provider's
+        key set. Billing is the first consumer, and the reason this endpoint
+        exists is on the record: billing's verifier requires a singular
+        `account_id` claim, this service's profile-scope access tokens carry
+        `accounts`, an array, and both sides were self-consistent and
+        incompatible (billing's `REPORT-billing-21-authorization.md`, DECISION
+        NEEDED). The resolution is that **the account is named by a party
+        allowed to name it**: a server-side caller, holding the user's session,
+        says which account its user is acting in; the membership is verified
+        here; and the answer is signed. Nothing anywhere picks `accounts[0]`.
+
+        The token's claims are `iss`, `aud` (the requested audience), `sub`,
+        `iat`, `exp`, `jti` and `account_id` — minimal by design, and
+        deliberately WITHOUT the `accounts` array: one token, one account, no
+        second answer to the same question. It is verifiable without calling
+        this service and dies with the session at the longest. Nothing is
+        stored: there is no row to revoke, because revocation is the session's
+        and the session surface already owns it.
+
+        **Session only.** A scoped api key is refused with `403`, like the rest
+        of the session surface: a credential bound to one account minting a
+        token that asserts a human's identity is a machine credential
+        impersonating its owner.
+
+        A 404 for a named account means one thing and one thing only — **the
+        caller is not a member of it, or it does not exist** — and the two are
+        deliberately the same sentence, so this endpoint cannot be used to walk
+        account ids.
+      security:
+        - sessionCookie: []
+        - bearerToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MintSessionTokenRequest'
+            examples:
+              billing:
+                value:
+                  account_id: 0b6d3f2e-8a41-4d2f-9d0e-5c1a2b3c4d5e
+                  audience: billing
+      responses:
+        '200':
+          description: |
+            The token and its expiry. 200 rather than 201 because nothing
+            durable was created — there is no row, so there is no `Location`
+            to point at, and RFC 6749's token endpoint answers 200 for the
+            same reason.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MintedSessionToken'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          description: |
+            The request presented a scoped api key. The session surface refuses
+            a machine credential on the same terms as `DELETE /v1/session`: a
+            token cannot mint a token that names a person.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: |
+            The named account is not one the caller is a member of — or does
+            not exist. One sentence for both, so this route is not an account
+            enumerator.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '500':
+          $ref: '#/components/responses/InternalError'
 
   /v1/mfa:
     get:
@@ -8633,6 +8741,48 @@ components:
         deps:
           type: string
           description: The dependencies probed, comma separated, or `none`. Present on `/readyz` only.
+
+
+    MintSessionTokenRequest:
+      type: object
+      description: |
+        The account to bind the token to and the service it is for. Both are
+        required; neither has a default, because a default here is a tenancy
+        key nobody chose.
+      additionalProperties: false
+      required: [account_id, audience]
+      properties:
+        account_id:
+          type: string
+          format: uuid
+          description: |
+            The one account this token will be bound to. The caller must be a
+            member of it — the membership is checked before anything is signed,
+            and a non-member gets the same 404 a nonexistent account gets.
+        audience:
+          type: string
+          pattern: '^[a-z][a-z0-9-]{0,63}$'
+          description: |
+            The service the token is for — `billing`, `darkroom` — copied into
+            the token's `aud` claim. A SHAPE and not a closed list: this service
+            does not hold the fleet's roster, and each receiver pins its own
+            audience and refuses anything else.
+
+    MintedSessionToken:
+      type: object
+      additionalProperties: false
+      required: [token, expires_at]
+      properties:
+        token:
+          type: string
+          description: |
+            The compact JWS. Signed with the key the JWKS publishes, so any
+            verifier that trusts this provider's key set can check it without
+            calling this service.
+        expires_at:
+          type: string
+          format: date-time
+          description: The token's `exp`, told to the caller so it can schedule the re-mint without parsing what it is about to hand on.
 
   responses:
     RateLimited:
