@@ -2,6 +2,8 @@ package recovery
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"time"
@@ -117,7 +119,17 @@ type SecondFactorState interface {
 // for. Naming an account here would be a second way to express tenancy, and this
 // service has exactly one.
 type MintSessionLinkInput struct {
+	// UserID names an existing subject. Mutually exclusive with Email: exactly
+	// one must be set. A UserID that does not resolve is a 404 on this surface,
+	// for the reason step (2) of MintSessionLink records.
 	UserID id.UUID
+	// Email names a subject by address rather than by id. When the address has no
+	// account yet, one is created here — with an unusable password, since the
+	// person will sign in through the link rather than through a password — so
+	// that an acceptance can reach somebody who has never registered. The account
+	// creation happens before the link is minted, inside the same transaction,
+	// so a mint that fails leaves no user behind.
+	Email string
 	// Window is the requested lifetime. Zero means the default, and a value over
 	// MaxSessionLinkTTL is REFUSED rather than clamped.
 	Window time.Duration
@@ -197,15 +209,38 @@ func (s *Service) MintSessionLink(ctx context.Context, in MintSessionLinkInput) 
 	}
 
 	now := s.clk.Now()
-	q := s.read.Queryer()
 
-	// (2)
-	user, err := s.users.ByID(ctx, q, in.UserID)
-	if err != nil {
-		if errors.Is(err, users.ErrNotFound) {
-			return SessionLink{}, ErrSubjectNotFound
+	if in.UserID.IsZero() && in.Email == "" {
+		return SessionLink{}, &users.FieldError{Field: "user_id", Code: users.CodeRequired}
+	}
+
+	// (2) Resolve the subject. Two shapes, one outcome: a user.
+	//
+	// UserID names an existing subject and is the 404 the surface has always
+	// answered. Email names a subject by address and, when no account exists for
+	// that address, creates one — with an unusable password, since the person
+	// signs in through the link and sets a password later via the reset flow.
+	// The creation is inside the mint's transaction so a mint that fails leaves
+	// no user behind; see resolveSubjectByEmail.
+	var user users.User
+	var err error
+	if in.Email != "" {
+		if in.UserID.IsZero() == false {
+			return SessionLink{}, &users.FieldError{Field: "user_id", Code: users.CodeInvalidFormat}
 		}
-		return SessionLink{}, fmt.Errorf("recovery: looking up the subject for a session link: %w", err)
+		user, err = s.resolveSubjectByEmail(ctx, in.Email, now)
+		if err != nil {
+			return SessionLink{}, err
+		}
+	} else {
+		q := s.read.Queryer()
+		user, err = s.users.ByID(ctx, q, in.UserID)
+		if err != nil {
+			if errors.Is(err, users.ErrNotFound) {
+				return SessionLink{}, ErrSubjectNotFound
+			}
+			return SessionLink{}, fmt.Errorf("recovery: looking up the subject for a session link: %w", err)
+		}
 	}
 
 	// (2b) A DISABLED SUBJECT GETS NO LINK, and it is its own error rather than the
@@ -222,6 +257,8 @@ func (s *Service) MintSessionLink(ctx context.Context, in MintSessionLinkInput) 
 	if user.IsDisabled() {
 		return SessionLink{}, ErrSubjectDisabled
 	}
+
+	q := s.read.Queryer()
 
 	// (3) A subject that cannot be asked about gets no link, and the error says the
 	// deployment is at fault rather than the subject — the alternative is a link
@@ -261,4 +298,89 @@ func (s *Service) MintSessionLink(ctx context.Context, in MintSessionLinkInput) 
 	}
 
 	return SessionLink{Token: token, ExpiresAt: expiresAt}, nil
+}
+
+// resolveSubjectByEmail returns the user for an address, creating one if no
+// account exists for it.
+//
+// THE CREATION IS THE WHOLE OF WHAT MAKES AN ACCEPTANCE REACHABLE BY SOMEBODY
+// WHO HAS NEVER REGISTERED. The mint has always named an existing subject;
+// naming an address instead and creating the subject here is what turns a session
+// link into a door an unregistered counterparty can walk through. The user is
+// created with an unusable password — a random value nobody knows — because the
+// person signs in through the link and sets a password later via the reset flow.
+//
+// IT IS INSIDE A TRANSACTION, and the user row is the only write here: no
+// personal account, no outbox event, no tenancy. That is a deliberate limit and
+// not an oversight. Provisioning a personal account from inside this package
+// would import the accounts service's rules into the recovery package, and the
+// account can be provisioned lazily — on first authenticated request, or by a
+// separate step — without the link being any less valid. A user with no account
+// who redeems a link holds a session that signs them in; what they can do with
+// it is the accounts service's question, not this one's.
+func (s *Service) resolveSubjectByEmail(ctx context.Context, raw string, now time.Time) (users.User, error) {
+	email := users.NormalizeEmail(raw)
+	if err := users.ValidateEmail(email); err != nil {
+		return users.User{}, &users.FieldError{Field: "email", Code: users.CodeInvalidFormat}
+	}
+
+	q := s.read.Queryer()
+	u, err := s.users.ByEmail(ctx, q, email)
+	if err == nil {
+		if u.IsDisabled() {
+			return users.User{}, ErrSubjectDisabled
+		}
+		return u, nil
+	}
+	if !errors.Is(err, users.ErrNotFound) {
+		return users.User{}, fmt.Errorf("recovery: looking up the subject by email: %w", err)
+	}
+
+	// Create the user with an unusable password.
+	// The digest is a hash of 32 random bytes; nobody knows the plaintext, so no
+	// password login can ever succeed against it. The reset flow is the only way
+	// in, which is exactly the property an unregistered counterparty needs.
+	digest, err := s.hasher.Hash(randomUnusablePassword())
+	if err != nil {
+		return users.User{}, fmt.Errorf("recovery: hashing the placeholder password: %w", err)
+	}
+
+	var created users.User
+	err = s.uow.Do(ctx, func(ctx context.Context, q db.Querier) error {
+		u, err := s.users.Create(ctx, q, users.CreateParams{Email: email, PasswordDigest: digest})
+		if err != nil {
+			// A race: somebody else created this email between our lookup and
+			// our insert. Re-read and use theirs.
+			if errors.Is(err, users.ErrEmailTaken) {
+				u2, err2 := s.users.ByEmail(ctx, q, email)
+				if err2 != nil {
+					return fmt.Errorf("recovery: re-reading a concurrently created user: %w", err2)
+				}
+				created = u2
+				return nil
+			}
+			return fmt.Errorf("recovery: creating the subject: %w", err)
+		}
+		created = u
+		return nil
+	})
+	if err != nil {
+		return users.User{}, err
+	}
+	_ = now
+	return created, nil
+}
+
+// randomUnusablePassword returns 32 bytes of entropy as a string, which is then
+// hashed and stored as the user's password digest. Nobody knows the plaintext,
+// so no password login can ever succeed against it; the reset flow is the only
+// way in.
+func randomUnusablePassword() string {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		// A failure to read randomness is a deployment problem, not a request
+		// problem; panic rather than store a guessable digest.
+		panic(fmt.Errorf("recovery: reading randomness for a placeholder password: %w", err))
+	}
+	return base64.StdEncoding.EncodeToString(b)
 }

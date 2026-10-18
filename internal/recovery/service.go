@@ -48,6 +48,7 @@ type TokenStore interface {
 // and putting them on a shared surface would be a statement about `users` made by a
 // different package.
 type UserStore interface {
+	Create(ctx context.Context, q db.Querier, p users.CreateParams) (users.User, error)
 	ByEmail(ctx context.Context, q db.Querier, email string) (users.User, error)
 	ByID(ctx context.Context, q db.Querier, userID id.UUID) (users.User, error)
 	SetPassword(ctx context.Context, q db.Querier, userID id.UUID, digest string) error

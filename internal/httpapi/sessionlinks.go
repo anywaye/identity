@@ -153,6 +153,10 @@ func (o options) requireSessionLinkMint(next http.HandlerFunc) http.HandlerFunc 
 // `{"window": 0}` silently mean "ten minutes".
 type mintSessionLinkRequest struct {
 	UserID string `json:"user_id"`
+	// Email names a subject by address. When set, the service creates the user
+	// if no account exists for that address, so an acceptance can reach somebody
+	// who has never registered. Mutually exclusive with user_id.
+	Email string `json:"email"`
 	// Window is the requested lifetime in seconds. Absent means
 	// recovery.SessionLinkTTL; a value over recovery.MaxSessionLinkTTL is a 422 and
 	// never a clamp.
@@ -198,15 +202,19 @@ func (o options) handleMintSessionLink(w http.ResponseWriter, r *http.Request) {
 	// transaction. The nil uuid is refused for the reason accountIDFrom refuses it:
 	// it is a value no row can have, and a store that treated it as a wildcard would
 	// mint for an arbitrary subject.
-	userID, err := id.Parse(body.UserID)
-	if err != nil || userID.IsZero() {
-		writeProblem(w, r, newProblem(http.StatusUnprocessableEntity, CodeValidationFailed).
-			withDetail("user_id must be the id of a user this service has").
-			withFieldErrors([]FieldError{{Field: "user_id", Code: "invalid_format"}}))
-		return
+	in := recovery.MintSessionLinkInput{}
+	if body.Email != "" {
+		in.Email = body.Email
+	} else {
+		userID, err := id.Parse(body.UserID)
+		if err != nil || userID.IsZero() {
+			writeProblem(w, r, newProblem(http.StatusUnprocessableEntity, CodeValidationFailed).
+				withDetail("user_id must be the id of a user this service has, or email must name one").
+				withFieldErrors([]FieldError{{Field: "user_id", Code: "invalid_format"}}))
+			return
+		}
+		in.UserID = userID
 	}
-
-	in := recovery.MintSessionLinkInput{UserID: userID}
 	if body.Window != nil {
 		in.Window = time.Duration(*body.Window) * time.Second
 	}
