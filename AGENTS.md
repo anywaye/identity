@@ -790,3 +790,6 @@ demands them, and the token/session axis is covered by
 The anonymous column is `403` here rather than `401` on every other row, because
 `requireAdminToken` runs first — which is also why `expectedStatus` consults a
 row's `expect` override BEFORE its authentication check.
+
+## Secrets
+- No `.env` files with values. Use `cafe secret set/get/list` (dev) and `cafe dev` (injects). See `docs/secrets.md`.

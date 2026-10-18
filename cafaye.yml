@@ -214,6 +214,28 @@ exposes:
     # left as empty lists; an empty list says "we checked and there are none",
     # which is true today but is a claim that has to be revisited.
 
+env:
+  - name: PORT
+    required: false
+    default: "8080"
+    secret: false
+    description: "TCP bind port."
+  - name: DATABASE_URL
+    required: false
+    secret: true
+    description: "Postgres DSN; unset = no pool."
+  - name: SIGNUP_SIGNING_KEY
+    required: true
+    secret: true
+    dev_default: "auto"
+    description: "HMAC key, 32 bytes."
+  - name: MFA_ENCRYPTION_KEY
+    required: false
+    secret: true
+    dev_default: "auto"
+    description: "TOTP seal key."
+
+
 repository:
   # SSH only. An HTTPS remote for a cafaye repo is a policy violation (PLAN.md §1).
   url: git@github.com:cafaye/identity.git
