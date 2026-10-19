@@ -35,6 +35,7 @@ func recoverPanics(logger *slog.Logger, next http.Handler) http.Handler {
 			}
 
 			logPanic(logger, r, tracked, recovered)
+			CaptureError(panicError{recovered}, r)
 
 			// Nothing can be written once the status line is out: a second
 			// WriteHeader is ignored and appending a body to a response that is

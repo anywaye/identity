@@ -262,6 +262,7 @@ func run() error {
 	// that takes ninety seconds because the database is slow is exactly the boot
 	// an operator is watching for, and it is invisible without this.
 	shutdownTelemetry, err := installTelemetry(ctx, logger)
+	httpapi.InitErrorReporting()
 	if err != nil {
 		return err
 	}

@@ -289,6 +289,7 @@ func unauthorized(w http.ResponseWriter, r *http.Request) {
 // The split is the whole point: the caller gets a trace id they can quote and the
 // operator gets the driver error, and neither has to be leaked to the other.
 func unexpected(w http.ResponseWriter, r *http.Request, logger *slog.Logger, err error) {
+	CaptureError(err, r)
 	if logger != nil {
 		logger.Error("request failed",
 			"error", err,
