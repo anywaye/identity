@@ -240,7 +240,7 @@ repository:
   # SSH only. An HTTPS remote for a cafaye repo is a policy violation (PLAN.md §1).
   url: git@github.com:cafaye/identity.git
   defaultBranch: master
-  visibility: public
+  visibility: private
 
 owner:
   team: identity
