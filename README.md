@@ -1,5 +1,7 @@
 # identity
 
+**Current direction (2026-10-19):** Ship is the product. The cafaye stack is internal infrastructure; we are not selling or supporting it as a standalone product as of this date. We continue to develop and improve it, treating the founder as the primary customer and keeping "build once, run everywhere" true, with the expectation that it may be offered again later.
+
 `identity` is the cafaye service that knows who someone is: auth, sessions,
 MFA, accounts and tenancy, social login, and OIDC. Every other cafaye service —
 billing, courier, gateway, parlor — asks this one who is calling and what they may
