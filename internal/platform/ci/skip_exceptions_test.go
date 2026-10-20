@@ -12,7 +12,7 @@ import (
 
 // # THE ONE PERMITTED SKIP, AND WHAT HOLDS IT TO THREE NAMES
 //
-// Two steps in `.github/workflows/ci.yml` fail the job on any `--- SKIP:` line.
+// Two steps in `ci/ci.yml` fail the job on any `--- SKIP:` line.
 // That rule is older than `internal/courier` and it is right: `dbtest.Pool` skips
 // when TEST_DATABASE_URL is unset, so the suite's most expensive third can verify
 // nothing and still report green.

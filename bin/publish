@@ -16,7 +16,7 @@
 # run so any machine with docker can do it.
 #
 # THE TWO PATHS, AND THE ONE MANUAL STEP. When Actions minutes exist the
-# service's .github/workflows/publish.yml does this. When they do not — or
+# service's ci/publish.yml does this. When they do not — or
 # when a developer needs to publish from a laptop, a sandbox, or CI that is
 # not GitHub — this script does the same bytes: the image digest is DERIVED
 # from the pushed image (never typed), the chart version is NOT bumped

@@ -25,7 +25,7 @@
 //
 // NO BUILD TAG, and that is a decision rather than an omission. kit's template is
 // tagged `tier_db`, and this repository has no tier_db convention: `go test ./...` in
-// .github/workflows/ci.yml is the whole suite and it passes no tags, so a tagged test
+// ci/ci.yml is the whole suite and it passes no tags, so a tagged test
 // would never be COMPILED there and the account boundary would ship with a proof that
 // cannot run. What replaces the tag is the repository's own pair: a loud skip when
 // TEST_DATABASE_URL is unset (so `go test ./...` stays green with no database, which

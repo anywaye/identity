@@ -6,7 +6,7 @@
 #
 # This is not a second gate and it is not a variant of bin/prime. bin/prime is
 # kit's and is untouched; this is the implementation of the one check that used
-# to be an inline `go tool cover … | awk` inside .github/workflows/ci.yml, where
+# to be an inline `go tool cover … | awk` inside ci/ci.yml, where
 # no test could reach it. The `coverage` step calls this, and
 # `TestTheCoverageStepRunsTheCheckedInFilter` fails if it ever stops calling it,
 # so the tested filter and the enforcing filter cannot be two programs.
@@ -35,7 +35,7 @@ set -o pipefail
 
 profile="${1:-}"
 declarations="${2:-coverage-exclusions}"
-# The floor the CALLER asserts, when it has one. `.github/workflows/ci.yml` sets
+# The floor the CALLER asserts, when it has one. `ci/ci.yml` sets
 # COVERAGE_FAIL_UNDER in its `env:` block, so that copy and the declaration's are
 # two statements of one number and the script compares them here rather than
 # letting whichever ran first win.
@@ -225,7 +225,7 @@ entries="$(cat "$records.count")"
 #
 # A second entry naming a different floor is two floors, and a floor that depends
 # on which line you read is not a floor. Checked here, and against
-# .github/workflows/ci.yml in TestTheCoverageFloorInTheDeclarationIsTheFloorsFloor.
+# ci/ci.yml in TestTheCoverageFloorInTheDeclarationIsTheFloorsFloor.
 # ---------------------------------------------------------------------------
 floor=""
 while IFS=$'\t' read -r prefix files lines entry_floor reason owner since until; do

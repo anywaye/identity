@@ -7,7 +7,7 @@
 # is the wiring between them that Actions used to hold, moved into the
 # repository where it can be run by hand, by a sandbox, or by a runner.
 #
-# WHERE THE FACTS COME FROM: `.github/workflows/ci.yml` IN THIS REPOSITORY.
+# WHERE THE FACTS COME FROM: `ci/ci.yml` IN THIS REPOSITORY.
 # That file is the source of truth for how this repository is built, and this
 # file follows it: the gate entrypoint (`bin/prime`, the `gate` job's "the gate
 # a developer runs" step), the deploy step above it (`goose up`, alone, never
@@ -45,7 +45,7 @@ log() { printf '\n== %s\n' "$1"; }
 log "pipeline: $REPO_NAME at $REPO_DIR"
 
 # ===========================================================================
-# THE GATE. `bin/prime` — the entrypoint `.github/workflows/ci.yml`'s `gate`
+# THE GATE. `bin/prime` — the entrypoint `ci/ci.yml`'s `gate`
 # job names in its "the gate a developer runs" step. Not a CI-only variant of
 # it: if the two can disagree, one of them is lying.
 # ===========================================================================
@@ -53,7 +53,7 @@ GATE=(./bin/prime)
 
 # ===========================================================================
 # PATHS THIS REPOSITORY'S CI ADDS. Both `echo … >> $GITHUB_PATH` lines in
-# `.github/workflows/ci.yml` append the same directory: the `goose` step (the
+# `ci/ci.yml` append the same directory: the `goose` step (the
 # migrate CLI) and the `install golangci-lint` step (the binary
 # TestTheLintExclusionNamesEveryEnabledLinter execs) both `go install` into
 # `$(go env GOPATH)/bin`. The pipeline installs the same two binaries the same
@@ -168,7 +168,7 @@ log "the tiers the workflow asserts"
 # this script cannot read fails loudly rather than defaulting. Both floors are
 # decrease detectors, not targets: green means nothing was deleted, skipped or
 # excluded since they were measured.
-WF=".github/workflows/ci.yml"
+WF="ci/ci.yml"
 SUITE_FLOOR="$(sed -n "s/^ *SUITE_FLOOR: *'\(.*\)'/\1/p" "$WF" | head -n 1)"
 DATABASE_TIER_FLOOR="$(sed -n "s/^ *DATABASE_TIER_FLOOR: *'\(.*\)'/\1/p" "$WF" | head -n 1)"
 if [ -z "$SUITE_FLOOR" ] || [ -z "$DATABASE_TIER_FLOOR" ]; then

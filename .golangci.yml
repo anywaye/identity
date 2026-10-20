@@ -64,7 +64,7 @@
 # This file does not enable kit's linter set (kit/lint/golangci.yml). That is
 # kit's to give, not this packet's to take: adopting it here would add bodyclose,
 # noctx, errorlint, exhaustive and the rest to a lint run that is expected red on
-# arrival for unrelated reasons (see .github/workflows/ci.yml's header). This
+# arrival for unrelated reasons (see ci/ci.yml's header). This
 # packet's scope is the generated client, and a wider lint policy would be a
 # different commit by a different packet.
 

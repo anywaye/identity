@@ -1,4 +1,4 @@
-// Checks on .github/workflows/publish.yml — the workflow that builds and pushes
+// Checks on ci/publish.yml — the workflow that builds and pushes
 // the two artifacts a deploy consumes: the image `config/deploy.yml` deploys
 // and the chart the Argo CD `Application` pulls.
 //
@@ -45,7 +45,7 @@ import (
 // pushes the image and says nothing about a chart, so a check that accepted any
 // `cafaye/kit` `uses:` would pass on a tree whose chart is published by
 // nothing.
-const kitPublishWorkflow = "cafaye/kit/.github/workflows/publish.reusable.yml@master"
+const kitPublishWorkflow = "cafaye/kit/ci/publish.reusable.yml@master"
 
 // defaultChartDir is the `chart-dir` input's default in kit's publish and chart
 // reusable workflows. Resolved here rather than assumed: the caller names no
@@ -62,7 +62,7 @@ const defaultChartDir = "chart/"
 const substrateTargetRevision = "0.1.0"
 
 // publishWorkflow is the file, relative to the repository root.
-const publishWorkflow = ".github/workflows/publish.yml"
+const publishWorkflow = "ci/publish.yml"
 
 var (
 	// Any `uses:` pointing at kit, at any indentation. Used to prove the file
@@ -114,7 +114,7 @@ func TestTheArtifactsAreBuiltBySomethingThatRuns(t *testing.T) {
 // TestThePublishWorkflowCallsKitsComposedPublishAtAPathThatResolves. The second
 // half of `kitWorkflow`'s rule, applied to the second call. GitHub resolves a
 // cross-repository reusable workflow at
-// {owner}/{repo}/.github/workflows/{file}@{ref} and documents that
+// {owner}/{repo}/ci/{file}@{ref} and documents that
 // subdirectories of the workflows directory are NOT supported, so any other path
 // resolves to nothing and the job is red before it starts.
 //
@@ -144,11 +144,11 @@ func TestThePublishWorkflowCallsKitsComposedPublishAtAPathThatResolves(t *testin
 	if calls[0] != kitPublishWorkflow {
 		t.Fatalf("the call is %q, want %q.\n"+
 			"GitHub resolves a cross-repository reusable workflow at\n"+
-			"  {owner}/{repo}/.github/workflows/{file}@{ref}\n"+
+			"  {owner}/{repo}/ci/{file}@{ref}\n"+
 			"and documents that subdirectories of the workflows directory are NOT\n"+
 			"supported, so any other path resolves to nothing and the job is red\n"+
 			"before it starts.\n\n"+
-			"The name is the assertion. cafaye/kit/.github/workflows/image.reusable.yml\n"+
+			"The name is the assertion. cafaye/kit/ci/image.reusable.yml\n"+
 			"is the caller this file used to require: it builds and pushes the image\n"+
 			"and says nothing about a chart, so identity's chart — which the\n"+
 			"substrate's Application pulls at targetRevision %s — was published by\n"+

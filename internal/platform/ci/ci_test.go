@@ -1,6 +1,6 @@
 // Package ci is the test that keeps this repository's CI honest.
 //
-// It holds no code: `.github/workflows/ci.yml` is the artifact under test, and a
+// It holds no code: `ci/ci.yml` is the artifact under test, and a
 // workflow file nobody has executed is a file nobody has tested — the same defect
 // as a test suite nobody runs, one level further out.
 //
@@ -55,7 +55,7 @@ import (
 // reader can check it against kit's tree with one `ls`.
 //
 // Verified present at that path in ../kit at commit 13228ed.
-const kitWorkflow = "cafaye/kit/.github/workflows/ci.reusable.yml@master"
+const kitWorkflow = "cafaye/kit/ci/ci.reusable.yml@master"
 
 // kitInputs are kit's `on.workflow_call` inputs, read from the reusable workflow
 // itself and from kit/README.md's "How a service repo adopts kit". A caller that
@@ -109,7 +109,7 @@ func TestTheSharedJobCallsKitAtAPathThatResolves(t *testing.T) {
 	if calls[0] != kitWorkflow {
 		t.Fatalf("the call is %q, want %q.\n"+
 			"GitHub resolves a cross-repository reusable workflow at\n"+
-			"  {owner}/{repo}/.github/workflows/{file}@{ref}\n"+
+			"  {owner}/{repo}/ci/{file}@{ref}\n"+
 			"and documents that subdirectories of the workflows directory are NOT\n"+
 			"supported, so any other path resolves to nothing and the build is red\n"+
 			"before it starts.", calls[0], kitWorkflow)
@@ -155,7 +155,7 @@ func TestTheGoPinIsGoModsGoDirective(t *testing.T) {
 	if pinned[1] != want {
 		t.Errorf("the kit call pins go %s and go.mod says %q.\n"+
 			"Raise both in the same commit: go.mod's `go` directive is the pin, and\n"+
-			"the literal in .github/workflows/ci.yml is the copy kit reads.",
+			"the literal in ci/ci.yml is the copy kit reads.",
 			pinned[1], want)
 	}
 }
@@ -659,7 +659,7 @@ func floor(t *testing.T, name string) int {
 func TestEveryRunBlockIsValidShell(t *testing.T) {
 	bash, err := exec.LookPath("bash")
 	if err != nil {
-		t.Fatalf("bash is not on PATH, so no `run:` block in .github/workflows/ci.yml can be parsed.\n"+
+		t.Fatalf("bash is not on PATH, so no `run:` block in ci/ci.yml can be parsed.\n"+
 			"GitHub runs these under bash and bin/prime is a shell script, so a machine\n"+
 			"without bash can run neither this workflow nor this repository's gate: %v", err)
 	}
@@ -765,7 +765,7 @@ func TestTheNamedSecurityTestsExist(t *testing.T) {
 	for _, name := range named {
 		if !defined[name] {
 			t.Errorf("ci.yml names %s as a test that must run, and no such function exists in this tree.\n"+
-				"Rename it back, or fix the name in .github/workflows/ci.yml in the same commit —\n"+
+				"Rename it back, or fix the name in ci/ci.yml in the same commit —\n"+
 				"a named list that no longer names anything is worse than no list.", name)
 		}
 	}
@@ -1027,7 +1027,7 @@ func goDirectiveOf(t *testing.T) string {
 func workflowLines(t *testing.T) []string {
 	t.Helper()
 
-	path := filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml")
+	path := filepath.Join(repoRoot(t), "ci", "ci.yml")
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)

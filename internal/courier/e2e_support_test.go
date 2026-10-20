@@ -62,7 +62,7 @@ import (
 // # AND CI KNOWS ABOUT THE SKIP RATHER THAN DISCOVERING IT
 //
 // A skip that CI tolerates silently is how a gate goes green by not checking, so
-// `.github/workflows/ci.yml` names these tests in `E2E_SKIP_EXCEPTIONS`: any other
+// `ci/ci.yml` names these tests in `E2E_SKIP_EXCEPTIONS`: any other
 // `--- SKIP:` line anywhere still fails the job, and `internal/platform/ci` holds
 // that list to exactly these three names and fails when one grows or disappears.
 // The exemption is declared, narrow, and under test — the same shape as every other

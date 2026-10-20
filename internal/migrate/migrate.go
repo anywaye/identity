@@ -22,7 +22,7 @@
 // # WHY THE goose LIBRARY AND NOT A SECOND APPLIER
 //
 // `goose` is pinned at v3.28.0, the version `bin/provision-testdb`,
-// `.github/workflows/ci.yml` and the README's own commands use. Linking the
+// `ci/ci.yml` and the README's own commands use. Linking the
 // library in at that same version means ONE migration engine describes the
 // schema on a developer's machine, in CI and on the box, and one version table
 // (`goose_db_version`) records where each database is.

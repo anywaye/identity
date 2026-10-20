@@ -1,4 +1,4 @@
-// Checks on the rollback tier: that .github/workflows/ci.yml can reach a green
+// Checks on the rollback tier: that ci/ci.yml can reach a green
 // boot at all, and that bin/rollback's contract is the one the workflow assumes.
 //
 // THE FINDING THIS FILE EXISTS FOR. `migrations/00016_account_isolation.sql`
@@ -7,7 +7,7 @@
 // policy for a role that cannot log in, so the migration needs a LOGIN role
 // named `<caller>_app`. `docker compose up` provides it — kit's cluster init
 // reads `KIT_POSTGRES_DATABASES: identity` and provisions `<service>_app`
-// beside each `<service>` — and .github/workflows/ci.yml did NOT, because it
+// beside each `<service>` — and ci/ci.yml did NOT, because it
 // runs a bare `postgres:17-alpine` service container with no init script.
 // `goose up` on that job died at 00016 with
 //
@@ -96,12 +96,12 @@ func suiteUser(t *testing.T) string {
 			continue
 		}
 		if m[1] == "" {
-			t.Fatalf(".github/workflows/ci.yml line %d sets "+dsnEnvKey+" with no user; "+
+			t.Fatalf("ci/ci.yml line %d sets "+dsnEnvKey+" with no user; "+
 				"the login role the migrations need cannot be derived.", i+1)
 		}
 		return m[1]
 	}
-	t.Fatal(".github/workflows/ci.yml sets no " + dsnEnvKey + ", so the role the suite connects\n" +
+	t.Fatal("ci/ci.yml sets no " + dsnEnvKey + ", so the role the suite connects\n" +
 		"as is unknown and the login role the migrations need cannot be derived. If the DSN moved\n" +
 		"to another variable this check has to learn where.")
 	return ""
@@ -140,11 +140,11 @@ func TestTheLoginRoleTheMigrationsProtectTablesForIsProvisionedBeforeTheyAreAppl
 	gooseUpAt := firstLineMatching(t, "goose up", lines, "goose -dir migrations postgres \"$DATABASE_URL\" up")
 
 	if gooseUpAt == 0 {
-		t.Fatalf(".github/workflows/ci.yml never runs `goose ... up`, so there is no point in this " +
+		t.Fatalf("ci/ci.yml never runs `goose ... up`, so there is no point in this " +
 			"check — but there is also no schema, and the suite would die on a missing table instead.")
 	}
 	if provisionedAt == 0 {
-		t.Fatalf(".github/workflows/ci.yml never creates the `%s` login role.\n"+
+		t.Fatalf("ci/ci.yml never creates the `%s` login role.\n"+
 			"migrations/00016_account_isolation.sql ends its Up with `select cafaye.protect_table('account_users')`,\n"+
 			"and protect_table defaults its login role to `current_user || '_app'` and REFUSES to write a\n"+
 			"policy for a role that cannot log in. This job's cluster is a bare postgres:17-alpine service\n"+
@@ -155,7 +155,7 @@ func TestTheLoginRoleTheMigrationsProtectTablesForIsProvisionedBeforeTheyAreAppl
 			"cluster.", role, role, role)
 	}
 	if provisionedAt > gooseUpAt {
-		t.Fatalf(".github/workflows/ci.yml creates `%s` on line %d but applies the migrations on line %d.\n"+
+		t.Fatalf("ci/ci.yml creates `%s` on line %d but applies the migrations on line %d.\n"+
 			"The ordering is the whole property: a role created after `goose up` cannot be one 00016 used.",
 			role, provisionedAt, gooseUpAt)
 	}
@@ -180,7 +180,7 @@ func TestTheProvisionedRoleIsCreatedFromTheJobDatabaseNotTheServiceEnvironment(t
 			continue
 		}
 		if strings.Contains(line, "${") {
-			t.Errorf(".github/workflows/ci.yml builds the role name with a shell expansion:\n%s\n"+
+			t.Errorf("ci/ci.yml builds the role name with a shell expansion:\n%s\n"+
 				"The job's environment does not carry the service container's POSTGRES_USER, POSTGRES_PASSWORD\n"+
 				"or POSTGRES_DB — GitHub sets those on the container, not on the steps — so `%s` here expands to\n"+
 				"an empty string and the role created is named `%s`.",
@@ -199,7 +199,7 @@ func TestTheProvisionedRoleIsCreatedFromTheJobDatabaseNotTheServiceEnvironment(t
 // a cluster where the migration has no CREATEROLE and fails; and a `goose down`
 // that cannot take the role away, because the role was never part of the
 // migration's own Up. The role is provisioned by docker-compose.yml, by kit's
-// cluster init, by .github/workflows/ci.yml and by bin/rollback. Those are four
+// cluster init, by ci/ci.yml and by bin/rollback. Those are four
 // homes, and this check is the one that says why a fifth is not allowed.
 func TestNoMigrationCreatesAClusterRole(t *testing.T) {
 	// `create role`, in any casing, with or without `if not exists`.
@@ -263,7 +263,7 @@ func TestTheRollbackRunsInCIAndCannotExitZeroByStandingDown(t *testing.T) {
 
 	at := firstLineMatching(t, "the rollback step", lines, "./bin/rollback")
 	if at == 0 {
-		t.Fatal(".github/workflows/ci.yml never runs bin/rollback, so seventeen Down sections go\n" +
+		t.Fatal("ci/ci.yml never runs bin/rollback, so seventeen Down sections go\n" +
 			"unchecked forever. A Down is code that sits beside an Up every run exercises and reads as\n" +
 			"though it were exercised too.")
 	}
@@ -279,12 +279,12 @@ func TestTheRollbackRunsInCIAndCannotExitZeroByStandingDown(t *testing.T) {
 	got := block.String()
 
 	if !strings.Contains(got, "IDENTITY_ROLLBACK_URL=") {
-		t.Errorf(".github/workflows/ci.yml runs bin/rollback without naming a server:\n%s\n"+
+		t.Errorf("ci/ci.yml runs bin/rollback without naming a server:\n%s\n"+
 			"With no URL the script prints a counted skip and exits 0, which is a green tick on a check\n"+
 			"that never ran.", got)
 	}
 	if !strings.Contains(got, "IDENTITY_ROLLBACK_REQUIRED=1") {
-		t.Errorf(".github/workflows/ci.yml runs bin/rollback without IDENTITY_ROLLBACK_REQUIRED=1:\n%s\n"+
+		t.Errorf("ci/ci.yml runs bin/rollback without IDENTITY_ROLLBACK_REQUIRED=1:\n%s\n"+
 			"The skip is the only path where that variable changes anything, and a step that can reach it\n"+
 			"can report success without having applied a single migration.", got)
 	}

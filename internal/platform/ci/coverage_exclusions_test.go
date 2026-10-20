@@ -350,7 +350,7 @@ func TestTheCoverageFloorInTheDeclarationIsTheFloorsFloor(t *testing.T) {
 
 	for floor, prefix := range declared {
 		if floor != gate {
-			t.Errorf("%s line %d says the floor is %s and .github/workflows/ci.yml says %s.\n"+
+			t.Errorf("%s line %d says the floor is %s and ci/ci.yml says %s.\n"+
 				"The excluded set, the gate's env: block and the input passed to kit are three "+
 				"statements of one number. Keep them in step, or delete two of them.",
 				exclusionsFile, entryLineNumberOf(t, root, prefix), floor, gate)

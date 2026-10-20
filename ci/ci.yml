@@ -1,3 +1,19 @@
+# THIS FILE IS NOT A GITHUB ACTIONS WORKFLOW ANY MORE, AND NOTHING RUNS IT.
+#
+# The fleet's CI runs in dev sandboxes: the same sandbox the work happens in,
+# on the machine the developer chose. This file is the SPECIFICATION those
+# checks read — the steps, the floors, the exemptions — kept where the
+# repository can hold it and read it.
+#
+# What executes is `ci/the pipeline` (named in this repository's `gate.yml`, under
+# `ci.workflow`), and the CI service reads that declaration and runs it.
+#
+# The GitHub Actions spelling is retired, not deleted, because the checks in
+# this repository read this file to hold the specification still: a gate that
+# checks a specification nobody executes is a gate checking a fiction, and a
+# gate that checks nothing is worse. The steps below are the specification
+# the executable CI is measured against, and the day this file stops being
+# that, the checks move with it.
 ---
 # identity's CI. Two jobs, and the split between them is the whole point:
 #
@@ -71,7 +87,7 @@ jobs:
   #
   # The `.github/workflows/` in that path is not decoration. GitHub resolves a
   # cross-repository reusable workflow at
-  # `{owner}/{repo}/.github/workflows/{file}@{ref}` and documents that
+  # `{owner}/{repo}/ci/{file}@{ref}` and documents that
   # subdirectories of the workflows directory are not supported, so a
   # `uses: cafaye/kit/workflows/ci.reusable.yml@master` line resolves to nothing
   # and the build is red before it starts. Verified present at that path in
@@ -112,7 +128,7 @@ jobs:
   # out of go.mod.
   ci:
     name: 'ci (kit: go)'
-    uses: cafaye/kit/.github/workflows/ci.reusable.yml@master
+    uses: cafaye/kit/ci/ci.reusable.yml@master
     with:
       language: go
       working-dir: .
@@ -374,7 +390,7 @@ jobs:
       # internal/courier's e2e file proves that a message identity really traverses a
       # LIVE courier's own validation. CI has no courier, and cannot have one without
       # standing up a second service with its own database, its own migrations and
-      # its own principal resolver — the same seam that .github/workflows/ci.yml's
+      # its own principal resolver — the same seam that ci/ci.yml's
       # own header records as missing from kit's reusable workflow, and the reason
       # the database tier needs the separate `gate` job at all. So on this runner
       # those four tests skip, loudly, naming what they would have proven.
@@ -557,7 +573,7 @@ jobs:
             echo "::error::go.mod carries no 'go' directive" >&2
             exit 1
           fi
-          have="$(sed -n 's/.*versions:.*"go":"\([0-9.]*\)".*/\1/p' .github/workflows/ci.yml | head -n 1)"
+          have="$(sed -n 's/.*versions:.*"go":"\([0-9.]*\)".*/\1/p' ci/ci.yml | head -n 1)"
           if [ "$have" != "$want" ]; then
             echo "::error::ci.yml pins go $have and go.mod says $want" >&2
             exit 1
@@ -593,7 +609,7 @@ jobs:
         # The version is READ OUT OF mise.toml, not retyped here: mise.toml is
         # this repository's `[tools]` pin and CI does not get to have a second
         # one. The value there tracks kit's `golangci-lint-action` pin
-        # (`cafaye/kit/.github/workflows/ci.reusable.yml`, `version: v2.14.0`),
+        # (`cafaye/kit/ci/ci.reusable.yml`, `version: v2.14.0`),
         # so local (`mise install`), the gate, and kit's lint step agree on
         # which linters are enabled — a bump touches mise.toml and reaches all
         # three. `go install` rather than the action, because this job needs

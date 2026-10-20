@@ -121,7 +121,7 @@ func TestTheLintExclusionIsOneFileAndNotAPrefix(t *testing.T) {
 // So the list is asked of the tool. If golangci-lint is not installed the test
 // FAILS rather than skipping, for the reason this repository uses everywhere: a
 // check that quietly does not run is indistinguishable from a check that passed,
-// and `.github/workflows/ci.yml` fails the build on a `--- SKIP:` line for exactly
+// and `ci/ci.yml` fails the build on a `--- SKIP:` line for exactly
 // this reason. The failure says how to install it.
 //
 // ## WHY ONE ENABLED LINTER IS ALLOWED TO BE MISSING FROM THE LIST

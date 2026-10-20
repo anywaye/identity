@@ -9,7 +9,7 @@
 # and the second is how a coverage floor stops being a coverage floor.
 #
 # It is read by `bin/coverage-floor`, which the `coverage` step of
-# `.github/workflows/ci.yml` runs, and it is validated by
+# `ci/ci.yml` runs, and it is validated by
 # `TestTheCoverageExclusionIsOnlyGeneratedCode` in `internal/platform/ci`, which is
 # the only thing that makes it a declaration rather than a comment.
 #
@@ -95,7 +95,7 @@
 # The floor, the path and the size of the excluded set are ONE EDITABLE UNIT, and
 # changing the denominator without restating the floor is the failure this file
 # exists to prevent. `TestTheCoverageFloorInTheDeclarationIsTheFloorsFloor` reads
-# this line and fails if it disagrees with the floor in `.github/workflows/ci.yml`
+# this line and fails if it disagrees with the floor in `ci/ci.yml`
 # or with the floor passed to kit — so "70%" cannot quietly come to mean three
 # different things in three files.
 #
@@ -108,7 +108,7 @@
 # and are checked together." A number written down by hand in a config file is the
 # one fact of the three that cannot be checked, because it is a copy of a
 # measurement rather than the measurement. The date-stamped "73.2% measured" in
-# `.github/workflows/ci.yml` is exactly that hazard and this packet removes it.
+# `ci/ci.yml` is exactly that hazard and this packet removes it.
 #
 # ---------------------------------------------------------------------------
 # FORMAT

@@ -115,7 +115,7 @@ DB_URL="$SCRATCH"
 # That is not a rollback finding. It is the harness wearing a cluster's clothes:
 # the role belongs to the ENVIRONMENT, which is why no migration creates it —
 # `KIT_POSTGRES_DATABASES: identity` provisions it, docker-compose.yml gets it
-# from that, and .github/workflows/ci.yml now provisions `identity` and
+# from that, and ci/ci.yml now provisions `identity` and
 # `identity_app` as NOSUPERUSER roles in a step of its own (the container
 # bootstraps only the superuser `postgres`, which is also who this script
 # connects as in CI — see the rollback step). So this file provisions it too,
