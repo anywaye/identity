@@ -150,7 +150,7 @@ info:
   # names and is a member of, for consumers that scope by a single account
   # (billing is the first: its verifier requires a singular `account_id`, and
   # identity's profile-scope tokens carry `accounts`, an array — the
-  # disagreement recorded in billing's REPORT-billing-21-authorization.md as a
+  # disagreement recorded in billing's REPORT-billing-21-authorization as a
   # DECISION NEEDED). The account is named by a party allowed to name it and
   # verified here before anything is signed; nothing picks an entry out of the
   # array. It is additive: no existing operation moved and no existing response
@@ -1751,7 +1751,7 @@ paths:
         exists is on the record: billing's verifier requires a singular
         `account_id` claim, this service's profile-scope access tokens carry
         `accounts`, an array, and both sides were self-consistent and
-        incompatible (billing's `REPORT-billing-21-authorization.md`, DECISION
+        incompatible (billing's `REPORT-billing-21-authorization`, DECISION
         NEEDED). The resolution is that **the account is named by a party
         allowed to name it**: a server-side caller, holding the user's session,
         says which account its user is acting in; the membership is verified
@@ -5856,7 +5856,7 @@ paths:
         This is a deliberate interim, not a contract. The fleet does not agree on the
         name: core's `docs/openapi-conventions.md` requires `scopes`, and gateway's
         `src/middleware/jwt.ts` reads `scope` and splits it on whitespace. The
-        question is open (MD7 in the manager's `DECISIONS.md`) and answering it
+        question is open (MD7 in the manager's `cafaye/notes/decisions.md`) and answering it
         unilaterally would mean rotating every credential already in a customer's
         hand. Emitting both means whichever name wins, the other is a one-line
         removal and no credential has to be reissued. A space-separated **string**
@@ -9150,3 +9150,4 @@ components:
 #  * There is no `GET /v1/users/{id}`. Nothing needs it, and an endpoint that
 #    exists only to be probed is an endpoint that leaks.
 # ---------------------------------------------------------------------------
+

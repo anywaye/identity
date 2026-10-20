@@ -4777,7 +4777,7 @@ type ClientInterface interface {
 	// This is a deliberate interim, not a contract. The fleet does not agree on the
 	// name: core's `docs/openapi-conventions.md` requires `scopes`, and gateway's
 	// `src/middleware/jwt.ts` reads `scope` and splits it on whitespace. The
-	// question is open (MD7 in the manager's `DECISIONS.md`) and answering it
+	// question is open (MD7 in the manager's `cafaye/notes/decisions.md`) and answering it
 	// unilaterally would mean rotating every credential already in a customer's
 	// hand. Emitting both means whichever name wins, the other is a one-line
 	// removal and no credential has to be reissued. A space-separated **string**
@@ -4834,7 +4834,7 @@ type ClientInterface interface {
 	// This is a deliberate interim, not a contract. The fleet does not agree on the
 	// name: core's `docs/openapi-conventions.md` requires `scopes`, and gateway's
 	// `src/middleware/jwt.ts` reads `scope` and splits it on whitespace. The
-	// question is open (MD7 in the manager's `DECISIONS.md`) and answering it
+	// question is open (MD7 in the manager's `cafaye/notes/decisions.md`) and answering it
 	// unilaterally would mean rotating every credential already in a customer's
 	// hand. Emitting both means whichever name wins, the other is a one-line
 	// removal and no credential has to be reissued. A space-separated **string**
@@ -5970,7 +5970,7 @@ type ClientInterface interface {
 	// exists is on the record: billing's verifier requires a singular
 	// `account_id` claim, this service's profile-scope access tokens carry
 	// `accounts`, an array, and both sides were self-consistent and
-	// incompatible (billing's `REPORT-billing-21-authorization.md`, DECISION
+	// incompatible (billing's `REPORT-billing-21-authorization`, DECISION
 	// NEEDED). The resolution is that **the account is named by a party
 	// allowed to name it**: a server-side caller, holding the user's session,
 	// says which account its user is acting in; the membership is verified
@@ -6008,7 +6008,7 @@ type ClientInterface interface {
 	// exists is on the record: billing's verifier requires a singular
 	// `account_id` claim, this service's profile-scope access tokens carry
 	// `accounts`, an array, and both sides were self-consistent and
-	// incompatible (billing's `REPORT-billing-21-authorization.md`, DECISION
+	// incompatible (billing's `REPORT-billing-21-authorization`, DECISION
 	// NEEDED). The resolution is that **the account is named by a party
 	// allowed to name it**: a server-side caller, holding the user's session,
 	// says which account its user is acting in; the membership is verified
@@ -8847,7 +8847,7 @@ func (c *Client) ConfirmEmailVerification(ctx context.Context, body ConfirmEmail
 // This is a deliberate interim, not a contract. The fleet does not agree on the
 // name: core's `docs/openapi-conventions.md` requires `scopes`, and gateway's
 // `src/middleware/jwt.ts` reads `scope` and splits it on whitespace. The
-// question is open (MD7 in the manager's `DECISIONS.md`) and answering it
+// question is open (MD7 in the manager's `cafaye/notes/decisions.md`) and answering it
 // unilaterally would mean rotating every credential already in a customer's
 // hand. Emitting both means whichever name wins, the other is a one-line
 // removal and no credential has to be reissued. A space-separated **string**
@@ -8914,7 +8914,7 @@ func (c *Client) IntrospectAPIKeyWithBody(ctx context.Context, contentType strin
 // This is a deliberate interim, not a contract. The fleet does not agree on the
 // name: core's `docs/openapi-conventions.md` requires `scopes`, and gateway's
 // `src/middleware/jwt.ts` reads `scope` and splits it on whitespace. The
-// question is open (MD7 in the manager's `DECISIONS.md`) and answering it
+// question is open (MD7 in the manager's `cafaye/notes/decisions.md`) and answering it
 // unilaterally would mean rotating every credential already in a customer's
 // hand. Emitting both means whichever name wins, the other is a one-line
 // removal and no credential has to be reissued. A space-separated **string**
@@ -10380,7 +10380,7 @@ func (c *Client) CompleteSecondFactor(ctx context.Context, body CompleteSecondFa
 // exists is on the record: billing's verifier requires a singular
 // `account_id` claim, this service's profile-scope access tokens carry
 // `accounts`, an array, and both sides were self-consistent and
-// incompatible (billing's `REPORT-billing-21-authorization.md`, DECISION
+// incompatible (billing's `REPORT-billing-21-authorization`, DECISION
 // NEEDED). The resolution is that **the account is named by a party
 // allowed to name it**: a server-side caller, holding the user's session,
 // says which account its user is acting in; the membership is verified
@@ -10428,7 +10428,7 @@ func (c *Client) MintSessionTokenWithBody(ctx context.Context, contentType strin
 // exists is on the record: billing's verifier requires a singular
 // `account_id` claim, this service's profile-scope access tokens carry
 // `accounts`, an array, and both sides were self-consistent and
-// incompatible (billing's `REPORT-billing-21-authorization.md`, DECISION
+// incompatible (billing's `REPORT-billing-21-authorization`, DECISION
 // NEEDED). The resolution is that **the account is named by a party
 // allowed to name it**: a server-side caller, holding the user's session,
 // says which account its user is acting in; the membership is verified
@@ -15474,7 +15474,7 @@ type ClientWithResponsesInterface interface {
 	// This is a deliberate interim, not a contract. The fleet does not agree on the
 	// name: core's `docs/openapi-conventions.md` requires `scopes`, and gateway's
 	// `src/middleware/jwt.ts` reads `scope` and splits it on whitespace. The
-	// question is open (MD7 in the manager's `DECISIONS.md`) and answering it
+	// question is open (MD7 in the manager's `cafaye/notes/decisions.md`) and answering it
 	// unilaterally would mean rotating every credential already in a customer's
 	// hand. Emitting both means whichever name wins, the other is a one-line
 	// removal and no credential has to be reissued. A space-separated **string**
@@ -15531,7 +15531,7 @@ type ClientWithResponsesInterface interface {
 	// This is a deliberate interim, not a contract. The fleet does not agree on the
 	// name: core's `docs/openapi-conventions.md` requires `scopes`, and gateway's
 	// `src/middleware/jwt.ts` reads `scope` and splits it on whitespace. The
-	// question is open (MD7 in the manager's `DECISIONS.md`) and answering it
+	// question is open (MD7 in the manager's `cafaye/notes/decisions.md`) and answering it
 	// unilaterally would mean rotating every credential already in a customer's
 	// hand. Emitting both means whichever name wins, the other is a one-line
 	// removal and no credential has to be reissued. A space-separated **string**
@@ -16683,7 +16683,7 @@ type ClientWithResponsesInterface interface {
 	// exists is on the record: billing's verifier requires a singular
 	// `account_id` claim, this service's profile-scope access tokens carry
 	// `accounts`, an array, and both sides were self-consistent and
-	// incompatible (billing's `REPORT-billing-21-authorization.md`, DECISION
+	// incompatible (billing's `REPORT-billing-21-authorization`, DECISION
 	// NEEDED). The resolution is that **the account is named by a party
 	// allowed to name it**: a server-side caller, holding the user's session,
 	// says which account its user is acting in; the membership is verified
@@ -16721,7 +16721,7 @@ type ClientWithResponsesInterface interface {
 	// exists is on the record: billing's verifier requires a singular
 	// `account_id` claim, this service's profile-scope access tokens carry
 	// `accounts`, an array, and both sides were self-consistent and
-	// incompatible (billing's `REPORT-billing-21-authorization.md`, DECISION
+	// incompatible (billing's `REPORT-billing-21-authorization`, DECISION
 	// NEEDED). The resolution is that **the account is named by a party
 	// allowed to name it**: a server-side caller, holding the user's session,
 	// says which account its user is acting in; the membership is verified
@@ -26897,7 +26897,7 @@ func (c *ClientWithResponses) ConfirmEmailVerificationWithResponse(ctx context.C
 // This is a deliberate interim, not a contract. The fleet does not agree on the
 // name: core's `docs/openapi-conventions.md` requires `scopes`, and gateway's
 // `src/middleware/jwt.ts` reads `scope` and splits it on whitespace. The
-// question is open (MD7 in the manager's `DECISIONS.md`) and answering it
+// question is open (MD7 in the manager's `cafaye/notes/decisions.md`) and answering it
 // unilaterally would mean rotating every credential already in a customer's
 // hand. Emitting both means whichever name wins, the other is a one-line
 // removal and no credential has to be reissued. A space-separated **string**
@@ -26960,7 +26960,7 @@ func (c *ClientWithResponses) IntrospectAPIKeyWithBodyWithResponse(ctx context.C
 // This is a deliberate interim, not a contract. The fleet does not agree on the
 // name: core's `docs/openapi-conventions.md` requires `scopes`, and gateway's
 // `src/middleware/jwt.ts` reads `scope` and splits it on whitespace. The
-// question is open (MD7 in the manager's `DECISIONS.md`) and answering it
+// question is open (MD7 in the manager's `cafaye/notes/decisions.md`) and answering it
 // unilaterally would mean rotating every credential already in a customer's
 // hand. Emitting both means whichever name wins, the other is a one-line
 // removal and no credential has to be reissued. A space-separated **string**
@@ -28310,7 +28310,7 @@ func (c *ClientWithResponses) CompleteSecondFactorWithResponse(ctx context.Conte
 // exists is on the record: billing's verifier requires a singular
 // `account_id` claim, this service's profile-scope access tokens carry
 // `accounts`, an array, and both sides were self-consistent and
-// incompatible (billing's `REPORT-billing-21-authorization.md`, DECISION
+// incompatible (billing's `REPORT-billing-21-authorization`, DECISION
 // NEEDED). The resolution is that **the account is named by a party
 // allowed to name it**: a server-side caller, holding the user's session,
 // says which account its user is acting in; the membership is verified
@@ -28354,7 +28354,7 @@ func (c *ClientWithResponses) MintSessionTokenWithBodyWithResponse(ctx context.C
 // exists is on the record: billing's verifier requires a singular
 // `account_id` claim, this service's profile-scope access tokens carry
 // `accounts`, an array, and both sides were self-consistent and
-// incompatible (billing's `REPORT-billing-21-authorization.md`, DECISION
+// incompatible (billing's `REPORT-billing-21-authorization`, DECISION
 // NEEDED). The resolution is that **the account is named by a party
 // allowed to name it**: a server-side caller, holding the user's session,
 // says which account its user is acting in; the membership is verified

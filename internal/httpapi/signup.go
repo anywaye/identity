@@ -15,7 +15,7 @@ package httpapi
 // the secret there is nothing to verify against, and a forged timestamp is
 // indistinguishable from a real one; that is why the variable is REQUIRED at
 // boot rather than optional like the feature keys. See
-// REPORT-identity-spamprotection-01.md for the per-secret argument against
+// REPORT-identity-spamprotection-01 for the per-secret argument against
 // reusing one of the four existing secrets, and internal/config for the boot
 // refusal when it is absent.
 //

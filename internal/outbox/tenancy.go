@@ -125,12 +125,12 @@ func NewAccountCreated(now time.Time, accountID id.UUID, name, slug string, pers
 // service does not send mail, and the fleet's consumer is cross-service —
 // courier has no identity client, no identity credentials and no identity
 // tables, so neither field is a fact it can read from the user row or re-read
-// from a store (REPORT-courier-consumer-invite-01.md §2.6, where the two
+// from a store (REPORT-courier-consumer-invite-01 §2.6, where the two
 // lookups and the token re-read were each refused, and the refusals recorded as
 // decisions rather than worked around).
 //
 // WHAT TRAVELS IS THE TOKEN AND NOT A URL, and that is the manager decision
-// recorded in REPORT-courier-consumer-invite-01.md §2.4: the token-in-a-mail is
+// recorded in REPORT-courier-consumer-invite-01 §2.4: the token-in-a-mail is
 // the same credential class as the reset links identity already mails, courier
 // re-reading the token was refused three times and stays refused, and a
 // redeem-by-id route is a bigger design than the packet that asked for this.
@@ -169,7 +169,7 @@ func NewMemberInvited(now time.Time, accountID, invitationID id.UUID, email, tok
 // THE MEMBER'S ADDRESS TRAVELS because the "welcome to the account" mail goes to
 // them and the consumer is cross-service: courier has no identity client and no
 // identity tables, so the address is not a fact it can read from the user row
-// (REPORT-courier-consumer-invite-01.md §2.6). It is the MEMBER's address — the
+// (REPORT-courier-consumer-invite-01 §2.6). It is the MEMBER's address — the
 // registered user who redeemed the token — and not the address the invitation
 // was sent to: the token is not bound to an address, so the two are different
 // facts and only one of them is the person who joined.

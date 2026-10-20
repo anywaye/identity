@@ -795,7 +795,7 @@ func (s *Service) ConfirmEmailChangeNew(ctx context.Context, in ConfirmEmailChan
 		// changed" notice is mailed, and the consumer that mails it cannot read the
 		// user row, so the event carries the address itself. Which address that
 		// is — the new one, at this point in the transaction — is recorded in
-		// REPORT-identity-event-payloads-01.md rather than hidden here.
+		// REPORT-identity-event-payloads-01 rather than hidden here.
 		user, err := s.users.ByID(ctx, q, live.UserID)
 		if err != nil {
 			return err

@@ -13,7 +13,7 @@ package sessions
 // session in production, which is why the assertion below is on the ROW and not on
 // a return value.
 //
-// The red proof for the ownership case is in REPORT-identity-sessions-01.md: the
+// The red proof for the ownership case is in REPORT-identity-sessions-01: the
 // owner clause was removed from the statement, this file went red on
 // `TestRevokeOneForUserRefusesAnotherUsersSession`, and the clause came back.
 

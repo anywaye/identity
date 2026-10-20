@@ -1441,7 +1441,7 @@ decision this packet should not make for the fleet.
 entry says so rather than letting the column imply a capability. The operator
 surface — and the role question that goes with it, because "a platform admin" does
 not exist on this service today and inventing one is a bigger decision than a
-packet — is named in `HANDOFF-identity-disabled-01.md`.
+packet — is named in `HANDOFF-identity-disabled-01`.
 
 ### What is deliberately NOT here, second: a soft disable
 

@@ -15,7 +15,7 @@
 // verifies it on submission. Without the secret there is nothing to verify
 // against, and a forged timestamp is indistinguishable from a real one; that is
 // why the variable is required at boot rather than optional like the feature
-// keys. See REPORT-identity-spamprotection-01.md for the per-secret argument
+// keys. See REPORT-identity-spamprotection-01 for the per-secret argument
 // against reusing one of the four existing secrets.
 //
 // # WHAT IS SIGNED, AND IN WHICH FORM

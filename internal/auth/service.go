@@ -938,7 +938,7 @@ func (s *Service) recordFailure(ctx context.Context, userID id.UUID, next sessio
 // HTTP surface, a scope, an audit record, a permission. `Enable` exists because
 // re-enabling has to be testable for the concept to be honest, not because an
 // operator can reach it yet. **This is a foundation, not a feature**, and the
-// operator surface is the next packet — see HANDOFF-identity-disabled-01.md.
+// operator surface is the next packet — see HANDOFF-identity-disabled-01.
 //
 // # WHY THE REVOCATION IS IN THE SAME TRANSACTION, AND WHY THAT IS NOT OPTIONAL
 //

@@ -654,7 +654,7 @@ func TestTheDocumentIsOpenAPI31AndCarriesAVersion(t *testing.T) {
 	// account-scoped token a single-account consumer (billing, first) verifies,
 	// minted by NAMING the account and having the membership checked before the
 	// signature — the resolution of the cross-repo disagreement billing's
-	// REPORT-billing-21-authorization.md records. One operation and two schemas
+	// REPORT-billing-21-authorization records. One operation and two schemas
 	// (`MintSessionTokenRequest`, `MintedSessionToken`); non-breaking, and the
 	// route is session-only like the rest of the surface.
 	const want = "1.15.0"

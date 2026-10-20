@@ -150,7 +150,7 @@ gate:
   # CI gate is the same command, not a CI variant of it" a rule, and a
   # declaration pointing at a stricter command would make this file the second
   # gate it exists to prevent. What the command CONTAINS was corrected, once, in
-  # this packet; see bin/prime and REPORT-identity-13-gate.md.
+  # this packet; see bin/prime and REPORT-identity-13-gate.
   command: [bin/prime]
   # The fleet's spelling, nine of thirteen repositories. It already resolves to
   # the entrypoint below with no edit: mise.toml says
@@ -254,7 +254,7 @@ gate:
     # matched, because admin's copy of the guard passes in that case. It asserts
     # that internal/admin's tests ran and passed, which is worth having, and it
     # is NOT evidence that admin's tier reached a database. Reported in
-    # REPORT-identity-13-gate.md as a finding; fixing it would mean changing a
+    # REPORT-identity-13-gate as a finding; fixing it would mean changing a
     # test assertion, which this packet does not do.
     - id: mfa-tier-ran
       match: '^ok\s+github\.com/cafaye/identity/internal/mfa\t'
@@ -387,7 +387,7 @@ gate:
     # AND THE ONE THAT WAS NOT FIXED, because it is the finding:
     # `internal/admin`'s copy of `TestTheDatabaseTierActuallyRan` passes with no
     # database at all. See the three-copies note above. It stays red in RED 1
-    # and is reported in REPORT-identity-13-gate.md; changing it would mean
+    # and is reported in REPORT-identity-13-gate; changing it would mean
     # editing a test assertion, which is the one thing this packet does not do.
     #
     # RED 3 — THE FALSE GREEN THAT WAS LIVE IN THIS REPOSITORY, reproduced and

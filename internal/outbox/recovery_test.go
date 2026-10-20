@@ -58,7 +58,7 @@ func TestSessionsRevokedEnvelope(t *testing.T) {
 // TestSessionsRevokedCarriesTheEmailChangeReason is the second half of the
 // closed set: the address-moved notice goes to the address the user holds when
 // the event is built, which for this reason is the NEW one. The choice is
-// recorded in REPORT-identity-event-payloads-01.md; what is pinned here is that
+// recorded in REPORT-identity-event-payloads-01; what is pinned here is that
 // the reason and the address travel together.
 func TestSessionsRevokedCarriesTheEmailChangeReason(t *testing.T) {
 	now := time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)

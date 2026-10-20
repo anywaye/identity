@@ -19,7 +19,7 @@ import (
 //
 // # THE SAME GAP get_rls_test.go CLOSED, IN THE TWO PLACES IT WAS LEFT
 //
-// REPORT-w2-authgaps-02.md §2 measured two more instances of the defect `Get`
+// REPORT-w2-authgaps-02 §2 measured two more instances of the defect `Get`
 // and `Member` had — a read on `s.read.Queryer()`, a bare pooled connection with
 // no transaction and therefore no GUC — and deliberately left them rather than
 // half-fix two more at the end of a budget. This file is that fix's proof.

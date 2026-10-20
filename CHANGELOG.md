@@ -23,7 +23,7 @@ were self-consistent and incompatible, and the consequence was not theoretical:
 walked on the whole local stack, parlor's billing screens took a real signed-in
 user to billing and were answered `401` on every `/v1` call, because
 `accounts[0]`-style guessing is exactly the cross-tenant bug billing-12 spent a
-packet finding. Billing's `REPORT-billing-21-authorization.md` recorded the
+packet finding. Billing's `REPORT-billing-21-authorization` recorded the
 disagreement as a DECISION NEEDED; this is the resolution, and the route is
 session-only on purpose — a machine credential minting a token that asserts a
 human's identity is the escalation path `sessionCredentialOnly` exists for.
@@ -1862,7 +1862,7 @@ test's failure message is the checklist for the packet that will do it properly.
   `account.created`, two segments, the forbidden form". It does not, and it
   never did: all twelve published event types in `internal/outbox` are
   three-segment and carry the `identity.` prefix, and `core`'s own
-  `REPORT-core-17.md` measured and reported the same thing before this packet
+  `REPORT-core-17` measured and reported the same thing before this packet
   started. The bare string survived only in prose — two comments and the short
   labels of one test's map — and those are now written in the three-segment
   form, so `grep '\baccount\.created\b'` over the tree returns nothing outside a

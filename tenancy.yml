@@ -53,7 +53,7 @@ scope:
   # OPENS ON ONE LINE (all six are listed and classified above `entryPoints`). The credential half WAS a measured production limitation
   # rather than a gap in this list: it is pinned by
   # `internal/tenancy/credential_lookup_test.go` and written up in
-  # `moon/logs/REPORT-identity-isolation-02.md` §3. Naming the two files is what
+  # `moon/logs/REPORT-identity-isolation-02` §3. Naming the two files is what
   # makes it checkable — the day somebody adds `and account_id = $2` to either
   # lookup, or rewrites one of those six as a single line, this checker goes red
   # naming the statement, which is the moment the fix lands and nobody has to
@@ -305,7 +305,7 @@ rls:
     # `rls-not-enabled`, `rls-owner-bypass` and four `rls-policy-absent` against a
     # table whose `relrowsecurity` and `relforcerowsecurity` are both true and whose
     # five policies exist. That is a FALSE RED in core's scanner, measured in
-    # moon/logs/REPORT-identity-isolation-04.md §4, and the fix is core's: widen
+    # moon/logs/REPORT-identity-isolation-04 §4, and the fix is core's: widen
     # `_PROTECT_TABLE` to `protect_(?:credential_)?table`. The alternative — deleting
     # this table from `rls.tables` to make the checker quiet — would declare that
     # Postgres does not protect the one table holding every machine credential, which
@@ -457,7 +457,7 @@ rls:
 # which is why `admin-audit-log-list` is the only entry point there is. The
 # finding for core is not "the window should follow the statement" — it is that a
 # Go raw string cannot be read line by line at all. It is in
-# `moon/logs/REPORT-identity-isolation-03.md` §4.
+# `moon/logs/REPORT-identity-isolation-03` §4.
 #
 # And the reason none of the six is DECLARED is the same reason the five in
 # `internal/accounts/store.go` are not: see below.
@@ -488,8 +488,8 @@ rls:
 # false, so they are declared nowhere and written down here instead. The two ways
 # out are somebody's: core grows a way for an entry point to name a TABLE's denial
 # proof and inherit it, or identity seeds four more tables. Both are in
-# `moon/logs/REPORT-identity-isolation-03.md` §4 and in
-# `HANDOFF-identity-isolation.md` §4.
+# `moon/logs/REPORT-identity-isolation-03` §4 and in
+# `HANDOFF-identity-isolation` §4.
 #
 # AND THE THREE SECRET-ADDRESSED LOOKUPS CANNOT BE DECLARED AT ALL, which is worth
 # stating because it is the format meeting a real fact: `api_keys` by

@@ -25,7 +25,7 @@ import (
 // the email carried the same token, the member had a valid session, and the
 // redemption still 404'd.
 //
-// HANDOFF-identity-isolation.md §4.1 records the paired fix this test demands:
+// HANDOFF-identity-isolation §4.1 records the paired fix this test demands:
 // `cafaye.protect_credential_table('account_invitations', 'token_digest')` in a
 // migration, plus `tenancy.BeginCredential` before the lookup on the Go side.
 // Both halves or neither — the migration half alone reads the same zero rows.

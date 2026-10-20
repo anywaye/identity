@@ -19,7 +19,7 @@ import (
 // profiles.go`: a person is a member of a personal account and usually several
 // team accounts, and a token carrying one of them arbitrarily would be wrong for
 // all the others. Both sides were self-consistent and incompatible, and the
-// consequence — recorded in billing's `REPORT-billing-21-authorization.md` as a
+// consequence — recorded in billing's `REPORT-billing-21-authorization` as a
 // DECISION NEEDED — was that a real user's request to `/v1` was answered 401.
 //
 // The resolution this endpoint implements is the one the record calls the

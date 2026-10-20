@@ -62,7 +62,7 @@ func TestLoad(t *testing.T) {
 			// SIGNUP_SIGNING_KEY is the one secret a boot cannot go without —
 			// spam protection is not a feature a deployment enables or skips —
 			// so "nothing set" is not a supported state the way it was before
-			// the signed timestamp landed. See REPORT-identity-signuptimestamp-01.md
+			// the signed timestamp landed. See REPORT-identity-signuptimestamp-01
 			// and loadSignupSigningKey's comment for the full argument.
 			name:    "defaults without the signup key are refused",
 			env:     map[string]string{},

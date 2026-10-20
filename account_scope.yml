@@ -3,7 +3,7 @@
 #
 # Checked by cafaye/core's contract harness:
 #
-#     /Users/kaka/Code/any/moon/cafaye/core/harness/bin/account-scope-check .
+#     /Users/kaka/Code/any/cafaye/core/harness/bin/account-scope-check .
 #
 # THE SIBLING FILE IS tenancy.yml, AND THE TWO ANSWER DIFFERENT QUESTIONS.
 # `tenancy.yml` declares the STATEMENTS that constrain on `account_id` and the

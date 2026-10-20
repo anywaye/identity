@@ -89,7 +89,7 @@ func validateReason(reason string) error {
 // THE ADDRESS IS OMITTED ANYWAY, and not for the reason this comment used to give.
 // "A fact every consumer can already read from the user it is about" was true only
 // for a consumer holding an identity client; the fleet's actual consumer has none
-// (REPORT-courier-consumer-invite-01.md §2.6), which is why the three events that
+// (REPORT-courier-consumer-invite-01 §2.6), which is why the three events that
 // carry a mail each carry the address — or the token — themselves. This one
 // carries neither because no consumer mails on it: the verification flow mails the
 // link, not a confirmation after. When one does, the field is added here, at the
@@ -115,7 +115,7 @@ func NewUserEmailVerified(now time.Time, userID id.UUID) (Envelope, error) {
 // (reason `password reset`) and "your email address was changed" (reason `email
 // address changed`). The consumer is cross-service — courier has no identity
 // client and no identity tables — so the address is not a fact it can read from
-// the user row (REPORT-courier-consumer-invite-01.md §2.6).
+// the user row (REPORT-courier-consumer-invite-01 §2.6).
 func NewSessionsRevoked(now time.Time, userID id.UUID, email, reason string) (Envelope, error) {
 	if err := validateReason(reason); err != nil {
 		return Envelope{}, err
