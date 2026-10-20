@@ -8,5 +8,5 @@
 # up, proofs, down — to the one loop. There is deliberately no logic here to
 # drift from it.
 set -eu
-GATEWAY_DIR="${L7_GATEWAY_DIR:-/Users/kaka/Code/any/moon/wt/roll-l7-gateway}"
+GATEWAY_DIR="${L7_GATEWAY_DIR:-/Users/kaka/Code/any/work/wt/roll-l7-gateway}"
 exec "$GATEWAY_DIR/local/run.sh" "$@"

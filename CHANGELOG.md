@@ -50,7 +50,7 @@ about the token is this service's business.
 **The grant.** [LICENSE](LICENSE) is now a Business Source Licence 1.1 with
 Licensor `Cafaye`, Licensed Work `identity`, Change Date `2030-10-10` and Change
 Licence `Apache-2.0`, and no Additional Use Grant. Free to run, free to self-host,
-never to offer it as a competing service — `OPS-D2` in `moon/CAFAYE-OPS.md:176`.
+never to offer it as a competing service — `OPS-D2` in `cafaye/notes/ops.md`.
 The file is the canonical BSL 1.1 text and nothing else, so the same file in
 gateway, courier and parlor is written to diff against this one on the
 Licensed Work line and nowhere else.
@@ -2338,7 +2338,7 @@ test's failure message is the checklist for the packet that will do it properly.
     method on an already-documented path: the path set is then identical on both
     sides and both counts unchanged, and only the (method, path) key catches it.
 - **[DECISIONS.md](DECISIONS.md)** — this repository's open-decision record,
-  numbered from D1. It did not exist: `moon/DECISIONS.md` numbers workspace
+  numbered from D1. It did not exist: `cafaye/notes/decisions.md` numbers workspace
   questions `MD…` and `cafaye.yml` carries the one callout this repository had.
   A packet that had to escalate something had nowhere to put it. A `DECISION
   NEEDED` callout for D1 is added to `cafaye.yml` as well, because

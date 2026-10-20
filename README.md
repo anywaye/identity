@@ -120,7 +120,7 @@ set. Treat it as a liveness signal, not a dependency check.
 **Business Source Licence 1.1** — [LICENSE](LICENSE). Free to run, free to
 self-host, and never to offer identity as a competing service.
 
-That is `OPS-D2` in `moon/CAFAYE-OPS.md` (line 176): the framework stays open,
+That is `OPS-D2` in `cafaye/notes/ops.md` (line 176): the framework stays open,
 the services move to BSL, and BSL rather than AGPL "because the buyers are
 teams and AGPL makes their lawyers twitchy". The principle behind the split is
 stated there too (line 429) and is worth quoting to a prospect rather than

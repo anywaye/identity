@@ -5,7 +5,7 @@ the call that was made so the work could continue and the cost of making the
 other one.
 
 This file did not exist before packet `identity-09`. The two places an open
-question in this repository used to live were `moon/DECISIONS.md` — which numbers
+question in this repository used to live were `cafaye/notes/decisions.md` — which numbers
 `MD…` and holds questions about the workspace rather than about one service — and
 a `> DECISION NEEDED (…)` callout in `cafaye.yml`, which is where the
 `openapi/v1.yaml` scope-claim question lives and which core's D6 shape moved
