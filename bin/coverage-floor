@@ -336,7 +336,7 @@ cat "$work/kept.out" >> "$filtered"
 # The agreement between this arithmetic and the tool's own `total:` is measured,
 # not assumed: on this repository's 5,581-block profile both read 44.6% over the
 # whole module and 73.6% with `client/generated` excluded. The comparison is in
-# REPORT-identity-12-coverage.md rather than in a comment here, because a comment
+# REPORT-identity-12-coverage rather than in a comment here, because a comment
 # stating a measurement is the one kind of number that goes stale quietly.
 # ---------------------------------------------------------------------------
 read -r statements covered <<<"$(awk '

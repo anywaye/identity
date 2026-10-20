@@ -37,7 +37,7 @@
 -- this call with the reason: the migration half alone reads the same zero rows
 -- as before, because nothing sets the digest. `Service.Accept` opens its
 -- transaction with `tenancy.BeginCredential` before `InvitationByToken`, which
--- is the second half HANDOFF-identity-isolation.md §4.1 names. Both halves or
+-- is the second half HANDOFF-identity-isolation §4.1 names. Both halves or
 -- neither.
 --
 -- WHY IT IS A NEW FILE AND NOT AN EDIT. 00016 is applied in deployed

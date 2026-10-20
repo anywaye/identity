@@ -545,7 +545,7 @@ type membershipResponse struct {
 // There is no endpoint that re-reads it and no column that stores it, only its
 // digest. The event half is the packet that handed the invitation mail to
 // courier: courier has no identity client and cannot re-read the token, so the
-// payload carries it (REPORT-courier-consumer-invite-01.md §2.4). This field
+// payload carries it (REPORT-courier-consumer-invite-01 §2.4). This field
 // stays as well — the 201 is the inviting client's copy and the event is the
 // subscribers', and a service that mints an invitation nobody can redeem is
 // worse than one that returns a credential twice.

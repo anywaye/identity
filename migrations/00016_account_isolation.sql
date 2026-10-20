@@ -950,7 +950,7 @@ select cafaye.protect_table('account_users');
 -- breaks redemption the same way this migration just fixed api_keys: the lookup would
 -- read zero rows and every invitation would be refused. They are ONE change and this
 -- migration does not make half of it; the exact call and the exact call site are in
--- HANDOFF-identity-isolation.md.
+-- HANDOFF-identity-isolation.
 select cafaye.protect_table('account_invitations');
 
 -- THE SERVICE'S OWN CREDENTIAL FOR AN ACCOUNT. Read another account's and you hold a
