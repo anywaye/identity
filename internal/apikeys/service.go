@@ -364,7 +364,7 @@ func (s *Service) Mint(ctx context.Context, in MintInput) (IssuedKey, error) {
 // wrong is the surface.
 func refuseNonAccountScope(scopes []string) error {
 	for _, scope := range scopes {
-		if scope == ScopeUsersDisable {
+		if scope == ScopeUsersDisable || scope == ScopeTokensIntrospect {
 			return ErrScopeNotMintableHere
 		}
 	}

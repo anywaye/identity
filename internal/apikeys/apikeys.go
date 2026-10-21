@@ -319,6 +319,8 @@ const (
 	// is the same rule `requireAdminToken` enforces and for the same reason — a
 	// session is a cookie, and a cookie is one CSRF away from being somebody else's.
 	ScopeUsersDisable = "users:disable"
+	// ScopeTokensIntrospect lets a service introspect any API key, not just its own.
+	ScopeTokensIntrospect = "tokens:introspect"
 )
 
 // AllScopes is the vocabulary, in a fixed order.
@@ -330,7 +332,7 @@ func AllScopes() []string {
 	return []string{
 		ScopeAccountsRead, ScopeAccountsWrite, ScopeAccountsDelete,
 		ScopeOIDCClientsWrite, ScopeAuditLogRead, ScopeAccountInvitationsWrite,
-		ScopeSessionsWrite, ScopeUsersDisable,
+		ScopeSessionsWrite, ScopeUsersDisable, ScopeTokensIntrospect,
 	}
 }
 
@@ -364,7 +366,7 @@ const MaxNameLength = 80
 // Eight, and the closed vocabulary has four names, so the ceiling exists only to
 // stop a caller sending the list four thousand times. It is a DoS control on the
 // request, not a policy.
-const MaxScopes = 8
+const MaxScopes = 9
 
 // FieldError is a per-field validation failure, rendered as one entry of a 422's
 // errors[].

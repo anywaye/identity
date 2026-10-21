@@ -18,6 +18,7 @@ package apikeys
 
 import (
 	"errors"
+	"slices"
 	"testing"
 )
 
@@ -37,6 +38,8 @@ func TestTheMintRefusesToGrantTheOperatorScope(t *testing.T) {
 		{"the operator scope alone", []string{ScopeUsersDisable}},
 		{"the operator scope beside an account scope", []string{ScopeAccountsRead, ScopeUsersDisable}},
 		{"the operator scope beside every account scope", everyAccountScopePlusOperator()},
+		{"the introspect scope alone", []string{ScopeTokensIntrospect}},
+		{"the introspect scope beside an account scope", []string{ScopeAccountsRead, ScopeTokensIntrospect}},
 	}
 
 	for _, tc := range cases {
@@ -85,13 +88,13 @@ func TestAnAccountOwnerMayStillMintEveryOtherScope(t *testing.T) {
 	}
 
 	for _, scope := range issued.Key.Scopes {
-		if scope == ScopeUsersDisable {
+		if scope == ScopeUsersDisable || scope == ScopeTokensIntrospect {
 			t.Errorf("a granted key carries %s", scope)
 		}
 	}
-	if len(issued.Key.Scopes) != len(AllScopes())-1 {
+	if len(issued.Key.Scopes) != len(AllScopes())-len(operatorScopes()) {
 		t.Errorf("the key carries %d scopes, want the %d that are not the operator's: %v",
-			len(issued.Key.Scopes), len(AllScopes())-1, issued.Key.Scopes)
+			len(issued.Key.Scopes), len(AllScopes())-len(operatorScopes()), issued.Key.Scopes)
 	}
 }
 
@@ -229,11 +232,17 @@ func (f *serviceFixture) apiKeyRows(t *testing.T) int {
 	return count
 }
 
-// everyAccountScope is the vocabulary minus the operator scope.
+// operatorScopes are the scopes that name no account and cannot be minted by
+// an account owner. They are service/deployment-wide credentials.
+func operatorScopes() []string {
+	return []string{ScopeUsersDisable, ScopeTokensIntrospect}
+}
+
+// everyAccountScope is the vocabulary minus the operator scopes.
 func everyAccountScope() []string {
 	var out []string
 	for _, scope := range AllScopes() {
-		if scope != ScopeUsersDisable {
+		if !slices.Contains(operatorScopes(), scope) {
 			out = append(out, scope)
 		}
 	}
@@ -243,5 +252,7 @@ func everyAccountScope() []string {
 // everyAccountScopePlusOperator is the whole vocabulary, for the mint that must be
 // refused on the strength of one name among them.
 func everyAccountScopePlusOperator() []string {
-	return append(everyAccountScope(), ScopeUsersDisable)
+	out := append([]string{}, everyAccountScope()...)
+	out = append(out, operatorScopes()...)
+	return out
 }

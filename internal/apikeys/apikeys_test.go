@@ -239,6 +239,9 @@ func TestEveryScopeIsWiredToARoute(t *testing.T) {
 			"POST /v1/users/{userID}/disable",
 			"POST /v1/users/{userID}/enable",
 		},
+		ScopeTokensIntrospect: {
+			"POST /v1/introspections",
+		},
 	}
 
 	if len(want) != len(AllScopes()) {

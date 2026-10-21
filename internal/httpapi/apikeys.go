@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -552,11 +553,14 @@ func (o options) mayIntrospect(w http.ResponseWriter, r *http.Request, caller ap
 		return true
 	}
 
-	// A token caller: itself, and only itself.
+	// A token caller: itself, unless it carries the tokens:introspect scope,
+	// in which case it may introspect any token (service-to-service use).
 	if claims.TokenID != caller.Key.ID.String() {
-		problemFor(w, r, http.StatusForbidden, CodeForbidden,
-			"an api key may only introspect itself")
-		return false
+		if !slices.Contains(caller.Key.Scopes, apikeys.ScopeTokensIntrospect) {
+			problemFor(w, r, http.StatusForbidden, CodeForbidden,
+				"an api key may only introspect itself")
+			return false
+		}
 	}
 	return true
 }

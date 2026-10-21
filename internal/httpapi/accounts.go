@@ -232,6 +232,10 @@ var accountRouteScopes = map[string]string{
 	// route to "admins may too" would be invisible everywhere else.
 	"POST /v1/users/{userID}/disable": apikeys.ScopeUsersDisable,
 	"POST /v1/users/{userID}/enable":  apikeys.ScopeUsersDisable,
+
+	// Service-to-service introspection: a token carrying this scope may
+	// introspect any API key, not just its own.
+	"POST /v1/introspections": apikeys.ScopeTokensIntrospect,
 }
 
 // scopeRequiredBy returns the scope a token needs for the route it reached, or ""
