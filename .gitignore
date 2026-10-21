@@ -27,6 +27,6 @@ coverage.txt
 # The tracked `docker-compose.yml` is the opposite case and is NOT ignored. That
 # one is hand-written, it is identity's own override on kit's shared stack, and
 # it is reviewed.
-/caf.dev.compose.yaml
+/cafe.dev.compose.yaml
 keyring/
 secrets/
