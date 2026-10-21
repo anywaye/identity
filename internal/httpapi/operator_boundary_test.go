@@ -100,7 +100,7 @@ func TestNoAccountRouteDeclaresTheOperatorScope(t *testing.T) {
 func everyAccountScope() []string {
 	var out []string
 	for _, scope := range apikeys.AllScopes() {
-		if scope != apikeys.ScopeUsersDisable {
+		if scope != apikeys.ScopeUsersDisable && scope != apikeys.ScopeTokensIntrospect {
 			out = append(out, scope)
 		}
 	}
