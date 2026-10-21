@@ -3,7 +3,7 @@
 # The Deployment: the service's image, its container port, its
 # environment and its readiness probe. The probe's path is the fleet's
 # contract (/readyz — see the chart README for why it is not a value);
-# the port is the language's, read from the same table `caf dev`
+# the port is the language's, read from the same table `cafe dev`
 # uses. Edit by changing the manifest and regenerating.
 apiVersion: apps/v1
 kind: Deployment
