@@ -4,7 +4,7 @@ package httpapi
 //
 // `openapi_drift_test.go` holds the two OpenAPI documents to the router. This file
 // holds the other two places this repository makes a claim about its own HTTP
-// surface — the README's endpoint tables and roadmap, and `cafaye.yml`'s
+// surface — the README's endpoint tables and roadmap, and `anywaye.yml`'s
 // description — and it exists because the document check was not enough.
 //
 // ## What it found, and why the document check could not have found it
@@ -18,7 +18,7 @@ package httpapi
 //     even a dependency of this module;
 //   - the opening paragraph, which listed "OAuth" among the things this service
 //     owns;
-//   - `cafaye.yml`'s `description`, which is the manifest customers are handed
+//   - `anywaye.yml`'s `description`, which is the manifest customers are handed
 //     and which listed "OAuth" beside "the OIDC provider" as though they were two
 //     capabilities rather than one.
 //
@@ -106,7 +106,7 @@ import (
 // what a customer reads, and neither is a build artifact.
 const (
 	readmePath   = "../../README.md"
-	manifestPath = "../../cafaye.yml"
+	manifestPath = "../../anywaye.yml"
 )
 
 // --- the README's endpoint tables ----------------------------------------------
@@ -634,7 +634,7 @@ func undocumentedSocialLoginRoutes(t *testing.T, served map[operationKey]string)
 
 // --- the manifest --------------------------------------------------------------
 
-// manifestCapabilityEvidence maps each item of `cafaye.yml`'s description to the
+// manifestCapabilityEvidence maps each item of `anywaye.yml`'s description to the
 // routes that prove this service has that capability.
 //
 // ## This table is the review surface, and it is not a proof
@@ -674,7 +674,7 @@ var manifestCapabilityEvidence = map[string][]string{
 // "OAuth" an unsafe word to put in this file's description in the first place.
 const manifestCapabilityCount = 7
 
-// manifestDescription reads the `description:` value out of cafaye.yml.
+// manifestDescription reads the `description:` value out of anywaye.yml.
 func manifestDescription(t *testing.T) string {
 	t.Helper()
 
@@ -779,7 +779,7 @@ func manifestCapabilities(description string) []string {
 	return out
 }
 
-// TestTheManifestDescribesOnlyCapabilitiesThisServiceHas holds `cafaye.yml`'s
+// TestTheManifestDescribesOnlyCapabilitiesThisServiceHas holds `anywaye.yml`'s
 // description to the router.
 //
 // The manifest is the one file here a customer is handed rather than reads, and
@@ -817,7 +817,7 @@ func TestTheManifestDescribesOnlyCapabilitiesThisServiceHas(t *testing.T) {
 	sort.Strings(unknown)
 
 	if len(unknown) > 0 {
-		t.Errorf("cafaye.yml's description claims %d capabilit(y/ies) this file has never heard "+
+		t.Errorf("anywaye.yml's description claims %d capabilit(y/ies) this file has never heard "+
 			"of:\n\n  %s\n\n"+
 			"This is the check that found the OAuth claim. A customer reads the manifest and "+
 			"decides what this service does, so an item with no route behind it is a promise in "+
@@ -857,7 +857,7 @@ func TestTheManifestCapabilityTableIsExactlyWhatItClaimsToBe(t *testing.T) {
 	t.Errorf("manifestCapabilityEvidence has %d entries and this file records %d. A table that "+
 		"shrank means a capability was dropped from the table rather than from the manifest, "+
 		"which TestTheManifestDescribesOnlyCapabilitiesThisServiceHas would then report as an "+
-		"unknown claim. Delete the capability from cafaye.yml's description, or restore the "+
+		"unknown claim. Delete the capability from anywaye.yml's description, or restore the "+
 		"entry and re-pin.\n\n  now: %v", len(manifestCapabilityEvidence), manifestCapabilityCount, names)
 }
 

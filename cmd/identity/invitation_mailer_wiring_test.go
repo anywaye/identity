@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cafaye/identity/internal/config"
+	"github.com/anywaye/identity/internal/config"
 )
 
 // TestBuildInvitationMailerNoCourierStaysNilAcrossTheInterfaceBoundary is the

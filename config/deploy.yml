@@ -13,7 +13,7 @@
 #   committed together, which is also the only shape in which
 #   `kamal-backup validate` can check the contract between them.
 #
-# IT IS A VERBATIM COPY of `templates/kamal/deploy.yml.erb` in cafaye/kit at the
+# IT IS A VERBATIM COPY of `templates/kamal/deploy.yml.erb` in anywaye/kit at the
 # ref in `kit.ref` (a0959929), with ONE identity-specific change, marked below:
 # the healthcheck path. Re-copy on a kit bump and re-apply that one line.
 #
@@ -108,7 +108,7 @@ app_domain  = require.call("KIT_APP_DOMAIN")
 %>
 # `config/deploy.yml` — the Kamal configuration for <%= service %>.
 #
-# Copy this file from cafaye/kit at the ref your `kit.ref` names, rename it to
+# Copy this file from anywaye/kit at the ref your `kit.ref` names, rename it to
 # `config/deploy.yml`, and export the five KIT_* variables above. Every value
 # that is a DECISION rather than a deployment fact is written out below with
 # the reason it was made, because a number without its reason is not a
@@ -125,7 +125,7 @@ service: <%= service %>
 # `image: ghcr.io/org/repo` with `server: ghcr.io` resolves to
 # `ghcr.io/ghcr.io/org/repo` and the deploy fails at the push, not here.
 # Measured on kamal 2.12.0: `kamal config` reports
-# `:repository: ghcr.io/ghcr.io/cafaye/courier` for exactly that spelling.
+# `:repository: ghcr.io/ghcr.io/anywaye/courier` for exactly that spelling.
 # The host appears in `registry.server` and nowhere else.
 image: <%= org %>/<%= repo %>
 

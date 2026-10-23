@@ -218,7 +218,7 @@ awk -v exempt="$EXEMPT" '
     for (i = 1; i <= n; i++) if (parts[i] == name) return 1
     return 0
   }
-  /^(ok|FAIL|\?)[[:space:]]+github\.com\/cafaye\/identity/ {
+  /^(ok|FAIL|\?)[[:space:]]+github\.com\/anywaye\/identity/ {
     printf "%s\t%d\t%d\t%d\n", $2, p, s, e; p = 0; s = 0; e = 0; next
   }
   /^[[:space:]]*--- PASS: / { p++ }
@@ -226,7 +226,7 @@ awk -v exempt="$EXEMPT" '
 ' "$TIER_LOG" > "$TIER_LOG.tiers"
 tier_pass=0
 while read -r dir; do
-  pkg="github.com/cafaye/identity/$dir"
+  pkg="github.com/anywaye/identity/$dir"
   row="$(awk -F'\t' -v want="$pkg" '$1 == want { print $2 " " $3 " " $4 }' "$TIER_LOG.tiers")"
   if [ -z "$row" ]; then
     echo "pipeline: $pkg is not in the run at all — the database tier did not execute" >&2
@@ -319,7 +319,7 @@ if [ -f chart/Chart.yaml ]; then
   log "publish image + chart"
   # `--service-dir .` because we are already at the root; the tool derives the
   # image name, reads the chart's name and version from Chart.yaml, stamps the
-  # chart with the PUSHED image's digest, and pushes to oci://ghcr.io/cafaye/charts.
+  # chart with the PUSHED image's digest, and pushes to oci://ghcr.io/anywaye/charts.
   # It needs a registry login already in place — the operator does that once
   # with `bin/publish --sandbox` (token via stdin); see backends/README.md.
   ./bin/publish --service-dir .

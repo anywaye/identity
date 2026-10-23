@@ -10,11 +10,11 @@ import (
 	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
 
-	"github.com/cafaye/identity/internal/outbox"
-	"github.com/cafaye/identity/internal/platform/clock"
-	"github.com/cafaye/identity/internal/platform/db"
-	"github.com/cafaye/identity/internal/platform/id"
-	"github.com/cafaye/identity/internal/sessions"
+	"github.com/anywaye/identity/internal/outbox"
+	"github.com/anywaye/identity/internal/platform/clock"
+	"github.com/anywaye/identity/internal/platform/db"
+	"github.com/anywaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/sessions"
 )
 
 // The use cases, and the rule that runs through all of them.

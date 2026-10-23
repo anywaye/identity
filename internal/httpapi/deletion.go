@@ -5,7 +5,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/cafaye/identity/internal/deletion"
+	"github.com/anywaye/identity/internal/deletion"
 )
 
 // # THE ROUTE THAT ENDS A PERSON'S PRESENCE.

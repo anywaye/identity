@@ -16,7 +16,7 @@ import (
 	"regexp"
 	"time"
 
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 const (
@@ -25,7 +25,7 @@ const (
 	SpecVersion = "1.0"
 
 	// SourceIdentity is the publishing service. core's event-naming.md: it "must
-	// equal `name` in that service's cafaye.yml", and identity's is `identity`.
+	// equal `name` in that service's anywaye.yml", and identity's is `identity`.
 	SourceIdentity = "identity"
 
 	// EventUserCreated is emitted when a registration succeeds, before any email
@@ -36,18 +36,18 @@ const (
 	// against it: rule 2 asks for the service prefix only when the bare entity
 	// name is generic (key, token, event, file, job, config, webhook, asset,
 	// secret), `user` is not on that list, and the catalog row plus
-	// examples/valid/go-api.cafaye.yml both spell it `user.created`. The same
+	// examples/valid/go-api.anywaye.yml both spell it `user.created`. The same
 	// document records this as an open decision (D1) with the three-segment form
 	// named as the alternative.
 	//
-	// The two spellings differ in one constant and one line of cafaye.yml, so a
+	// The two spellings differ in one constant and one line of anywaye.yml, so a
 	// manager ruling the other way is a one-line change. What must not happen is
 	// the drift where the code emits one and the manifest advertises the other.
 	EventUserCreated = "identity.user.created"
 )
 
-// Envelope is the cafaye event envelope, reproducing
-// cafaye/core/schemas/event-envelope.schema.json.
+// Envelope is the anywaye event envelope, reproducing
+// anywaye/core/schemas/event-envelope.schema.json.
 //
 // The JSON tags are the wire contract. core sets additionalProperties:false, so
 // every attribute is declared here and nothing else is ever added: an undeclared

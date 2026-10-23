@@ -21,7 +21,7 @@ import (
 // policies, so the same lookup read zero rows and every fresh invitation 404'd
 // on redemption (the site-loop walk proved it live). migrations/00029 extends
 // the same call to this table —
-// `cafaye.protect_credential_table('account_invitations', 'token_digest')` —
+// `anywaye.protect_credential_table('account_invitations', 'token_digest')` —
 // and `Accept` opens its transaction with `tenancy.BeginCredential`.
 //
 // # WHY HERE AND NOT ONLY IN internal/accounts
@@ -70,7 +70,7 @@ func TestTenancyAnInvitationResolvesByTheDigestTheCallerPresentedAndNothingElse(
 	// resolve policy under test.
 	for _, tenant := range []string{tenantA, tenantB} {
 		var own int
-		if err := inTransaction(ctx, owner, `select cafaye.begin_account($1)`, tenant,
+		if err := inTransaction(ctx, owner, `select anywaye.begin_account($1)`, tenant,
 			func(ctx context.Context, tx pgx.Tx) error {
 				return tx.QueryRow(ctx, `select count(*) from account_invitations where account_id = $1`, tenant).Scan(&own)
 			}); err != nil {
@@ -117,7 +117,7 @@ func TestTenancyAnInvitationResolvesByTheDigestTheCallerPresentedAndNothingElse(
 				}
 			}
 			var got int
-			if err := inTransaction(ctx, app, `select cafaye.begin_credential($1)`, tc.digest,
+			if err := inTransaction(ctx, app, `select anywaye.begin_credential($1)`, tc.digest,
 				func(ctx context.Context, tx pgx.Tx) error {
 					return tx.QueryRow(ctx,
 						`select count(*) from account_invitations where token_digest = $1`, tc.digest).Scan(&got)
@@ -136,7 +136,7 @@ func TestTenancyAnInvitationResolvesByTheDigestTheCallerPresentedAndNothingElse(
 	// describe a session that can see nothing.
 	t.Run("a resolution cannot browse", func(t *testing.T) {
 		var accounts []string
-		if err := inTransaction(ctx, app, `select cafaye.begin_credential($1)`, digestFor(tenantA),
+		if err := inTransaction(ctx, app, `select anywaye.begin_credential($1)`, digestFor(tenantA),
 			func(ctx context.Context, tx pgx.Tx) error {
 				rows, err := tx.Query(ctx, `select account_id::text from account_invitations`)
 				if err != nil {
@@ -166,7 +166,7 @@ func TestTenancyAnInvitationResolvesByTheDigestTheCallerPresentedAndNothingElse(
 	// to a savepoint so the refusal costs nothing else.
 	t.Run("a resolution cannot write", func(t *testing.T) {
 		accepted := false
-		err := inTransaction(ctx, app, `select cafaye.begin_credential($1)`, digestFor(tenantA),
+		err := inTransaction(ctx, app, `select anywaye.begin_credential($1)`, digestFor(tenantA),
 			func(ctx context.Context, tx pgx.Tx) error {
 				if _, err := tx.Exec(ctx, `savepoint invitation_write`); err != nil {
 					return err
@@ -228,20 +228,20 @@ func TestTheInvitationResolvePolicyIsInstalled(t *testing.T) {
 	err = owner.QueryRow(ctx,
 		`SELECT pg_get_expr(polqual, polrelid) FROM pg_policy
 		  WHERE polrelid = 'account_invitations'::regclass
-		    AND polname = 'account_invitations_cafaye_resolve'`,
+		    AND polname = 'account_invitations_anywaye_resolve'`,
 	).Scan(&qual)
 	if err != nil {
 		t.Fatalf("reading the invitation resolve policy: %v. Without it, every resolution "+
 			"case in this file reads zero rows for the wrong reason — the policy is their subject.", err)
 	}
 	if !strings.Contains(strings.ToLower(qual), "current_credential_digest") {
-		t.Errorf("account_invitations_cafaye_resolve filters on %q, want a predicate naming "+
-			"cafaye.current_credential_digest().", qual)
+		t.Errorf("account_invitations_anywaye_resolve filters on %q, want a predicate naming "+
+			"anywaye.current_credential_digest().", qual)
 	}
 
 	var idx int
 	if err := owner.QueryRow(ctx,
-		`select count(*) from pg_class where relname = 'account_invitations_cafaye_token_digest_idx'`,
+		`select count(*) from pg_class where relname = 'account_invitations_anywaye_token_digest_idx'`,
 	).Scan(&idx); err != nil {
 		t.Fatalf("reading the digest index: %v", err)
 	}
@@ -280,7 +280,7 @@ func seedInvitationRows(ctx context.Context, t *testing.T, owner *pgx.Conn) (ten
 			_ = tx.Rollback(ctx)
 			t.Fatalf("inserting a fixture user: %v", err)
 		}
-		if _, err := tx.Exec(ctx, `select cafaye.begin_account($1)`, accountID); err != nil {
+		if _, err := tx.Exec(ctx, `select anywaye.begin_account($1)`, accountID); err != nil {
 			_ = tx.Rollback(ctx)
 			t.Fatalf("setting the identity: %v", err)
 		}

@@ -59,7 +59,7 @@ CREATE TABLE api_keys (
     -- clean. The stored column is the only thing a dump yields, and one SHA-256
     -- of a 256-bit value is not invertible.
     --
-    -- The presented value INCLUDES the `cafaye_` prefix and the whole string is
+    -- The presented value INCLUDES the `anywaye_` prefix and the whole string is
     -- what is hashed, so a digest is bound to the format it was minted in. That
     -- is not needed for security — nothing here compares a digest to a guess —
     -- and it is here because it removes a question: two credential types can

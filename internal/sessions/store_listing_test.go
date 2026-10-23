@@ -26,8 +26,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/cafaye/identity/internal/platform/dbtest"
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/platform/dbtest"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // mintSession writes one live session and returns the row with its token, so a

@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // The OIDC client: the credential a product presents at the token endpoint, and
@@ -49,7 +49,7 @@ var (
 )
 
 // Field validation codes. They land verbatim in the `errors[]` array of the
-// cafaye error envelope, so they are part of the contract.
+// anywaye error envelope, so they are part of the contract.
 const (
 	CodeRequired       = "required"
 	CodeInvalidFormat  = "invalid_format"

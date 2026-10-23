@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 var eventAt = time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
@@ -91,7 +91,7 @@ func TestMFAEventPayloadsCarryNoCredential(t *testing.T) {
 		"JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",                         // a TOTP secret
 		"7KQF-4W2X-5DTR-M3HN",                                      // a recovery code
 		"a4b1c0f3e2d5a6b7c8d9e0f1a2b3c4d5",                         // a SHA-256 digest
-		"otpauth://totp/cafaye%20identity?secret=JBSWY3DPEHPK3PXP", // a provisioning URI
+		"otpauth://totp/anywaye%20identity?secret=JBSWY3DPEHPK3PXP", // a provisioning URI
 	}
 
 	enabled, err := NewMFAEnabled(eventAt, userA, credA, "totp")

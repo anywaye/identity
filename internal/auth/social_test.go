@@ -67,10 +67,10 @@ import (
 
 	"github.com/alexedwards/argon2id"
 
-	"github.com/cafaye/identity/internal/oauth"
-	"github.com/cafaye/identity/internal/platform/db"
-	"github.com/cafaye/identity/internal/platform/id"
-	"github.com/cafaye/identity/internal/users"
+	"github.com/anywaye/identity/internal/oauth"
+	"github.com/anywaye/identity/internal/platform/db"
+	"github.com/anywaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/users"
 )
 
 // ---------------------------------------------------------------------------

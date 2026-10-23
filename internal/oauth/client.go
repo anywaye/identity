@@ -13,7 +13,7 @@ import (
 
 	"golang.org/x/oauth2"
 
-	"github.com/cafaye/identity/internal/users"
+	"github.com/anywaye/identity/internal/users"
 )
 
 // DefaultProviderTimeout bounds every call this service makes to a provider.

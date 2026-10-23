@@ -532,19 +532,19 @@ func TestTheCoverageFilterCanFail(t *testing.T) {
 	// over the whole module and 3/12 = 25.0% with the exclusion in place — both
 	// far below the floor, which is what a real decrease looks like.
 	const profileLow = "mode: set\n" +
-		"github.com/cafaye/identity/internal/platform/clock:10.13,12.2 2 1\n" +
-		"github.com/cafaye/identity/internal/platform/clock:20.13,22.2 9 0\n" +
-		"github.com/cafaye/identity/internal/platform/id:10.13,12.2 1 1\n" +
-		"github.com/cafaye/identity/client/generated/api.gen.go:10.13,12.2 1 0\n"
+		"github.com/anywaye/identity/internal/platform/clock:10.13,12.2 2 1\n" +
+		"github.com/anywaye/identity/internal/platform/clock:20.13,22.2 9 0\n" +
+		"github.com/anywaye/identity/internal/platform/id:10.13,12.2 1 1\n" +
+		"github.com/anywaye/identity/client/generated/api.gen.go:10.13,12.2 1 0\n"
 
 	// `profileHigh` is the same module after the tests caught up: every
 	// hand-written statement covered, the generated block still at zero. 100.0%
 	// over what is left, from 92.9% over everything.
 	const profileHigh = "mode: set\n" +
-		"github.com/cafaye/identity/internal/platform/clock:10.13,12.2 2 1\n" +
-		"github.com/cafaye/identity/internal/platform/clock:20.13,22.2 9 1\n" +
-		"github.com/cafaye/identity/internal/platform/id:10.13,12.2 1 1\n" +
-		"github.com/cafaye/identity/client/generated/api.gen.go:10.13,12.2 1 0\n"
+		"github.com/anywaye/identity/internal/platform/clock:10.13,12.2 2 1\n" +
+		"github.com/anywaye/identity/internal/platform/clock:20.13,22.2 9 1\n" +
+		"github.com/anywaye/identity/internal/platform/id:10.13,12.2 1 1\n" +
+		"github.com/anywaye/identity/client/generated/api.gen.go:10.13,12.2 1 0\n"
 
 	// The two profiles that decide whether the floor means 70 at all: a module
 	// one tenth of a percent under it, and one over.
@@ -996,9 +996,9 @@ func oneStatementPerBlockProfile(covered, total int) string {
 		if i%2 == 1 {
 			pkg = "internal/platform/id"
 		}
-		fmt.Fprintf(&b, "github.com/cafaye/identity/%s:%d.13,%d.2 1 %d\n", pkg, 10+i*10, 12+i*10, count)
+		fmt.Fprintf(&b, "github.com/anywaye/identity/%s:%d.13,%d.2 1 %d\n", pkg, 10+i*10, 12+i*10, count)
 	}
-	b.WriteString("github.com/cafaye/identity/client/generated/api.gen.go:10.13,12.2 1 0\n")
+	b.WriteString("github.com/anywaye/identity/client/generated/api.gen.go:10.13,12.2 1 0\n")
 	return b.String()
 }
 

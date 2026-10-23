@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cafaye/identity/internal/accounts"
-	"github.com/cafaye/identity/internal/platform/dbtest"
-	"github.com/cafaye/identity/internal/platform/id"
-	"github.com/cafaye/identity/internal/recovery"
+	"github.com/anywaye/identity/internal/accounts"
+	"github.com/anywaye/identity/internal/platform/dbtest"
+	"github.com/anywaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/recovery"
 )
 
 // # THE END-TO-END TEST, AND WHAT IT IS ALLOWED TO CLAIM

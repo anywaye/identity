@@ -1,6 +1,6 @@
 package ci
 
-// A reader for the one block of cafaye.yml this package needs.
+// A reader for the one block of anywaye.yml this package needs.
 //
 // go.mod has no YAML dependency and adding one would put a parser and its CVEs in
 // this module's dependency list for the sake of one list of strings, so this
@@ -30,18 +30,18 @@ import (
 	"testing"
 )
 
-// manifestEventTypes returns the entries of `exposes.events` in cafaye.yml, and
+// manifestEventTypes returns the entries of `exposes.events` in anywaye.yml, and
 // fails the test if the block cannot be read whole.
 func manifestEventTypes(t *testing.T) []string {
 	t.Helper()
-	path := filepath.Join(repoRoot(t), "cafaye.yml")
+	path := filepath.Join(repoRoot(t), "anywaye.yml")
 	source, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("reading cafaye.yml: %v", err)
+		t.Fatalf("reading anywaye.yml: %v", err)
 	}
 	got, err := eventTypesFromManifest(string(source))
 	if err != nil {
-		t.Fatalf("reading cafaye.yml: %v", err)
+		t.Fatalf("reading anywaye.yml: %v", err)
 	}
 	return got
 }
@@ -70,7 +70,7 @@ func eventTypesFromManifest(source string) ([]string, error) {
 		// Blank lines and comments sit between sibling keys in this
 		// repository's own manifest, so they are stepped over rather than
 		// treated as the end of the block. Treating a blank line as the end
-		// would make the reader refuse the real cafaye.yml, and a reader that
+		// would make the reader refuse the real anywaye.yml, and a reader that
 		// refuses everything is indistinguishable from a correct one.
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 			continue
@@ -119,7 +119,7 @@ func eventTypesFromManifest(source string) ([]string, error) {
 
 // The tests below are of the READER, not of a document. Each is a shape the
 // reader must refuse, because a reader exercised only against the real
-// cafaye.yml has proven that it reads cafaye.yml and nothing else.
+// anywaye.yml has proven that it reads anywaye.yml and nothing else.
 
 func TestTheManifestReaderReadsTheRealShape(t *testing.T) {
 	const document = `name: identity
@@ -132,7 +132,7 @@ exposes:
 
     - identity.api_key.created
 repository:
-  url: git@github.com:cafaye/identity.git
+  url: git@github.com:anywaye/identity.git
 `
 
 	got, err := eventTypesFromManifest(document)
@@ -158,8 +158,8 @@ func TestTheManifestReaderRefusesWhatItDidNotRead(t *testing.T) {
 
 	for name, document := range map[string]string{
 		"no exposes block":                         "name: identity\nconsumes: []\n",
-		"no events list under exposes":             "exposes:\n  api: openapi/v1.yaml\nrepository:\n  url: git@github.com:cafaye/identity.git\n",
-		"an events list that yields nothing":       "exposes:\n  events:\n    # every line here is a comment\nrepository:\n  url: git@github.com:cafaye/identity.git\n",
+		"no events list under exposes":             "exposes:\n  api: openapi/v1.yaml\nrepository:\n  url: git@github.com:anywaye/identity.git\n",
+		"an events list that yields nothing":       "exposes:\n  events:\n    # every line here is a comment\nrepository:\n  url: git@github.com:anywaye/identity.git\n",
 		"an entry with no value":                   "exposes:\n  events:\n    - \n    - identity.user.created\n",
 		"a line in the block that is not an entry": "exposes:\n  events:\n    - identity.user.created\n    identity.member.invited\n",
 		"a second top-level exposes":               wellFormed + "exposes:\n  events:\n    - identity.user.created\n",

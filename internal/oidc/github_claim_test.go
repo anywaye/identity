@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cafaye/identity/internal/platform/db"
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/platform/db"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // A fake GitHubIDReader, so the claim is tested without a database tier.

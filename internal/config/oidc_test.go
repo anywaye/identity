@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cafaye/identity/internal/oidc"
+	"github.com/anywaye/identity/internal/oidc"
 )
 
 // The OIDC configuration, and the rule that decides whether the OIDC surface
@@ -42,30 +42,30 @@ func TestLoadOIDC(t *testing.T) {
 		},
 		{
 			name: "an issuer with no key",
-			env:  map[string]string{"OIDC_ISSUER": "https://identity.cafaye.com"},
+			env:  map[string]string{"OIDC_ISSUER": "https://identity.anywaye.com"},
 			// Not a fallback: a provider with an issuer and no key cannot sign.
 			wantErr: ErrInvalidOIDC,
 		},
 		{
 			name:    "a key with no issuer",
-			env:     map[string]string{"OIDC_SIGNING_KEY": keyPEM, "OIDC_SIGNING_KEY_ID": "cafaye-2026-09"},
+			env:     map[string]string{"OIDC_SIGNING_KEY": keyPEM, "OIDC_SIGNING_KEY_ID": "anywaye-2026-09"},
 			wantErr: ErrInvalidOIDC,
 		},
 		{
 			name: "an issuer, a key and a key id",
 			env: map[string]string{
-				"OIDC_ISSUER":         "https://identity.cafaye.com",
+				"OIDC_ISSUER":         "https://identity.anywaye.com",
 				"OIDC_SIGNING_KEY":    keyPEM,
-				"OIDC_SIGNING_KEY_ID": "cafaye-2026-09",
+				"OIDC_SIGNING_KEY_ID": "anywaye-2026-09",
 			},
 			assert: func(t *testing.T, cfg Config) {
 				if !cfg.OIDCEnabled() {
 					t.Error("OIDCEnabled is false with a complete configuration")
 				}
-				if cfg.OIDCIssuer != "https://identity.cafaye.com" {
+				if cfg.OIDCIssuer != "https://identity.anywaye.com" {
 					t.Errorf("OIDCIssuer = %q", cfg.OIDCIssuer)
 				}
-				if cfg.OIDCKeyID != "cafaye-2026-09" {
+				if cfg.OIDCKeyID != "anywaye-2026-09" {
 					t.Errorf("OIDCKeyID = %q", cfg.OIDCKeyID)
 				}
 				if cfg.OIDCAllowInsecure {
@@ -76,15 +76,15 @@ func TestLoadOIDC(t *testing.T) {
 		{
 			name: "values are trimmed",
 			env: map[string]string{
-				"OIDC_ISSUER":         "  https://identity.cafaye.com  ",
+				"OIDC_ISSUER":         "  https://identity.anywaye.com  ",
 				"OIDC_SIGNING_KEY":    keyPEM,
-				"OIDC_SIGNING_KEY_ID": "  cafaye-2026-09  ",
+				"OIDC_SIGNING_KEY_ID": "  anywaye-2026-09  ",
 			},
 			assert: func(t *testing.T, cfg Config) {
-				if cfg.OIDCIssuer != "https://identity.cafaye.com" {
+				if cfg.OIDCIssuer != "https://identity.anywaye.com" {
 					t.Errorf("OIDCIssuer = %q, want it trimmed", cfg.OIDCIssuer)
 				}
-				if cfg.OIDCKeyID != "cafaye-2026-09" {
+				if cfg.OIDCKeyID != "anywaye-2026-09" {
 					t.Errorf("OIDCKeyID = %q, want it trimmed", cfg.OIDCKeyID)
 				}
 			},
@@ -95,9 +95,9 @@ func TestLoadOIDC(t *testing.T) {
 			// failure at 3am.
 			name: "a key keeps its interior and loses its trailing whitespace",
 			env: map[string]string{
-				"OIDC_ISSUER":         "https://identity.cafaye.com",
+				"OIDC_ISSUER":         "https://identity.anywaye.com",
 				"OIDC_SIGNING_KEY":    keyPEM + "\n\n  ",
-				"OIDC_SIGNING_KEY_ID": "cafaye-2026-09",
+				"OIDC_SIGNING_KEY_ID": "anywaye-2026-09",
 			},
 			assert: func(t *testing.T, cfg Config) {
 				if strings.HasSuffix(cfg.OIDCSigningKey, "\n") || strings.HasSuffix(cfg.OIDCSigningKey, " ") {
@@ -110,7 +110,7 @@ func TestLoadOIDC(t *testing.T) {
 			env: map[string]string{
 				"OIDC_ISSUER":         "http://localhost:8080",
 				"OIDC_SIGNING_KEY":    keyPEM,
-				"OIDC_SIGNING_KEY_ID": "cafaye-2026-09",
+				"OIDC_SIGNING_KEY_ID": "anywaye-2026-09",
 			},
 			wantErr: ErrInsecureOIDCIssuer,
 		},
@@ -119,7 +119,7 @@ func TestLoadOIDC(t *testing.T) {
 			env: map[string]string{
 				"OIDC_ISSUER":         "http://localhost:8080",
 				"OIDC_SIGNING_KEY":    keyPEM,
-				"OIDC_SIGNING_KEY_ID": "cafaye-2026-09",
+				"OIDC_SIGNING_KEY_ID": "anywaye-2026-09",
 				"OIDC_ALLOW_INSECURE": "true",
 			},
 			assert: func(t *testing.T, cfg Config) {
@@ -131,9 +131,9 @@ func TestLoadOIDC(t *testing.T) {
 		{
 			name: "a misspelled opt-in",
 			env: map[string]string{
-				"OIDC_ISSUER":         "https://identity.cafaye.com",
+				"OIDC_ISSUER":         "https://identity.anywaye.com",
 				"OIDC_SIGNING_KEY":    keyPEM,
-				"OIDC_SIGNING_KEY_ID": "cafaye-2026-09",
+				"OIDC_SIGNING_KEY_ID": "anywaye-2026-09",
 				"OIDC_ALLOW_INSECURE": "yes-please",
 			},
 			wantErr: ErrInvalidOIDC,
@@ -141,9 +141,9 @@ func TestLoadOIDC(t *testing.T) {
 		{
 			name: "an issuer that is not a URL",
 			env: map[string]string{
-				"OIDC_ISSUER":         "identity.cafaye.com",
+				"OIDC_ISSUER":         "identity.anywaye.com",
 				"OIDC_SIGNING_KEY":    keyPEM,
-				"OIDC_SIGNING_KEY_ID": "cafaye-2026-09",
+				"OIDC_SIGNING_KEY_ID": "anywaye-2026-09",
 			},
 			wantErr: ErrInvalidOIDC,
 		},
@@ -170,7 +170,7 @@ func TestLoadOIDC(t *testing.T) {
 				env[key] = value
 			}
 			if _, set := env[oidc.LoginUIEnvVar]; !set && mentionsTheOIDCBlock(env) {
-				env[oidc.LoginUIEnvVar] = "https://login.cafaye.com/sign-in/oidc"
+				env[oidc.LoginUIEnvVar] = "https://login.anywaye.com/sign-in/oidc"
 			}
 			// SIGNUP_SIGNING_KEY is the one secret a boot cannot go without, so
 			// every case that expects Load to succeed supplies it — the same
@@ -213,9 +213,9 @@ func TestTheLoginUIIsPartOfTheOIDCBlock(t *testing.T) {
 	const keyPEM = "-----BEGIN PRIVATE KEY-----\nnot-a-real-key\n-----END PRIVATE KEY-----\n"
 
 	block := map[string]string{
-		"OIDC_ISSUER":         "https://identity.cafaye.com",
+		"OIDC_ISSUER":         "https://identity.anywaye.com",
 		"OIDC_SIGNING_KEY":    keyPEM,
-		"OIDC_SIGNING_KEY_ID": "cafaye-2026-09",
+		"OIDC_SIGNING_KEY_ID": "anywaye-2026-09",
 	}
 
 	tests := []struct {
@@ -230,7 +230,7 @@ func TestTheLoginUIIsPartOfTheOIDCBlock(t *testing.T) {
 		},
 		{
 			name: "a login UI with nothing to apply it to",
-			env:  map[string]string{oidc.LoginUIEnvVar: "https://login.cafaye.com/sign-in/oidc"},
+			env:  map[string]string{oidc.LoginUIEnvVar: "https://login.anywaye.com/sign-in/oidc"},
 			// Same reasoning as OIDC_ALLOW_INSECURE with no issuer: a setting an
 			// operator changed and nothing reads is a typo, and a typo found at boot
 			// costs a log line.
@@ -239,9 +239,9 @@ func TestTheLoginUIIsPartOfTheOIDCBlock(t *testing.T) {
 		{
 			name: "a login UI that is not an address a browser can be sent to",
 			env: map[string]string{
-				"OIDC_ISSUER":         "https://identity.cafaye.com",
+				"OIDC_ISSUER":         "https://identity.anywaye.com",
 				"OIDC_SIGNING_KEY":    keyPEM,
-				"OIDC_SIGNING_KEY_ID": "cafaye-2026-09",
+				"OIDC_SIGNING_KEY_ID": "anywaye-2026-09",
 				oidc.LoginUIEnvVar:    "javascript:alert(1)",
 			},
 			wantErr: ErrInvalidOIDC,
@@ -249,10 +249,10 @@ func TestTheLoginUIIsPartOfTheOIDCBlock(t *testing.T) {
 		{
 			name: "a complete block",
 			env: map[string]string{
-				"OIDC_ISSUER":         "https://identity.cafaye.com",
+				"OIDC_ISSUER":         "https://identity.anywaye.com",
 				"OIDC_SIGNING_KEY":    keyPEM,
-				"OIDC_SIGNING_KEY_ID": "cafaye-2026-09",
-				oidc.LoginUIEnvVar:    "https://login.cafaye.com/sign-in/oidc",
+				"OIDC_SIGNING_KEY_ID": "anywaye-2026-09",
+				oidc.LoginUIEnvVar:    "https://login.anywaye.com/sign-in/oidc",
 				// The one required secret, so the boot this case is about can
 				// happen. The three refusal cases above are unaffected: the
 				// OIDC block is checked before the signup key.
@@ -280,7 +280,7 @@ func TestTheLoginUIIsPartOfTheOIDCBlock(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Load: %v", err)
 			}
-			if cfg.OIDCLoginUIURL != "https://login.cafaye.com/sign-in/oidc" {
+			if cfg.OIDCLoginUIURL != "https://login.anywaye.com/sign-in/oidc" {
 				t.Errorf("OIDCLoginUIURL = %q, want the configured one", cfg.OIDCLoginUIURL)
 			}
 		})
@@ -294,10 +294,10 @@ func TestLoadTrimsTheSigningKey(t *testing.T) {
 	t.Parallel()
 
 	env := map[string]string{
-		"OIDC_ISSUER":         "https://identity.cafaye.com",
+		"OIDC_ISSUER":         "https://identity.anywaye.com",
 		"OIDC_SIGNING_KEY":    "  -----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----  ",
 		"OIDC_SIGNING_KEY_ID": "k1",
-		oidc.LoginUIEnvVar:    "https://login.cafaye.com/sign-in/oidc",
+		oidc.LoginUIEnvVar:    "https://login.anywaye.com/sign-in/oidc",
 		// The one required secret, so the boot this test is about can happen.
 		"SIGNUP_SIGNING_KEY": base64.RawURLEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef")),
 	}

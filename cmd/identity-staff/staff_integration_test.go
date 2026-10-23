@@ -12,9 +12,9 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/cafaye/identity/internal/platform/db"
-	"github.com/cafaye/identity/internal/platform/dbtest"
-	"github.com/cafaye/identity/internal/users"
+	"github.com/anywaye/identity/internal/platform/db"
+	"github.com/anywaye/identity/internal/platform/dbtest"
+	"github.com/anywaye/identity/internal/users"
 )
 
 func testStore(t *testing.T) (*users.Store, db.Querier) {

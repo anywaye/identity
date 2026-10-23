@@ -1,14 +1,14 @@
 # AGENTS.md
 
-Conventions for `identity`, the cafaye security boundary. Read this before
-changing anything; the house rules apply on top of it — SSH remotes for the repositories cafaye owns, and tests first: write the test, watch it fail, then implement.
+Conventions for `identity`, the anywaye security boundary. Read this before
+changing anything; the house rules apply on top of it — SSH remotes for the repositories anywaye owns, and tests first: write the test, watch it fail, then implement.
 
 ## What this repository is
 
-`module github.com/cafaye/identity`, Go >= 1.25, one static binary. It owns auth,
+`module github.com/anywaye/identity`, Go >= 1.25, one static binary. It owns auth,
 sessions, MFA, OAuth, accounts and tenancy, and OIDC — it is what every other
-cafaye service asks to identify a caller. The contracts are owned by
-`cafaye/core`; CI and lint config come from `cafaye/kit`. Neither lives here.
+anywaye service asks to identify a caller. The contracts are owned by
+`anywaye/core`; CI and lint config come from `anywaye/kit`. Neither lives here.
 
 Because this is the security boundary, `PLAN.md` §3 applies a higher bar here:
 TDD throughout, an authorization matrix suite (route table × role × anonymous)
@@ -45,7 +45,7 @@ bin/coverage-floor     the coverage floor, over the profile minus coverage-exclu
 coverage-exclusions    DECLARED paths left out of that measurement: reason, owner, dates
 gate.yml               WHAT THIS GATE IS WORTH, declared: the entrypoint, the proofs the
                        gate's own output must contain, and what the gate needs from the
-                       machine. Checked by cafaye/core's harness/gate_check.py, NOT by
+                       machine. Checked by anywaye/core's harness/gate_check.py, NOT by
                        go test. Go prints no test count, so this file carries no
                        `minimum` floor and the decrease-detector is SUITE_FLOOR in
                        .github/workflows/ci.yml — read the report before changing it.
@@ -73,8 +73,8 @@ but process lifetime; the pieces it does own — the socket, the drain, the sign
 handling — live in an `app` type the tests drive directly, because a signal path
 is not worth testing through a mock.
 
-`internal/platform/` is where infrastructure that is not a cafaye concept goes.
-If a package is a cafaye concept (accounts, sessions, OIDC), it sits at
+`internal/platform/` is where infrastructure that is not a anywaye concept goes.
+If a package is a anywaye concept (accounts, sessions, OIDC), it sits at
 `internal/<concept>/`. Do not create a new platform package per dependency; one
 per substrate.
 
@@ -121,7 +121,7 @@ itself. Never edit an applied migration; write a new one. Every migration needs
 a `Down`, or a comment saying why it cannot be reversed. The rules and the
 dev/prod commands are in [migrations/README.md](migrations/README.md).
 
-**`cafaye.yml` is a draft.** The schema belongs to `cafaye/core` and is still in
+**`anywaye.yml` is a draft.** The schema belongs to `anywaye/core` and is still in
 flight. Fields marked `# GUESS` in that file are a reconciliation list, not
 precedent — when core freezes the manifest, `cafe init` regenerates the file and
 guessed fields are dropped, not migrated.
@@ -427,7 +427,7 @@ says a backup has been taken, and neither claims one has. The R2 bucket must
 exist before the first backup — `init_if_missing: true` initialises the
 *repository* inside a bucket you created — six secrets must be in
 `.kamal/secrets`, and nobody has run a drill here. README.md § "Backups" states
-that in the place an operator reads, and the runbook in `cafaye/docs` is the
+that in the place an operator reads, and the runbook in `anywaye/docs` is the
 procedure. **The template is copied, so a kit bump means re-copying and
 re-applying identity's one change** (`healthcheck.path: /readyz`, because
 identity does not serve kit's `/up`); both files say which kit ref they came
@@ -540,19 +540,19 @@ has reported something false.
 ```sh
 docker compose up -d --wait postgres
 goose -dir migrations postgres "$DATABASE_URL" up
-TEST_DATABASE_URL="postgres://identity:cafaye@localhost:5432/identity?sslmode=disable" go test ./...
+TEST_DATABASE_URL="postgres://identity:anywaye@localhost:5432/identity?sslmode=disable" go test ./...
 ```
 
 **The password in that DSN is the CLUSTER's, and it changed in packet
 identity-27.** `docker-compose.yml` no longer sets `POSTGRES_PASSWORD`, so the
 role that `KIT_POSTGRES_DATABASES: identity` provisions takes kit's
-`KIT_POSTGRES_PASSWORD`, default `cafaye`. The old `identity:identity` DSN now
+`KIT_POSTGRES_PASSWORD`, default `anywaye`. The old `identity:identity` DSN now
 fails authentication against the shared cluster while continuing to work verbatim
 in CI — which is the worst possible split, because a developer who copies a DSN
 out of `.github/workflows/ci.yml` gets a failure that names a password rather than
 the architecture change. Take the local DSN from the `identity` service's own
 `DATABASE_URL` in `docker-compose.yml`: it is written down in exactly one place,
-and it interpolates `${KIT_POSTGRES_PASSWORD:-cafaye}` so it follows an
+and it interpolates `${KIT_POSTGRES_PASSWORD:-anywaye}` so it follows an
 overridden cluster password instead of drifting from it.
 
 `docker compose up` also needs `kit.ref` to name a kit commit that has
@@ -630,7 +630,7 @@ gate.** It builds and pushes the two artifacts a deploy consumes — the image
 and it never runs on a pull request — so a mistake in it cannot be caught by
 the mistake being noticed, only by a check. `internal/platform/ci/publish_test.go`
 is that check: the file exists, it calls
-`cafaye/kit/.github/workflows/publish.reusable.yml@master` — the COMPOSED
+`anywaye/kit/.github/workflows/publish.reusable.yml@master` — the COMPOSED
 workflow, and the name is the assertion: a caller that names
 `image.reusable.yml` publishes the image and no chart, which was the exact
 regression identity-w98 fixed — at the one path GitHub can resolve, it carries

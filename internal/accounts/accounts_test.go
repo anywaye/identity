@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // These are the rules the whole tenancy surface rests on, and none of them needs

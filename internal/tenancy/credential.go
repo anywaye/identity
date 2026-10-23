@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/cafaye/identity/internal/platform/db"
+	"github.com/anywaye/identity/internal/platform/db"
 )
 
 // The CREDENTIAL seam: the transaction that resolves a presented secret to its row.
@@ -13,7 +13,7 @@ import (
 // # WHY THIS IS A SEPARATE FILE AND NOT A SECOND FUNCTION IN scope.go
 //
 // scope.go is the account seam and its whole argument is that there is exactly
-// ONE place that writes `cafaye.account_id`, so a boundary stated in two places
+// ONE place that writes `anywaye.account_id`, so a boundary stated in two places
 // is a boundary asserted in zero times. The same argument applies here, and it is
 // why this file exists rather than two more functions in that one: the digest is
 // a second GUC, it is set by a second statement, and a reader looking for the one
@@ -69,7 +69,7 @@ var ErrNoCredential = errors.New("setting the credential digest on the transacti
 // kit's decision — the mechanism and the four answers it rejected are argued in
 // the substrate itself and in kit's DECISIONS.md — and this service adopts it
 // rather than carrying a second opinion about how a credential resolves.
-const beginCredentialSQL = `select cafaye.begin_credential($1)`
+const beginCredentialSQL = `select anywaye.begin_credential($1)`
 
 // beginCredential sets the presented digest on a transaction that is already
 // open. It is unexported, so the digest is written by CredentialResolver and by
@@ -157,7 +157,7 @@ type CredentialResolver struct {
 // Exactly two things, and the second is 00028's: read the credential row
 // whose digest it presented, and read the membership rows of that row's
 // (account, user) pair — which is what lets ByDigest's JOIN return. The
-// membership half is admitted by account_users_cafaye_resolve, whose EXISTS
+// membership half is admitted by account_users_anywaye_resolve, whose EXISTS
 // runs under api_keys' own policies and so can only match the presented
 // row, and only while it is live (revoked_at IS NULL is in the policy).
 // `select *` from api_keys inside one of these transactions returns THAT row

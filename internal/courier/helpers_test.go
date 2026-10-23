@@ -3,7 +3,7 @@ package courier
 import (
 	"errors"
 
-	"github.com/cafaye/identity/internal/recovery"
+	"github.com/anywaye/identity/internal/recovery"
 )
 
 // resetLinkTemplate, verifyLinkTemplate and changeLinkTemplate are the three

@@ -19,7 +19,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cafaye/identity/internal/oauth"
+	"github.com/anywaye/identity/internal/oauth"
 )
 
 // appleTestPrivateKeyPEM returns a valid .p8 PEM — the shape of

@@ -49,8 +49,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cafaye/identity/internal/oauth"
-	"github.com/cafaye/identity/internal/users"
+	"github.com/anywaye/identity/internal/oauth"
+	"github.com/anywaye/identity/internal/users"
 )
 
 // A disabled account is refused, and the refusal names the state.

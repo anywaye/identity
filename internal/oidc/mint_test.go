@@ -8,7 +8,7 @@ import (
 	jose "github.com/go-jose/go-jose/v4"
 	"github.com/go-jose/go-jose/v4/jwt"
 
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // The exchanged token's claim set, asserted against the SAME verifier shape a

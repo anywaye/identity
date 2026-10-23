@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // The authorization request and its code: the two statements the token endpoint

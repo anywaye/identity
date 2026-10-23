@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/cafaye/identity/internal/accounts"
-	"github.com/cafaye/identity/internal/outbox"
-	"github.com/cafaye/identity/internal/platform/clock"
-	"github.com/cafaye/identity/internal/platform/db"
-	"github.com/cafaye/identity/internal/platform/id"
-	"github.com/cafaye/identity/internal/users"
+	"github.com/anywaye/identity/internal/accounts"
+	"github.com/anywaye/identity/internal/outbox"
+	"github.com/anywaye/identity/internal/platform/clock"
+	"github.com/anywaye/identity/internal/platform/db"
+	"github.com/anywaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/users"
 )
 
 // The use cases: mint a credential, list an account's credentials, withdraw one,
@@ -555,8 +555,8 @@ func (s *Service) Introspect(ctx context.Context, token string, now time.Time) (
 //
 // WHERE THE RESOLUTION RUNS, and it is the second thing this method needs saying.
 // The lookup runs inside a transaction that already carries
-// `cafaye.begin_credential(digest)`, because `api_keys` is a credential table
-// (migrations/00016 calls `cafaye.protect_credential_table('api_keys',
+// `anywaye.begin_credential(digest)`, because `api_keys` is a credential table
+// (migrations/00016 calls `anywaye.protect_credential_table('api_keys',
 // 'token_digest')`) and the query that turns a presented secret into a caller has
 // no account to predicate on — the account is what it is FOR. Protected the ordinary
 // way, that query read zero rows for a request with no identity set, which is the

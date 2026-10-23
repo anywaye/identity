@@ -35,15 +35,15 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/cafaye/identity/internal/oidc"
-	"github.com/cafaye/identity/internal/outbox"
-	"github.com/cafaye/identity/internal/platform/clock"
-	"github.com/cafaye/identity/internal/platform/db"
-	"github.com/cafaye/identity/internal/platform/dbtest"
-	"github.com/cafaye/identity/internal/platform/id"
-	"github.com/cafaye/identity/internal/sessions"
-	"github.com/cafaye/identity/internal/useraudit"
-	"github.com/cafaye/identity/internal/users"
+	"github.com/anywaye/identity/internal/oidc"
+	"github.com/anywaye/identity/internal/outbox"
+	"github.com/anywaye/identity/internal/platform/clock"
+	"github.com/anywaye/identity/internal/platform/db"
+	"github.com/anywaye/identity/internal/platform/dbtest"
+	"github.com/anywaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/sessions"
+	"github.com/anywaye/identity/internal/useraudit"
+	"github.com/anywaye/identity/internal/users"
 )
 
 // integrationFixture is a registered user, a real password digest and a real

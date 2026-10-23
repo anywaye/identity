@@ -21,8 +21,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cafaye/identity/internal/platform/clock"
-	"github.com/cafaye/identity/internal/signup"
+	"github.com/anywaye/identity/internal/platform/clock"
+	"github.com/anywaye/identity/internal/signup"
 )
 
 // mintAt is the instant the fake clock is parked at, and the instant every

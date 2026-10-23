@@ -14,8 +14,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/cafaye/identity/internal/platform/db"
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/platform/db"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // auditColumns is the table's own column list, in one place.

@@ -32,7 +32,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/cafaye/identity/internal/platform/db"
+	"github.com/anywaye/identity/internal/platform/db"
 )
 
 // EnvVar names the environment variable that points at a throwaway database.

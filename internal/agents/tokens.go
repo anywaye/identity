@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cafaye/identity/internal/platform/db"
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/platform/db"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // THE AGENT TOKEN LIFECYCLE: create, list, revoke, rotate — the routes `caf agent
@@ -21,7 +21,7 @@ import (
 // the agent for itself rather than by a signed-in owner for an account. So it is
 // a parallel lifecycle over the same digest machinery, exactly as Register is a
 // parallel of a signup. Nothing here reaches into internal/apikeys, and nothing
-// there is asked about a value that begins with the shared `cafaye_` prefix: each
+// there is asked about a value that begins with the shared `anywaye_` prefix: each
 // surface resolves its own table, which is the one thing that prefix is FOR (see
 // the agents package header).
 //

@@ -1,7 +1,7 @@
 # openapi/v1.yaml — the HTTP contract for identity's v1 surface.
 #
-# This file is what `exposes.api` in cafaye.yml points at, and it is written to
-# cafaye/core docs/openapi-conventions.md. Where core and this file disagree, core
+# This file is what `exposes.api` in anywaye.yml points at, and it is written to
+# anywaye/core docs/openapi-conventions.md. Where core and this file disagree, core
 # is right and this file is the bug.
 #
 # Three places this document knowingly departs from core, all of them a manager
@@ -10,7 +10,7 @@
 openapi: 3.1.0
 
 info:
-  title: cafaye identity
+  title: anywaye identity
   # Bumped for the OIDC registration routes, again for the multi-factor routes, and
   # again for the scoped API tokens. No path prefix moved and no existing response
   # shape changed, so core's sync rule asks for exactly this: a non-breaking change
@@ -26,7 +26,7 @@ info:
   # second credential accepted by `bearerToken`, and one behaviour change on an
   # EXISTING operation — `DELETE /v1/session` now answers 403 to a scoped token
   # where it used to answer 204. A client that only ever presents session tokens
-  # cannot tell, and a client that had started pasting a `cafaye_` token into its
+  # cannot tell, and a client that had started pasting a `anywaye_` token into its
   # logout call was being told a revocation had happened when none had.
   #
   # 1.4.0 is the admin surface: three new operations, all under a new `admin` tag,
@@ -159,7 +159,7 @@ info:
   version: 1.15.0
   summary: Authentication, sessions, multi-factor authentication, account recovery, accounts, tenancy, scoped API tokens, the admin surface, the operator surface, the agent principal and OIDC registrations.
   description: |
-    `identity` is the cafaye platform's security boundary: it is what every other
+    `identity` is the anywaye platform's security boundary: it is what every other
     service asks to identify a caller.
 
     ## Two credential surfaces
@@ -234,7 +234,7 @@ info:
     for the same reason the error envelope differs there: an off-the-shelf OIDC
     client library cannot parse a problem document, and core's `/v1` rule cannot
     be satisfied by a path RFC 8414 chooses. What IS in this document is the
-    cafaye API for managing the registrations that provider accepts:
+    anywaye API for managing the registrations that provider accepts:
     `/v1/accounts/{account_id}/oidc-clients`.
 
     ## Three authorization decisions worth knowing before reading the matrix
@@ -285,8 +285,8 @@ info:
     token.
   contact:
     name: identity
-    url: https://github.com/cafaye/identity
-    email: identity@cafaye.com
+    url: https://github.com/anywaye/identity
+    email: identity@anywaye.com
   license:
     # Business Source Licence 1.1, SPDX BUSL-1.1. Free to run, free to
     # self-host, and never to offer identity as a competing service -- the grant
@@ -304,7 +304,7 @@ info:
     identifier: BUSL-1.1
 
 servers:
-  - url: https://api.cafaye.com
+  - url: https://api.anywaye.com
     description: production
   - url: http://localhost:8080
     description: local development (docker compose up)
@@ -482,7 +482,7 @@ tags:
     description: |
       **The agent principal** — an identity that exists before anybody owns it.
       Registration is public and unauthenticated; the claim-link refresh and the
-      bearer-token lifecycle are authenticated with the agent's OWN `cafaye_`
+      bearer-token lifecycle are authenticated with the agent's OWN `anywaye_`
       credential (the same prefix an account api key uses, resolved against the
       agent table rather than the api-keys table); and the binding of a principal
       to a human account — the claim — is under the account surface,
@@ -566,7 +566,7 @@ paths:
                 conflict:
                   summary: the address is taken
                   value:
-                    type: https://docs.cafaye.com/errors/conflict
+                    type: https://docs.anywaye.com/errors/conflict
                     title: Conflict
                     status: 409
                     detail: an account already exists for that email address
@@ -729,7 +729,7 @@ paths:
                 notAToken:
                   summary: A browser session, or no credential
                   value:
-                    type: https://docs.cafaye.com/errors/forbidden
+                    type: https://docs.anywaye.com/errors/forbidden
                     title: Forbidden
                     status: 403
                     detail: >-
@@ -744,7 +744,7 @@ paths:
                 missingScope:
                   summary: A token without the scope
                   value:
-                    type: https://docs.cafaye.com/errors/forbidden
+                    type: https://docs.anywaye.com/errors/forbidden
                     title: Forbidden
                     status: 403
                     detail: this api key does not carry the users:disable scope
@@ -820,7 +820,7 @@ paths:
                 notAToken:
                   summary: A browser session, or no credential
                   value:
-                    type: https://docs.cafaye.com/errors/forbidden
+                    type: https://docs.anywaye.com/errors/forbidden
                     title: Forbidden
                     status: 403
                     detail: >-
@@ -835,7 +835,7 @@ paths:
                 missingScope:
                   summary: A token without the scope
                   value:
-                    type: https://docs.cafaye.com/errors/forbidden
+                    type: https://docs.anywaye.com/errors/forbidden
                     title: Forbidden
                     status: 403
                     detail: this api key does not carry the users:disable scope
@@ -874,7 +874,7 @@ paths:
         status, so there is nothing here to enumerate.
 
         A cookie and a bearer session token are both accepted, exactly as on
-        `GET /v1/me`. A `cafaye_` API key presented as a bearer token is not a
+        `GET /v1/me`. A `anywaye_` API key presented as a bearer token is not a
         session and is refused with 403, not 401.
       security:
         - sessionCookie: []
@@ -915,7 +915,7 @@ paths:
                 notStaff:
                   summary: An authenticated session whose user is not staff
                   value:
-                    type: https://docs.cafaye.com/errors/forbidden
+                    type: https://docs.anywaye.com/errors/forbidden
                     title: Forbidden
                     status: 403
                     detail: >-
@@ -928,7 +928,7 @@ paths:
                 notASession:
                   summary: A scoped API token
                   value:
-                    type: https://docs.cafaye.com/errors/forbidden
+                    type: https://docs.anywaye.com/errors/forbidden
                     title: Forbidden
                     status: 403
                     detail: >-
@@ -1235,7 +1235,7 @@ paths:
               examples:
                 refused:
                   value:
-                    type: https://docs.cafaye.com/errors/unauthorized
+                    type: https://docs.anywaye.com/errors/unauthorized
                     title: Unauthorized
                     status: 401
                     detail: authentication is required to access this resource
@@ -1317,7 +1317,7 @@ paths:
               examples:
                 disabled:
                   value:
-                    type: https://docs.cafaye.com/errors/forbidden
+                    type: https://docs.anywaye.com/errors/forbidden
                     title: Forbidden
                     status: 403
                     detail: this account is disabled; contact the person or organisation that administers it
@@ -1357,7 +1357,7 @@ paths:
               examples:
                 locked:
                   value:
-                    type: https://docs.cafaye.com/errors/account_locked
+                    type: https://docs.anywaye.com/errors/account_locked
                     title: Account locked
                     status: 423
                     detail: too many failed sign-in attempts for this account; retry after 900 seconds
@@ -1604,7 +1604,7 @@ paths:
               examples:
                 default:
                   value:
-                    type: https://docs.cafaye.com/errors/not_found
+                    type: https://docs.anywaye.com/errors/not_found
                     title: Not found
                     status: 404
                     detail: no route matches this request
@@ -1628,7 +1628,7 @@ paths:
         sessions.
 
         **The challenge is accepted in the cookie or in the body**, and both are
-        supported on purpose: cafaye's conventions say "no cookies for API traffic",
+        supported on purpose: anywaye's conventions say "no cookies for API traffic",
         and `POST /v1/session` returns the session token in the body as well as in
         the cookie precisely so a non-browser client has a way in. The explicit body
         value wins when both are present, for the reason `GET /v1/me` prefers the
@@ -2237,7 +2237,7 @@ paths:
                 soleOwner:
                   summary: The caller is the only owner of a team account
                   value:
-                    type: https://docs.cafaye.com/errors/account_ownership_conflict
+                    type: https://docs.anywaye.com/errors/account_ownership_conflict
                     title: Account ownership conflict
                     status: 409
                     code: account_ownership_conflict
@@ -2501,7 +2501,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Problem'
               example:
-                type: https://docs.cafaye.com/errors/not_found
+                type: https://docs.anywaye.com/errors/not_found
                 title: Not found
                 status: 404
                 detail: no such link, or it has already been used
@@ -2639,7 +2639,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Problem'
               example:
-                type: https://docs.cafaye.com/errors/not_found
+                type: https://docs.anywaye.com/errors/not_found
                 title: Not found
                 status: 404
                 detail: no such link, or it has already been used
@@ -2783,7 +2783,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Problem'
               example:
-                type: https://docs.cafaye.com/errors/conflict
+                type: https://docs.anywaye.com/errors/conflict
                 title: Conflict
                 status: 409
                 detail: an account already exists for that email address
@@ -2849,7 +2849,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Problem'
               example:
-                type: https://docs.cafaye.com/errors/not_found
+                type: https://docs.anywaye.com/errors/not_found
                 title: Not found
                 status: 404
                 detail: no such link, or it has already been used
@@ -2925,7 +2925,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Problem'
               example:
-                type: https://docs.cafaye.com/errors/not_found
+                type: https://docs.anywaye.com/errors/not_found
                 title: Not found
                 status: 404
                 detail: no such link, or it has already been used
@@ -3034,7 +3034,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Problem'
               example:
-                type: https://docs.cafaye.com/errors/conflict
+                type: https://docs.anywaye.com/errors/conflict
                 title: Conflict
                 status: 409
                 detail: an account with that name already exists; its handle is the name in lower case with dashes
@@ -3994,7 +3994,7 @@ paths:
   # /v1/accounts/{account_id}/agents/claim, because it binds a principal to an
   # account; none of the four below knows an account. Registration is anonymous;
   # the other three authenticate with the agent's OWN bearer credential (the same
-  # `cafaye_` token `POST /v1/accounts/{account_id}/api-keys` mints, held by a
+  # `anywaye_` token `POST /v1/accounts/{account_id}/api-keys` mints, held by a
   # principal rather than an account), and the principal it resolves to is in the
   # token, never in the path — so no caller can point a route at a token that is
   # not their own.
@@ -4073,9 +4073,9 @@ paths:
                   id: ab000000-0000-0000-0000-0000000000b1
                   name: bootstrap
                   expires_at: '2027-01-08T12:00:00Z'
-                  token: cafaye_Zq3vK7mXpR2tY8wB4cN6dF0gH1jK5lM9oP3qS7uV2wX4yZ8
+                  token: anywaye_Zq3vK7mXpR2tY8wB4cN6dF0gH1jK5lM9oP3qS7uV2wX4yZ8
                 claim:
-                  url: https://cafaye.com/agents/claim/cafaye_9bTf2NpQ7wRk4mXy6vLj1
+                  url: https://anywaye.com/agents/claim/anywaye_9bTf2NpQ7wRk4mXy6vLj1
                   expires_at: '2026-10-10T12:00:00Z'
         '400':
           $ref: '#/components/responses/MalformedBody'
@@ -4124,7 +4124,7 @@ paths:
         in: path
         required: true
         description: |
-          The claim link itself: 256 bits of `cafaye_`-prefixed entropy whose
+          The claim link itself: 256 bits of `anywaye_`-prefixed entropy whose
           SHA-256 is the only part stored. **A credential and not an
           identifier** — there is no row id in this path and nothing that could
           enumerate one. It is never parsed, so a malformed value is a digest
@@ -4145,7 +4145,7 @@ paths:
 
         **Anonymous and unauthenticated, and rate-limited** on the same terms
         `POST /v1/agents` is. The claim link in the path is the credential: it is
-        256 bits of `cafaye_`-prefixed entropy whose SHA-256 is the only part
+        256 bits of `anywaye_`-prefixed entropy whose SHA-256 is the only part
         stored, and guessing it is not a search anybody can run — which is what
         makes the one bit a 200 discloses affordable. The limiter's key is the
         client and the route and never a token, so a 429 is identical for
@@ -4209,7 +4209,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Problem'
               example:
-                type: https://docs.cafaye.com/errors/not_found
+                type: https://docs.anywaye.com/errors/not_found
                 title: Not Found
                 status: 404
                 detail: no agent matches that claim link
@@ -4236,7 +4236,7 @@ paths:
         the answer is the server's own word about the principal the bearer token
         resolved to, read fresh rather than served out of the client's cache.
 
-        **Authenticated with the agent's own bearer token** — the same `cafaye_`
+        **Authenticated with the agent's own bearer token** — the same `anywaye_`
         value the registration or the claim minted, resolving against the agent
         table and not the account api-keys table. A token that does not resolve —
         wrong, revoked, expired, or belonging to a disabled principal — is the
@@ -4305,7 +4305,7 @@ paths:
 
         **Authenticated with the agent's own bearer token**, which resolves
         through the agent table and not the account api-keys table even though
-        both begin `cafaye_`: an agent may refresh its own link precisely because
+        both begin `anywaye_`: an agent may refresh its own link precisely because
         the credential it presents names a principal, and a principal that has
         lost its link is the one thing this route exists to save. A token that
         does not resolve — wrong, revoked, expired, or belonging to a disabled
@@ -4344,7 +4344,7 @@ paths:
                   username: noel-7k3m2q
                   status: unclaimed
                 claim:
-                  url: https://cafaye.com/agents/claim/cafaye_3hRk9wTq2pLm6xVy4nBj7
+                  url: https://anywaye.com/agents/claim/anywaye_3hRk9wTq2pLm6xVy4nBj7
                   expires_at: '2026-10-10T12:00:00Z'
         '401':
           $ref: '#/components/responses/Unauthenticated'
@@ -4379,7 +4379,7 @@ paths:
       description: |
         Mints a named bearer credential for the calling agent, in the same shape
         `POST /v1/accounts/{account_id}/api-keys` renders its mint: an opaque
-        `cafaye_` token, SHA-256 at rest, revocable and expiring, with `token`
+        `anywaye_` token, SHA-256 at rest, revocable and expiring, with `token`
         returned here and nowhere else.
 
         **Authenticated with the agent's own bearer token**, and the credential it
@@ -4444,7 +4444,7 @@ paths:
                 id: ab000000-0000-0000-0000-0000000000b2
                 name: deploy
                 expires_at: '2027-01-08T12:00:00Z'
-                token: cafaye_4pLm9wTq2hRk6xVy3nBj7dF0gH1jK5lM9oP3qS7uV2wX4yZ8aB
+                token: anywaye_4pLm9wTq2hRk6xVy3nBj7dF0gH1jK5lM9oP3qS7uV2wX4yZ8aB
         '401':
           $ref: '#/components/responses/Unauthenticated'
         '409':
@@ -4659,7 +4659,7 @@ paths:
                 id: ab000000-0000-0000-0000-0000000000b4
                 name: deploy
                 expires_at: '2027-01-08T12:00:00Z'
-                token: cafaye_8wXy2dF0gH1jK5lM9oP3qS7uV2wX4yZ8aBcDeFgHjKmNpQrStUv
+                token: anywaye_8wXy2dF0gH1jK5lM9oP3qS7uV2wX4yZ8aBcDeFgHjKmNpQrStUv
         '401':
           $ref: '#/components/responses/Unauthenticated'
         '404':
@@ -4984,7 +4984,7 @@ paths:
                 scopes: [accounts:read]
                 expires_at: '2026-12-29T12:00:00Z'
                 created_at: '2026-09-30T12:00:00Z'
-                token: cafaye_Zq3vK7mXpR2tY8wB4cN6dF0gH1jK5lM9oP3qS7uV2wX4yZ8
+                token: anywaye_Zq3vK7mXpR2tY8wB4cN6dF0gH1jK5lM9oP3qS7uV2wX4yZ8
         '401':
           $ref: '#/components/responses/Unauthenticated'
         '403':
@@ -5552,7 +5552,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/SessionLink'
               example:
-                token: cafaye_Zq3vK7mXpR2tY8wB4cN6dF0gH1jK5lM9oP3qS7uV2wX4yZ8
+                token: anywaye_Zq3vK7mXpR2tY8wB4cN6dF0gH1jK5lM9oP3qS7uV2wX4yZ8
                 expires_at: '2026-10-01T12:10:00Z'
         '401':
           $ref: '#/components/responses/Unauthenticated'
@@ -5578,7 +5578,7 @@ paths:
                 disabled:
                   summary: The subject has been turned off by a person
                   value:
-                    type: https://docs.cafaye.com/errors/forbidden
+                    type: https://docs.anywaye.com/errors/forbidden
                     title: Forbidden
                     status: 403
                     detail: that account is disabled and cannot be given a session
@@ -5768,7 +5768,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Problem'
               example:
-                type: https://docs.cafaye.com/errors/forbidden
+                type: https://docs.anywaye.com/errors/forbidden
                 title: Forbidden
                 status: 403
                 detail: a scoped api key may not exchange a delegated link for a browser session
@@ -5789,7 +5789,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Problem'
               example:
-                type: https://docs.cafaye.com/errors/not_found
+                type: https://docs.anywaye.com/errors/not_found
                 title: Not found
                 status: 404
                 detail: no such link, or it has already been used
@@ -5821,7 +5821,7 @@ paths:
       summary: Resolve a presented API token to its claims
       description: |
         Asks "what may this token do, and for which account". It exists because the
-        token is **opaque**: it is `cafaye_` plus 32 random bytes and the row holds
+        token is **opaque**: it is `anywaye_` plus 32 random bytes and the row holds
         a SHA-256 of it, so there is no claim document inside it and no published
         key set to verify it against. Asking identity is the only way a resource
         server can learn a scope. The response is RFC 7662's shape.
@@ -5856,7 +5856,7 @@ paths:
         This is a deliberate interim, not a contract. The fleet does not agree on the
         name: core's `docs/openapi-conventions.md` requires `scopes`, and gateway's
         `src/middleware/jwt.ts` reads `scope` and splits it on whitespace. The
-        question is open (MD7 in the manager's `cafaye/notes/decisions.md`) and answering it
+        question is open (MD7 in the manager's `anywaye/notes/decisions.md`) and answering it
         unilaterally would mean rotating every credential already in a customer's
         hand. Emitting both means whichever name wins, the other is a one-line
         removal and no credential has to be reissued. A space-separated **string**
@@ -5879,7 +5879,7 @@ paths:
             schema:
               $ref: '#/components/schemas/IntrospectRequest'
             example:
-              token: cafaye_Zq3vK7mXpR2tY8wB4cN6dF0gH1jK5lM9oP3qS7uV2wX4yZ8
+              token: anywaye_Zq3vK7mXpR2tY8wB4cN6dF0gH1jK5lM9oP3qS7uV2wX4yZ8
       responses:
         '200':
           description: |
@@ -5974,7 +5974,7 @@ paths:
               schema:
                 type: string
                 format: uri
-              example: 'https://accounts.google.com/o/oauth2/v2/auth?client_id=…&state=…&redirect_uri=https%3A%2F%2Fidentity.cafaye.com%2Fv1%2Fauth%2Foauth%2Fgoogle%2Fcallback'
+              example: 'https://accounts.google.com/o/oauth2/v2/auth?client_id=…&state=…&redirect_uri=https%3A%2F%2Fidentity.anywaye.com%2Fv1%2Fauth%2Foauth%2Fgoogle%2Fcallback'
             Set-Cookie:
               description: |
                 The `__Host-oauth-state` cookie, `HttpOnly` so no page on any origin
@@ -6145,7 +6145,7 @@ paths:
               examples:
                 refused:
                   value:
-                    type: https://docs.cafaye.com/errors/invalid_request
+                    type: https://docs.anywaye.com/errors/invalid_request
                     title: Invalid request
                     status: 400
                     code: invalid_request
@@ -6193,7 +6193,7 @@ paths:
               examples:
                 emailInUse:
                   value:
-                    type: https://docs.cafaye.com/errors/conflict
+                    type: https://docs.anywaye.com/errors/conflict
                     title: Conflict
                     status: 409
                     code: conflict
@@ -6317,10 +6317,10 @@ components:
         * a **session token** from `POST /v1/session` — a browser credential, with
           the full authority of its role.
         * a **scoped API token** from `POST /v1/accounts/{account_id}/api-keys` —
-          `cafaye_` followed by 43 base64url characters. Narrowed by a scope set,
+          `anywaye_` followed by 43 base64url characters. Narrowed by a scope set,
           bound to one account, revocable, expiring.
 
-        The `cafaye_` prefix is what tells them apart, before any query runs, so a
+        The `anywaye_` prefix is what tells them apart, before any query runs, so a
         value of one kind is never looked up in the other's table. A scoped token
         is accepted on the account-scoped routes only, and only where its scope
         allows; it is **refused with 403** on the session surface, the second
@@ -6761,7 +6761,7 @@ components:
             unrecognised token is the same `404` as an expired link and an
             already-claimed agent, so this is not a way to probe for which agents
             exist.
-          examples: [cafaye_9Xk2Qm7RfT4vB1nJ8pL5wY3hD6sZ0aC]
+          examples: [anywaye_9Xk2Qm7RfT4vB1nJ8pL5wY3hD6sZ0aC]
     ClaimedAgent:
       type: object
       description: |
@@ -6931,14 +6931,14 @@ components:
             token:
               type: string
               description: |
-                The credential: `cafaye_` plus 43 base64url characters. Shown once,
+                The credential: `anywaye_` plus 43 base64url characters. Shown once,
                 here, and unrecoverable afterwards — not because an endpoint is
                 missing but because the row holds a SHA-256 of a 256-bit value.
                 A caller that loses it mints another.
 
                 The prefix is a feature and the feature is recognition: a secret
                 that leaks into a CI log, a shell history or a support ticket is
-                recognised as a cafaye credential by its first seven characters,
+                recognised as a anywaye credential by its first seven characters,
                 which turns "somebody has to work out which of these strings is
                 working" into a grep.
 
@@ -7350,7 +7350,7 @@ components:
       type: object
       description: |
         The claim link, rendered once. `url` is the absolute address a human opens;
-        the link is 256 bits of `cafaye_`-prefixed entropy whose SHA-256 is the
+        the link is 256 bits of `anywaye_`-prefixed entropy whose SHA-256 is the
         only part stored.
       required: [url, expires_at]
       properties:
@@ -7408,7 +7408,7 @@ components:
         token:
           type: string
           description: |
-            The credential: `cafaye_` followed by base64url random bytes. Shown
+            The credential: `anywaye_` followed by base64url random bytes. Shown
             exactly once, here. Never in a cookie — a credential in a cookie is
             one a browser silently attaches to a request its holder did not intend.
 
@@ -8659,7 +8659,7 @@ components:
     Problem:
       type: object
       description: |
-        The cafaye error envelope: RFC 9457 plus core's `code` and `trace_id`.
+        The anywaye error envelope: RFC 9457 plus core's `code` and `trace_id`.
         Every non-2xx response from this service is this shape. No service invents
         its own error body.
       required: [type, title, status, detail, instance, code, trace_id]
@@ -8667,8 +8667,8 @@ components:
         type:
           type: string
           format: uri
-          description: 'A stable `https://docs.cafaye.com/errors/<code>` URI — the machine-readable contract.'
-          example: https://docs.cafaye.com/errors/validation_failed
+          description: 'A stable `https://docs.anywaye.com/errors/<code>` URI — the machine-readable contract.'
+          example: https://docs.anywaye.com/errors/validation_failed
         title:
           type: string
           description: A fixed human-readable summary for the code. May be reworded without a version bump.
@@ -8807,7 +8807,7 @@ components:
           schema:
             $ref: '#/components/schemas/Problem'
           example:
-            type: https://docs.cafaye.com/errors/rate_limited
+            type: https://docs.anywaye.com/errors/rate_limited
             title: Too many requests
             status: 429
             detail: too many requests; slow down and try again later
@@ -8838,7 +8838,7 @@ components:
           schema:
             $ref: '#/components/schemas/Problem'
           example:
-            type: https://docs.cafaye.com/errors/service_unavailable
+            type: https://docs.anywaye.com/errors/service_unavailable
             title: Service unavailable
             status: 503
             detail: this deployment cannot send email, so it cannot send that link
@@ -8857,7 +8857,7 @@ components:
           schema:
             $ref: '#/components/schemas/Problem'
           example:
-            type: https://docs.cafaye.com/errors/unauthorized
+            type: https://docs.anywaye.com/errors/unauthorized
             title: Unauthorized
             status: 401
             detail: authentication is required to access this resource
@@ -8880,7 +8880,7 @@ components:
           schema:
             $ref: '#/components/schemas/Problem'
           example:
-            type: https://docs.cafaye.com/errors/forbidden
+            type: https://docs.anywaye.com/errors/forbidden
             title: Forbidden
             status: 403
             detail: your role in this account does not permit this action
@@ -8901,7 +8901,7 @@ components:
           schema:
             $ref: '#/components/schemas/Problem'
           example:
-            type: https://docs.cafaye.com/errors/not_found
+            type: https://docs.anywaye.com/errors/not_found
             title: Not found
             status: 404
             detail: no such OIDC client is visible to you
@@ -8922,7 +8922,7 @@ components:
             passwordTooShort:
               summary: the password is under the minimum
               value:
-                type: https://docs.cafaye.com/errors/validation_failed
+                type: https://docs.anywaye.com/errors/validation_failed
                 title: Validation failed
                 status: 422
                 detail: the request has an invalid field
@@ -8935,7 +8935,7 @@ components:
             unknownField:
               summary: the body has a field the endpoint does not accept
               value:
-                type: https://docs.cafaye.com/errors/validation_failed
+                type: https://docs.anywaye.com/errors/validation_failed
                 title: Validation failed
                 status: 422
                 detail: the request body has a field this endpoint does not accept
@@ -8953,7 +8953,7 @@ components:
           schema:
             $ref: '#/components/schemas/Problem'
           example:
-            type: https://docs.cafaye.com/errors/invalid_json
+            type: https://docs.anywaye.com/errors/invalid_json
             title: Malformed request body
             status: 400
             detail: the request body is not a JSON object this endpoint accepts
@@ -8971,7 +8971,7 @@ components:
           schema:
             $ref: '#/components/schemas/Problem'
           example:
-            type: https://docs.cafaye.com/errors/payload_too_large
+            type: https://docs.anywaye.com/errors/payload_too_large
             title: Request body too large
             status: 413
             detail: the request body is larger than the 4096 bytes this endpoint accepts
@@ -8991,7 +8991,7 @@ components:
           schema:
             $ref: '#/components/schemas/Problem'
           example:
-            type: https://docs.cafaye.com/errors/internal
+            type: https://docs.anywaye.com/errors/internal
             title: Internal server error
             status: 500
             detail: the request could not be completed. Quote the trace id when reporting this.
@@ -9000,7 +9000,7 @@ components:
             trace_id: 0af7651916cd43dd8448eb211c80319c
 
 # ---------------------------------------------------------------------------
-# Known gaps — departures from cafaye/core docs/openapi-conventions.md
+# Known gaps — departures from anywaye/core docs/openapi-conventions.md
 #
 # Each is a manager decision, not a local choice, and each is recorded here so it
 # cannot be discovered by a consumer instead of by a reviewer.

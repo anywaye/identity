@@ -9,9 +9,9 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/cafaye/identity/internal/platform/dbtest"
-	"github.com/cafaye/identity/internal/platform/id"
-	"github.com/cafaye/identity/internal/users"
+	"github.com/anywaye/identity/internal/platform/dbtest"
+	"github.com/anywaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/users"
 )
 
 var issuedAt = time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)

@@ -10,8 +10,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/cafaye/identity/internal/agents"
-	"github.com/cafaye/identity/internal/platform/dbtest"
+	"github.com/anywaye/identity/internal/agents"
+	"github.com/anywaye/identity/internal/platform/dbtest"
 )
 
 // THE CLAIM OVER THE REAL ROUTER AND THE REAL SQL, WHICH IS THE ONLY PLACE THE

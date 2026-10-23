@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cafaye/identity/internal/accounts"
-	"github.com/cafaye/identity/internal/apikeys"
-	"github.com/cafaye/identity/internal/platform/id"
-	"github.com/cafaye/identity/internal/users"
+	"github.com/anywaye/identity/internal/accounts"
+	"github.com/anywaye/identity/internal/apikeys"
+	"github.com/anywaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/users"
 )
 
 // The scoped api key surface, against a programmable double.

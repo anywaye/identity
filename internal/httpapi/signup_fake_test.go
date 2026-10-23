@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cafaye/identity/internal/signup"
+	"github.com/anywaye/identity/internal/signup"
 )
 
 // fakeSignup is the Signup double. It wraps a REAL signup.Service under a test

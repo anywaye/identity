@@ -10,9 +10,9 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/cafaye/identity/internal/platform/clock"
-	"github.com/cafaye/identity/internal/platform/dbtest"
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/platform/clock"
+	"github.com/anywaye/identity/internal/platform/dbtest"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // The store, over a real Postgres in a private schema.
@@ -35,11 +35,11 @@ type fixture struct {
 // theClaimDigest is a syntactically valid 64-hex digest, so a probe of the shape
 // a caller could send is the same shape a real one is.
 func theClaimDigest(tag string) string {
-	return Digest("cafaye_" + strings.Repeat("c", 43) + tag)
+	return Digest("anywaye_" + strings.Repeat("c", 43) + tag)
 }
 
 func theTokenDigest(tag string) string {
-	return Digest("cafaye_" + strings.Repeat("t", 43) + tag)
+	return Digest("anywaye_" + strings.Repeat("t", 43) + tag)
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -116,7 +116,7 @@ func TestARegisteredAgentIsUnclaimedAndCarriesNoAuthority(t *testing.T) {
 
 	// The plaintext claim link is nowhere: the struct has no field for it, and
 	// the row holds only the digest.
-	if agent.ClaimTokenDigest != nil && strings.Contains(*agent.ClaimTokenDigest, "cafaye_") {
+	if agent.ClaimTokenDigest != nil && strings.Contains(*agent.ClaimTokenDigest, "anywaye_") {
 		t.Error("the row holds the claim link itself rather than its digest")
 	}
 

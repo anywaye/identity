@@ -10,10 +10,10 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
-	"github.com/cafaye/identity/internal/accounts"
-	"github.com/cafaye/identity/internal/outbox"
-	"github.com/cafaye/identity/internal/platform/db"
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/accounts"
+	"github.com/anywaye/identity/internal/outbox"
+	"github.com/anywaye/identity/internal/platform/db"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // THE LOGIC OF ONE DELETION, WITH NO POSTGRES AND NO POLICIES.
@@ -139,7 +139,7 @@ func newHarness(t *testing.T) *harness {
 // IT EXISTS BECAUSE `tenancy.BeginUser` EXECUTES, so a harness that passed a nil
 // Querier panicked on the first statement rather than failing a test. That panic
 // was a useful accident: it says the service really does open the transaction
-// with `cafaye.begin_user`, which is the premise `deletion_rls_test.go` checks
+// with `anywaye.begin_user`, which is the premise `deletion_rls_test.go` checks
 // against the real policies — and a harness that answered `begin_user` with an
 // error instead would have passed that same test for the wrong reason.
 //

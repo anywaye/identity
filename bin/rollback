@@ -27,7 +27,7 @@
 # forgets an object shows up as C_N containing something A_{N-1} does not, and
 # the migration is NAMED. A Down that errors stops the run loudly. And a Down
 # that reaches BEYOND its own migration — identity has one: 00016's Down ends in
-# `drop schema if exists cafaye cascade`, which would take the tables of
+# `drop schema if exists anywaye cascade`, which would take the tables of
 # 00002..00015 with it in the middle of a `goose down` — is caught by the same
 # comparison, because C_16 would be MISSING A_15's objects. The cascade is not a
 # stylistic quibble: goose rolls back exactly one migration, and a Down that
@@ -81,7 +81,7 @@ COUNT="${#MIGRATIONS[@]}"
 DB="identity_rollback_check"
 
 # THE CALLER'S OWN NAME, read out of the URL. This is load-bearing rather than
-# bookkeeping: 00016's Up calls `cafaye.protect_table('account_users')` with no
+# bookkeeping: 00016's Up calls `anywaye.protect_table('account_users')` with no
 # second argument, and `protect_table`'s default is `current_user || '_app'` —
 # so the role the migration needs is named after WHOEVER IS CONNECTED.
 #
@@ -109,7 +109,7 @@ DB_URL="$SCRATCH"
 # Without this, the first draft ran against a scratch cluster as `postgres` and
 # 00016 failed at `protect_table` with
 #
-#     ERROR: cafaye.protect_table(account_users, postgres_app):
+#     ERROR: anywaye.protect_table(account_users, postgres_app):
 #            postgres_app is not a LOGIN role on this cluster.
 #
 # That is not a rollback finding. It is the harness wearing a cluster's clothes:
@@ -218,7 +218,7 @@ trap cleanup EXIT
 # identically every time, diffable line by line.
 #
 # EVERY SCHEMA BUT THE SYSTEM'S, and this is the second time this file was wrong
-# in the same place. The first draft filtered on `nspname = 'cafaye'`, because
+# in the same place. The first draft filtered on `nspname = 'anywaye'`, because
 # that is the schema this repository's substrate lives in and it read like the
 # answer. It is not: `migrations/00016_account_isolation.sql` is the ONLY file
 # that says `create schema`, and it does so for its seven functions — the
@@ -234,7 +234,7 @@ trap cleanup EXIT
 # pantry packet was written to catch — left the harness green.
 #
 # So: everything except `pg_catalog`, `information_schema`, `pg_toast` and the
-# per-session `pg_temp_*`. Not `public and cafaye` either, because the next
+# per-session `pg_temp_*`. Not `public and anywaye` either, because the next
 # migration to create a schema would then be invisible for the same reason.
 #
 # COLUMNS ARE IN THE UNION, and they are in it because a Down that drops a column

@@ -28,8 +28,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cafaye/identity/internal/accounts"
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/accounts"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // invitationFixture is one invitation waiting to be mailed.

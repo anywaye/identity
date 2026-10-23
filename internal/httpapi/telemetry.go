@@ -6,7 +6,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/cafaye/identity/internal/telemetry"
+	"github.com/anywaye/identity/internal/telemetry"
 )
 
 // requestSpanName is the name of the span every inbound request produces.

@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cafaye/identity/internal/accounts"
-	"github.com/cafaye/identity/internal/platform/clock"
-	"github.com/cafaye/identity/internal/platform/dbtest"
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/accounts"
+	"github.com/anywaye/identity/internal/platform/clock"
+	"github.com/anywaye/identity/internal/platform/dbtest"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // The targeted tenancy cases, over HTTP, against the real service and a real

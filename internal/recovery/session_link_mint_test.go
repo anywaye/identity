@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cafaye/identity/internal/platform/id"
-	"github.com/cafaye/identity/internal/sessions"
-	"github.com/cafaye/identity/internal/users"
+	"github.com/anywaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/sessions"
+	"github.com/anywaye/identity/internal/users"
 )
 
 // THE MINT, AT THE USE CASE.

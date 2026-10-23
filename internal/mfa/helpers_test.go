@@ -3,7 +3,7 @@ package mfa
 import (
 	"testing"
 
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // mustUUID is a test-only parse that fails the test rather than returning a zero

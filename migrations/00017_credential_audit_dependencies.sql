@@ -14,24 +14,24 @@
 --   role      rows                     digest_column
 --   identity  OLD (in 00016)           api_keys/token_digest
 --   identity  NEW (here)               api_keys/token_digest
---   cafaye    OLD (in 00016)           (none)
---   cafaye    NEW (here)               api_keys/token_digest
+--   anywaye    OLD (in 00016)           (none)
+--   anywaye    NEW (here)               api_keys/token_digest
 --
 -- THE MECHANISM, because "the regexp was too strict" is the wrong diagnosis and
 -- would be fixed by loosening it. The old query recovered the column name by
 -- pattern-matching the text `pg_get_expr(polqual, polrelid)` prints, and
 -- `pg_get_expr` omits the schema of any name the READER could resolve — where the
 -- reader is the session, `"$user"` is a `search_path` entry, and kit's cluster
--- admin role is `cafaye` (`KIT_POSTGRES_USER: ${KIT_POSTGRES_USER:-cafaye}` in
+-- admin role is `anywaye` (`KIT_POSTGRES_USER: ${KIT_POSTGRES_USER:-anywaye}` in
 -- kit's `templates/compose/docker-compose.yml`). So ONE policy deparses two ways:
 --
---   as identity  (token_digest = ( SELECT cafaye.current_credential_digest() AS ...))
---   as cafaye    (token_digest = ( SELECT current_credential_digest() AS ...))
+--   as identity  (token_digest = ( SELECT anywaye.current_credential_digest() AS ...))
+--   as anywaye    (token_digest = ( SELECT current_credential_digest() AS ...))
 --
--- and the old pattern requires the literal `cafaye.`, so it matches the first and
+-- and the old pattern requires the literal `anywaye.`, so it matches the first and
 -- not the second.
 --
--- WHY THAT IS WORTH A PACKET. As `cafaye` the old query returns ZERO ROWS, and
+-- WHY THAT IS WORTH A PACKET. As `anywaye` the old query returns ZERO ROWS, and
 -- zero rows reads as "no table in this database can be resolved without an
 -- account" — the answer an operator is most likely to believe, and the one this
 -- query exists to make loud. The failure is also unfalsifiable from its own
@@ -69,7 +69,7 @@
 -- for it and is not duplicated here on purpose: one argument in one file is a fact,
 -- and a second copy of it in this repository is the thing this migration exists to
 -- stop.
-create or replace function cafaye.credential_tables()
+create or replace function anywaye.credential_tables()
 returns table (table_schema text, table_name text, digest_column text)
 language sql
 stable
@@ -80,7 +80,7 @@ as $caf$
     select fn.oid
       from pg_proc fn
       join pg_namespace fns on fns.oid = fn.pronamespace
-     where fns.nspname = 'cafaye'
+     where fns.nspname = 'anywaye'
        and fn.proname = 'current_credential_digest'
        and fn.pronargs = 0
   ),
@@ -110,7 +110,7 @@ as $caf$
         on att.attrelid = pol.polrelid
        and att.attnum = cd.refobjsubid
        and not att.attisdropped
-     where pol.polname like '%!_cafaye!_resolve' escape '!'
+     where pol.polname like '%!_anywaye!_resolve' escape '!'
        and pol.polcmd = 'r'
   )
 
@@ -139,7 +139,7 @@ $caf$;
 -- The definition 00016 installed, restored byte for byte.
 --
 -- THIS IS A ROLLBACK TO A GREEN BOOT, NOT A ROLLBACK TO SAFETY. The body below
--- is the one this migration exists to remove, and it is wrong for the `cafaye`
+-- is the one this migration exists to remove, and it is wrong for the `anywaye`
 -- role for the reason in this file's header. It is here because `goose down` has
 -- to return the tree to the state the previous migration left it in, and dropping
 -- the function instead would turn an audit that lies into one that errors at the
@@ -147,7 +147,7 @@ $caf$;
 -- contract is a reversal rather than an improvement.
 --
 -- If you are reaching for this to fix something, the fix is a forward migration.
-create or replace function cafaye.credential_tables()
+create or replace function anywaye.credential_tables()
 returns table (table_schema text, table_name text, digest_column text)
 language sql
 stable
@@ -156,15 +156,15 @@ as $caf$
          c.relname::text,
          (regexp_match(
             lower(coalesce(pg_get_expr(p.polqual, p.polrelid), '')),
-            '^ *\(?([a-z_][a-z0-9_$]*) = \( *select cafaye\.current_credential_digest\(\)'
+            '^ *\(?([a-z_][a-z0-9_$]*) = \( *select anywaye\.current_credential_digest\(\)'
           ))[1]::text
     from pg_policy p
     join pg_class c on c.oid = p.polrelid
     join pg_namespace n on n.oid = c.relnamespace
-   where p.polname like '%!_cafaye!_resolve' escape '!'
+   where p.polname like '%!_anywaye!_resolve' escape '!'
      and p.polcmd = 'r'
      and lower(coalesce(pg_get_expr(p.polqual, p.polrelid), ''))
-         like '%cafaye.current_credential_digest()%'
+         like '%anywaye.current_credential_digest()%'
    order by n.nspname, c.relname
 $caf$;
 -- +goose StatementEnd

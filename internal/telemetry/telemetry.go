@@ -28,7 +28,7 @@
 // asserted on directly in telemetry_test.go — including a test that no name in
 // it contains `prompt`, `content`, `message`, `body`, `header` or `query`.
 //
-// Everything here is a projection of cafaye/core's schemas, and the projection
+// Everything here is a projection of anywaye/core's schemas, and the projection
 // is checked rather than trusted:
 //
 //	schemas/telemetry/traces.schema.json     the attribute allowlist below
@@ -131,14 +131,14 @@ const TenantVariable = "IDENTITY_TENANT_ID"
 // "no traffic" when it really means "your filter ran first".
 const MaxRouteLength = 200
 
-// AllowedSpanAttributes is the complete set of attribute names a cafaye span may
+// AllowedSpanAttributes is the complete set of attribute names a anywaye span may
 // carry, projected from core's `traces.schema.json`.
 //
 // Read this list as the security control it is. Every name is a fact about HOW a
 // request was served — which method, which route template, which status, which
 // class of failure — and none of them is a fact about WHAT the caller said. The
 // names are the OpenTelemetry semantic conventions' own, dotted, so a span
-// exported to a backend nobody at cafaye has heard of is still readable.
+// exported to a backend nobody at anywaye has heard of is still readable.
 //
 // What is absent is the interesting part:
 //
@@ -234,7 +234,7 @@ var errorTypes = func() map[string]struct{} {
 // The property the grammar exists to guarantee is that no segment is longer than
 // fifteen characters, so no segment CAN hold an identifier, a trace id, a ULID, a
 // URL or a path. `identity.user.usr_01J9Z8QK5M4N7P2R3T6V8W9X0A` is not
-// rejected because this package knows about cafaye id formats; it is rejected
+// rejected because this package knows about anywaye id formats; it is rejected
 // because no legal segment is 26 characters long. That is why the route and the
 // identity are ATTRIBUTES and the name carries only the operation.
 //
@@ -553,7 +553,7 @@ func Resource(lookup func(string) string) *resource.Resource {
 //	unset                          -> the collector that ships with the stack.
 //
 // `OTEL_EXPORTER_OTLP_ENDPOINT` is honored as a fallback so identity also works
-// with generic OTel tooling, and the cafaye name wins when both are set. That
+// with generic OTel tooling, and the anywaye name wins when both are set. That
 // precedence is written down here rather than discovered later: a contract with
 // an undocumented precedence order is a bug report.
 func Endpoint(lookup func(string) string) string {

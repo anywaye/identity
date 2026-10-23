@@ -61,9 +61,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/cafaye/identity/internal/accounts"
-	"github.com/cafaye/identity/internal/agents"
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/accounts"
+	"github.com/anywaye/identity/internal/agents"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // Agents is the claim use case, and the reason this route needs nothing else.
@@ -536,7 +536,7 @@ func agentFrom(ctx context.Context) (agents.Owner, bool) {
 // presentedAgentToken returns the bearer credential a request carries, or "".
 //
 // IT DOES NOT CHECK THE PREFIX, and that is the point. An agent token and a user
-// api key share the one `cafaye_` prefix on purpose (see the agents package
+// api key share the one `anywaye_` prefix on purpose (see the agents package
 // header), so a shape test could not tell them apart and a magic second prefix
 // would be a fact this platform refuses to publish. What tells them apart is
 // WHICH TABLE resolves the value: this route resolves it against agent_tokens, and
@@ -741,7 +741,7 @@ func (o options) handleRegisterAgent(w http.ResponseWriter, r *http.Request) {
 }
 
 // registerAgentResponse is the 201 from POST /v1/agents, in the shape the CLI's
-// register command consumes (`cafaye agents register`):
+// register command consumes (`anywaye agents register`):
 //
 //	{agent:{status:"unclaimed", …}, api_key:{token}, claim:{url}}
 //

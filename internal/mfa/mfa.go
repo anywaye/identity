@@ -48,7 +48,7 @@ import (
 	"net/netip"
 	"time"
 
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // The methods this service knows how to store. A method is a property of the
@@ -231,7 +231,7 @@ var (
 )
 
 // Field validation codes, which land verbatim in the `errors[]` array of the
-// cafaye error envelope (core: docs/openapi-conventions.md) and which clients may
+// anywaye error envelope (core: docs/openapi-conventions.md) and which clients may
 // switch on.
 const (
 	// CodeRequired is an absent value.

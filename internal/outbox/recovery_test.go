@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // The two recovery events, under the same envelope rules as the tenancy ones:

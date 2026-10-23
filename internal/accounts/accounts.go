@@ -14,7 +14,7 @@
 // replace AtLeast with a ReBAC check behind the same signature.
 //
 // Nothing here knows about HTTP. Handlers translate the errors below into the
-// cafaye error envelope; they do not define the rules.
+// anywaye error envelope; they do not define the rules.
 package accounts
 
 import (
@@ -24,7 +24,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // Errors the store, the service and the validators return. Callers match them
@@ -142,7 +142,7 @@ var (
 )
 
 // Field validation codes. These land verbatim in the `errors[]` array of the
-// cafaye error envelope, so they are part of the contract and clients may switch
+// anywaye error envelope, so they are part of the contract and clients may switch
 // on them.
 const (
 	CodeRequired      = "required"

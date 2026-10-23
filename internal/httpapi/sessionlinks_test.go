@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cafaye/identity/internal/apikeys"
-	"github.com/cafaye/identity/internal/platform/id"
-	"github.com/cafaye/identity/internal/recovery"
-	"github.com/cafaye/identity/internal/users"
+	"github.com/anywaye/identity/internal/apikeys"
+	"github.com/anywaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/recovery"
+	"github.com/anywaye/identity/internal/users"
 )
 
 // THE MINT, AT THE ROUTER.

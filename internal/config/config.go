@@ -15,9 +15,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cafaye/identity/internal/oauth"
-	"github.com/cafaye/identity/internal/oidc"
-	"github.com/cafaye/identity/internal/recovery"
+	"github.com/anywaye/identity/internal/oauth"
+	"github.com/anywaye/identity/internal/oidc"
+	"github.com/anywaye/identity/internal/recovery"
 )
 
 const (
@@ -132,12 +132,12 @@ var (
 // DefaultMFAIssuer is what an authenticator app displays next to the entry when
 // MFA_ISSUER is unset.
 //
-// "cafaye identity", with a space rather than a hyphen, because that is what a
+// "anywaye identity", with a space rather than a hyphen, because that is what a
 // person reads in a phone's authenticator next to the six digits and the clock.
 // It is also what the provisioning URI's issuer parameter carries, so changing it
 // changes what every future enrollment shows and nothing about the credentials
 // already confirmed.
-const DefaultMFAIssuer = "cafaye identity"
+const DefaultMFAIssuer = "anywaye identity"
 
 // Config is the fully validated service configuration.
 type Config struct {
@@ -225,7 +225,7 @@ type Config struct {
 	// THE KEY IS `recovery.Purpose` AND NOT A STRING, so that a purpose cannot be
 	// misspelled into a template nothing reads. It is the one place this package
 	// names a recovery concept, and the dependency runs the right way: `recovery` is
-	// a cafaye concept, `internal/courier` is the platform adapter that implements
+	// a anywaye concept, `internal/courier` is the platform adapter that implements
 	// its seam, and neither of them imports this package.
 	LinkTemplates map[recovery.Purpose]string
 

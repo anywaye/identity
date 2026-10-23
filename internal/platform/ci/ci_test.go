@@ -55,7 +55,7 @@ import (
 // reader can check it against kit's tree with one `ls`.
 //
 // Verified present at that path in ../kit at commit 13228ed.
-const kitWorkflow = "cafaye/kit/ci/ci.reusable.yml@master"
+const kitWorkflow = "anywaye/kit/ci/ci.reusable.yml@master"
 
 // kitInputs are kit's `on.workflow_call` inputs, read from the reusable workflow
 // itself and from kit/README.md's "How a service repo adopts kit". A caller that
@@ -94,7 +94,7 @@ var (
 func TestTheSharedJobCallsKitAtAPathThatResolves(t *testing.T) {
 	var calls []string
 	for _, line := range workflowLines(t) {
-		if m := usesLine.FindStringSubmatch(line); m != nil && strings.HasPrefix(m[1], "cafaye/kit/") {
+		if m := usesLine.FindStringSubmatch(line); m != nil && strings.HasPrefix(m[1], "anywaye/kit/") {
 			calls = append(calls, m[1])
 		}
 	}
@@ -380,7 +380,7 @@ func TestTheGateChecksOutCourierBesideTheTree(t *testing.T) {
 
 	repository, pinned := false, false
 	for _, script := range stepScripts(t, "gate") {
-		if strings.Contains(script, "git clone") && strings.Contains(script, "cafaye/courier") {
+		if strings.Contains(script, "git clone") && strings.Contains(script, "anywaye/courier") {
 			repository = true
 			// The clone must land on the commit the pin names, not on
 			// whatever branch the clone happened to leave checked out.
@@ -390,7 +390,7 @@ func TestTheGateChecksOutCourierBesideTheTree(t *testing.T) {
 		}
 	}
 	if !repository {
-		t.Error("no gate step clones cafaye/courier, so " +
+		t.Error("no gate step clones anywaye/courier, so " +
 			"TestCouriersTypesAgreeWithCouriersDocument reports instead of checking")
 	}
 	if !pinned {
@@ -437,7 +437,7 @@ func TestTheGateChecksOutKitBesideTheTree(t *testing.T) {
 
 	repository, pinned := false, false
 	for _, script := range stepScripts(t, "gate") {
-		if strings.Contains(script, "git clone") && strings.Contains(script, "cafaye/kit") {
+		if strings.Contains(script, "git clone") && strings.Contains(script, "anywaye/kit") {
 			repository = true
 			// The clone must land on the commit the pin names, not on
 			// whatever branch the clone happened to leave checked out.
@@ -447,7 +447,7 @@ func TestTheGateChecksOutKitBesideTheTree(t *testing.T) {
 		}
 	}
 	if !repository {
-		t.Error("no gate step clones cafaye/kit, so " +
+		t.Error("no gate step clones anywaye/kit, so " +
 			"TestEverySubstrateFunctionThisRepositoryInstallsIsKitsBytes skips and the suite floor goes red on a green tree")
 	}
 	if !pinned {

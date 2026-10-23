@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // The recovery events: an address was proved, and a set of credentials was ended.

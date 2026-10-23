@@ -20,7 +20,7 @@ import (
 func newTestProvider(t *testing.T) *Provider {
 	t.Helper()
 
-	key, err := LoadSigningKey(pemFor(t, 2048, pkcs8), "cafaye-test-key")
+	key, err := LoadSigningKey(pemFor(t, 2048, pkcs8), "anywaye-test-key")
 	if err != nil {
 		t.Fatalf("LoadSigningKey: %v", err)
 	}
@@ -233,7 +233,7 @@ func TestDiscoveryClaimsAreClaimsThisServiceAsserts(t *testing.T) {
 func TestNewProviderRefusesAnIssuerItCannotBeVerifiedAgainst(t *testing.T) {
 	t.Parallel()
 
-	key, err := LoadSigningKey(pemFor(t, 2048, pkcs8), "cafaye-test-key")
+	key, err := LoadSigningKey(pemFor(t, 2048, pkcs8), "anywaye-test-key")
 	if err != nil {
 		t.Fatalf("LoadSigningKey: %v", err)
 	}
@@ -269,7 +269,7 @@ func TestNewProviderRefusesAnIssuerItCannotBeVerifiedAgainst(t *testing.T) {
 func TestNewProviderAcceptsATrailingSlash(t *testing.T) {
 	t.Parallel()
 
-	key, err := LoadSigningKey(pemFor(t, 2048, pkcs8), "cafaye-test-key")
+	key, err := LoadSigningKey(pemFor(t, 2048, pkcs8), "anywaye-test-key")
 	if err != nil {
 		t.Fatalf("LoadSigningKey: %v", err)
 	}
@@ -300,7 +300,7 @@ func TestNewProviderRefusesToBuildWithoutASigningKey(t *testing.T) {
 func TestDerivedEncryptionKeyIsNotTheSigningKey(t *testing.T) {
 	t.Parallel()
 
-	key, err := LoadSigningKey(pemFor(t, 2048, pkcs8), "cafaye-test-key")
+	key, err := LoadSigningKey(pemFor(t, 2048, pkcs8), "anywaye-test-key")
 	if err != nil {
 		t.Fatalf("LoadSigningKey: %v", err)
 	}
@@ -322,7 +322,7 @@ func TestDerivedEncryptionKeyIsNotTheSigningKey(t *testing.T) {
 		t.Error("the encryption key id equals the signing kid, so a rotation could not tell them apart in a log")
 	}
 
-	other, err := LoadSigningKey(pemFor(t, 2048, pkcs8), "cafaye-test-key")
+	other, err := LoadSigningKey(pemFor(t, 2048, pkcs8), "anywaye-test-key")
 	if err != nil {
 		t.Fatalf("LoadSigningKey: %v", err)
 	}

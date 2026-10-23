@@ -301,7 +301,7 @@ func TestTheBackupConfigNamesThisService(t *testing.T) {
 	backup := readBackupConfig(t)
 	if want := "identity"; backup.app != want {
 		t.Errorf("config/kamal-backup.yml says `app: %s`, want `app: %s`.\n"+
-			"cafaye.yml's `name:` is %s and config/deploy.yml renders `service:` from the same KIT_SERVICE this file's app: is a copy of. A mismatch orphans every existing snapshot, because restic tracks by path.",
+			"anywaye.yml's `name:` is %s and config/deploy.yml renders `service:` from the same KIT_SERVICE this file's app: is a copy of. A mismatch orphans every existing snapshot, because restic tracks by path.",
 			backup.app, want, want)
 	}
 }

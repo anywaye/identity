@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cafaye/identity/internal/platform/dbtest"
+	"github.com/anywaye/identity/internal/platform/dbtest"
 )
 
 // THE VERIFICATION FLOW.

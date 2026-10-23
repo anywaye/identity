@@ -1,4 +1,4 @@
-module github.com/cafaye/identity
+module github.com/anywaye/identity
 
 go 1.26.1
 

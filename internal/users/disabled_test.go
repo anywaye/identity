@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cafaye/identity/internal/platform/dbtest"
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/platform/dbtest"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // MIGRATION 00021's TEST, and it runs first because the file it needs does not

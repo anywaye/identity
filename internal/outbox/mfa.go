@@ -3,7 +3,7 @@ package outbox
 import (
 	"time"
 
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // The MFA events: a second factor went on, and a second factor went off.

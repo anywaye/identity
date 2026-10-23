@@ -2,8 +2,8 @@
 -- answering with an empty list.
 --
 -- WHAT THIS MIGRATION IS. `migrations/00016_account_isolation.sql` protects
--- `account_users` with `cafaye.protect_table`, whose predicate is
--- `account_id = (select cafaye.current_account_id())`. That predicate answers
+-- `account_users` with `anywaye.protect_table`, whose predicate is
+-- `account_id = (select anywaye.current_account_id())`. That predicate answers
 -- "which membership rows belong to the account I am standing in", and the query
 -- `GET /v1/accounts` issues is "which accounts is THIS PERSON in" — a question
 -- asked before any account is being stood in, because being a caller rather than
@@ -11,7 +11,7 @@
 --
 -- MEASURED, against this database, as the owner, with the membership row present:
 --
---   cafaye.begin_account(…)    rows in account_users visible
+--   anywaye.begin_account(…)    rows in account_users visible
 --   (not called)               0
 --   called with the caller's   1
 --   own account
@@ -75,7 +75,7 @@
 
 -- +goose Up
 -- +goose StatementBegin
-create or replace function cafaye.current_user_id()
+create or replace function anywaye.current_user_id()
 returns uuid
 language plpgsql
 stable
@@ -86,16 +86,16 @@ begin
   -- `missing_ok = true` and the empty check are the two cases `begin_account`'s
   -- reader handles, copied rather than re-derived: an unset dotted GUC reads as
   -- set-to-empty, and a caller with no identity is a legitimate state.
-  raw := current_setting('cafaye.user_id', true);
+  raw := current_setting('anywaye.user_id', true);
   if raw is null or raw = '' then
     return null;
   end if;
   return raw::uuid;
 exception
   when invalid_text_representation then
-    raise exception 'cafaye.user_id is set to % which is not a uuid', raw
+    raise exception 'anywaye.user_id is set to % which is not a uuid', raw
       using errcode = '22023',
-            hint = 'cafaye.begin_user/1 takes a uuid. A request that reaches the '
+            hint = 'anywaye.begin_user/1 takes a uuid. A request that reaches the '
                    'database with a malformed user has a bug in whatever '
                    'authenticated it, and this is the cheapest place to find it.';
 end
@@ -103,22 +103,22 @@ $caf$;
 -- +goose StatementEnd
 
 -- +goose StatementBegin
-create or replace function cafaye.begin_user(p_user uuid)
+create or replace function anywaye.begin_user(p_user uuid)
 returns void
 language plpgsql
 as $caf$
 begin
   if p_user is null then
-    perform set_config('cafaye.user_id', '', true);
+    perform set_config('anywaye.user_id', '', true);
     return;
   end if;
-  perform set_config('cafaye.user_id', p_user::text, true);
+  perform set_config('anywaye.user_id', p_user::text, true);
 end
 $caf$;
 -- +goose StatementEnd
 
 -- +goose StatementBegin
-create or replace function cafaye.protect_membership_table(
+create or replace function anywaye.protect_membership_table(
   p_table regclass,
   p_user_column text,
   p_login_role text default null
@@ -137,7 +137,7 @@ begin
   --    nothing instead of a migration that stops.
   if p_user_column is null
      or p_user_column !~ '^[A-Za-z_][A-Za-z0-9_$]*$' then
-    raise exception 'cafaye.protect_membership_table(%, %): the user column must be one bare column name, and % is not one.', p_table, coalesce(p_user_column, '<null>'), coalesce(p_user_column, 'null')
+    raise exception 'anywaye.protect_membership_table(%, %): the user column must be one bare column name, and % is not one.', p_table, coalesce(p_user_column, '<null>'), coalesce(p_user_column, 'null')
       using errcode = 'undefined_column',
             hint = 'The second argument is the column on this table holding the member''s `users.id` — `user_id` in every service kit has shipped. It is a column of this table and nothing else.';
   end if;
@@ -154,7 +154,7 @@ begin
     select 1 from pg_attribute
     where attrelid = p_table and attname = p_user_column and not attisdropped
   ) then
-    raise exception 'cafaye.protect_membership_table(%, %): the table has no % column.', p_table, p_user_column, p_user_column
+    raise exception 'anywaye.protect_membership_table(%, %): the table has no % column.', p_table, p_user_column, p_user_column
       using errcode = 'undefined_column',
             hint = 'A membership table is read by the column that names the member. Name the one this table has; if it has none, this table is not a membership table and does not want this mechanism.';
   end if;
@@ -164,7 +164,7 @@ begin
   --    also raises if the table has no `account_id`, which a membership table
   --    must have: it is the edge of the account graph, not a user-scoped
   --    resource that happens to mention accounts.
-  perform cafaye.protect_table(p_table, p_login_role);
+  perform anywaye.protect_table(p_table, p_login_role);
 
   base := (select c.relname from pg_class c where c.oid = p_table::regclass::oid);
 
@@ -174,31 +174,31 @@ begin
   --    caller's memberships. Without the index that scan is sequential however
   --    few rows it returns.
   execute format('create index if not exists %I on %s (%I)',
-                 base || '_cafaye_' || p_user_column || '_idx', p_table, p_user_column);
+                 base || '_anywaye_' || p_user_column || '_idx', p_table, p_user_column);
 
   -- 4. ONE POLICY, FOR ONE COMMAND, FOR THE TWO NAMED ROLES, PREDICATED ON THE
   --    CALLER rather than on an account.
-  qual := format('%I = (select cafaye.current_user_id())', p_user_column);
+  qual := format('%I = (select anywaye.current_user_id())', p_user_column);
 
   --    DROP before CREATE, so a re-run converges and a corrected qualifier cannot
   --    survive one.
-  execute format('drop policy if exists %I on %s', base || '_cafaye_members', p_table);
+  execute format('drop policy if exists %I on %s', base || '_anywaye_members', p_table);
   execute format('create policy %I on %s for select to %I, %I using (%s)',
-                 base || '_cafaye_members', p_table, current_user, login_role, qual);
+                 base || '_anywaye_members', p_table, current_user, login_role, qual);
 
-  -- 5. USAGE on `cafaye`, for the reason the other two functions grant it:
-  --    without it the login role cannot call `cafaye.begin_user/1` and every
-  --    membership read fails with `permission denied for schema cafaye` — which
+  -- 5. USAGE on `anywaye`, for the reason the other two functions grant it:
+  --    without it the login role cannot call `anywaye.begin_user/1` and every
+  --    membership read fails with `permission denied for schema anywaye` — which
   --    reads as a permissions bug rather than as the missing GRANT that it is.
-  if to_regnamespace('cafaye') is not null then
-    execute format('grant usage on schema cafaye to %I', login_role);
+  if to_regnamespace('anywaye') is not null then
+    execute format('grant usage on schema anywaye to %I', login_role);
   end if;
 end
 $caf$;
 -- +goose StatementEnd
 
 -- +goose StatementBegin
-create or replace function cafaye.membership_tables()
+create or replace function anywaye.membership_tables()
 returns table (table_schema text, table_name text, user_column text)
 language sql
 stable
@@ -208,7 +208,7 @@ as $caf$
     select fn.oid
       from pg_proc fn
       join pg_namespace fns on fns.oid = fn.pronamespace
-     where fns.nspname = 'cafaye'
+     where fns.nspname = 'anywaye'
        and fn.proname = 'current_user_id'
        and fn.pronargs = 0
   ),
@@ -237,7 +237,7 @@ as $caf$
         on att.attrelid = pol.polrelid
        and att.attnum = ud.refobjsubid
        and not att.attisdropped
-     where pol.polname like '%!_cafaye!_members' escape '!'
+     where pol.polname like '%!_anywaye!_members' escape '!'
        and pol.polcmd = 'r'
   )
 
@@ -269,7 +269,7 @@ $caf$;
 -- 00016 issued them. The only difference is the fifth policy, whose USING clause
 -- is the caller rather than an account:
 --
---   using (user_id = (select cafaye.current_user_id()))
+--   using (user_id = (select anywaye.current_user_id()))
 --
 -- `for select` and nothing else, so a caller who can see where it belongs cannot
 -- add itself anywhere: an insert still meets the ordinary `with check`, which
@@ -280,7 +280,7 @@ $caf$;
 -- `user_id` is the column 00006 built and every account_users query already keys
 -- by. Named here rather than derived, because a substrate that guessed which
 -- column holds the member would be guessing at the adopter's vocabulary.
-select cafaye.protect_membership_table('account_users', 'user_id');
+select anywaye.protect_membership_table('account_users', 'user_id');
 -- +goose StatementEnd
 
 -- +goose Down
@@ -292,29 +292,29 @@ select cafaye.protect_membership_table('account_users', 'user_id');
 -- that revoked them would be undoing 00016 rather than this migration.
 --
 -- THE DISCOVER POLICY IS NAMED, NOT `cascade`d, for the reason 00016's Down gives
--- and which got worse with this migration: `cafaye.membership_tables()` READS THE
+-- and which got worse with this migration: `anywaye.membership_tables()` READS THE
 -- POLICIES, so a policy that outlived the capability it describes would keep
 -- answering "this table can be read with no account because of who is asking" on a
 -- database where it no longer can. An audit that has gone stale is worse than no
 -- audit.
 -- +goose StatementBegin
-drop policy if exists account_users_cafaye_members on account_users;
+drop policy if exists account_users_anywaye_members on account_users;
 -- +goose StatementEnd
 
 -- +goose StatementBegin
-drop index if exists account_users_cafaye_user_id_idx;
+drop index if exists account_users_anywaye_user_id_idx;
 -- +goose StatementEnd
 
 -- THE FOUR FUNCTIONS, NAMED, AND IN THE ORDER THAT LETS THEM GO. `protect_membership_table`
 -- calls `protect_table`, and the policy dropped above depends on `current_user_id()`, so
 -- the only ordering constraint this list actually carries is: the audit first (it READS
 -- the policy), the policy before the function that could recreate it, and the rest in
--- the order they read. Nothing here drops the `cafaye` schema — 00016 created it and
+-- the order they read. Nothing here drops the `anywaye` schema — 00016 created it and
 -- 00016's Down removes it, and a migration that dropped it here would take
 -- `protect_table` with it and leave 00016's Down unable to finish.
 -- +goose StatementBegin
-drop function if exists cafaye.membership_tables();
-drop function if exists cafaye.protect_membership_table(regclass, text, text);
-drop function if exists cafaye.begin_user(uuid);
-drop function if exists cafaye.current_user_id();
+drop function if exists anywaye.membership_tables();
+drop function if exists anywaye.protect_membership_table(regclass, text, text);
+drop function if exists anywaye.begin_user(uuid);
+drop function if exists anywaye.current_user_id();
 -- +goose StatementEnd

@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // Two small things this package needs from a uuid, and neither of them is a
@@ -110,14 +110,14 @@ func isUUID(value string) bool {
 // idempotencyKeyDomain is the domain separator, and it is a constant rather than an
 // inline literal so a reader can see that it is a choice: the same token used for
 // something else in this codebase must not produce the same key.
-const idempotencyKeyDomain = "cafaye/identity/recovery/idempotency/v1"
+const idempotencyKeyDomain = "anywaye/identity/recovery/idempotency/v1"
 
 // invitationIdempotencyKeyDomain is the invitation send's separator, and it is a
 // SECOND constant rather than a parameter because the two domains must never
 // collapse into one: a recovery token and an invitation token are different
 // credentials, and a key that could be produced by both is a key whose uniqueness
 // cannot be reasoned about.
-const invitationIdempotencyKeyDomain = "cafaye/identity/invitation/idempotency/v1"
+const invitationIdempotencyKeyDomain = "anywaye/identity/invitation/idempotency/v1"
 
 // invitationIdempotencyKeyFor derives the Idempotency-Key for one invitation's
 // send, from the invitation and the token its link carries.

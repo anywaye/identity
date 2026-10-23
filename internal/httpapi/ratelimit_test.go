@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cafaye/identity/internal/platform/clock"
-	"github.com/cafaye/identity/internal/platform/dbtest"
-	"github.com/cafaye/identity/internal/ratelimit"
+	"github.com/anywaye/identity/internal/platform/clock"
+	"github.com/anywaye/identity/internal/platform/dbtest"
+	"github.com/anywaye/identity/internal/ratelimit"
 )
 
 // THE RATE LIMITER'S TWO PROOFS.

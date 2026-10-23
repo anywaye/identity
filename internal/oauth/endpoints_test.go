@@ -43,7 +43,7 @@ const (
 // where to send people.
 func configuredProviders() Settings {
 	return Settings{
-		RedirectBaseURL: "https://identity.cafaye.com",
+		RedirectBaseURL: "https://identity.anywaye.com",
 		EncryptionKey:   testKeyBase64(9),
 		Google:          ProviderSettings{ClientID: "google-id", ClientSecret: "google-secret"},
 		GitHub:          ProviderSettings{ClientID: "github-id", ClientSecret: "github-secret"},
@@ -117,7 +117,7 @@ func TestUnsetOverridesLeaveTheShippedEndpointsAndParameters(t *testing.T) {
 func TestGoogleKeepsAskingForOfflineAccessWithNoOverridesSet(t *testing.T) {
 	t.Parallel()
 
-	authorizeURL, err := url.Parse(configuredProviders().Providers()[0].AuthCodeURL("state-123", "https://identity.cafaye.com/v1/auth/oauth/google/callback"))
+	authorizeURL, err := url.Parse(configuredProviders().Providers()[0].AuthCodeURL("state-123", "https://identity.anywaye.com/v1/auth/oauth/google/callback"))
 	if err != nil {
 		t.Fatalf("parsing the authorize url: %v", err)
 	}
@@ -139,7 +139,7 @@ func TestAnAuthorizeOverrideReachesTheURLTheBrowserIsSentTo(t *testing.T) {
 	s.Google.Endpoints.AuthorizeURL = "https://idp.test/fake/google/authorize"
 	s.GitHub.Endpoints.AuthorizeURL = "https://idp.test/fake/github/authorize"
 
-	redirectURI := "https://identity.cafaye.com/v1/auth/oauth/google/callback"
+	redirectURI := "https://identity.anywaye.com/v1/auth/oauth/google/callback"
 	for _, p := range s.Providers() {
 		authorizeURL, err := url.Parse(p.AuthCodeURL("state-123", redirectURI))
 		if err != nil {
@@ -176,7 +176,7 @@ func TestTokenUserInfoAndEmailsOverridesReachTheCallsThisServiceMakes(t *testing
 		providers[p.Name] = p
 	}
 
-	client := NewClient(ClientOptions{RedirectBaseURL: "https://identity.cafaye.com"})
+	client := NewClient(ClientOptions{RedirectBaseURL: "https://identity.anywaye.com"})
 
 	tests := []struct {
 		name     string
@@ -244,7 +244,7 @@ func TestWithNoOverridesSetTheOnlyOutboundCallsAreTheShippedEndpoints(t *testing
 
 	recorder := &recordingTransport{}
 	client := NewClient(ClientOptions{
-		RedirectBaseURL: "https://identity.cafaye.com",
+		RedirectBaseURL: "https://identity.anywaye.com",
 		HTTPClient:      &http.Client{Transport: recorder},
 	})
 	ctx := context.Background()
@@ -369,7 +369,7 @@ func TestAnEndpointOverrideIsCheckedWithoutAnyCredentials(t *testing.T) {
 
 	var s Settings
 	s.Google.Endpoints.TokenURL = "not a url at all"
-	s.RedirectBaseURL = "https://identity.cafaye.com"
+	s.RedirectBaseURL = "https://identity.anywaye.com"
 	s.EncryptionKey = testKeyBase64(4)
 
 	if err := s.Validate(); !errors.Is(err, ErrInvalidEndpoint) {
@@ -524,7 +524,7 @@ func TestAnOverrideChangesNoOtherPartOfAProvider(t *testing.T) {
 
 	shipped := Google()
 	s := Settings{
-		RedirectBaseURL: "https://identity.cafaye.com",
+		RedirectBaseURL: "https://identity.anywaye.com",
 		EncryptionKey:   testKeyBase64(5),
 		Google: ProviderSettings{
 			ClientID:     "google-id",

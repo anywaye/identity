@@ -44,7 +44,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/cafaye/identity/internal/oauth"
+	"github.com/anywaye/identity/internal/oauth"
 )
 
 // walkOptions is the full set of conditional surfaces, in one place, so the tests
@@ -236,7 +236,7 @@ func TestServedRoutesAndTheClaimWalkAgree(t *testing.T) {
 // So the constant is checked against the function. It is a cheap test and it is the
 // difference between a tripwire and a coincidence.
 func TestTheSocialLoginPrefixIsTheOneTheProviderBuilds(t *testing.T) {
-	const base = "https://identity.cafaye.com"
+	const base = "https://identity.anywaye.com"
 
 	// The REAL function, called with the real provider. This test could have
 	// reimplemented the string concatenation and asserted against its own copy, and

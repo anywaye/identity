@@ -61,7 +61,7 @@ package client
 //     `detail`.
 //
 //  2. Structural shapes, whether or not this instance ever held them: the
-//     `cafaye_` API-token prefix, a JWS compact serialization, and any
+//     `anywaye_` API-token prefix, a JWS compact serialization, and any
 //     `Authorization` / `Proxy-Authorization` / `Cookie` / `Set-Cookie` header
 //     line. This catches credentials the instance never held — a `Set-Cookie` on a
 //     response it did not authenticate, or a header a caller built by hand.
@@ -111,7 +111,7 @@ const Redacted = "[redacted: a credential-shaped value was present]"
 // `lastIndex`, which only `Find` and `FindAll` do, and this one is only ever used
 // with `MatchString`.
 var credentialShapes = regexp.MustCompile(
-	`\bcafaye_[A-Za-z0-9_-]+` +
+	`\banywaye_[A-Za-z0-9_-]+` +
 		`|\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]*` +
 		`|(?:^|[\s,;])(?:proxy-)?authorization\s*:\s*\S+` +
 		`|(?:^|[\s,;])(?:set-)?cookie\s*:\s*[^\r\n]*`)

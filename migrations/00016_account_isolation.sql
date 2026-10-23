@@ -18,12 +18,12 @@
 -- returns NULL rather than raising when no account has been set.
 --
 -- THE FIVE CALLS AT THE BOTTOM ARE THE WHOLE OF WHAT THIS MIGRATION DECIDES, and
--- `cafaye.protect_table` is the ONLY entry point FOR AN ORDINARILY SCOPED TABLE:
+-- `anywaye.protect_table` is the ONLY entry point FOR AN ORDINARILY SCOPED TABLE:
 -- there is no `protect_table_lite`, and there is no way to ask it for a policy without
 -- FORCE, because a template that offers the weaker version is a template the weaker
 -- version gets chosen from.
 --
--- There is exactly ONE second entry point, `cafaye.protect_credential_table(table,
+-- There is exactly ONE second entry point, `anywaye.protect_credential_table(table,
 -- digest_column)`, and ONE table uses it. It protects a table exactly as `protect_table`
 -- does — it CALLS it, so there is no second copy of ENABLE/FORCE to drift — and then
 -- adds a fifth `for select` policy whose qualifier is the digest the caller presented.
@@ -69,7 +69,7 @@
 -- every policy, so the owner's reads are ACCOUNT-SCOPED rather than absent, which is
 -- the only version of "the owner may read" that is not "the owner may read
 -- everything". A migration that has to read or backfill one of these five tables sets
--- the identity first (`select cafaye.begin_account(…)`), and that is the WHOLE answer.
+-- the identity first (`select anywaye.begin_account(…)`), and that is the WHOLE answer.
 --
 -- There was a second suggestion here and it was WRONG: "or goes through a SECURITY
 -- DEFINER function". FORCE ROW LEVEL SECURITY applies to the DEFINER as well as to the
@@ -79,16 +79,16 @@
 -- is the whole answer, and this header says it too rather than leaving the false version
 -- where the next reader of this file finds it. `api_keys` has one further step: a
 -- migration that reads it has no account to begin AS, so it opens the row with
--- `cafaye.begin_credential(<the digest it is looking for>)` — the resolution seam, and
+-- `anywaye.begin_credential(<the digest it is looking for>)` — the resolution seam, and
 -- the same transaction-local GUC as the account one.
 --
--- NO MIGRATION AFTER THIS ONE NEEDS TO KNOW. `cafaye.protect_table` is idempotent —
+-- NO MIGRATION AFTER THIS ONE NEEDS TO KNOW. `anywaye.protect_table` is idempotent —
 -- it drops and recreates its policies and uses `create … if not exists` for the index
 -- — so a re-run converges rather than failing on a duplicate name.
 
 -- +goose Up
 --
--- RE-SYNCED `cafaye.protect_table` FROM kit's substrate (registry-identity-down-05).
+-- RE-SYNCED `anywaye.protect_table` FROM kit's substrate (registry-identity-down-05).
 -- The copy had drifted: kit's version grants USAGE ON SEQUENCES to the login role
 -- (a protected table with a bigserial column was uninsertable without it) and this
 -- file predated that change, which `TestTheOtherSixSubstrateFunctionsAreKitsBytes`
@@ -175,8 +175,8 @@
 --
 -- THE `(select ...)` WRAPPING IS NOT STYLE.
 --
---   using (      cafaye.current_account_id() = account_id )      -- per ROW
---   using ( (select cafaye.current_account_id()) = account_id )  -- per STATEMENT
+--   using (      anywaye.current_account_id() = account_id )      -- per ROW
+--   using ( (select anywaye.current_account_id()) = account_id )  -- per STATEMENT
 --
 -- Postgres evaluates a bare function call in a policy qualifier once per
 -- candidate row and hoists an uncorrelated scalar subquery into an InitPlan that
@@ -196,16 +196,16 @@
 -- `auth.uid()`. How a service turns the credential in its hand into an account
 -- is that service's own business — identity issues opaque session tokens and
 -- guard verifies JWKS bearer JWTs, and a template that picked one of those would
--- be wrong for the other. The seam is `cafaye.begin_account/1`, and a service
+-- be wrong for the other. The seam is `anywaye.begin_account/1`, and a service
 -- calls it once per request from whatever it already authenticates.
 --
 -- Idempotent, deliberately: this is a migration, migrations get re-run by
 -- `down`/`up` and by `bin/dev down -v`, and `protect_table` drops and recreates
 -- its policies so a re-run converges rather than failing on a duplicate name.
 
--- Its own schema, and not `public`, so `cafaye` is never part of a sweep over
+-- Its own schema, and not `public`, so `anywaye` is never part of a sweep over
 -- the service's tables and never collides with a name the service chose.
-create schema if not exists cafaye;
+create schema if not exists anywaye;
 
 -- THE ONE SEAM.
 --
@@ -223,7 +223,7 @@ create schema if not exists cafaye;
 -- is a legitimate state that must read as nothing. A MALFORMED one is a bug in
 -- the service's own plumbing, and reading nothing would report it as a service
 -- with no data, which is the worst possible way to find out.
-create or replace function cafaye.current_account_id()
+create or replace function anywaye.current_account_id()
 returns uuid
 language plpgsql
 stable
@@ -234,16 +234,16 @@ begin
   -- `missing_ok = true` is what makes an unset GUC NULL rather than an error.
   -- A dotted custom GUC needs no CREATE to be read: Postgres treats the
   -- placeholder as set-to-empty, which is the second case below.
-  raw := current_setting('cafaye.account_id', true);
+  raw := current_setting('anywaye.account_id', true);
   if raw is null or raw = '' then
     return null;
   end if;
   return raw::uuid;
 exception
   when invalid_text_representation then
-    raise exception 'cafaye.account_id is set to % which is not a uuid', raw
+    raise exception 'anywaye.account_id is set to % which is not a uuid', raw
       using errcode = '22023',
-            hint = 'cafaye.begin_account/1 takes a uuid. A request that reaches the '
+            hint = 'anywaye.begin_account/1 takes a uuid. A request that reaches the '
                    'database with a malformed account has a bug in whatever '
                    'authenticated it, and this is the cheapest place to find it.';
 end
@@ -270,16 +270,16 @@ $caf$;
 -- leak and it is loud rather than silent — a service that suddenly sees none of
 -- its own data fails its first integration test — and `isolation.sql` runs every
 -- case inside an explicit transaction for exactly this reason.
-create or replace function cafaye.begin_account(p_account uuid)
+create or replace function anywaye.begin_account(p_account uuid)
 returns void
 language plpgsql
 as $caf$
 begin
   if p_account is null then
-    perform set_config('cafaye.account_id', '', true);
+    perform set_config('anywaye.account_id', '', true);
     return;
   end if;
-  perform set_config('cafaye.account_id', p_account::text, true);
+  perform set_config('anywaye.account_id', p_account::text, true);
 end
 $caf$;
 
@@ -320,7 +320,7 @@ $caf$;
 -- WHAT IS HERE INSTEAD. One extra `for select` policy, whose qualifier is the
 -- value the CALLER PRESENTED, read from a transaction-local GUC:
 --
---     using (token_digest = (select cafaye.current_credential_digest()))
+--     using (token_digest = (select anywaye.current_credential_digest()))
 --
 -- The predicate is in the POLICY and not only in the caller's query, and that is
 -- the whole design rather than a detail. RLS policies combine permissively, so a
@@ -368,7 +368,7 @@ $caf$;
 -- policy plus an account policy reads nothing at all rather than raising. A
 -- credential table is still fully protected without a digest — this policy only
 -- ever ADDS the one row whose digest is present.
-create or replace function cafaye.current_credential_digest()
+create or replace function anywaye.current_credential_digest()
 returns text
 language plpgsql
 stable
@@ -378,7 +378,7 @@ declare
 begin
   -- `missing_ok = true` makes an unset GUC NULL rather than an error; the second
   -- case is Postgres treating an unregistered dotted placeholder as set-to-empty.
-  raw := current_setting('cafaye.credential_digest', true);
+  raw := current_setting('anywaye.credential_digest', true);
   if raw is null or raw = '' then
     return null;
   end if;
@@ -394,16 +394,16 @@ $caf$;
 -- hands the digest to Postgres as the statement that scopes the read. Postgres
 -- does not learn the secret, does not learn how it was derived, and gains no
 -- ability to compute one: it is given a string it will compare against a column.
-create or replace function cafaye.begin_credential(p_digest text)
+create or replace function anywaye.begin_credential(p_digest text)
 returns void
 language plpgsql
 as $caf$
 begin
   if p_digest is null then
-    perform set_config('cafaye.credential_digest', '', true);
+    perform set_config('anywaye.credential_digest', '', true);
     return;
   end if;
-  perform set_config('cafaye.credential_digest', p_digest, true);
+  perform set_config('anywaye.credential_digest', p_digest, true);
 end
 $caf$;
 
@@ -415,13 +415,13 @@ $caf$;
 -- because a substrate with two entry points for one table is a substrate where
 -- the one nobody reads is the one that ships.
 --
---   select cafaye.protect_credential_table('api_keys', 'token_digest');
+--   select anywaye.protect_credential_table('api_keys', 'token_digest');
 --
 -- The digest column is named in the migration and nowhere else, and naming it
 -- IS the declaration: it is the column whose value a caller must already hold to
 -- resolve a credential on this table, and the README says what makes a value
 -- suitable (it has to be unguessable, or this mechanism is the wrong one).
-create or replace function cafaye.protect_credential_table(
+create or replace function anywaye.protect_credential_table(
   p_table regclass,
   p_digest_column text,
   p_login_role text default null
@@ -439,7 +439,7 @@ begin
   --    which is the failure a database-boundary file exists to make loud.
   if p_digest_column is null
      or p_digest_column !~ '^[A-Za-z_][A-Za-z0-9_$]*$' then
-    raise exception 'cafaye.protect_credential_table(%, %): the digest column must be one bare column name, and % is not one.', p_table, coalesce(p_digest_column, '<null>'), coalesce(p_digest_column, 'null')
+    raise exception 'anywaye.protect_credential_table(%, %): the digest column must be one bare column name, and % is not one.', p_table, coalesce(p_digest_column, '<null>'), coalesce(p_digest_column, 'null')
       using errcode = 'undefined_column',
             hint = 'The second argument is the column a caller presents to resolve a credential on this table — `token_digest` for a hashed API key, `token` for a hashed invitation. It is a column of this table and nothing else.';
   end if;
@@ -450,7 +450,7 @@ begin
     select 1 from pg_attribute
     where attrelid = p_table and attname = p_digest_column and not attisdropped
   ) then
-    raise exception 'cafaye.protect_credential_table(%, %): the table has no % column.', p_table, login_role, p_digest_column
+    raise exception 'anywaye.protect_credential_table(%, %): the table has no % column.', p_table, login_role, p_digest_column
       using errcode = 'undefined_column',
             hint = 'A credential table resolves by the column a caller presents. Name the one this table has; if it has none, this table is not resolved by an unguessable value and does not want this mechanism.';
   end if;
@@ -458,7 +458,7 @@ begin
   -- 2. THE SAME PROTECTION AS EVERY OTHER ACCOUNT-SCOPED TABLE. This calls the
   --    other function rather than repeating it, so a fix to one is a fix to both
   --    and there is no second copy of ENABLE/FORCE to drift.
-  perform cafaye.protect_table(p_table, p_login_role);
+  perform anywaye.protect_table(p_table, p_login_role);
 
   base := (select c.relname from pg_class c where c.oid = p_table::regclass::oid);
 
@@ -466,7 +466,7 @@ begin
   --    on `account_id`: a policy is a filter on every candidate row, and this one
   --    filters on the column the resolution query is keyed by.
   execute format('create index if not exists %I on %s (%I)',
-                 base || '_cafaye_' || p_digest_column || '_idx', p_table, p_digest_column);
+                 base || '_anywaye_' || p_digest_column || '_idx', p_table, p_digest_column);
 
   -- 4. ONE POLICY, FOR ONE COMMAND, FOR THE TWO NAMED ROLES, WITH THE PREDICATE
   --    THE CALLER'S OWN QUERY CARRIES.
@@ -479,19 +479,19 @@ begin
   --    The `(select ...)` wrapping is the same InitPlan discipline as every other
   --    policy in this file, for the same measured reason: `tests/tenancy_test.sh`
   --    measures 1 call wrapped against 5 bare on five rows, on every run.
-  qual := format('%I = (select cafaye.current_credential_digest())', p_digest_column);
+  qual := format('%I = (select anywaye.current_credential_digest())', p_digest_column);
 
   --    DROP before CREATE, so a re-run converges and a corrected qualifier cannot
   --    survive one.
-  execute format('drop policy if exists %I on %s', base || '_cafaye_resolve', p_table);
+  execute format('drop policy if exists %I on %s', base || '_anywaye_resolve', p_table);
   execute format('create policy %I on %s for select to %I, %I using (%s)',
-                 base || '_cafaye_resolve', p_table, current_user, login_role, qual);
+                 base || '_anywaye_resolve', p_table, current_user, login_role, qual);
 
-  -- 5. USAGE on `cafaye`, for the same reason `protect_table` grants it: without
-  --    it the login role cannot resolve `cafaye.begin_credential/1` and every
-  --    resolution fails with `permission denied for schema cafaye`.
-  if to_regnamespace('cafaye') is not null then
-    execute format('grant usage on schema cafaye to %I', login_role);
+  -- 5. USAGE on `anywaye`, for the same reason `protect_table` grants it: without
+  --    it the login role cannot resolve `anywaye.begin_credential/1` and every
+  --    resolution fails with `permission denied for schema anywaye`.
+  if to_regnamespace('anywaye') is not null then
+    execute format('grant usage on schema anywaye to %I', login_role);
   end if;
 end
 $caf$;
@@ -511,12 +511,12 @@ $caf$;
 -- transaction-local and gone by the time anything could look at it.
 -- ONE CAPTURE GROUP, AROUND THE COLUMN AND NOTHING ELSE. `pg_get_expr` is a
 -- pretty-printer, so the qualifier this file writes renders back as
--- `(token_digest = ( SELECT cafaye.current_credential_digest() AS …))` — its own
+-- `(token_digest = ( SELECT anywaye.current_credential_digest() AS …))` — its own
 -- capitalisation, spacing and alias. A regexp written against the SQL executed
 -- rather than against what the catalog prints matches nothing here, and an audit
 -- query that returns an empty column forever looks exactly like an audit query
 -- that found nothing.
-create or replace function cafaye.credential_tables()
+create or replace function anywaye.credential_tables()
 returns table (table_schema text, table_name text, digest_column text)
 language sql
 stable
@@ -525,28 +525,28 @@ as $caf$
          c.relname::text,
          (regexp_match(
             lower(coalesce(pg_get_expr(p.polqual, p.polrelid), '')),
-            '^ *\(?([a-z_][a-z0-9_$]*) = \( *select cafaye\.current_credential_digest\(\)'
+            '^ *\(?([a-z_][a-z0-9_$]*) = \( *select anywaye\.current_credential_digest\(\)'
           ))[1]::text
     from pg_policy p
     join pg_class c on c.oid = p.polrelid
     join pg_namespace n on n.oid = c.relnamespace
-   where p.polname like '%!_cafaye!_resolve' escape '!'
+   where p.polname like '%!_anywaye!_resolve' escape '!'
      and p.polcmd = 'r'
      and lower(coalesce(pg_get_expr(p.polqual, p.polrelid), ''))
-         like '%cafaye.current_credential_digest()%'
+         like '%anywaye.current_credential_digest()%'
    order by n.nspname, c.relname
 $caf$;
 
 -- PROTECT ONE ACCOUNT-SCOPED TABLE. The only thing a migration calls.
 --
---   select cafaye.protect_table('assets');                 -- the owner's role
---   select cafaye.protect_table('assets', 'darkroom_app'); -- explicit login role
+--   select anywaye.protect_table('assets');                 -- the owner's role
+--   select anywaye.protect_table('assets', 'darkroom_app'); -- explicit login role
 --
 -- Everything it does is required and everything it does is idempotent. There is
 -- no `protect_table_lite`, and there is no way to ask it for a policy without
 -- FORCE, because a template that offers the weaker version is a template the
 -- weaker version gets chosen from.
-create or replace function cafaye.protect_table(
+create or replace function anywaye.protect_table(
   p_table regclass,
   p_login_role text default null
 )
@@ -555,7 +555,7 @@ language plpgsql
 as $caf$
 declare
   login_role text := coalesce(p_login_role, current_user || '_app');
-  qual text := 'account_id = (select cafaye.current_account_id())';
+  qual text := 'account_id = (select anywaye.current_account_id())';
   base text;
   seq_name text;
 begin
@@ -565,7 +565,7 @@ begin
   --    six lines into a function, with the table named by the context and the
   --    fix not. This is the check that turns that into one sentence.
   if not exists (select 1 from pg_roles where rolname = login_role and rolcanlogin) then
-    raise exception 'cafaye.protect_table(%, %): % is not a LOGIN role on this cluster.', p_table, login_role, login_role
+    raise exception 'anywaye.protect_table(%, %): % is not a LOGIN role on this cluster.', p_table, login_role, login_role
       using errcode = 'undefined_object',
             hint = 'kit''s cluster provisions <service> and <service>_app. Either the _app role has not been provisioned — this service was added to KIT_POSTGRES_DATABASES before it existed, and the init script only runs on a fresh volume — or pass the login role explicitly as the second argument.';
   end if;
@@ -578,7 +578,7 @@ begin
     select 1 from pg_attribute
     where attrelid = p_table and attname = 'account_id' and not attisdropped
   ) then
-    raise exception 'cafaye.protect_table(%, %): the table has no account_id column, so there is nothing to scope it by.', p_table, login_role
+    raise exception 'anywaye.protect_table(%, %): the table has no account_id column, so there is nothing to scope it by.', p_table, login_role
       using errcode = 'undefined_column',
             hint = 'Either the column is spelled something else — write the policy yourself and name the fleet''s key — or this table is not account-scoped and should not be protected. A service holding no customer rows is core''s honest zero and needs none of this.';
   end if;
@@ -591,7 +591,7 @@ begin
   --    through its primary key still has to filter on `account_id`, and without
   --    this index that is a full scan behind a primary-key lookup. Named
   --    deterministically so a re-run converges rather than making a second one.
-  execute format('create index if not exists %I on %s (account_id)', base || '_cafaye_account_id_idx', p_table);
+  execute format('create index if not exists %I on %s (account_id)', base || '_anywaye_account_id_idx', p_table);
 
   -- 3. REVOKE FROM PUBLIC BEFORE ENABLING. A table's default privileges come
   --    from its owner and from whatever has been granted on it; PUBLIC is not
@@ -642,25 +642,25 @@ begin
   --
   --    DROP before CREATE so the function is re-runnable, and so a policy whose
   --    definition has been corrected here cannot survive a re-run.
-  execute format('drop policy if exists %I on %s', base || '_cafaye_select', p_table);
-  execute format('drop policy if exists %I on %s', base || '_cafaye_insert', p_table);
-  execute format('drop policy if exists %I on %s', base || '_cafaye_update', p_table);
-  execute format('drop policy if exists %I on %s', base || '_cafaye_delete', p_table);
+  execute format('drop policy if exists %I on %s', base || '_anywaye_select', p_table);
+  execute format('drop policy if exists %I on %s', base || '_anywaye_insert', p_table);
+  execute format('drop policy if exists %I on %s', base || '_anywaye_update', p_table);
+  execute format('drop policy if exists %I on %s', base || '_anywaye_delete', p_table);
 
-  execute format('create policy %I on %s for select to %I, %I using (%s)', base || '_cafaye_select', p_table, current_user, login_role, qual);
-  execute format('create policy %I on %s for insert to %I, %I with check (%s)', base || '_cafaye_insert', p_table, current_user, login_role, qual);
-  execute format('create policy %I on %s for update to %I, %I using (%s) with check (%s)', base || '_cafaye_update', p_table, current_user, login_role, qual, qual);
-  execute format('create policy %I on %s for delete to %I, %I using (%s)', base || '_cafaye_delete', p_table, current_user, login_role, qual);
+  execute format('create policy %I on %s for select to %I, %I using (%s)', base || '_anywaye_select', p_table, current_user, login_role, qual);
+  execute format('create policy %I on %s for insert to %I, %I with check (%s)', base || '_anywaye_insert', p_table, current_user, login_role, qual);
+  execute format('create policy %I on %s for update to %I, %I using (%s) with check (%s)', base || '_anywaye_update', p_table, current_user, login_role, qual, qual);
+  execute format('create policy %I on %s for delete to %I, %I using (%s)', base || '_anywaye_delete', p_table, current_user, login_role, qual);
 
   -- 6. AND THE LOGIN ROLE GETS DML AND NOTHING ELSE. No ownership, no DDL, no
   --    CREATE on the schema, no ability to change a policy. A grant that gives a
   --    login role more than it needs is a grant that has to be re-examined every
   --    time somebody adds a privilege, and this is the one place that list lives.
   --
-  --    USAGE on `cafaye` is in the list and is not optional: without it the login
-  --    role cannot resolve `cafaye.begin_account/1` at all, so the first thing a
+  --    USAGE on `anywaye` is in the list and is not optional: without it the login
+  --    role cannot resolve `anywaye.begin_account/1` at all, so the first thing a
   --    service does after adopting this is a `permission denied for schema
-  --    cafaye` on every request.
+  --    anywaye` on every request.
   --
   --    USAGE ON A SEQUENCE is in the list for the same reason and it is the one
   --    that is INVISIBLE until a service writes a row. A table's INSERT reads its
@@ -674,14 +674,14 @@ begin
   --    which is SQLSTATE 42501 — the code the policies themselves raise. An
   --    assertion that checks the code alone cannot tell a working boundary from a
   --    table nobody can write to. `templates/database/tenancy/isolation.sql`'s
-  --    `cafaye_observed` returns `sqlstate` and nothing else, so it is exposed to
+  --    `anywaye_observed` returns `sqlstate` and nothing else, so it is exposed to
   --    exactly that; what has kept it out of reach is that its probe table is
   --    `id uuid … default gen_random_uuid()`, which is why 39 assertions have been
   --    green through this defect. `reports/substrate-sequence-grant/` is where the
   --    message is required, and it is where the two are told apart.
   execute format('grant usage on schema public to %I', login_role);
-  if to_regnamespace('cafaye') is not null then
-    execute format('grant usage on schema cafaye to %I', login_role);
+  if to_regnamespace('anywaye') is not null then
+    execute format('grant usage on schema anywaye to %I', login_role);
   end if;
   execute format('grant select, insert, update, delete on table %s to %I', p_table, login_role);
 
@@ -782,7 +782,7 @@ $caf$;
 -- with a migration, and the proofs it is meant to repair are the thing that
 -- decides whether the migration is needed. Instead the scope is read back out of
 -- what the substrate ALREADY wrote: `protect_table` names its policies
--- `<table>_cafaye_<command>` and creates an index beside them, so every schema
+-- `<table>_anywaye_<command>` and creates an index beside them, so every schema
 -- the substrate was applied in is discoverable from the catalog, with nothing
 -- new to install and nothing to remember to update.
 --
@@ -799,7 +799,7 @@ $caf$;
 -- per-session, so no other session — not another test, not another service — can
 -- put a table in scope by creating one. `pg_temp` is the alias; the real schema
 -- is named `pg_temp_N`, which is why this is a prefix test and not an equality.
-create or replace function cafaye.unprotected_tables()
+create or replace function anywaye.unprotected_tables()
 returns table (table_schema text, table_name text, why text)
 language sql
 stable
@@ -807,9 +807,9 @@ as $caf$
   with scoped(nspname) as (
     -- (1) The substrate's own schema. It holds functions rather than rows, so
     --     this contributes nothing today; it is here so that a table added to
-    --     `cafaye` later cannot be quietly unowned by the exclusion this query
+    --     `anywaye` later cannot be quietly unowned by the exclusion this query
     --     used to carry.
-    select 'cafaye'::name
+    select 'anywaye'::name
     -- (2) This session's temporary schema, where `isolation.sql` plants its
     --     control table. Per-session, so it can never carry another session's.
     union
@@ -828,7 +828,7 @@ as $caf$
       join pg_class c on c.relnamespace = n.oid
       join pg_policy p on p.polrelid = c.oid
      where c.relkind = 'r'
-       and p.polname ~ '_cafaye_(select|insert|update|delete)$'
+       and p.polname ~ '_anywaye_(select|insert|update|delete)$'
   )
   select n.nspname::text,
          c.relname::text,
@@ -924,7 +924,7 @@ $caf$;
 -- truncate around one. The application switching to that role is the NEXT packet and
 -- is deliberately not in this one: it touches every query's behaviour.
 --
--- NOT `cafaye.protect_table('accounts')`. The account table has no `account_id`, and
+-- NOT `anywaye.protect_table('accounts')`. The account table has no `account_id`, and
 -- `protect_table` refuses that by name rather than creating policies whose predicate
 -- cannot be evaluated — a table nobody can read is a much harder failure to diagnose
 -- than one that says why.
@@ -937,7 +937,7 @@ $caf$;
 -- WHO MAY BE A MEMBER OF AN ACCOUNT. The membership itself, its roles and its scopes
 -- — this is the table an admin surface reads, and an admin reading another account's
 -- membership is a disclosure of who works where.
-select cafaye.protect_table('account_users');
+select anywaye.protect_table('account_users');
 
 -- AN INVITATION ADDRESSED INTO AN ACCOUNT. Its unique index is already the
 -- account_id-leading partial index 00007 built for exactly this query.
@@ -946,12 +946,12 @@ select cafaye.protect_table('account_users');
 -- is — a 256-bit random value whose only stored form is a hash — so
 -- `protect_credential_table('account_invitations', 'token_digest')` WOULD be the right
 -- call here, and it is NOT made yet. The mechanism is one call in a migration and one
--- `cafaye.begin_credential` in the Go path, and taking the first without the second
+-- `anywaye.begin_credential` in the Go path, and taking the first without the second
 -- breaks redemption the same way this migration just fixed api_keys: the lookup would
 -- read zero rows and every invitation would be refused. They are ONE change and this
 -- migration does not make half of it; the exact call and the exact call site are in
 -- HANDOFF-identity-isolation.
-select cafaye.protect_table('account_invitations');
+select anywaye.protect_table('account_invitations');
 
 -- THE SERVICE'S OWN CREDENTIAL FOR AN ACCOUNT. Read another account's and you hold a
 -- bearer token for it, so this is the row whose isolation matters most — AND the one
@@ -966,7 +966,7 @@ select cafaye.protect_table('account_invitations');
 -- Every machine credential in the fleet, refused as though it had never existed.
 --
 -- `protect_credential_table` adds one `for select` policy whose USING clause is
--- `token_digest = (select cafaye.current_credential_digest())`, so the POLICY carries
+-- `token_digest = (select anywaye.current_credential_digest())`, so the POLICY carries
 -- the same predicate the caller's own query carries. The honest semantics, which is
 -- NARROWER than "reads nothing" and not one bit wider: a resolution session may read
 -- exactly the row whose digest it presented, in either role, and cannot write at all —
@@ -979,7 +979,7 @@ select cafaye.protect_table('account_invitations');
 -- tell a secret from a label, which is why the OTHER two lookups in this service do not
 -- get this call — see `oidc_clients` below, where the presented value is a public
 -- identifier and the mechanism is the wrong tool by construction.
-select cafaye.protect_credential_table('api_keys', 'token_digest');
+select anywaye.protect_credential_table('api_keys', 'token_digest');
 
 -- A CLIENT'S CREDENTIALS. `client_secret_hash` in somebody else's row is the same
 -- disclosure as the row above.
@@ -995,11 +995,11 @@ select cafaye.protect_credential_table('api_keys', 'token_digest');
 -- lookup as a different problem this mechanism does not answer. Neither is this
 -- migration's to guess at, and guessing would be applying the mechanism exactly where it
 -- has been measured not to belong.
-select cafaye.protect_table('oidc_clients');
+select anywaye.protect_table('oidc_clients');
 
 -- THE AUDIT TRAIL. Immutable by trigger, so it is also the one table where a
 -- cross-account read cannot be explained away by a recent write.
-select cafaye.protect_table('account_audit_log');
+select anywaye.protect_table('account_audit_log');
 
 -- +goose Down
 
@@ -1028,64 +1028,64 @@ alter table oidc_clients      disable row level security;
 alter table api_keys          disable row level security;
 alter table account_audit_log disable row level security;
 
-drop policy if exists account_users_cafaye_select     on account_users;
-drop policy if exists account_users_cafaye_insert     on account_users;
-drop policy if exists account_users_cafaye_update     on account_users;
-drop policy if exists account_users_cafaye_delete     on account_users;
-drop policy if exists account_invitations_cafaye_select on account_invitations;
-drop policy if exists account_invitations_cafaye_insert on account_invitations;
-drop policy if exists account_invitations_cafaye_update on account_invitations;
-drop policy if exists account_invitations_cafaye_delete on account_invitations;
-drop policy if exists oidc_clients_cafaye_select      on oidc_clients;
-drop policy if exists oidc_clients_cafaye_insert      on oidc_clients;
-drop policy if exists oidc_clients_cafaye_update      on oidc_clients;
-drop policy if exists oidc_clients_cafaye_delete      on oidc_clients;
-drop policy if exists api_keys_cafaye_select          on api_keys;
-drop policy if exists api_keys_cafaye_insert          on api_keys;
-drop policy if exists api_keys_cafaye_update          on api_keys;
-drop policy if exists api_keys_cafaye_delete          on api_keys;
+drop policy if exists account_users_anywaye_select     on account_users;
+drop policy if exists account_users_anywaye_insert     on account_users;
+drop policy if exists account_users_anywaye_update     on account_users;
+drop policy if exists account_users_anywaye_delete     on account_users;
+drop policy if exists account_invitations_anywaye_select on account_invitations;
+drop policy if exists account_invitations_anywaye_insert on account_invitations;
+drop policy if exists account_invitations_anywaye_update on account_invitations;
+drop policy if exists account_invitations_anywaye_delete on account_invitations;
+drop policy if exists oidc_clients_anywaye_select      on oidc_clients;
+drop policy if exists oidc_clients_anywaye_insert      on oidc_clients;
+drop policy if exists oidc_clients_anywaye_update      on oidc_clients;
+drop policy if exists oidc_clients_anywaye_delete      on oidc_clients;
+drop policy if exists api_keys_anywaye_select          on api_keys;
+drop policy if exists api_keys_anywaye_insert          on api_keys;
+drop policy if exists api_keys_anywaye_update          on api_keys;
+drop policy if exists api_keys_anywaye_delete          on api_keys;
 -- The fifth one: the resolve policy `protect_credential_table` adds. It is named here
--- rather than left to the `cascade` because `cafaye.credential_tables()` READS THE
+-- rather than left to the `cascade` because `anywaye.credential_tables()` READS THE
 -- POLICIES, so a policy that outlived its table's RLS would keep answering "this table
 -- can be read with no account" on a database where it no longer can — an audit query
 -- that has gone stale is worse than no audit query.
-drop policy if exists api_keys_cafaye_resolve         on api_keys;
-drop policy if exists account_audit_log_cafaye_select on account_audit_log;
-drop policy if exists account_audit_log_cafaye_insert on account_audit_log;
-drop policy if exists account_audit_log_cafaye_update on account_audit_log;
-drop policy if exists account_audit_log_cafaye_delete on account_audit_log;
+drop policy if exists api_keys_anywaye_resolve         on api_keys;
+drop policy if exists account_audit_log_anywaye_select on account_audit_log;
+drop policy if exists account_audit_log_anywaye_insert on account_audit_log;
+drop policy if exists account_audit_log_anywaye_update on account_audit_log;
+drop policy if exists account_audit_log_anywaye_delete on account_audit_log;
 
 -- The index protect_table created. `if exists` because a Down that assumes its own Up
 -- ran is a Down that fails on a partially applied database, which is the one moment a
 -- Down is actually wanted.
-drop index if exists account_users_cafaye_account_id_idx;
-drop index if exists account_invitations_cafaye_account_id_idx;
-drop index if exists oidc_clients_cafaye_account_id_idx;
-drop index if exists api_keys_cafaye_account_id_idx;
-drop index if exists api_keys_cafaye_token_digest_idx;
-drop index if exists account_audit_log_cafaye_account_id_idx;
+drop index if exists account_users_anywaye_account_id_idx;
+drop index if exists account_invitations_anywaye_account_id_idx;
+drop index if exists oidc_clients_anywaye_account_id_idx;
+drop index if exists api_keys_anywaye_account_id_idx;
+drop index if exists api_keys_anywaye_token_digest_idx;
+drop index if exists account_audit_log_anywaye_account_id_idx;
 
 -- THE FUNCTIONS, NAMED, AND THEN THE SCHEMA WITHOUT `cascade`.
 --
--- This section used to end in a single `drop schema if exists cafaye cascade`, justified by
+-- This section used to end in a single `drop schema if exists anywaye cascade`, justified by
 -- the claim that naming the functions first would be "two ways to fail for the same result".
 -- It is the opposite: `cascade` is what made the twenty `drop policy` statements above
 -- unverifiable. That is the finding registry-identity-down-05's rollback check produced, and
 -- it was not visible any other way.
 --
 -- A RLS policy is a DEPENDENT object, not a member: each of the twenty policies created above
--- names `cafaye.current_account_id()` in its expression, so `pg_depend` records a dependency
+-- names `anywaye.current_account_id()` in its expression, so `pg_depend` records a dependency
 -- on that function, and `drop schema ... cascade` takes the policies with it. That is why the
 -- line above it enumerated twenty `drop policy` statements that `cascade` was going to sweep
 -- anyway — and why a mistake in them was invisible.
 --
 -- MEASURED, not reasoned. Delete ONE of those twenty drops — the
--- `account_audit_log_cafaye_delete` line — and re-apply this Down: with `cascade` the policy
+-- `account_audit_log_anywaye_delete` line — and re-apply this Down: with `cascade` the policy
 -- is gone anyway and the database ends up correct. Delete the `cascade` from THIS line and
 -- leave that drop out, and Postgres refuses:
 --
---     ERROR: cannot drop schema cafaye because other objects depend on it
---     DETAIL:  policy account_audit_log_cafaye_delete on table account_audit_log depends on schema cafaye
+--     ERROR: cannot drop schema anywaye because other objects depend on it
+--     DETAIL:  policy account_audit_log_anywaye_delete on table account_audit_log depends on schema anywaye
 --
 -- which is the outcome this line wants. The cascade was converting a forgotten statement into
 -- a silent success, and `bin/rollback` — which compares the object census before and after
@@ -1095,18 +1095,18 @@ drop index if exists account_audit_log_cafaye_account_id_idx;
 -- cosmetic: six of them call the two `current_*` readers, so the schema cannot go first even
 -- with the policies and indexes already gone — Postgres says so itself --
 --
---     ERROR:  cannot drop schema cafaye because other objects depend on it
---     DETAIL:  function cafaye.current_account_id() depends on schema cafaye
+--     ERROR:  cannot drop schema anywaye because other objects depend on it
+--     DETAIL:  function anywaye.current_account_id() depends on schema anywaye
 --
 -- Dropping the callers first and the readers last leaves `drop schema` with only members
 -- inside it, and members do not block their own schema's removal. Anything this Down forgot
 -- to enumerate is now an error naming itself, which is what a rollback should be.
-drop function if exists cafaye.unprotected_tables();
-drop function if exists cafaye.protect_credential_table(regclass, text, text);
-drop function if exists cafaye.protect_table(regclass, text);
-drop function if exists cafaye.begin_account(uuid);
-drop function if exists cafaye.begin_credential(text);
-drop function if exists cafaye.credential_tables();
-drop function if exists cafaye.current_credential_digest();
-drop function if exists cafaye.current_account_id();
-drop schema if exists cafaye;
+drop function if exists anywaye.unprotected_tables();
+drop function if exists anywaye.protect_credential_table(regclass, text, text);
+drop function if exists anywaye.protect_table(regclass, text);
+drop function if exists anywaye.begin_account(uuid);
+drop function if exists anywaye.begin_credential(text);
+drop function if exists anywaye.credential_tables();
+drop function if exists anywaye.current_credential_digest();
+drop function if exists anywaye.current_account_id();
+drop schema if exists anywaye;

@@ -19,7 +19,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/cafaye/identity/internal/accounts"
+	"github.com/anywaye/identity/internal/accounts"
 )
 
 // InvitationMailer sends one team_invitation through the client.

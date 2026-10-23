@@ -35,7 +35,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // The lifecycle, in order, with the transitions written out.
@@ -138,10 +138,10 @@ func MayTransition(from, to string) bool {
 //
 // The SAME prefix apikeys uses and the reason is the same one: it is recognition.
 // A secret that leaks into a transcript, a CI log or a support ticket is
-// recognized as a cafaye credential by its first seven characters, which turns
+// recognized as a anywaye credential by its first seven characters, which turns
 // "somebody has to guess which of these strings is a working key" into a grep.
 //
-// IT IS DELIBERATELY NOT A DISTINCT PREFIX. A second prefix — `cafaye_agent_` —
+// IT IS DELIBERATELY NOT A DISTINCT PREFIX. A second prefix — `anywaye_agent_` —
 // would buy a way to tell an agent credential from a user's api key by looking at
 // it, and that is a property this platform refuses to build: identity's whole
 // argument is that a credential's shape is NOT a public fact worth having, which
@@ -149,7 +149,7 @@ func MayTransition(from, to string) bool {
 // before any query runs and nothing else does. One prefix, two tables, and the
 // discriminator is the prefix ALONE — meaning an agent token must be looked up in
 // agent_tokens and nowhere else, by the same rule.
-const Prefix = "cafaye_"
+const Prefix = "anywaye_"
 
 // SecretBytes is the entropy behind the prefix: 256 bits, the same budget as a
 // session token, an api key and an invitation token, for the same reason — none

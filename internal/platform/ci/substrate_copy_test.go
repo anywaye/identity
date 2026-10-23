@@ -8,15 +8,15 @@ package ci
 // kit-rls-advisor-02 rewrote `credential_tables()`. Nothing compared the copy
 // against the template again, so it drifted, and it drifted into an audit query
 // that returns NOTHING for the role an operator audits credentials as — kit's
-// cluster admin role, `cafaye` — while returning the right answer for every
+// cluster admin role, `anywaye` — while returning the right answer for every
 // other role. Measured on a scratch postgres:17, both rows same database, same
 // policy, same instant:
 //
 //	role      rows                           digest_column
 //	identity  BEFORE 00017 (deparsing)       api_keys/token_digest
 //	identity  AFTER  00017 (dependencies)    api_keys/token_digest
-//	cafaye    BEFORE 00017 (deparsing)       (none)
-//	cafaye    AFTER  00017 (dependencies)    api_keys/token_digest
+//	anywaye    BEFORE 00017 (deparsing)       (none)
+//	anywaye    AFTER  00017 (dependencies)    api_keys/token_digest
 //
 // `bin/credential-audit-drift` reproduces that table; this file is the half that
 // runs in `bin/prime`, on a machine with no Postgres.
@@ -45,7 +45,7 @@ package ci
 // matters is structural (resolve by OID, do not read a spelling) and it is
 // checkable here with no network, no checkout and no recorded digest.
 // What WOULD close the remaining gap — comparing this copy to kit's bytes at a
-// ref — needs a kind of its own in `caf`, plus a declaration in `cafaye.yml`,
+// ref — needs a kind of its own in `caf`, plus a declaration in `anywaye.yml`,
 // plus kit's substrate being fetchable at a ref, which it deliberately is not:
 // kit splits its templates into FETCHED (`templates/compose`, pinned by
 // `kit.ref`) and COPIED (`templates/database`), and that split is the reason a
@@ -117,7 +117,7 @@ func sqlSection(t *testing.T, migration string, up bool) string {
 	return head[upAt:]
 }
 
-// functionBodies returns every `create or replace function cafaye.<fn>`
+// functionBodies returns every `create or replace function anywaye.<fn>`
 // definition inside `src`, from each declaration to the `$caf$;` that closes it.
 //
 // PLURAL, and that is the load-bearing part. A single-body reader checks the LAST
@@ -132,7 +132,7 @@ func sqlSection(t *testing.T, migration string, up bool) string {
 // body early and every assertion below would pass against a prefix.
 func functionBodies(t *testing.T, migration, src, fn string) []string {
 	t.Helper()
-	needle := "create or replace function cafaye." + fn + "("
+	needle := "create or replace function anywaye." + fn + "("
 	var out []string
 	for rest := src; ; {
 		at := strings.Index(rest, needle)
@@ -142,7 +142,7 @@ func functionBodies(t *testing.T, migration, src, fn string) []string {
 		rest = rest[at:]
 		end := strings.Index(rest, "\n$caf$;")
 		if end < 0 {
-			t.Fatalf("%s: cafaye.%s is opened and never closed with `$caf$;`", migration, fn)
+			t.Fatalf("%s: anywaye.%s is opened and never closed with `$caf$;`", migration, fn)
 		}
 		out = append(out, rest[:end])
 		rest = rest[end:]
@@ -156,7 +156,7 @@ func functionBody(t *testing.T, migration, src, fn string) string {
 	t.Helper()
 	bodies := functionBodies(t, migration, src, fn)
 	if len(bodies) != 1 {
-		t.Fatalf("%s: expected exactly one `create or replace function cafaye.%s(`, found %d.\n"+
+		t.Fatalf("%s: expected exactly one `create or replace function anywaye.%s(`, found %d.\n"+
 			"A check that picks one of several is reading a file nobody can reason about, and\n"+
 			"the file is either malformed or carrying a definition this reader does not know "+
 			"about.", migration, fn, len(bodies))
@@ -210,13 +210,13 @@ func TestNoMigrationAfterTheFixInstallsAnAuditThatReadsASpelling(t *testing.T) {
 	// function by OID out of pg_proc and their column by a pg_depend row onto the
 	// policy's OWN table, and a rewrite that read either of those as text would
 	// give the right answer to every role except the one whose `"$user"` schema
-	// IS `cafaye` — which is kit's cluster admin role, and so the operator most
+	// IS `anywaye` — which is kit's cluster admin role, and so the operator most
 	// likely to be auditing. 00018's `membership_tables()` has to be covered by
 	// this or the rule has a hole exactly the shape of the defect it was written
 	// for: a second audit, added later, quietly deparsing.
 	//
 	// Both names are listed rather than matched by a regexp over every
-	// `cafaye.*_tables()` definition, because the alternative sweeps in a function
+	// `anywaye.*_tables()` definition, because the alternative sweeps in a function
 	// that returns tables and is not an audit of this kind, and a rule that
 	// catches the wrong function is a rule nobody can reason about at the point it
 	// fires.
@@ -248,7 +248,7 @@ func TestNoMigrationAfterTheFixInstallsAnAuditThatReadsASpelling(t *testing.T) {
 				t.Errorf("migrations/%s: the %d `%s()` in its Up section contains %q.\n"+
 					"Reading a pretty-printed expression makes the answer depend on the session's\n"+
 					"search_path, so the audit returns NOTHING as kit's cluster admin role\n"+
-					"`cafaye` and the right answer as every other role — measured by\n"+
+					"`anywaye` and the right answer as every other role — measured by\n"+
 					"bin/credential-audit-drift. It reads as 'no table here can be resolved without\n"+
 					"an account', which is the one answer an operator believes.\n"+
 					"A migration is APPEND-ONLY: fix this with a new numbered file, and if the body\n"+
@@ -283,7 +283,7 @@ func TestTheCredentialAuditReadsDependenciesAndNotASpelling(t *testing.T) {
 		"'(unresolved)'",             // a row we cannot narrow is reported, not dropped
 	} {
 		if !strings.Contains(body, want) {
-			t.Errorf("cafaye.credential_tables() does not contain %q.\n"+
+			t.Errorf("anywaye.credential_tables() does not contain %q.\n"+
 				"Without it the audit is reading something the session can change. The argument is\n"+
 				"kit's, at templates/database/tenancy/substrate.sql above that function.", want)
 		}
@@ -294,10 +294,10 @@ func TestTheCredentialAuditReadsDependenciesAndNotASpelling(t *testing.T) {
 		"regexp_match",
 	} {
 		if strings.Contains(body, forbidden) {
-			t.Errorf("cafaye.credential_tables() contains %q.\n"+
+			t.Errorf("anywaye.credential_tables() contains %q.\n"+
 				"That is the reading the whole fix removed: it makes the answer depend on the\n"+
 				"session's search_path, so the audit returns NOTHING as kit's cluster admin\n"+
-				"role `cafaye` and the right answer as every other role. Measured by\n"+
+				"role `anywaye` and the right answer as every other role. Measured by\n"+
 				"bin/credential-audit-drift.", forbidden)
 		}
 	}
@@ -323,12 +323,12 @@ func TestTheMembershipAuditResolvesTheCallerAndNotASpelling(t *testing.T) {
 		"pg_proc",
 		"pronargs = 0",
 		"proname = 'current_user_id'",
-		"_cafaye!_members",
+		"_anywaye!_members",
 		"ud.refobjid = pol.polrelid", // the policy's OWN table, so another table's column stays out
 		"'(unresolved)'",             // a row we cannot narrow is reported, not dropped
 	} {
 		if !strings.Contains(body, want) {
-			t.Errorf("cafaye.membership_tables() does not contain %q.\n"+
+			t.Errorf("anywaye.membership_tables() does not contain %q.\n"+
 				"Without it the audit is reading something the session can change, or answering\n"+
 				"about a scope other than the caller's. The argument is kit's, at\n"+
 				"templates/database/tenancy/substrate.sql above that function.", want)
@@ -340,7 +340,7 @@ func TestTheMembershipAuditResolvesTheCallerAndNotASpelling(t *testing.T) {
 		"regexp_match",
 	} {
 		if strings.Contains(body, forbidden) {
-			t.Errorf("cafaye.membership_tables() contains %q.\n"+
+			t.Errorf("anywaye.membership_tables() contains %q.\n"+
 				"That is the reading 00017 removed from the credential audit, and the reason it\n"+
 				"matters twice over here: this audit answers 'which tables can be read with no\n"+
 				"account because of WHO IS ASKING', so an admin told nothing reads as a service\n"+
@@ -418,7 +418,7 @@ func TestEverySubstrateFunctionThisRepositoryInstallsIsKitsBytes(t *testing.T) {
 		"protect_credential_table",
 	} {
 		if a, b := kitFunctionBody(t, kitSrc, fn), functionBody(t, substrateMigration, here, fn); a != b {
-			t.Errorf("cafaye.%s differs from kit's.\n"+
+			t.Errorf("anywaye.%s differs from kit's.\n"+
 				"00016 claims to embed kit's substrate verbatim, and one function differing\n"+
 				"means the copy has drifted again. Either re-copy it in a NEW migration or\n"+
 				"record why this one is deliberately different.", fn)
@@ -431,7 +431,7 @@ func TestEverySubstrateFunctionThisRepositoryInstallsIsKitsBytes(t *testing.T) {
 	//
 	// A SEPARATE LOOP rather than one list of ten, because the two migrations have
 	// different provenance and merging them would hide which file has to be edited
-	// when kit's substrate changes next. A reader told "cafaye.protect_table differs
+	// when kit's substrate changes next. A reader told "anywaye.protect_table differs
 	// from kit's" and given ten function names has to go and work out which of the
 	// two migrations owns each one before they can do anything about it.
 	membershipSrc := sqlSection(t, userScopeMigration, true)
@@ -442,7 +442,7 @@ func TestEverySubstrateFunctionThisRepositoryInstallsIsKitsBytes(t *testing.T) {
 		"membership_tables",
 	} {
 		if a, b := kitFunctionBody(t, kitSrc, fn), functionBody(t, userScopeMigration, membershipSrc, fn); a != b {
-			t.Errorf("cafaye.%s differs from kit's.\n"+
+			t.Errorf("anywaye.%s differs from kit's.\n"+
 				"%s claims to embed kit's substrate verbatim, and one function differing\n"+
 				"means the copy has drifted again — the failure 00017 exists because it\n"+
 				"happened once and nothing noticed. Either re-copy it in a NEW migration\n"+
@@ -454,7 +454,7 @@ func TestEverySubstrateFunctionThisRepositoryInstallsIsKitsBytes(t *testing.T) {
 	// And the one that WAS replaced has to actually differ, or the migration that
 	// claims to fix it fixed nothing.
 	if kitFunctionBody(t, kitSrc, "credential_tables") != functionBody(t, fixMigration, sqlSection(t, fixMigration, true), "credential_tables") {
-		t.Errorf("cafaye.credential_tables() in %s is NOT kit's current body.\n"+
+		t.Errorf("anywaye.credential_tables() in %s is NOT kit's current body.\n"+
 			"The fix and the template have drifted apart, which is this file's own defect\n"+
 			"one layer up.", fixMigration)
 	}
@@ -472,7 +472,7 @@ func kitFunctionBody(t *testing.T, src, fn string) string {
 // reads a fleet it does not own: kit's own AGENTS.md records a sweep that found a
 // whole fleet in a leftover checkout in a shared temp directory and went red on a
 // tree with nothing wrong with it. Three levels covers a sibling (`../kit`) and a
-// worktree nested one directory deeper (`identity/cafaye/wt-*/`), which is how
+// worktree nested one directory deeper (`identity/anywaye/wt-*/`), which is how
 // this measurement is actually taken, and stops there.
 //
 // "" is the honest answer rather than a guess: the caller turns it into a named

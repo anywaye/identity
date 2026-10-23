@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cafaye/identity/internal/oauth"
-	"github.com/cafaye/identity/internal/platform/oauthtest"
+	"github.com/anywaye/identity/internal/oauth"
+	"github.com/anywaye/identity/internal/platform/oauthtest"
 )
 
 // A FAKE IS A CLAIM ABOUT A PROVIDER, and this file pins the one claim here

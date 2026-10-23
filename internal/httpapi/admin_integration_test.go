@@ -27,15 +27,15 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/cafaye/identity/internal/accounts"
-	"github.com/cafaye/identity/internal/admin"
-	"github.com/cafaye/identity/internal/apikeys"
-	"github.com/cafaye/identity/internal/auth"
-	"github.com/cafaye/identity/internal/platform/clock"
-	"github.com/cafaye/identity/internal/platform/db"
-	"github.com/cafaye/identity/internal/platform/dbtest"
-	"github.com/cafaye/identity/internal/platform/id"
-	"github.com/cafaye/identity/internal/users"
+	"github.com/anywaye/identity/internal/accounts"
+	"github.com/anywaye/identity/internal/admin"
+	"github.com/anywaye/identity/internal/apikeys"
+	"github.com/anywaye/identity/internal/auth"
+	"github.com/anywaye/identity/internal/platform/clock"
+	"github.com/anywaye/identity/internal/platform/db"
+	"github.com/anywaye/identity/internal/platform/dbtest"
+	"github.com/anywaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/users"
 )
 
 // --- fixture ------------------------------------------------------------------
@@ -535,8 +535,8 @@ func TestAnAdminActionNeverWritesACredential(t *testing.T) {
 		if strings.Contains(entry, w2.tokenSecret) {
 			t.Errorf("a log entry contains the api key's plaintext: %s", entry)
 		}
-		if strings.Contains(entry, "cafaye_") {
-			t.Errorf("a log entry contains something shaped like a cafaye credential: %s", entry)
+		if strings.Contains(entry, "anywaye_") {
+			t.Errorf("a log entry contains something shaped like a anywaye credential: %s", entry)
 		}
 	}
 
@@ -550,8 +550,8 @@ func TestAnAdminActionNeverWritesACredential(t *testing.T) {
 	if body := badRec.Body.String(); strings.Contains(body, w2.tokenSecret) {
 		t.Error("a problem document contains the api key's plaintext")
 	}
-	if body := badRec.Body.String(); strings.Contains(body, "cafaye_") {
-		t.Errorf("a problem document contains something shaped like a cafaye credential: %s", body)
+	if body := badRec.Body.String(); strings.Contains(body, "anywaye_") {
+		t.Errorf("a problem document contains something shaped like a anywaye credential: %s", body)
 	}
 }
 

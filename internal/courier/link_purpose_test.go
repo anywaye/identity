@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cafaye/identity/internal/config"
-	"github.com/cafaye/identity/internal/recovery"
+	"github.com/anywaye/identity/internal/config"
+	"github.com/anywaye/identity/internal/recovery"
 )
 
 // # THE TEST THAT WOULD HAVE CAUGHT THE BUTTON THAT LIES

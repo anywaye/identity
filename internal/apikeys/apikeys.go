@@ -63,7 +63,7 @@ import (
 //
 // IT IS A FEATURE AND THE FEATURE IS RECOGNITION. A secret that leaks — into a
 // CI log, a shell history, a support ticket, a screenshot, a paste buffer — is
-// recognized as a cafaye credential by its first seven characters, which turns
+// recognized as a anywaye credential by its first seven characters, which turns
 // "somebody has to guess which of these strings is a working key" into a grep.
 // It is the same reason the OIDC client id is 32 random bytes rather than a
 // counter, and the same reason gateway's api key carries a prefix: a credential
@@ -72,7 +72,7 @@ import (
 // It is the PREFIX of the value rather than a separator somewhere in the middle
 // because a scanner that looks at the first bytes is looking at the bytes a
 // truncated log line is most likely to have kept.
-const Prefix = "cafaye_"
+const Prefix = "anywaye_"
 
 // SecretBytes is the entropy behind the prefix.
 //
@@ -345,7 +345,7 @@ func IsSupportedScope(scope string) bool {
 }
 
 // Field validation codes. They land verbatim in the `errors[]` array of the
-// cafaye error envelope, so they are part of the contract and clients may switch
+// anywaye error envelope, so they are part of the contract and clients may switch
 // on them.
 const (
 	CodeRequired      = "required"

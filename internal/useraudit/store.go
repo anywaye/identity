@@ -20,7 +20,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/cafaye/identity/internal/platform/db"
+	"github.com/anywaye/identity/internal/platform/db"
 )
 
 // auditColumns is the table's own column list, in one place.

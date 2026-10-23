@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // The refresh token, over real SQL in a private schema.

@@ -24,8 +24,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/cafaye/identity/internal/platform/db"
-	"github.com/cafaye/identity/internal/users"
+	"github.com/anywaye/identity/internal/platform/db"
+	"github.com/anywaye/identity/internal/users"
 )
 
 // grantTimeout bounds the whole command. It is a local operator tool, not a

@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // The five tenancy events. Every one of them is about an account, so the
@@ -300,7 +300,7 @@ func TestTenancyEventTypesAreDistinct(t *testing.T) {
 	}
 }
 
-// The five types are declared here and in cafaye.yml. Those are the same fact
+// The five types are declared here and in anywaye.yml. Those are the same fact
 // stated twice and core asserts they agree, so a type that exists in one and
 // not the other is drift this repository is not allowed to ship.
 func TestTenancyEventTypesMatchTheManifest(t *testing.T) {

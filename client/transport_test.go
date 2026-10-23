@@ -24,7 +24,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cafaye/identity/client/generated"
+	"github.com/anywaye/identity/client/generated"
 )
 
 // generatedModule is the module the generated code imports, and the one MD6 says
@@ -37,7 +37,7 @@ const generatedModule = "github.com/oapi-codegen/runtime"
 // that issues every credential in the platform. Whether the oapi-codegen runtime
 // reaches that artifact is the difference between "three modules in `go.mod`" — which
 // is a fact about the module graph, and which D2 records honestly — and "three
-// modules in the thing every cafaye service ships", which would be a supply-chain
+// modules in the thing every anywaye service ships", which would be a supply-chain
 // change to the whole platform.
 //
 // Asserted by asking `go list -deps`, which is the question itself rather than a
@@ -80,7 +80,7 @@ func TestTheServiceBinaryDoesNotReachTheGeneratedClient(t *testing.T) {
 		if strings.TrimSpace(dependency) == generatedModule {
 			t.Errorf("%s reaches ./cmd/identity, so the service's binary now carries "+
 				"oapi-codegen's runtime.\n\n"+
-				"That is a supply-chain change to the artifact every cafaye service ships, "+
+				"That is a supply-chain change to the artifact every anywaye service ships, "+
 				"made by a client nobody asked for. DECISIONS.md D6 records that this "+
 				"package does not reach the binary; if that has stopped being true, D2 is "+
 				"wrong and the fix is to find the import that reached for it, not to edit "+
@@ -95,12 +95,12 @@ func TestTheServiceBinaryDoesNotReachTheGeneratedClient(t *testing.T) {
 	// the absence above would mean nothing.
 	found := false
 	for _, dependency := range dependencies {
-		if strings.TrimSpace(dependency) == "github.com/cafaye/identity/client" {
+		if strings.TrimSpace(dependency) == "github.com/anywaye/identity/client" {
 			found = true
 		}
 	}
 	if found {
-		t.Errorf("./cmd/identity imports github.com/cafaye/identity/client.\n" +
+		t.Errorf("./cmd/identity imports github.com/anywaye/identity/client.\n" +
 			"The client is for CONSUMERS of identity, not for identity itself. A service " +
 			"that called its own API over HTTP would add a network hop and a dependency " +
 			"to itself for no benefit — it has the stores already.")

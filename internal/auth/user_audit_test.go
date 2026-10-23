@@ -33,9 +33,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cafaye/identity/internal/platform/db"
-	"github.com/cafaye/identity/internal/platform/id"
-	"github.com/cafaye/identity/internal/useraudit"
+	"github.com/anywaye/identity/internal/platform/db"
+	"github.com/anywaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/useraudit"
 )
 
 // errAuditInjected is the failure this file programs at the audit write.

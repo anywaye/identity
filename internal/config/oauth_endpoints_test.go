@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cafaye/identity/internal/oauth"
+	"github.com/anywaye/identity/internal/oauth"
 )
 
 // This file holds the two halves of the endpoint-override wiring that
@@ -37,7 +37,7 @@ func oauthTestKey() string {
 // oauthTestKey uses, base64url.
 func oauthTestEnv() map[string]string {
 	return map[string]string{
-		OAuthRedirectBaseURLVar:       "https://identity.cafaye.com",
+		OAuthRedirectBaseURLVar:       "https://identity.anywaye.com",
 		OAuthEncryptionKeyVar:         oauthTestKey(),
 		OAuthGoogleClientIDVar:        "google-id",
 		OAuthGoogleClientSecretVar:    "google-secret",

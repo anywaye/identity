@@ -61,11 +61,11 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/cafaye/identity/internal/apikeys"
-	"github.com/cafaye/identity/internal/auth"
-	"github.com/cafaye/identity/internal/platform/id"
-	"github.com/cafaye/identity/internal/useraudit"
-	"github.com/cafaye/identity/internal/users"
+	"github.com/anywaye/identity/internal/apikeys"
+	"github.com/anywaye/identity/internal/auth"
+	"github.com/anywaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/useraudit"
+	"github.com/anywaye/identity/internal/users"
 )
 
 // registerOperatorRoutes mounts the two routes.

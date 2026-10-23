@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cafaye/identity/internal/mfa"
-	"github.com/cafaye/identity/internal/platform/id"
-	"github.com/cafaye/identity/internal/sessions"
+	"github.com/anywaye/identity/internal/mfa"
+	"github.com/anywaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/sessions"
 )
 
 // The MFA management surface, the second step of a login, and the properties the

@@ -37,8 +37,8 @@ package httpapi
 import (
 	"context"
 
-	"github.com/cafaye/identity/internal/auth"
-	"github.com/cafaye/identity/internal/oauth"
+	"github.com/anywaye/identity/internal/auth"
+	"github.com/anywaye/identity/internal/oauth"
 )
 
 // socialWiring is the adapter. UNEXPORTED, and the constructor below is the only

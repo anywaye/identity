@@ -6,10 +6,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cafaye/identity/internal/outbox"
-	"github.com/cafaye/identity/internal/platform/clock"
-	"github.com/cafaye/identity/internal/platform/db"
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/outbox"
+	"github.com/anywaye/identity/internal/platform/clock"
+	"github.com/anywaye/identity/internal/platform/db"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // The client registration use cases: register a relying party, list them, read

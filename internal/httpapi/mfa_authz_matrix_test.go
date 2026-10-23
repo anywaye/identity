@@ -12,8 +12,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/cafaye/identity/internal/mfa"
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/mfa"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // THE MFA HALF OF THE AUTHORIZATION MATRIX.

@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cafaye/identity/internal/config"
-	"github.com/cafaye/identity/internal/mfa"
-	"github.com/cafaye/identity/internal/platform/dbtest"
+	"github.com/anywaye/identity/internal/config"
+	"github.com/anywaye/identity/internal/mfa"
+	"github.com/anywaye/identity/internal/platform/dbtest"
 )
 
 // THE MFA WIRING.

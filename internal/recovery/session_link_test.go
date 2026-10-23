@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cafaye/identity/internal/platform/id"
-	"github.com/cafaye/identity/internal/sessions"
+	"github.com/anywaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/sessions"
 )
 
 // THE SESSION LINK, AT THE STORE.

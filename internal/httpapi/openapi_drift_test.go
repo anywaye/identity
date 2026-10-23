@@ -100,7 +100,7 @@ import (
 )
 
 // The two documents, relative to this package. Both are committed and both are
-// what a client generator reads: `cafaye.yml`'s `exposes.api` names the first,
+// what a client generator reads: `anywaye.yml`'s `exposes.api` names the first,
 // and AGENTS.md explains why there are two rather than one.
 const (
 	v1Document     = "../../openapi/v1.yaml"

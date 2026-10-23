@@ -14,7 +14,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cafaye/identity/client/generated"
+	"github.com/anywaye/identity/client/generated"
 )
 
 // problemBody builds a well-formed problem document, so each case differs only in the
@@ -25,7 +25,7 @@ import (
 // MAPPING, not the JSON.
 func problemBody(code string, status int) []byte {
 	document := map[string]any{
-		"type":     "https://docs.cafaye.com/errors/" + code,
+		"type":     "https://docs.anywaye.com/errors/" + code,
 		"title":    "A fixed summary for " + code,
 		"status":   status,
 		"detail":   "something specific to this occurrence",
@@ -216,7 +216,7 @@ func TestTheCodeChoosesTheTypeAndTheStatusOnlyBreaksTies(t *testing.T) {
 	})
 
 	t.Run("the status is used when the code is absent", func(t *testing.T) {
-		body := []byte(`{"type":"https://docs.cafaye.com/errors/","title":"Unauthorized",` +
+		body := []byte(`{"type":"https://docs.anywaye.com/errors/","title":"Unauthorized",` +
 			`"status":401,"detail":"","instance":"/v1/me","trace_id":"abc"}`)
 
 		err := ProblemFrom("getCurrentUser", http.StatusUnauthorized, ProblemContentType, "",
@@ -224,7 +224,7 @@ func TestTheCodeChoosesTheTypeAndTheStatusOnlyBreaksTies(t *testing.T) {
 
 		if !isType[*UnauthenticatedError](err) {
 			t.Errorf("a 401 with no code produced %T, want *UnauthenticatedError.\n"+
-				"RFC 9457 makes `code` a cafaye extension rather than a required member, "+
+				"RFC 9457 makes `code` a anywaye extension rather than a required member, "+
 				"so a service may omit it. Falling back to the status is what keeps a "+
 				"conforming-but-terse service from landing on the fallback type.", err)
 		}
@@ -411,7 +411,7 @@ func TestProblemFieldsAreRedacted(t *testing.T) {
 	// exercises the "not a problem document" branch instead of the redaction this
 	// test is about. It cost one run to find out.
 	leaky, marshalErr := json.Marshal(map[string]any{
-		"type":     "https://docs.cafaye.com/errors/validation_failed",
+		"type":     "https://docs.anywaye.com/errors/validation_failed",
 		"title":    "Validation failed",
 		"status":   422,
 		"detail":   "the token " + apiCredential + " was rejected",

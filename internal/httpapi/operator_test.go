@@ -27,9 +27,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cafaye/identity/internal/apikeys"
-	"github.com/cafaye/identity/internal/platform/id"
-	"github.com/cafaye/identity/internal/users"
+	"github.com/anywaye/identity/internal/apikeys"
+	"github.com/anywaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/users"
 )
 
 // operatorFixture is the operator surface's router: one auth double, one api-key

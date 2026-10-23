@@ -25,7 +25,7 @@ import (
 // its configuration package with the gRPC one —
 //
 //	$ go mod why -m google.golang.org/grpc
-//	github.com/cafaye/identity/internal/telemetry
+//	github.com/anywaye/identity/internal/telemetry
 //	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp
 //	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp/internal/otlpconfig
 //	google.golang.org/grpc
@@ -128,8 +128,8 @@ func normaliseEndpoint(endpoint string) (string, error) {
 	// `WithEndpoint(host, port)` plus `WithURLPath`. `path.Join` below is the
 	// SDK's own rule — its env-config reader uses exactly
 	// `path.Join(u.Path, DefaultTracesPath)` for the environment-variable path — so
-	// a self-hoster pointing at `https://otlp.example.com/cafaye` gets
-	// `/cafaye/v1/traces`, precisely as they would have from the SDK's own
+	// a self-hoster pointing at `https://otlp.example.com/anywaye` gets
+	// `/anywaye/v1/traces`, precisely as they would have from the SDK's own
 	// configuration. One implementation of that rule, in the place that already
 	// normalises every other spelling.
 	//

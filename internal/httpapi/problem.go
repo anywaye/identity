@@ -8,9 +8,9 @@ import (
 )
 
 // errorTypeBase is the stable URI prefix for the `type` attribute. core:
-// "type is a stable https://docs.cafaye.com/errors/<code> URI — the machine-readable
+// "type is a stable https://docs.anywaye.com/errors/<code> URI — the machine-readable
 // contract". Changing this is a breaking change to every client.
-const errorTypeBase = "https://docs.cafaye.com/errors/"
+const errorTypeBase = "https://docs.anywaye.com/errors/"
 
 // Problem codes.
 //
@@ -114,7 +114,7 @@ const (
 	// CodeInvalidRequest is 400 for a request this service understood well enough
 	// to name a specific problem with, on a surface it owns. It is the OAuth 2.0
 	// error name for the same class of thing, which is deliberate: the one place
-	// this service answers with the cafaye envelope for an OAuth-shaped refusal is
+	// this service answers with the anywaye envelope for an OAuth-shaped refusal is
 	// the /oidc/authorize pre-check, and a client debugging it will search for
 	// `invalid_request` in the specifications.
 	CodeInvalidRequest = "invalid_request"
@@ -204,7 +204,7 @@ type FieldError struct {
 	Code  string `json:"code"`
 }
 
-// Problem is the cafaye error envelope: RFC 9457 (application/problem+json) plus
+// Problem is the anywaye error envelope: RFC 9457 (application/problem+json) plus
 // core's `code` and `trace_id` extensions.
 //
 // core sets no additionalProperties rule on the error body, so the seven fields

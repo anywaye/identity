@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/cafaye/identity/internal/outbox"
-	"github.com/cafaye/identity/internal/platform/clock"
-	"github.com/cafaye/identity/internal/platform/db"
-	"github.com/cafaye/identity/internal/platform/id"
-	"github.com/cafaye/identity/internal/tenancy"
-	"github.com/cafaye/identity/internal/users"
+	"github.com/anywaye/identity/internal/outbox"
+	"github.com/anywaye/identity/internal/platform/clock"
+	"github.com/anywaye/identity/internal/platform/db"
+	"github.com/anywaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/tenancy"
+	"github.com/anywaye/identity/internal/users"
 )
 
 // The use cases. Everything a client can do to an account, a membership or an
@@ -25,7 +25,7 @@ import (
 // not of a handler and not of a schema.
 //
 // NOTHING HERE KNOWS ABOUT HTTP. The handlers translate the errors below into
-// the cafaye error envelope; they do not define the rules.
+// the anywaye error envelope; they do not define the rules.
 
 // UnitOfWork runs a function inside a transaction. db.TxRunner implements it;
 // the interface is the seam that lets these rules be tested without Postgres.
@@ -317,8 +317,8 @@ func (s *Service) addOwner(ctx context.Context, q db.Querier, account Account, u
 // # WHY THIS IS THE ONE CALL SITE OF tenancy.BeginUser
 //
 // `account_users` carries two policies after migration 00018 and this query needs
-// the second one. The first is `cafaye.protect_table`'s — `account_id = (select
-// cafaye.current_account_id())` — and it answers "which members belong to the
+// the second one. The first is `anywaye.protect_table`'s — `account_id = (select
+// anywaye.current_account_id())` — and it answers "which members belong to the
 // account I am standing in", which is a different question from this one. A caller
 // who has signed in and has not yet chosen an account is not standing in one;
 // that is what makes them a caller rather than a tenant.
@@ -328,7 +328,7 @@ func (s *Service) addOwner(ctx context.Context, q db.Querier, account Account, u
 // membership row was in the table, and the answer was `[]` for a user who owned
 // an account. The product rendered "you are not a member of any account".
 //
-// The fix is `cafaye.begin_user/1`, and it needs a TRANSACTION to live in —
+// The fix is `anywaye.begin_user/1`, and it needs a TRANSACTION to live in —
 // `begin_user` is `is_local = true`, exactly as `begin_account` is, so on a
 // pooled connection outside a transaction it expires at the end of the statement
 // that set it. That is why this opens one through the same `s.uow` every write in
@@ -385,10 +385,10 @@ func (s *Service) ListMine(ctx context.Context, userID id.UUID) ([]MemberSummary
 //
 // This read runs BEFORE a request has chosen an account — `requireAccountRole`
 // calls it to decide whether the account in the path is this caller's at all — so
-// nothing has set `cafaye.account_id` and the four account policies on
+// nothing has set `anywaye.account_id` and the four account policies on
 // `account_users` cannot let this row through. Migration 00018 added the fifth,
-// `account_users_cafaye_members`, which filters on
-// `user_id = cafaye.current_user_id()`, and `cafaye.begin_user` is what puts the
+// `account_users_anywaye_members`, which filters on
+// `user_id = anywaye.current_user_id()`, and `anywaye.begin_user` is what puts the
 // caller there.
 //
 // So without the transaction below this returns ErrNotAMember to the OWNER of
@@ -449,8 +449,8 @@ func (s *Service) Get(ctx context.Context, accountID, userID id.UUID) (Account, 
 //
 // # WHY IT OPENS A TRANSACTION, AND WHY THAT IS THE WHOLE FIX
 //
-// `account_users` is scoped by the ACCOUNT — `account_users_cafaye_select` from
-// 00016, `account_id = (select cafaye.current_account_id())` — so listing an
+// `account_users` is scoped by the ACCOUNT — `account_users_anywaye_select` from
+// 00016, `account_id = (select anywaye.current_account_id())` — so listing an
 // account's members needs the ACCOUNT identity, and `begin_account` is
 // `is_local`: on a bare pooled connection it expires at the end of the statement
 // that set it. Reading on `s.read.Queryer()` therefore saw no identity at all,
@@ -601,8 +601,8 @@ type Invited struct {
 // THE READ IS `s.Member`, and that is the whole fix for a defect that stopped
 // anybody being invited at all. It used to be
 // `s.store.Member(ctx, s.read.Queryer(), …)` — a bare pooled connection, no
-// transaction, no `tenancy.BeginUser` — so the `account_users_cafaye_members`
-// policy (00018, `user_id = cafaye.current_user_id()`) filtered the OWNER'S OWN
+// transaction, no `tenancy.BeginUser` — so the `account_users_anywaye_members`
+// policy (00018, `user_id = anywaye.current_user_id()`) filtered the OWNER'S OWN
 // membership row out, `ErrNotAMember` came back, and the mapping a few lines
 // below turned it into ErrOwnerProtected. An owner could not invite anybody,
 // and the error said something about owners, which is the hardest kind of wrong

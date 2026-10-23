@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cafaye/identity/internal/accounts"
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/accounts"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // fakeTenancy is a programmable stand-in for accounts.Service, so the handlers

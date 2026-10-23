@@ -26,8 +26,8 @@ import (
 // That was a characterisation, not a requirement, and it was pinned deliberately
 // so that whoever fixed the problem would get a red test naming exactly what
 // moved. migrations/00016 now calls
-// `cafaye.protect_credential_table('api_keys', 'token_digest')` and the
-// application opens the resolution with `cafaye.begin_credential(digest)`, so the
+// `anywaye.protect_credential_table('api_keys', 'token_digest')` and the
+// application opens the resolution with `anywaye.begin_credential(digest)`, so the
 // measurement it took is no longer what the service does — and a test whose name
 // says "has no identity to run under" would now be a test asserting a defect.
 //
@@ -331,7 +331,7 @@ func TestTenancyACredentialResolvesByTheDigestTheCallerPresentedAndNothingElse(t
 // so the same transaction can establish what the identity can SEE — which is case
 // 0's tripwire.
 func countAsAccount(ctx context.Context, conn *pgx.Conn, accountID, digest string, out *int) error {
-	return inTransaction(ctx, conn, `select cafaye.begin_account($1)`, accountID, func(ctx context.Context, tx pgx.Tx) error {
+	return inTransaction(ctx, conn, `select anywaye.begin_account($1)`, accountID, func(ctx context.Context, tx pgx.Tx) error {
 		if digest == "" {
 			return tx.QueryRow(ctx, `select count(*) from api_keys`).Scan(out)
 		}
@@ -345,7 +345,7 @@ func countAsAccount(ctx context.Context, conn *pgx.Conn, accountID, digest strin
 // supply it. It is what makes case 0's precondition a precondition — it holds
 // whatever the policies do, so a failure names the seed rather than the boundary.
 func countOwnKeysAs(ctx context.Context, conn *pgx.Conn, accountID string, out *int) error {
-	return inTransaction(ctx, conn, `select cafaye.begin_account($1)`, accountID,
+	return inTransaction(ctx, conn, `select anywaye.begin_account($1)`, accountID,
 		func(ctx context.Context, tx pgx.Tx) error {
 			return tx.QueryRow(ctx, `select count(*) from api_keys where account_id = $1`, accountID).Scan(out)
 		})
@@ -356,7 +356,7 @@ func countOwnKeysAs(ctx context.Context, conn *pgx.Conn, accountID string, out *
 // that a resolution works before the account is known.
 func countAsCredential(ctx context.Context, conn *pgx.Conn, digest string) (int, error) {
 	var out int
-	err := inTransaction(ctx, conn, `select cafaye.begin_credential($1)`, digest,
+	err := inTransaction(ctx, conn, `select anywaye.begin_credential($1)`, digest,
 		func(ctx context.Context, tx pgx.Tx) error {
 			return tx.QueryRow(ctx,
 				`select count(*) from api_keys where token_digest = $1`, digest).Scan(&out)
@@ -370,7 +370,7 @@ func countAsCredential(ctx context.Context, conn *pgx.Conn, digest string) (int,
 // assertion.
 func namesInResolution(ctx context.Context, conn *pgx.Conn, digest string) ([]string, error) {
 	var names []string
-	err := inTransaction(ctx, conn, `select cafaye.begin_credential($1)`, digest,
+	err := inTransaction(ctx, conn, `select anywaye.begin_credential($1)`, digest,
 		func(ctx context.Context, tx pgx.Tx) error {
 			rows, err := tx.Query(ctx, `select name from api_keys`)
 			if err != nil {
@@ -393,7 +393,7 @@ func namesInResolution(ctx context.Context, conn *pgx.Conn, digest string) ([]st
 // "it does not open another table" case is measured on another table rather than
 // asserted from the shape of the policy.
 func countInResolution(ctx context.Context, conn *pgx.Conn, digest, query string, out *int) error {
-	return inTransaction(ctx, conn, `select cafaye.begin_credential($1)`, digest,
+	return inTransaction(ctx, conn, `select anywaye.begin_credential($1)`, digest,
 		func(ctx context.Context, tx pgx.Tx) error {
 			return tx.QueryRow(ctx, query).Scan(out)
 		})
@@ -432,7 +432,7 @@ func writeInResolution(ctx context.Context, conn *pgx.Conn, digest, accountID st
 	}
 
 	accepted := false
-	err := inTransaction(ctx, conn, `select cafaye.begin_credential($1)`, digest,
+	err := inTransaction(ctx, conn, `select anywaye.begin_credential($1)`, digest,
 		func(ctx context.Context, tx pgx.Tx) error {
 			if _, err := tx.Exec(ctx, `savepoint resolution_write`); err != nil {
 				return err
@@ -518,7 +518,7 @@ func seedCredentialRows(ctx context.Context, t *testing.T, conn *pgx.Conn) (tena
 			_ = tx.Rollback(ctx)
 			t.Fatalf("inserting a fixture user: %v", err)
 		}
-		if _, err := tx.Exec(ctx, `select cafaye.begin_account($1)`, accountID); err != nil {
+		if _, err := tx.Exec(ctx, `select anywaye.begin_account($1)`, accountID); err != nil {
 			_ = tx.Rollback(ctx)
 			t.Fatalf("setting the identity: %v", err)
 		}

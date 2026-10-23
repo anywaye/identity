@@ -10,11 +10,11 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/cafaye/identity/internal/platform/clock"
-	"github.com/cafaye/identity/internal/platform/db"
-	"github.com/cafaye/identity/internal/platform/dbtest"
-	"github.com/cafaye/identity/internal/platform/id"
-	"github.com/cafaye/identity/internal/tenancy"
+	"github.com/anywaye/identity/internal/platform/clock"
+	"github.com/anywaye/identity/internal/platform/db"
+	"github.com/anywaye/identity/internal/platform/dbtest"
+	"github.com/anywaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/tenancy"
 )
 
 // The claim use case, over a real Postgres in a private schema.
@@ -303,7 +303,7 @@ func TestTheClaimRefusesALinkItCannotResolve(t *testing.T) {
 
 	// A wrong token.
 	if _, err := f.svc.Claim(f.claimCtx(), ClaimInput{
-		Token: "cafaye_" + link[7:] + "x", Account: f.account, User: f.user, TraceID: "t", Now: serviceInstant,
+		Token: "anywaye_" + link[7:] + "x", Account: f.account, User: f.user, TraceID: "t", Now: serviceInstant,
 	}); !errors.Is(err, ErrNotFound) {
 		t.Errorf("a wrong token returned %v, want ErrNotFound", err)
 	}

@@ -11,9 +11,9 @@ import (
 
 	"time"
 
-	authsvc "github.com/cafaye/identity/internal/auth"
-	"github.com/cafaye/identity/internal/deletion"
-	"github.com/cafaye/identity/internal/platform/clock"
+	authsvc "github.com/anywaye/identity/internal/auth"
+	"github.com/anywaye/identity/internal/deletion"
+	"github.com/anywaye/identity/internal/platform/clock"
 )
 
 // # THE HTTP HALF OF THE DELETION.
@@ -167,7 +167,7 @@ func TestTheRouteIsRefusedWithAConflictThatNamesTheAccount(t *testing.T) {
 	// "Request failed", a title that names neither the conflict nor the remedy.
 	// That passed this test, which is why the assertion lives here.
 	//
-	// `type` is the machine-readable contract (`docs.cafaye.com/errors/<code>`, exactly
+	// `type` is the machine-readable contract (`docs.anywaye.com/errors/<code>`, exactly
 	// the code) and a client matching on it must not find a base URI this service
 	// emits nowhere else. Both were wrong in the first draft of the document, and
 	// neither was visible to a reader of the handler.

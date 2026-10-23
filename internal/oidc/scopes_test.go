@@ -48,8 +48,8 @@ func TestIsSupportedScope(t *testing.T) {
 		// out. A product asking for `phone` has asked for something identity
 		// cannot answer, and answering with a token that quietly omits it is how
 		// a product ships a sign-in screen with a missing phone field.
-		{name: "phone is not a cafaye scope", give: "phone"},
-		{name: "address is not a cafaye scope", give: "address"},
+		{name: "phone is not a anywaye scope", give: "phone"},
+		{name: "address is not a anywaye scope", give: "address"},
 		{name: "offline_access is not offered", give: "offline_access"},
 
 		// A near miss on one of ours. `profile` and `profiles` are different

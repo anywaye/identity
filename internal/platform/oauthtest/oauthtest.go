@@ -28,7 +28,7 @@ import (
 
 	"github.com/go-jose/go-jose/v4"
 
-	"github.com/cafaye/identity/internal/oauth"
+	"github.com/anywaye/identity/internal/oauth"
 )
 
 // Email is one entry of GitHub's /user/emails response.

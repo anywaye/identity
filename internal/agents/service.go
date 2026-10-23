@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/cafaye/identity/internal/platform/db"
-	"github.com/cafaye/identity/internal/platform/id"
-	"github.com/cafaye/identity/internal/tenancy"
+	"github.com/anywaye/identity/internal/platform/db"
+	"github.com/anywaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/tenancy"
 )
 
 // The service: the use cases that sit between a route and the store.
@@ -163,7 +163,7 @@ func (s *Service) Claim(ctx context.Context, in ClaimInput) (Claimed, error) {
 		// THE ACCOUNT BOUNDARY, SET ON THIS TRANSACTION.
 		//
 		// `requireAccountRole` put the account on the request context, and
-		// `cafaye.begin_account/1` is `set_config(..., is_local => true)` — which
+		// `anywaye.begin_account/1` is `set_config(..., is_local => true)` — which
 		// outside an explicit transaction expires at the end of the STATEMENT that
 		// set it, so a caller reaching the database in autocommit reads zero rows.
 		//

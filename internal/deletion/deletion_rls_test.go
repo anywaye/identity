@@ -8,14 +8,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cafaye/identity/internal/accounts"
-	"github.com/cafaye/identity/internal/oidc"
-	"github.com/cafaye/identity/internal/outbox"
-	"github.com/cafaye/identity/internal/platform/db"
-	"github.com/cafaye/identity/internal/platform/dbtest"
-	"github.com/cafaye/identity/internal/platform/id"
-	"github.com/cafaye/identity/internal/sessions"
-	"github.com/cafaye/identity/internal/users"
+	"github.com/anywaye/identity/internal/accounts"
+	"github.com/anywaye/identity/internal/oidc"
+	"github.com/anywaye/identity/internal/outbox"
+	"github.com/anywaye/identity/internal/platform/db"
+	"github.com/anywaye/identity/internal/platform/dbtest"
+	"github.com/anywaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/sessions"
+	"github.com/anywaye/identity/internal/users"
 )
 
 // # THE DELETION AGAINST THE REAL POLICIES AND THE REAL FOREIGN KEYS.
@@ -81,7 +81,7 @@ func seed(t *testing.T, pool db.Pool, asAccount id.UUID, fn func(ctx context.Con
 
 	err := db.TxRunner{Pool: pool}.Do(t.Context(), func(ctx context.Context, q db.Querier) error {
 		if !asAccount.IsZero() {
-			if _, err := q.Exec(ctx, `SELECT cafaye.begin_account($1)`, asAccount); err != nil {
+			if _, err := q.Exec(ctx, `SELECT anywaye.begin_account($1)`, asAccount); err != nil {
 				return fmt.Errorf("standing in the account: %w", err)
 			}
 		}
@@ -178,7 +178,7 @@ func count(t *testing.T, pool db.Pool, query string, args ...any) int {
 // correct for `users` and `accounts` — neither carries a policy, and 00016 says
 // so — and silently returns ZERO for `account_users`, `account_invitations` and
 // `oidc_clients`. Every one of them is `FORCE ROW LEVEL SECURITY` behind a
-// `cafaye.current_account_id()` predicate that is NULL here.
+// `anywaye.current_account_id()` predicate that is NULL here.
 //
 // So `SELECT count(*) FROM account_users WHERE account_id = $1` on a bare pool
 // answers 0 for "the membership was deleted" AND for "the membership is right
@@ -205,7 +205,7 @@ func countInAccount(t *testing.T, pool db.Pool, accountID id.UUID, query string,
 
 	var n int
 	err := db.TxRunner{Pool: pool}.Do(t.Context(), func(ctx context.Context, q db.Querier) error {
-		if _, err := q.Exec(ctx, `SELECT cafaye.begin_account($1)`, accountID); err != nil {
+		if _, err := q.Exec(ctx, `SELECT anywaye.begin_account($1)`, accountID); err != nil {
 			return err
 		}
 		return q.QueryRow(ctx, query, args...).Scan(&n)

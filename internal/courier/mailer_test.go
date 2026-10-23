@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cafaye/identity/internal/platform/id"
-	"github.com/cafaye/identity/internal/recovery"
+	"github.com/anywaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/recovery"
 )
 
 // # THE SHAPE OF THIS FILE
@@ -60,7 +60,7 @@ func resetMessageFor(email, token string) recovery.Message {
 // even though courier's `email_change_new` template does not render one.
 func verificationMessage(token string) recovery.Message {
 	message := recoveryMessage(kindVerifyEmail, "kaka@example.com",
-		"Confirm the address kaka@example.com for your cafaye account.\n\n"+
+		"Confirm the address kaka@example.com for your anywaye account.\n\n"+
 			"Your confirmation code is:\n\n    "+token+"\n")
 	message.UserID = testUserID
 	return message
@@ -68,7 +68,7 @@ func verificationMessage(token string) recovery.Message {
 
 func changeCurrentMessage(token string) recovery.Message {
 	message := recoveryMessage(kindChangeCurrent, "kaka@example.com",
-		"Somebody signed in to the cafaye account on kaka@example.com and asked to\n"+
+		"Somebody signed in to the anywaye account on kaka@example.com and asked to\n"+
 			"change the address it uses.\n\nIf that was you, confirm it with this code:\n\n    "+
 			token+"\n")
 	message.UserID = testUserID
@@ -77,7 +77,7 @@ func changeCurrentMessage(token string) recovery.Message {
 
 func changeNewMessage(token string) recovery.Message {
 	message := recoveryMessage(kindChangeNew, "new@example.com",
-		"Somebody asked to move the cafaye account on kaka@example.com to this address.\n\n"+
+		"Somebody asked to move the anywaye account on kaka@example.com to this address.\n\n"+
 			"Confirm it with this code:\n\n    "+token+"\n")
 	message.UserID = testUserID
 	return message
@@ -197,13 +197,13 @@ func TestAMessageCourierHasNoTypeForIsRefused(t *testing.T) {
 		{
 			name: "a two-factor enrolment notice",
 			message: recoveryMessage("Confirm your new security key", "kaka@example.com",
-				"Somebody added a security key to your cafaye account.\n\n    "+testToken+"\n"),
+				"Somebody added a security key to your anywaye account.\n\n    "+testToken+"\n"),
 			why: "courier's NotificationType has no security-key type, and inventing " +
 				"one would mean identity owning a template courier renders",
 		},
 		{
 			name: "a subject that is almost a real one",
-			message: recoveryMessage("Reset your cafaye password.", "kaka@example.com",
+			message: recoveryMessage("Reset your anywaye password.", "kaka@example.com",
 				"Somebody asked to reset the password for the account registered to "+
 					"kaka@example.com.\n\n    "+testToken+"\n"),
 			why: "the match on the subject is exact and not a normalisation: a subject " +

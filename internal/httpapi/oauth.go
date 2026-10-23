@@ -30,7 +30,7 @@ package httpapi
 // the callback whether or not this flow is the reason it holds one, and deciding
 // from the cookie alone would mean a cross-site GET of the start route — which any
 // page can cause, and which a top-level navigation sends cookies for — could turn
-// into a link of the ATTACKER's provider account to the VICTIM's cafaye account.
+// into a link of the ATTACKER's provider account to the VICTIM's anywaye account.
 // The whole of social login is a mechanism for turning somebody else's provider
 // identity into a credential, so an authorization decision made from ambient cookie
 // state is the one thing this pair of routes must not do.
@@ -72,9 +72,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/cafaye/identity/internal/auth"
-	"github.com/cafaye/identity/internal/oauth"
-	"github.com/cafaye/identity/internal/users"
+	"github.com/anywaye/identity/internal/auth"
+	"github.com/anywaye/identity/internal/oauth"
+	"github.com/anywaye/identity/internal/users"
 )
 
 const (

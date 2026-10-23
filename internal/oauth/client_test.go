@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cafaye/identity/internal/oauth"
-	"github.com/cafaye/identity/internal/platform/oauthtest"
+	"github.com/anywaye/identity/internal/oauth"
+	"github.com/anywaye/identity/internal/platform/oauthtest"
 )
 
 // These are the two calls this service makes to a provider, driven end to end
@@ -19,11 +19,11 @@ import (
 // mock of the client's own interface — would both assert that the code does what
 // the test assumed; an httptest server asserts it does what the wire says.
 
-const fakeRedirectURI = "https://identity.cafaye.com/v1/auth/oauth/google/callback"
+const fakeRedirectURI = "https://identity.anywaye.com/v1/auth/oauth/google/callback"
 
 func newTestClient(t *testing.T) *oauth.Client {
 	t.Helper()
-	return oauth.NewClient(oauth.ClientOptions{RedirectBaseURL: "https://identity.cafaye.com"})
+	return oauth.NewClient(oauth.ClientOptions{RedirectBaseURL: "https://identity.anywaye.com"})
 }
 
 // The exchange must present the code together with the same redirect_uri the
@@ -554,7 +554,7 @@ func TestClientIdentityCapsTheResponseBody(t *testing.T) {
 
 	client := oauth.NewClient(oauth.ClientOptions{
 		HTTPClient:      &http.Client{Timeout: 5 * time.Second},
-		RedirectBaseURL: "https://identity.cafaye.com",
+		RedirectBaseURL: "https://identity.anywaye.com",
 	})
 	if _, err := client.Identity(context.Background(), provider, oauth.Tokens{AccessToken: "t"}); err == nil {
 		t.Error("Identity accepted a response past the size cap")

@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// Every assertion here comes from cafaye/core docs/openapi-conventions.md,
+// Every assertion here comes from anywaye/core docs/openapi-conventions.md,
 // "Error envelope". The document says no service invents its own error body, so
 // this file is the service's half of that rule.
 
@@ -31,12 +31,12 @@ func TestProblemMatchesTheCoreEnvelope(t *testing.T) {
 		t.Fatalf("the body is not JSON: %v\n%s", err, rec.Body)
 	}
 
-	// type is the machine-readable contract: a stable docs.cafaye.com/errors URI.
-	if want := "https://docs.cafaye.com/errors/unauthorized"; p.Type != want {
+	// type is the machine-readable contract: a stable docs.anywaye.com/errors URI.
+	if want := "https://docs.anywaye.com/errors/unauthorized"; p.Type != want {
 		t.Errorf("type = %q, want %q", p.Type, want)
 	}
 	// code is the same slug as the last segment of type.
-	if slug := strings.TrimPrefix(p.Type, "https://docs.cafaye.com/errors/"); p.Code != slug {
+	if slug := strings.TrimPrefix(p.Type, "https://docs.anywaye.com/errors/"); p.Code != slug {
 		t.Errorf("code = %q, want the last segment of type (%q)", p.Code, slug)
 	}
 	if p.Status != http.StatusUnauthorized {

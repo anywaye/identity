@@ -10,7 +10,7 @@ package client
 // the router side, and a client needs its own tripwire for the same reason — the
 // two files cannot both be right and nothing else would say so.
 //
-// This is the Go half of a pair. `cafaye-ts`'s `regeneration.test.mjs` is the
+// This is the Go half of a pair. `anywaye-ts`'s `regeneration.test.mjs` is the
 // TypeScript half, and the three clients for one platform have to fail the same
 // way or "we regenerate when we remember" is the platform's policy.
 //
@@ -92,7 +92,7 @@ func repoRoot(t *testing.T) string {
 // `git status --porcelain` is asked as well, because `git diff` is blind to an
 // untracked file and a generator that starts emitting an extra file changes the
 // published surface while reporting a clean diff. That is the same reasoning
-// cafaye-ts's regeneration test gives, and it is right for the same reason.
+// anywaye-ts's regeneration test gives, and it is right for the same reason.
 func TestTheCommittedGeneratedFileIsWhatThePinnedGeneratorProduces(t *testing.T) {
 	root := repoRoot(t)
 

@@ -15,14 +15,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cafaye/identity/internal/outbox"
-	"github.com/cafaye/identity/internal/platform/clock"
-	"github.com/cafaye/identity/internal/platform/db"
-	"github.com/cafaye/identity/internal/platform/dbtest"
-	"github.com/cafaye/identity/internal/platform/id"
-	"github.com/cafaye/identity/internal/recovery"
-	"github.com/cafaye/identity/internal/sessions"
-	"github.com/cafaye/identity/internal/users"
+	"github.com/anywaye/identity/internal/outbox"
+	"github.com/anywaye/identity/internal/platform/clock"
+	"github.com/anywaye/identity/internal/platform/db"
+	"github.com/anywaye/identity/internal/platform/dbtest"
+	"github.com/anywaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/recovery"
+	"github.com/anywaye/identity/internal/sessions"
+	"github.com/anywaye/identity/internal/users"
 )
 
 // # THIS IS THE PROOF, AND ITS BOUNDARIES ARE WHY IT IS WRITTEN LIKE THIS
@@ -373,7 +373,7 @@ func TestASuppressedMailboxIsRefusedRatherThanReportedAsSent(t *testing.T) {
 		_, _ = w.Write([]byte(`{"code":"conflict","detail":"That mailbox does not ` +
 			`exist: it hard-bounced a previous message.","instance":"/v1/messages",` +
 			`"status":409,"title":"Conflict","trace_id":"sup-1",` +
-			`"type":"https://docs.cafaye.com/errors/conflict"}`))
+			`"type":"https://docs.anywaye.com/errors/conflict"}`))
 	}))
 	defer suppressed.Close()
 
@@ -422,7 +422,7 @@ func TestTheSuppressionNeverReachesTheAddress(t *testing.T) {
 		w.WriteHeader(http.StatusConflict)
 		_, _ = w.Write([]byte(`{"code":"conflict","detail":"That mailbox does not ` +
 			`exist.","status":409,"trace_id":"sup-2",` +
-			`"type":"https://docs.cafaye.com/errors/conflict"}`))
+			`"type":"https://docs.anywaye.com/errors/conflict"}`))
 	}))
 	defer suppressed.Close()
 
@@ -554,7 +554,7 @@ func newCourierStub(t *testing.T) *courierStub {
 			_, _ = w.Write([]byte(`{"code":"validation_failed","detail":"` + field +
 				`","errors":[{"code":"invalid_format","field":"` + field + `"}],` +
 				`"status":422,"trace_id":"stub-1",` +
-				`"type":"https://docs.cafaye.com/errors/validation_failed"}`))
+				`"type":"https://docs.anywaye.com/errors/validation_failed"}`))
 			return
 		}
 

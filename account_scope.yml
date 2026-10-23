@@ -1,9 +1,9 @@
 # account_scope.yml — every entry point identity mounts, and which of them can
 # reach another account's data.
 #
-# Checked by cafaye/core's contract harness:
+# Checked by anywaye/core's contract harness:
 #
-#     /Users/kaka/Code/any/cafaye/core/harness/bin/account-scope-check .
+#     /Users/kaka/Code/any/anywaye/core/harness/bin/account-scope-check .
 #
 # THE SIBLING FILE IS tenancy.yml, AND THE TWO ANSWER DIFFERENT QUESTIONS.
 # `tenancy.yml` declares the STATEMENTS that constrain on `account_id` and the
@@ -718,7 +718,7 @@ entryPoints:
 # reader will want to check and the answer is not obvious: the token this
 # provider mints carries an `accounts` ARRAY rather than one `account_id`.
 # `oidc.claimAccount` at internal/oidc/profiles.go:166-194 is the projection, and
-# its own comment gives the reason — "a user of a cafaye product is a member of
+# its own comment gives the reason — "a user of a anywaye product is a member of
 # a personal account and usually of several team accounts, so there is no single
 # account_id to put in a token". So the account a caller receives on any of these
 # eleven is derived from the USER identity this service authenticated, and no

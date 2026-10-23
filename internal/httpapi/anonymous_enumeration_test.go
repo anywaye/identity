@@ -75,17 +75,17 @@ import (
 	"github.com/alexedwards/argon2id"
 	"github.com/go-chi/chi/v5"
 
-	"github.com/cafaye/identity/internal/accounts"
-	"github.com/cafaye/identity/internal/apikeys"
-	"github.com/cafaye/identity/internal/deletion"
-	"github.com/cafaye/identity/internal/outbox"
-	"github.com/cafaye/identity/internal/platform/clock"
-	"github.com/cafaye/identity/internal/platform/db"
-	"github.com/cafaye/identity/internal/platform/dbtest"
-	"github.com/cafaye/identity/internal/platform/id"
-	"github.com/cafaye/identity/internal/recovery"
-	"github.com/cafaye/identity/internal/sessions"
-	"github.com/cafaye/identity/internal/users"
+	"github.com/anywaye/identity/internal/accounts"
+	"github.com/anywaye/identity/internal/apikeys"
+	"github.com/anywaye/identity/internal/deletion"
+	"github.com/anywaye/identity/internal/outbox"
+	"github.com/anywaye/identity/internal/platform/clock"
+	"github.com/anywaye/identity/internal/platform/db"
+	"github.com/anywaye/identity/internal/platform/dbtest"
+	"github.com/anywaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/recovery"
+	"github.com/anywaye/identity/internal/sessions"
+	"github.com/anywaye/identity/internal/users"
 )
 
 // auditRoute is one row: a route a stranger can reach, the identifier it accepts,
@@ -499,7 +499,7 @@ func anonymousFamilyAudit() []auditRoute {
 			// reporting a session-gated route as one that answered a stranger.
 			name: "claim an agent", method: http.MethodPost,
 			pattern:   "/v1/accounts/{accountID}/agents/claim",
-			probe:     `{"token":"cafaye_` + strings.Repeat("z", 43) + `"}`,
+			probe:     `{"token":"anywaye_` + strings.Repeat("z", 43) + `"}`,
 			anonymous: http.StatusUnauthorized,
 			discloses: "nothing from a stranger: 401 before the token in the body is read. " +
 				"Behind a session, one 404 for a wrong token, an expired link, an " +
@@ -830,7 +830,7 @@ func TestRegistrationPublishesOnlyThatAnAddressIsTaken(t *testing.T) {
 	// A problem document is seven fields. If a future change adds an eighth — an id, a
 	// name, a `verified` boolean — this fails and names it.
 	want := Problem{
-		Type:     "https://docs.cafaye.com/errors/conflict",
+		Type:     "https://docs.anywaye.com/errors/conflict",
 		Title:    "Conflict",
 		Status:   http.StatusConflict,
 		Detail:   "an account already exists for that email address",

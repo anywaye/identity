@@ -6,12 +6,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cafaye/identity/internal/platform/clock"
-	"github.com/cafaye/identity/internal/platform/db"
-	"github.com/cafaye/identity/internal/platform/dbtest"
-	"github.com/cafaye/identity/internal/platform/id"
-	"github.com/cafaye/identity/internal/tenancy"
-	"github.com/cafaye/identity/internal/users"
+	"github.com/anywaye/identity/internal/platform/clock"
+	"github.com/anywaye/identity/internal/platform/db"
+	"github.com/anywaye/identity/internal/platform/dbtest"
+	"github.com/anywaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/tenancy"
+	"github.com/anywaye/identity/internal/users"
 )
 
 // `Invite` and `Members` UNDER THE REAL POLICIES, and the second file in this
@@ -132,8 +132,8 @@ func TestInviteFindsTheInviterUnderTheRealPolicies(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("Invite by the account's own owner = %v, want a pending invitation. "+
-			"account_users carries `account_users_cafaye_members` (00018), which filters on "+
-			"`user_id = cafaye.current_user_id()`, so a read that has not called "+
+			"account_users carries `account_users_anywaye_members` (00018), which filters on "+
+			"`user_id = anywaye.current_user_id()`, so a read that has not called "+
 			"tenancy.BeginUser ON ITS OWN TRANSACTION cannot see the inviter's own row: the "+
 			"database filters it and this maps ErrNotAMember to ErrOwnerProtected, which is "+
 			"how the owner of an account came to be unable to invite anybody into it.",
@@ -274,7 +274,7 @@ func TestMembersListsEveryRowOfTheAccountUnderTheRealPolicies(t *testing.T) {
 	if len(members) != 3 {
 		t.Fatalf("Members listed %d rows, want 3 — the account has an owner, an admin and a "+
 			"member. An EMPTY list here is the defect: account_users is scoped by "+
-			"`account_id = cafaye.current_account_id()`, a read on a bare pooled connection has "+
+			"`account_id = anywaye.current_account_id()`, a read on a bare pooled connection has "+
 			"set no account, so the database filtered every row and the caller was told this "+
 			"account has nobody in it.", len(members))
 	}
@@ -350,7 +350,7 @@ func TestMembersRefusesWithoutItsOwnAccountRatherThanAnsweringEmpty(t *testing.T
 // TestTheAccountSelectPolicyIsInstalledUnderRealPolicies is the control for
 // TestMembersListsEveryRowOfTheAccountUnderTheRealPolicies.
 //
-// get_rls_test.go has one for `account_users_cafaye_members`, which is the
+// get_rls_test.go has one for `account_users_anywaye_members`, which is the
 // policy `Invite` depends on. This is the OTHER one: `Members` is scoped by the
 // account rather than by the caller, so a run against a database where 00016's
 // select policy had been dropped would see every row of the table and this
@@ -363,7 +363,7 @@ func TestTheAccountSelectPolicyIsInstalledUnderRealPolicies(t *testing.T) {
 	err := pool.QueryRow(t.Context(),
 		`SELECT pg_get_expr(polqual, polrelid) FROM pg_policy
 		  WHERE polrelid = 'account_users'::regclass
-		    AND polname = 'account_users_cafaye_select'`,
+		    AND polname = 'account_users_anywaye_select'`,
 	).Scan(&qual)
 	if err != nil {
 		t.Fatalf("reading the membership account policy: %v. Without it, every account-scoped "+
@@ -371,8 +371,8 @@ func TestTheAccountSelectPolicyIsInstalledUnderRealPolicies(t *testing.T) {
 			err)
 	}
 	if !strings.Contains(strings.ToLower(qual), "current_account_id") {
-		t.Errorf("account_users_cafaye_select filters on %q, want a predicate naming "+
-			"cafaye.current_account_id(). A policy that does not scope by the ACCOUNT is a "+
+		t.Errorf("account_users_anywaye_select filters on %q, want a predicate naming "+
+			"anywaye.current_account_id(). A policy that does not scope by the ACCOUNT is a "+
 			"different boundary, and the empty member list this file exists for would be a "+
 			"different bug.", qual)
 	}
@@ -383,8 +383,8 @@ func TestTheAccountSelectPolicyIsInstalledUnderRealPolicies(t *testing.T) {
 // this file's Invite tests are the ones that would pass without it.
 //
 // `Invite` reads the inviter's membership through `Member`, which names the
-// caller — so the read is admitted by `account_users_cafaye_members` (00018,
-// `user_id = cafaye.current_user_id()`). Drop that policy and the read still
+// caller — so the read is admitted by `account_users_anywaye_members` (00018,
+// `user_id = anywaye.current_user_id()`). Drop that policy and the read still
 // succeeds, because a table with no policy on it shows every row to every
 // caller: the inviter is found, the invitation is created, and both Invite tests
 // above stay green while the boundary they depend on is gone. get_rls_test.go
@@ -393,7 +393,7 @@ func TestTheAccountSelectPolicyIsInstalledUnderRealPolicies(t *testing.T) {
 // have to know that another file's control is what stands between these tests and
 // a database with no caller scope.
 //
-// The invitation WRITE's `with check` (`account_invitations_cafaye_insert`) is
+// The invitation WRITE's `with check` (`account_invitations_anywaye_insert`) is
 // not controlled here. It is one of the five tables'
 // `TestTenancyIdentityOwnsItsFiveTables` in internal/tenancy asserts, at the
 // suite level, on every run — which is the right home for a property all five
@@ -405,15 +405,15 @@ func TestTheCallerSelectPolicyIsInstalledUnderRealPolicies(t *testing.T) {
 	err := pool.QueryRow(t.Context(),
 		`SELECT pg_get_expr(polqual, polrelid) FROM pg_policy
 		  WHERE polrelid = 'account_users'::regclass
-		    AND polname = 'account_users_cafaye_members'`,
+		    AND polname = 'account_users_anywaye_members'`,
 	).Scan(&qual)
 	if err != nil {
 		t.Fatalf("reading the membership caller policy: %v. Without it, both Invite tests "+
 			"in this file pass for the wrong reason — the policy is their subject.", err)
 	}
 	if !strings.Contains(strings.ToLower(qual), "current_user_id") {
-		t.Errorf("account_users_cafaye_members filters on %q, want a predicate naming "+
-			"cafaye.current_user_id(). A policy that does not scope by the CALLER lets the "+
+		t.Errorf("account_users_anywaye_members filters on %q, want a predicate naming "+
+			"anywaye.current_user_id(). A policy that does not scope by the CALLER lets the "+
 			"inviter's row through for anybody, and the invite privilege rules this file "+
 			"exists for would be enforced by a boundary that is not there.", qual)
 	}

@@ -104,7 +104,7 @@ func TestTenancyACredentialJoinSeesItsMembership(t *testing.T) {
 	// open the membership of the presented credential and nothing else.
 	t.Run("a resolution sees exactly the presented credential's membership", func(t *testing.T) {
 		var members []string
-		err := inTransaction(ctx, app, `select cafaye.begin_credential($1)`, digestFor(tenantA),
+		err := inTransaction(ctx, app, `select anywaye.begin_credential($1)`, digestFor(tenantA),
 			func(ctx context.Context, tx pgx.Tx) error {
 				rows, err := tx.Query(ctx, `select account_id::text from account_users`)
 				if err != nil {
@@ -130,7 +130,7 @@ func TestTenancyACredentialJoinSeesItsMembership(t *testing.T) {
 		}
 
 		var other int
-		err = inTransaction(ctx, app, `select cafaye.begin_credential($1)`, digestFor(tenantA),
+		err = inTransaction(ctx, app, `select anywaye.begin_credential($1)`, digestFor(tenantA),
 			func(ctx context.Context, tx pgx.Tx) error {
 				return tx.QueryRow(ctx,
 					`select count(*) from api_keys where token_digest = $1`, digestFor(tenantB)).Scan(&other)
@@ -151,7 +151,7 @@ func TestTenancyACredentialJoinSeesItsMembership(t *testing.T) {
 		// revoked_at without its revoked_by, so a one-column UPDATE is a
 		// 23514 rather than a revocation. revoked_by is the key's own user,
 		// read back rather than threaded through the seed.
-		if err := inTransaction(ctx, owner, `select cafaye.begin_account($1)`, tenantA,
+		if err := inTransaction(ctx, owner, `select anywaye.begin_account($1)`, tenantA,
 			func(ctx context.Context, tx pgx.Tx) error {
 				_, err := tx.Exec(ctx,
 					`update api_keys set revoked_at = now(), revoked_by = user_id where token_digest = $1`, digestFor(tenantA))
@@ -196,7 +196,7 @@ func byDigestJoinAs(ctx context.Context, conn *pgx.Conn, digest string, now time
 		  AND k.expires_at > $2`
 
 	var out []joinRow
-	err := inTransaction(ctx, conn, `select cafaye.begin_credential($1)`, digest,
+	err := inTransaction(ctx, conn, `select anywaye.begin_credential($1)`, digest,
 		func(ctx context.Context, tx pgx.Tx) error {
 			rows, err := tx.Query(ctx, query, digest, now)
 			if err != nil {
@@ -243,7 +243,7 @@ func seedJoinRows(ctx context.Context, t *testing.T, owner *pgx.Conn) (tenantA, 
 			_ = tx.Rollback(ctx)
 			t.Fatalf("inserting a fixture user: %v", err)
 		}
-		if _, err := tx.Exec(ctx, `select cafaye.begin_account($1)`, accountID); err != nil {
+		if _, err := tx.Exec(ctx, `select anywaye.begin_account($1)`, accountID); err != nil {
 			_ = tx.Rollback(ctx)
 			t.Fatalf("setting the identity: %v", err)
 		}

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // THE CLAIM DOCUMENT: what identity publishes about a token to whoever has to
@@ -16,7 +16,7 @@ import (
 // IT EXISTS BECAUSE THIS TOKEN IS OPAQUE. Every other credential identity mints
 // carries its own claims: the OIDC access token is a JWT and the claims are in
 // it, readable by anybody holding the published JWKS with no call back to here.
-// This one is `cafaye_` plus 32 random bytes, and the row holds a SHA-256 of it —
+// This one is `anywaye_` plus 32 random bytes, and the row holds a SHA-256 of it —
 // so a resource server learns what a token may do by ASKING, and this file is the
 // answer. There is no second way to read a scope off this credential.
 //
@@ -32,7 +32,7 @@ import (
 //	treats an absent claim as an empty set.
 //
 // The question is recorded as MD7 in the manager's DECISIONS.md and it is OPEN.
-// It has been written down twice before, by `guard-02` and by `cafaye-rb-01`,
+// It has been written down twice before, by `guard-02` and by `anywaye-rb-01`,
 // and answered neither time. Picking a side here would mint credentials into a
 // contract that does not exist yet, and the cost of being wrong is a rotation of
 // every credential already in a customer's hand.

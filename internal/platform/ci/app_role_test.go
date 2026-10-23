@@ -102,8 +102,8 @@ func TestTheComposeServiceConnectsAsTheAppRole(t *testing.T) {
 	}
 
 	for _, tc := range []struct{ name, dsn, want string }{
-		{"the app role itself", "postgres://identity_app:cafaye@postgres:5432/identity", appRole},
-		{"the owner, which is the regression", "postgres://identity:cafaye@postgres:5432/identity", "identity"},
+		{"the app role itself", "postgres://identity_app:anywaye@postgres:5432/identity", appRole},
+		{"the owner, which is the regression", "postgres://identity:anywaye@postgres:5432/identity", "identity"},
 		{"no user at all", "postgres://postgres:5432/identity", "postgres"},
 	} {
 		t.Run("reads the role out of "+tc.name, func(t *testing.T) {

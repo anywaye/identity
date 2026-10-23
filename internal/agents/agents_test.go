@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // The lifecycle, the credential shape, and the two properties a reviewer has to

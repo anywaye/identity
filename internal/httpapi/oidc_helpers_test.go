@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cafaye/identity/internal/oauth"
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/oauth"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // jsonUnmarshal is a one-line alias so newResponse reads as one statement. The

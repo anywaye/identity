@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/cafaye/identity/internal/agents"
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/agents"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // The double for the agent claim use case.
@@ -132,7 +132,7 @@ func (f *fakeAgents) Register(_ context.Context, in agents.RegisterInput) (agent
 			ExpiresAt: now.Add(time.Hour),
 		},
 		TokenPlaintext:     agents.Prefix + "fake-registration-token",
-		ClaimURL:           "https://cafaye.example/agents/claim/fake",
+		ClaimURL:           "https://anywaye.example/agents/claim/fake",
 		ClaimLinkExpiresAt: now.Add(time.Hour),
 	}, nil
 }
@@ -149,7 +149,7 @@ func (f *fakeAgents) RefreshClaimLink(_ context.Context, in agents.RefreshClaimI
 			Name:   "Noel",
 			Status: agents.StatusUnclaimed,
 		},
-		ClaimURL:           "https://cafaye.example/agents/claim/fake-refresh",
+		ClaimURL:           "https://anywaye.example/agents/claim/fake-refresh",
 		ClaimLinkExpiresAt: in.Now.Add(time.Hour),
 	}, nil
 }

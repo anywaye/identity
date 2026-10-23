@@ -24,7 +24,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cafaye/identity/internal/auth"
+	"github.com/anywaye/identity/internal/auth"
 )
 
 // A disabled login is 403 forbidden, with core's own code and no new one.

@@ -2,7 +2,7 @@
 //
 // A separate file rather than two more functions in scope.go, for the reason
 // scope.go's own package comment gives: that file's whole argument is that there
-// is exactly ONE place that writes `cafaye.account_id`, and a reader hunting that
+// is exactly ONE place that writes `anywaye.account_id`, and a reader hunting that
 // one place should not have to decide whether a second statement is part of it.
 // The same reader is going to come here.
 //
@@ -11,12 +11,12 @@
 // `GET /v1/accounts` asked "which accounts is this person in", and the answer was
 // an empty list for a user who owned one. The membership row was in the database,
 // the join was correct, and the query succeeded — `account_users` is protected by
-// `account_id = (select cafaye.current_account_id())`, and a caller who has not
+// `account_id = (select anywaye.current_account_id())`, and a caller who has not
 // chosen an account yet is not standing in one.
 //
 // That is a different question from the one the account seam answers, so it needs
-// a different seam. `cafaye.begin_user/1` names the CALLER for the same reason
-// `cafaye.begin_account/1` names the account: naming a thing is what a GUC is
+// a different seam. `anywaye.begin_user/1` names the CALLER for the same reason
+// `anywaye.begin_account/1` names the account: naming a thing is what a GUC is
 // for, and the value is the one the service has ALREADY resolved — the same
 // `users.id` the middleware authenticated — so nothing here is chosen by the
 // caller.
@@ -48,13 +48,13 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/cafaye/identity/internal/platform/db"
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/platform/db"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // beginUserSQL is kit's seam, called by name rather than written out, for the
 // reason beginAccountSQL gives.
-const beginUserSQL = `select cafaye.begin_user($1)`
+const beginUserSQL = `select anywaye.begin_user($1)`
 
 // userKey is the context key the caller travels on.
 //
@@ -107,7 +107,7 @@ func UserFrom(ctx context.Context) (id.UUID, bool) {
 // makes the mistake legible at the call site rather than leaving it to be read
 // out of a `[]`.
 //
-// The substrate's own `cafaye.begin_user(NULL)` DOES clear, because a worker with
+// The substrate's own `anywaye.begin_user(NULL)` DOES clear, because a worker with
 // no caller is a legitimate call and it goes through there rather than through a
 // hand-rolled `set_config`. This wrapper refuses because its only call site is a
 // membership read, and a membership read with no membership to find is not a

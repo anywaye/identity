@@ -147,7 +147,7 @@ func TestTheRecoveryAuthorizationMatrix(t *testing.T) {
 			for _, column := range []struct {
 				name string
 				// credential is what the bearer header carries. A scoped token is
-				// distinguished by its `cafaye_` prefix before any query runs, which
+				// distinguished by its `anywaye_` prefix before any query runs, which
 				// is why it is a shape and not a flag.
 				credential string
 				want       int
@@ -203,7 +203,7 @@ func TestTheRecoveryAuthorizationMatrix(t *testing.T) {
 // nothing. `sessionCredentialOnly` decides from the PREFIX alone, before any query,
 // so a token that resolves to no row is the right fixture for this column: it proves
 // the refusal comes from the credential's SHAPE and not from a lookup failing.
-const scopedTokenForTheMatrix = "cafaye_" + "0123456789abcdefghijklmnopqrstuvwxyzABCDEFG"
+const scopedTokenForTheMatrix = "anywaye_" + "0123456789abcdefghijklmnopqrstuvwxyzABCDEFG"
 
 // TestTheTwoSessionOnlyRoutesAreTheOnlyTwoThatRequireOne is the session column stated
 // as a property rather than as a status code.

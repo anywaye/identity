@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cafaye/identity/internal/platform/db"
-	"github.com/cafaye/identity/internal/platform/dbtest"
-	"github.com/cafaye/identity/internal/tenancy"
+	"github.com/anywaye/identity/internal/platform/db"
+	"github.com/anywaye/identity/internal/platform/dbtest"
+	"github.com/anywaye/identity/internal/tenancy"
 )
 
 // `Accept` UNDER THE REAL POLICIES: the redemption lookup has no account to
@@ -26,7 +26,7 @@ import (
 // redemption still 404'd.
 //
 // HANDOFF-identity-isolation §4.1 records the paired fix this test demands:
-// `cafaye.protect_credential_table('account_invitations', 'token_digest')` in a
+// `anywaye.protect_credential_table('account_invitations', 'token_digest')` in a
 // migration, plus `tenancy.BeginCredential` before the lookup on the Go side.
 // Both halves or neither — the migration half alone reads the same zero rows.
 //

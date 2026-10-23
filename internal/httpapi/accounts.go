@@ -9,12 +9,12 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/cafaye/identity/internal/accounts"
-	"github.com/cafaye/identity/internal/apikeys"
-	"github.com/cafaye/identity/internal/auth"
-	"github.com/cafaye/identity/internal/platform/id"
-	"github.com/cafaye/identity/internal/tenancy"
-	"github.com/cafaye/identity/internal/users"
+	"github.com/anywaye/identity/internal/accounts"
+	"github.com/anywaye/identity/internal/apikeys"
+	"github.com/anywaye/identity/internal/auth"
+	"github.com/anywaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/tenancy"
+	"github.com/anywaye/identity/internal/users"
 )
 
 // The tenancy surface: accounts, memberships and invitations.
@@ -260,7 +260,7 @@ func scopeRequiredBy(r *http.Request) string {
 // It is on the HTTP layer's own options rather than on Auth because it is a
 // DIFFERENT CREDENTIAL with a different table, a different lifetime and a
 // different revocation story, and routing it through Auth would put a lookup for a
-// `cafaye_…` value in the sessions table on the path of every authenticated
+// `anywaye_…` value in the sessions table on the path of every authenticated
 // request.
 type APIKeyCaller interface {
 	Authenticate(ctx context.Context, token string, now time.Time) (apikeys.Caller, error)
@@ -401,7 +401,7 @@ func (o options) requireAccountRole(min accounts.Role, next http.HandlerFunc) ht
 // scoped api key.
 //
 // THE PREFIX DECIDES WHICH, before any query runs. That is the second thing the
-// `cafaye_` prefix buys — the first is recognition in a log — and it means a value
+// `anywaye_` prefix buys — the first is recognition in a log — and it means a value
 // of the wrong kind never reaches the wrong table. A session token is looked up in
 // sessions and an api key in api_keys, and neither lookup is ever handed a value
 // belonging to the other, so "is this token live" cannot be answered by the

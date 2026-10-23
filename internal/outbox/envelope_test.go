@@ -6,11 +6,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // Every assertion here is traceable to a rule in
-// cafaye/core/schemas/event-envelope.schema.json. That file is the contract; this
+// anywaye/core/schemas/event-envelope.schema.json. That file is the contract; this
 // test is the service's half of keeping to it.
 
 func TestEnvelopeValidatesAgainstCoreSchema(t *testing.T) {
@@ -262,7 +262,7 @@ func TestUserCreatedEnvelope(t *testing.T) {
 		t.Errorf("Type = %q, want %q", e.Type, EventUserCreated)
 	}
 	if e.Source != SourceIdentity {
-		t.Errorf("Source = %q, want %q — it must equal `name` in cafaye.yml", e.Source, SourceIdentity)
+		t.Errorf("Source = %q, want %q — it must equal `name` in anywaye.yml", e.Source, SourceIdentity)
 	}
 	// Subject is the entity the event is *about*, not the actor.
 	if e.Subject != userID.String() {

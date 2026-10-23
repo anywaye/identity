@@ -1,7 +1,7 @@
-# cafaye.yml — the cafaye project manifest for identity.
+# anywaye.yml — the anywaye project manifest for identity.
 #
-# The schema is owned by cafaye/core, not by this repository:
-# ../core/schemas/cafaye.manifest.schema.json. This file satisfies it, and core
+# The schema is owned by anywaye/core, not by this repository:
+# ../core/schemas/anywaye.manifest.schema.json. This file satisfies it, and core
 # asserts that agreement in both directions — a catalog row without a publisher
 # entry, or a publisher entry without a catalog row, fails core's suite.
 #
@@ -19,9 +19,9 @@
 # Validated with:
 #
 #   python -c "import json,yaml;from jsonschema import Draft202012Validator;\
-#     print(list(Draft202012Validator(json.load(open('../core/schemas/cafaye.manifest.schema.json'))).iter_errors(yaml.safe_load(open('cafaye.yml')))))"
+#     print(list(Draft202012Validator(json.load(open('../core/schemas/anywaye.manifest.schema.json'))).iter_errors(yaml.safe_load(open('anywaye.yml')))))"
 
-# The cafaye namespace name. Also the repository name, the Go module path, the
+# The anywaye namespace name. Also the repository name, the Go module path, the
 # event envelope's `source`, and the gateway routing prefix. Changing it means
 # changing all five.
 name: identity
@@ -37,7 +37,7 @@ language: go
 # ^0.2.0, bumped with identity-14. This service has published three-segment,
 # service-prefixed event types from the beginning, so nothing about its own
 # behaviour changed with the bump — it is the DECLARATION that was stale. Core
-# froze the grammar in 0.2.0 and `harness/bin/cafaye-contract` resolves this
+# froze the grammar in 0.2.0 and `harness/bin/anywaye-contract` resolves this
 # field, so a `^0.1.0` line against a 0.2.0 core is a red build
 # (`core.constraint-unmet`) that says the service is compiling against a core it
 # said it would not. The two travel in one commit on purpose: 0.2.0's changelog
@@ -53,10 +53,10 @@ core: ^0.2.0
 # 2030-10-10.
 #
 # It is NOT declared in this document, and that is a constraint rather than an
-# omission. core owns the schema, ../core/schemas/cafaye.manifest.schema.json,
+# omission. core owns the schema, ../core/schemas/anywaye.manifest.schema.json,
 # which sets `additionalProperties: false` (line 7) and lists every key it
 # accepts (line 9's `properties`) -- `license` is not one of them, and there is
-# no `x-cafaye-` prefix escape either. Measured, not inferred: validating this
+# no `x-anywaye-` prefix escape either. Measured, not inferred: validating this
 # document with a `license: BUSL-1.1` key added returns "Additional properties
 # are not allowed ('license' was unexpected)". So a licence field in this file
 # would be a contract violation, and a manifest that disagreed with its own
@@ -209,7 +209,7 @@ exposes:
     # stated twice, so declaring one of these before the code emits it would fail
     # core's suite in the other direction.
     #
-    # consumes: none. identity is a leaf — it depends on no other cafaye service.
+    # consumes: none. identity is a leaf — it depends on no other anywaye service.
     # dependencies: none, for the same reason. Both keys are omitted rather than
     # left as empty lists; an empty list says "we checked and there are none",
     # which is true today but is a claim that has to be revisited.
@@ -237,14 +237,14 @@ env:
 
 
 repository:
-  # SSH only. An HTTPS remote for a cafaye repo is a policy violation (PLAN.md §1).
-  url: git@github.com:cafaye/identity.git
+  # SSH only. An HTTPS remote for a anywaye repo is a policy violation (PLAN.md §1).
+  url: git@github.com:anywaye/identity.git
   defaultBranch: master
   visibility: private
 
 owner:
   team: identity
-  contact: identity@cafaye.com
+  contact: identity@anywaye.com
 
 # ---------------------------------------------------------------------------
 # Dropped from the previous draft, with the information kept here:
@@ -275,7 +275,7 @@ owner:
 # DECISION NEEDED — the scope claim has two names in the fleet, and this service
 # publishes both.
 #
-# Recorded here rather than only in a changelog because `cafaye.yml` is the file a
+# Recorded here rather than only in a changelog because `anywaye.yml` is the file a
 # consumer and a reviewer both read, and because a client integrating against
 # POST /v1/introspections needs to know that one of the two names is going away.
 #
@@ -286,7 +286,7 @@ owner:
 #   treats an absent claim as an empty set.
 #
 # The question is open as MD7 in the manager's DECISIONS.md. It has been recorded
-# twice before, by `guard-02` and by `cafaye-rb-01`, and answered neither time.
+# twice before, by `guard-02` and by `anywaye-rb-01`, and answered neither time.
 # This service does NOT pick a side.
 #
 # WHAT IT DOES INSTEAD: POST /v1/introspections emits the capability set twice —

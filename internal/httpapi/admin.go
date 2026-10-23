@@ -48,10 +48,10 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/cafaye/identity/internal/accounts"
-	"github.com/cafaye/identity/internal/admin"
-	"github.com/cafaye/identity/internal/apikeys"
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/accounts"
+	"github.com/anywaye/identity/internal/admin"
+	"github.com/anywaye/identity/internal/apikeys"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // chiURLParam reads a URL parameter, named so this file does not import chi for

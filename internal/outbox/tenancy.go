@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // The tenancy events: an account came into being, somebody was invited, the
@@ -63,10 +63,10 @@ const (
 	// `identity.member.accepted` in its event list, for the same reason
 	// identity-02 followed the packet for `identity.user.created`: the packet is
 	// the manager's decision and the divergence is recorded rather than silently
-	// resolved. The cost is that identity's cafaye.yml now advertises a type core's
+	// resolved. The cost is that identity's anywaye.yml now advertises a type core's
 	// catalog does not have, while core's catalog row has no publisher.
 	//
-	// Flipping it is this constant and the matching line in cafaye.yml. Nothing
+	// Flipping it is this constant and the matching line in anywaye.yml. Nothing
 	// else moves: the payload schema, the subject, and every consumer keyed on the
 	// account id are unaffected.
 	EventMemberAccepted = "identity.member.accepted"

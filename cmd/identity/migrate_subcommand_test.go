@@ -26,7 +26,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cafaye/identity/internal/migrate"
+	"github.com/anywaye/identity/internal/migrate"
 )
 
 // TestTheMigrateSubcommandIsSelectedByArgumentAndByArgvZero covers every way a

@@ -10,7 +10,7 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
-	"github.com/cafaye/identity/internal/telemetry"
+	"github.com/anywaye/identity/internal/telemetry"
 )
 
 // THE SERVICE-SIDE HALF OF THE REDACTION PROOF.

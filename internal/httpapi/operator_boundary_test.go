@@ -25,9 +25,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cafaye/identity/internal/accounts"
-	"github.com/cafaye/identity/internal/apikeys"
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/accounts"
+	"github.com/anywaye/identity/internal/apikeys"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // TestNoAccountRouteDeclaresTheOperatorScope walks the scope table rather than the

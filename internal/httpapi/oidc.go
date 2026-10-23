@@ -12,14 +12,14 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/cafaye/identity/internal/accounts"
-	"github.com/cafaye/identity/internal/auth"
-	"github.com/cafaye/identity/internal/mfa"
-	"github.com/cafaye/identity/internal/oauth"
-	"github.com/cafaye/identity/internal/oidc"
-	"github.com/cafaye/identity/internal/platform/id"
-	"github.com/cafaye/identity/internal/sessions"
-	"github.com/cafaye/identity/internal/users"
+	"github.com/anywaye/identity/internal/accounts"
+	"github.com/anywaye/identity/internal/auth"
+	"github.com/anywaye/identity/internal/mfa"
+	"github.com/anywaye/identity/internal/oauth"
+	"github.com/anywaye/identity/internal/oidc"
+	"github.com/anywaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/sessions"
+	"github.com/anywaye/identity/internal/users"
 )
 
 // The OIDC surface: the protocol endpoints, the login interaction, and the
@@ -39,7 +39,7 @@ import (
 // the OAuth endpoints would make this provider interop with nothing.
 //
 // The one exception is the pre-check below, which the brief specifies as a 400
-// with the problem envelope, and which is a cafaye decision about a cafaye
+// with the problem envelope, and which is a anywaye decision about a anywaye
 // request rather than an OAuth protocol response.
 //
 // AND A THIRD SHAPE, ON THE INTERACTION ONLY: a refusal that can be re-shown is
@@ -1131,7 +1131,7 @@ func clearOIDCStateCookie(w http.ResponseWriter, requestID string) {
 	})
 }
 
-// writeOIDCError maps the OIDC sentinels onto the cafaye envelope.
+// writeOIDCError maps the OIDC sentinels onto the anywaye envelope.
 //
 // These are all failures on paths a browser is on, not on a protocol endpoint, so
 // the problem envelope is right here: the person reading them is a person.

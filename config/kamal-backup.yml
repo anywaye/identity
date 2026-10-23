@@ -1,10 +1,10 @@
 ---
 # config/kamal-backup.yml — identity's backup configuration.
 #
-# Copied from `templates/kamal/kamal-backup.yml.erb` in cafaye/kit at the ref in
+# Copied from `templates/kamal/kamal-backup.yml.erb` in anywaye/kit at the ref in
 # `kit.ref` (a0959929), which is this repository's pinned kit commit. The only
 # value the template needed was KIT_SERVICE, and identity's is `identity` — the
-# same name as `cafaye.yml`'s `name:`, the module path, the compose service and
+# same name as `anywaye.yml`'s `name:`, the module path, the compose service and
 # the outbox envelope's `source`. Re-copy on a kit bump and re-check that one
 # value, because a mismatch writes the snapshot under one name and looks for it
 # under another, which reads as "the backup is missing".
@@ -16,7 +16,7 @@
 # loop inside that container. Until the accessory is booted, the R2 bucket
 # exists, the six secrets in `.kamal/secrets` are set and somebody takes a dump
 # by hand, this is a specification. README.md § "Backups" says the same thing in
-# the place an operator reads, and the runbook in cafaye/docs is the procedure.
+# the place an operator reads, and the runbook in anywaye/docs is the procedure.
 #
 # WHAT DOES NOT APPEAR IN THIS FILE, AND THAT IS THE POINT.
 #

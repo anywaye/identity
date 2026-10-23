@@ -21,14 +21,14 @@ import (
 	jose "github.com/go-jose/go-jose/v4"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/cafaye/identity/internal/accounts"
-	"github.com/cafaye/identity/internal/oauth"
-	"github.com/cafaye/identity/internal/oidc"
-	"github.com/cafaye/identity/internal/outbox"
-	"github.com/cafaye/identity/internal/platform/clock"
-	"github.com/cafaye/identity/internal/platform/db"
-	"github.com/cafaye/identity/internal/platform/dbtest"
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/accounts"
+	"github.com/anywaye/identity/internal/oauth"
+	"github.com/anywaye/identity/internal/oidc"
+	"github.com/anywaye/identity/internal/outbox"
+	"github.com/anywaye/identity/internal/platform/clock"
+	"github.com/anywaye/identity/internal/platform/db"
+	"github.com/anywaye/identity/internal/platform/dbtest"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // THE OIDC SUITE.
@@ -47,7 +47,7 @@ import (
 
 const (
 	oidcTestIssuer   = "https://identity.test"
-	oidcTestKeyID    = "cafaye-test-key"
+	oidcTestKeyID    = "anywaye-test-key"
 	oidcTestRedirect = "https://app.example.com/cb"
 	oidcTestPassword = "correct horse battery staple"
 	// oidcTestUserAgent is the client identity internal/auth records an attempt

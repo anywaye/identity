@@ -185,7 +185,7 @@ func TestAgainstInteractionsRecordedFromRealCourier(t *testing.T) {
 				`mailbox that has said it is gone.","instance":"/v1/messages",` +
 				`"status":409,"title":"Conflict",` +
 				`"trace_id":"1cd5f880-fc3a-428d-923c-71866c488ea6",` +
-				`"type":"https://docs.cafaye.com/errors/conflict"}`,
+				`"type":"https://docs.anywaye.com/errors/conflict"}`,
 			wantErrIs: ErrSuppressed,
 			wantCode:  "conflict",
 			wantTrace: "1cd5f880-fc3a-428d-923c-71866c488ea6",
@@ -202,7 +202,7 @@ func TestAgainstInteractionsRecordedFromRealCourier(t *testing.T) {
 				`has asked not to be written to.","instance":"/v1/messages",` +
 				`"status":409,"title":"Conflict",` +
 				`"trace_id":"d1f22bfb-7948-443b-bb39-2eb87882f860",` +
-				`"type":"https://docs.cafaye.com/errors/conflict"}`,
+				`"type":"https://docs.anywaye.com/errors/conflict"}`,
 			wantErrIs: ErrSuppressed,
 			wantCode:  "conflict",
 			wantTrace: "d1f22bfb-7948-443b-bb39-2eb87882f860",
@@ -221,7 +221,7 @@ func TestAgainstInteractionsRecordedFromRealCourier(t *testing.T) {
 				`"field":"type"}],"instance":"/v1/messages","status":422,` +
 				`"title":"Validation failed",` +
 				`"trace_id":"c5eb7c00-76a4-46cc-82bd-afc067babfe8",` +
-				`"type":"https://docs.cafaye.com/errors/validation_failed"}`,
+				`"type":"https://docs.anywaye.com/errors/validation_failed"}`,
 			wantErrIs: ErrDeclined,
 			wantCode:  "validation_failed",
 			wantTrace: "c5eb7c00-76a4-46cc-82bd-afc067babfe8",
@@ -244,7 +244,7 @@ func TestAgainstInteractionsRecordedFromRealCourier(t *testing.T) {
 				`"field":"type"}],"instance":"/v1/messages","status":422,` +
 				`"title":"Validation failed",` +
 				`"trace_id":"2226cc75-4b8c-4a24-8dc5-5fceba01e4be",` +
-				`"type":"https://docs.cafaye.com/errors/validation_failed"}`,
+				`"type":"https://docs.anywaye.com/errors/validation_failed"}`,
 			wantErrIs: ErrRefused,
 			wantCode:  "validation_failed",
 			wantTrace: "2226cc75-4b8c-4a24-8dc5-5fceba01e4be",
@@ -267,7 +267,7 @@ func TestAgainstInteractionsRecordedFromRealCourier(t *testing.T) {
 				`valid.","errors":[{"code":"unknown_field","field":"subject"}],` +
 				`"instance":"/v1/messages","status":422,"title":"Validation failed",` +
 				`"trace_id":"baa4918d-f58a-4b78-bc56-9514d64ce7ee",` +
-				`"type":"https://docs.cafaye.com/errors/validation_failed"}`,
+				`"type":"https://docs.anywaye.com/errors/validation_failed"}`,
 			wantErrIs: ErrRefused,
 			wantCode:  "validation_failed",
 			wantTrace: "baa4918d-f58a-4b78-bc56-9514d64ce7ee",
@@ -286,7 +286,7 @@ func TestAgainstInteractionsRecordedFromRealCourier(t *testing.T) {
 				`valid.","errors":[{"code":"invalid_format","field":"user_id"}],` +
 				`"instance":"/v1/messages","status":422,"title":"Validation failed",` +
 				`"trace_id":"cfd5fdca-17a7-4298-8a8c-d031bef8f3a2",` +
-				`"type":"https://docs.cafaye.com/errors/validation_failed"}`,
+				`"type":"https://docs.anywaye.com/errors/validation_failed"}`,
 			wantErrIs: ErrRefused,
 			wantCode:  "validation_failed",
 			wantTrace: "cfd5fdca-17a7-4298-8a8c-d031bef8f3a2",
@@ -305,7 +305,7 @@ func TestAgainstInteractionsRecordedFromRealCourier(t *testing.T) {
 				`valid.","errors":[{"code":"invalid_format","field":"url"}],` +
 				`"instance":"/v1/messages","status":422,"title":"Validation failed",` +
 				`"trace_id":"5e8c6f7d-dc5a-44a0-897d-140c4cf2d564",` +
-				`"type":"https://docs.cafaye.com/errors/validation_failed"}`,
+				`"type":"https://docs.anywaye.com/errors/validation_failed"}`,
 			wantErrIs: ErrRefused,
 			wantCode:  "validation_failed",
 			wantTrace: "5e8c6f7d-dc5a-44a0-897d-140c4cf2d564",
@@ -330,7 +330,7 @@ func TestAgainstInteractionsRecordedFromRealCourier(t *testing.T) {
 				`be a uuid, chosen by the client.","field":"Idempotency-Key"}],` +
 				`"instance":"/v1/messages","status":422,"title":"Validation failed",` +
 				`"trace_id":"4f54da8d-6453-474c-8a04-5a9aa69de187",` +
-				`"type":"https://docs.cafaye.com/errors/validation_failed"}`,
+				`"type":"https://docs.anywaye.com/errors/validation_failed"}`,
 			wantErrIs: ErrRefused,
 			wantCode:  "validation_failed",
 			wantTrace: "4f54da8d-6453-474c-8a04-5a9aa69de187",
@@ -356,7 +356,7 @@ func TestAgainstInteractionsRecordedFromRealCourier(t *testing.T) {
 				`new key.","instance":"/v1/messages","status":409,` +
 				`"title":"Idempotency key reused",` +
 				`"trace_id":"328ebc5c-dab5-4f5d-93c4-4fc573ca1f0c",` +
-				`"type":"https://docs.cafaye.com/errors/idempotency_key_reused"}`,
+				`"type":"https://docs.anywaye.com/errors/idempotency_key_reused"}`,
 			wantErrIs: ErrRefused,
 			wantCode:  "idempotency_key_reused",
 			wantTrace: "328ebc5c-dab5-4f5d-93c4-4fc573ca1f0c",
@@ -377,7 +377,7 @@ func TestAgainstInteractionsRecordedFromRealCourier(t *testing.T) {
 				`authenticated caller.","instance":"/v1/messages","status":401,` +
 				`"title":"Unauthorized",` +
 				`"trace_id":"4adb7daa-a480-48d1-bbe8-e6a6f9c5db6f",` +
-				`"type":"https://docs.cafaye.com/errors/unauthorized"}`,
+				`"type":"https://docs.anywaye.com/errors/unauthorized"}`,
 			wantErrIs: ErrUnauthenticated,
 			wantCode:  "unauthorized",
 			wantTrace: "4adb7daa-a480-48d1-bbe8-e6a6f9c5db6f",
@@ -402,7 +402,7 @@ func TestAgainstInteractionsRecordedFromRealCourier(t *testing.T) {
 				`"instance":"/v1/messages","status":503,` +
 				`"title":"Service unavailable",` +
 				`"trace_id":"5c0f0b3a-1f9d-4c0e-9c1e-2f3a4b5c6d7e",` +
-				`"type":"https://docs.cafaye.com/errors/unavailable"}`,
+				`"type":"https://docs.anywaye.com/errors/unavailable"}`,
 			wantErrIs: ErrUnavailable,
 			wantCode:  "unavailable",
 			wantTrace: "5c0f0b3a-1f9d-4c0e-9c1e-2f3a4b5c6d7e",
@@ -780,15 +780,15 @@ func assertRecordedAccepted(t *testing.T, got MessageResult, tc recordedCase) {
 
 // findCourierOpenAPI locates courier's document, and the ORDER is the point.
 //
-// The first candidate is the SOURCE checkout — `cafaye/courier` — resolved through
+// The first candidate is the SOURCE checkout — `anywaye/courier` — resolved through
 // git rather than through a relative path. A worktree of identity is not
 // necessarily beside a worktree of courier: from a worktree under `wt/`, the
-// relative path that finds `cafaye/courier` from the source checkout instead
+// relative path that finds `anywaye/courier` from the source checkout instead
 // finds whatever `courier` directory sits beside THIS worktree — the courier
 // repository's own worktree, which can be on any branch at any commit. A green
 // run that read that file could not say which document it had verified.
 // `git rev-parse --git-common-dir` names the main checkout whatever the
-// worktree's location, and courier is its sibling in `cafaye/`.
+// worktree's location, and courier is its sibling in `anywaye/`.
 //
 // The positional candidates remain as a fallback for a machine with no git or an
 // unusual layout. Whichever candidate wins, the test NAMES the file it read — in
@@ -817,7 +817,7 @@ func findCourierOpenAPI(t *testing.T) string {
 }
 
 // sourceCheckoutCourier resolves courier's document in the source checkout — the
-// `cafaye/courier` repository, not whatever worktree of it happens to sit beside
+// `anywaye/courier` repository, not whatever worktree of it happens to sit beside
 // this one.
 func sourceCheckoutCourier(t *testing.T) (string, bool) {
 	t.Helper()

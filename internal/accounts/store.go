@@ -14,9 +14,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
-	"github.com/cafaye/identity/internal/platform/db"
-	"github.com/cafaye/identity/internal/platform/id"
-	"github.com/cafaye/identity/internal/tenancy"
+	"github.com/anywaye/identity/internal/platform/db"
+	"github.com/anywaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/tenancy"
 )
 
 // Postgres SQLSTATE 23505, unique_violation. Every mapping in this file is off
@@ -488,8 +488,8 @@ func (s *Store) RemoveMember(ctx context.Context, q db.Querier, accountID, userI
 // query passes there and fails in production.
 //
 // Here is the failure. `migrations/00018` admits a caller to `account_users` for
-// SELECT through `account_users_cafaye_members`, whose predicate is
-// `user_id = cafaye.current_user_id()`. So standing in as the user, the caller sees
+// SELECT through `account_users_anywaye_members`, whose predicate is
+// `user_id = anywaye.current_user_id()`. So standing in as the user, the caller sees
 // its OWN membership rows and nothing else. The `NOT EXISTS (SELECT 1 FROM
 // account_users other WHERE other.account_id = a.id AND other.role = 'owner'
 // AND other.user_id <> $1)` subquery is filtered to the empty set by that policy
@@ -506,7 +506,7 @@ func (s *Store) RemoveMember(ctx context.Context, q db.Querier, accountID, userI
 // found it.
 //
 // So the count has to happen standing in the ACCOUNT, where
-// `account_users_cafaye_select` (`account_id = cafaye.current_account_id()`) does
+// `account_users_anywaye_select` (`account_id = anywaye.current_account_id()`) does
 // admit the rows — one account per transaction-local identity, which is why this
 // is a loop rather than a join. `CountOwners` is the query, and it already takes
 // `FOR UPDATE` on the owner rows, so the answer is a lock rather than a
@@ -515,7 +515,7 @@ func (s *Store) RemoveMember(ctx context.Context, q db.Querier, accountID, userI
 //
 // # IT LEAVES THE TRANSACTION STANDING IN THE LAST ACCOUNT IT VISITED
 //
-// `cafaye.begin_account` and `cafaye.begin_user` set the SAME GUC, so the last
+// `anywaye.begin_account` and `anywaye.begin_user` set the SAME GUC, so the last
 // call wins and there is no way to hold both. A caller that needs to read as the
 // USER after this must call `tenancy.BeginUser` again. `internal/deletion` does
 // exactly that and says so at the call site; the alternative would be a getter
@@ -531,7 +531,7 @@ func (s *Store) SolelyOwnedTeamAccounts(ctx context.Context, q db.Querier, userI
 
 	// Step 1, standing in as the user: the team accounts this user owns at all.
 	// Every row this matches is the caller's OWN membership row, so
-	// `account_users_cafaye_members` admits all of them and none of the filtering
+	// `account_users_anywaye_members` admits all of them and none of the filtering
 	// above applies to this statement.
 	const candidates = `
 		SELECT ` + accountColumnsQualified + `
@@ -574,7 +574,7 @@ func (s *Store) SolelyOwnedTeamAccounts(ctx context.Context, q db.Querier, userI
 // Returns the personal accounts belonging to userID.
 //
 // IT READS ONLY THE CALLER'S OWN MEMBERSHIP ROWS, so it is admitted by
-// `account_users_cafaye_members` (00018) with `begin_user` set — the same seam
+// `account_users_anywaye_members` (00018) with `begin_user` set — the same seam
 // `Service.ListMine` uses, and for the same reason.
 func (s *Store) PersonalAccounts(ctx context.Context, q db.Querier, userID id.UUID) ([]Account, error) {
 	if userID.IsZero() {

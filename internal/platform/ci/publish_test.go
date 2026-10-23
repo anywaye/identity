@@ -43,9 +43,9 @@ import (
 // The name is the assertion. `image.reusable.yml` is what this file used to
 // require, and it is the exact regression this packet prevents: it builds and
 // pushes the image and says nothing about a chart, so a check that accepted any
-// `cafaye/kit` `uses:` would pass on a tree whose chart is published by
+// `anywaye/kit` `uses:` would pass on a tree whose chart is published by
 // nothing.
-const kitPublishWorkflow = "cafaye/kit/ci/publish.reusable.yml@master"
+const kitPublishWorkflow = "anywaye/kit/ci/publish.reusable.yml@master"
 
 // defaultChartDir is the `chart-dir` input's default in kit's publish and chart
 // reusable workflows. Resolved here rather than assumed: the caller names no
@@ -67,7 +67,7 @@ const publishWorkflow = "ci/publish.yml"
 var (
 	// Any `uses:` pointing at kit, at any indentation. Used to prove the file
 	// calls kit and does not also carry a build of its own.
-	kitUseLine = regexp.MustCompile(`^\s+uses:\s+(cafaye/kit/\S+)\s*$`)
+	kitUseLine = regexp.MustCompile(`^\s+uses:\s+(anywaye/kit/\S+)\s*$`)
 	// `packages: write`, at any indentation, and nothing after it on the line.
 	// Anchored both ends so `packages: write-foo` cannot satisfy it.
 	packagesWrite = regexp.MustCompile(`(?m)^\s*packages:\s*write\s*$`)
@@ -100,7 +100,7 @@ func publishLines(t *testing.T) []string {
 
 // TestTheArtifactsAreBuiltBySomethingThatRuns. The gap this closes:
 // `config/deploy.yml` names ghcr.io/<org>/<repo> and `kamal deploy` pulls it,
-// and the substrate's Application pulls oci://ghcr.io/cafaye/charts/identity —
+// and the substrate's Application pulls oci://ghcr.io/anywaye/charts/identity —
 // with no publisher, the only way either artifact existed was one person running
 // `docker build` and `helm package` on one machine. CI stayed green the entire
 // time — a green CI and an unpublished artifact are not in tension, they are
@@ -148,7 +148,7 @@ func TestThePublishWorkflowCallsKitsComposedPublishAtAPathThatResolves(t *testin
 			"and documents that subdirectories of the workflows directory are NOT\n"+
 			"supported, so any other path resolves to nothing and the job is red\n"+
 			"before it starts.\n\n"+
-			"The name is the assertion. cafaye/kit/ci/image.reusable.yml\n"+
+			"The name is the assertion. anywaye/kit/ci/image.reusable.yml\n"+
 			"is the caller this file used to require: it builds and pushes the image\n"+
 			"and says nothing about a chart, so identity's chart — which the\n"+
 			"substrate's Application pulls at targetRevision %s — was published by\n"+
@@ -240,7 +240,7 @@ func TestThePublishWorkflowAsksToPush(t *testing.T) {
 // TestTheChartVersionIsTheTagTheSubstratePulls. The chart half of the publish
 // loop, and the seam that decides whether a deploy finds the artifact at all:
 // chart.reusable.yml reads the chart's name and version from Chart.yaml and
-// never takes them as inputs, pushes to oci://ghcr.io/cafaye/charts, and tags
+// never takes them as inputs, pushes to oci://ghcr.io/anywaye/charts, and tags
 // the chart with its `version`. The substrate's Application pulls
 // `targetRevision: 0.1.0`. The chart's version and the Application's
 // targetRevision are therefore one fact written twice, and a service that

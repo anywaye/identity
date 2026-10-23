@@ -84,25 +84,25 @@
 #   above are fast-tier proofs. CI and this declaration run `bin/prime`
 #   unmodified; see the `ci` section below for why that distinction is
 #   load-bearing.
-#   db-tier: github.com/cafaye/identity/cmd/identity
-#   db-tier: github.com/cafaye/identity/cmd/identity-staff
-#   db-tier: github.com/cafaye/identity/internal/accounts
-#   db-tier: github.com/cafaye/identity/internal/admin
-#   db-tier: github.com/cafaye/identity/internal/agents
-#   db-tier: github.com/cafaye/identity/internal/apikeys
-#   db-tier: github.com/cafaye/identity/internal/auth
-#   db-tier: github.com/cafaye/identity/internal/courier
-#   db-tier: github.com/cafaye/identity/internal/deletion
-#   db-tier: github.com/cafaye/identity/internal/httpapi
-#   db-tier: github.com/cafaye/identity/internal/mfa
-#   db-tier: github.com/cafaye/identity/internal/migrate
-#   db-tier: github.com/cafaye/identity/internal/oauth
-#   db-tier: github.com/cafaye/identity/internal/oidc
-#   db-tier: github.com/cafaye/identity/internal/outbox
-#   db-tier: github.com/cafaye/identity/internal/recovery
-#   db-tier: github.com/cafaye/identity/internal/sessions
-#   db-tier: github.com/cafaye/identity/internal/useraudit
-#   db-tier: github.com/cafaye/identity/internal/users
+#   db-tier: github.com/anywaye/identity/cmd/identity
+#   db-tier: github.com/anywaye/identity/cmd/identity-staff
+#   db-tier: github.com/anywaye/identity/internal/accounts
+#   db-tier: github.com/anywaye/identity/internal/admin
+#   db-tier: github.com/anywaye/identity/internal/agents
+#   db-tier: github.com/anywaye/identity/internal/apikeys
+#   db-tier: github.com/anywaye/identity/internal/auth
+#   db-tier: github.com/anywaye/identity/internal/courier
+#   db-tier: github.com/anywaye/identity/internal/deletion
+#   db-tier: github.com/anywaye/identity/internal/httpapi
+#   db-tier: github.com/anywaye/identity/internal/mfa
+#   db-tier: github.com/anywaye/identity/internal/migrate
+#   db-tier: github.com/anywaye/identity/internal/oauth
+#   db-tier: github.com/anywaye/identity/internal/oidc
+#   db-tier: github.com/anywaye/identity/internal/outbox
+#   db-tier: github.com/anywaye/identity/internal/recovery
+#   db-tier: github.com/anywaye/identity/internal/sessions
+#   db-tier: github.com/anywaye/identity/internal/useraudit
+#   db-tier: github.com/anywaye/identity/internal/users
 #
 # ---------------------------------------------------------------------
 # THE GATE PROVISIONS ITS OWN TEST DATABASE, and the measurements.
@@ -181,8 +181,8 @@ gate:
     # **Go's `go test` prints no test count, and this was MEASURED on this tree
     # rather than recalled.** `go test ./...` prints one line per PACKAGE —
     #
-    #     ok  	github.com/cafaye/identity/internal/mfa	0.531s
-    #     ?   	github.com/cafaye/identity/internal/platform/dbtest	[no test files]
+    #     ok  	github.com/anywaye/identity/internal/mfa	0.531s
+    #     ?   	github.com/anywaye/identity/internal/platform/dbtest	[no test files]
     #
     # — and the only number on the line is a DURATION. Verified against a
     # complete 5225-line `go test -v -count=1 ./...` run: every candidate
@@ -241,7 +241,7 @@ gate:
     #                                     the tier.
     #
     # So proofs 1 and 2 below are the ones that carry the claim:
-    # `ok github.com/cafaye/identity/internal/mfa` cannot be printed by a run in
+    # `ok github.com/anywaye/identity/internal/mfa` cannot be printed by a run in
     # which the database tier did not execute. In the run just measured, exactly
     # those two packages went red and the other ELEVEN of the thirteen database
     # packages — 1,590 tests' worth, including internal/httpapi's 669-test
@@ -257,35 +257,35 @@ gate:
     # REPORT-identity-13-gate as a finding; fixing it would mean changing a
     # test assertion, which this packet does not do.
     - id: mfa-tier-ran
-      match: '^ok\s+github\.com/cafaye/identity/internal/mfa\t'
+      match: '^ok\s+github\.com/anywaye/identity/internal/mfa\t'
     - id: apikeys-tier-ran
-      match: '^ok\s+github\.com/cafaye/identity/internal/apikeys\t'
+      match: '^ok\s+github\.com/anywaye/identity/internal/apikeys\t'
     - id: admin-tests-passed
-      match: '^ok\s+github\.com/cafaye/identity/internal/admin\t'
+      match: '^ok\s+github\.com/anywaye/identity/internal/admin\t'
     # 4. The largest package and the one that carries the authorization matrix,
     # the OpenAPI drift walk in both directions, the security-logging canary and
     # the OIDC allow-list test. 669 PASS lines measured, which is more than a
     # third of the suite.
     - id: httpapi-matrix-ran
-      match: '^ok\s+github\.com/cafaye/identity/internal/httpapi\t'
+      match: '^ok\s+github\.com/anywaye/identity/internal/httpapi\t'
     # 5. The package that guards ci.yml itself: that the workflow really runs
     # bin/prime, that migrations really run before it, that the toolchain pin
     # matches go.mod, and that no secret is written down. A gate whose own
     # guard package silently stops running is a gate with no reader.
     - id: ci-guard-ran
-      match: '^ok\s+github\.com/cafaye/identity/internal/platform/ci\t'
+      match: '^ok\s+github\.com/anywaye/identity/internal/platform/ci\t'
     # 6. The hand-written client, which is where the credential-leak sweep and
     # the "the committed generated file is what the pinned generator produces"
     # test live. Not a cache of the generated code — `client/` itself, which
     # AGENTS.md is explicit is hand-written and inside this module so it is
     # gated.
     - id: client-ran
-      match: '^ok\s+github\.com/cafaye/identity/client\t'
+      match: '^ok\s+github\.com/anywaye/identity/client\t'
     # 7. cmd/identity, where `TestMFAEncryptionKeyIsNeverGenerated` and the
     # "no key mounts no management routes" wiring case live. This is the entry
     # point, and `./...` would not reach it if the module layout changed.
     - id: cmd-identity-ran
-      match: '^ok\s+github\.com/cafaye/identity/cmd/identity\t'
+      match: '^ok\s+github\.com/anywaye/identity/cmd/identity\t'
     # 8. NOT a success line, and that is why it is here. `client/generated` is
     # 16,684 lines of committed oapi-codegen output and no test, excluded from the
     # coverage floor by the DECLARED path `client/generated` in
@@ -303,7 +303,7 @@ gate:
     # appearing here is the defect, and this line going red says so in the gate
     # rather than in a review.
     - id: generated-excluded
-      match: '^\?\s+github\.com/cafaye/identity/client/generated\t\[no test files\]$'
+      match: '^\?\s+github\.com/anywaye/identity/client/generated\t\[no test files\]$'
     # 9-10. THE TWO PACKAGES identity-w69-authsurface ADDED TESTS TO, and the
     # proofs exist because a package with no proof is a package the gate does not
     # claim ran. internal/auth carries the login path: the per-account lockout,
@@ -315,9 +315,9 @@ gate:
     # "unlimited". Neither package had a proof before this packet; both are
     # security-boundary code and both now have one.
     - id: auth-tests-passed
-      match: '^ok\s+github\.com/cafaye/identity/internal/auth\t'
+      match: '^ok\s+github\.com/anywaye/identity/internal/auth\t'
     - id: config-tests-passed
-      match: '^ok\s+github\.com/cafaye/identity/internal/config\t'
+      match: '^ok\s+github\.com/anywaye/identity/internal/config\t'
 
     # ---------------------------------------------------------------------
     # THIS GATE HAS BEEN OBSERVED RED. A declaration that has only ever been
@@ -360,7 +360,7 @@ gate:
     #
     #   FAIL gate.nonzero: the gate exited 1
     #   FAIL gate.proof-missing: proof 'mfa-tier-ran' never appeared; no line of
-    #        the gate's output ... matches '^ok\s+github\.com/cafaye/identity/internal/mfa\t'
+    #        the gate's output ... matches '^ok\s+github\.com/anywaye/identity/internal/mfa\t'
     #   FAIL gate.proof-missing: proof 'apikeys-tier-ran' never appeared; ...
     #   FAIL ...: 3 failure(s), 2 warning(s)
     #

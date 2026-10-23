@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cafaye/identity/internal/recovery"
+	"github.com/anywaye/identity/internal/recovery"
 )
 
 // # WHY A `recovery.Mailer` LIVES IN THE COURIER CLIENT RATHER THAN THE OTHER WAY
@@ -69,10 +69,10 @@ var ErrUnsupportedMessage = errors.New("courier: courier cannot send this messag
 // `internal/recovery/message.go` and fails when the four bodies there are not the
 // four subjects here.
 const (
-	kindPasswordReset = "Reset your cafaye password"
-	kindVerifyEmail   = "Confirm your cafaye email address"
+	kindPasswordReset = "Reset your anywaye password"
+	kindVerifyEmail   = "Confirm your anywaye email address"
 	kindChangeCurrent = "Confirm an email address change"
-	kindChangeNew     = "Confirm your new cafaye email address"
+	kindChangeNew     = "Confirm your new anywaye email address"
 )
 
 // knownSubjects is every message `internal/recovery` renders, and the set is
@@ -497,7 +497,7 @@ type deliverableLink struct {
 // refusal is about a configuration VARIABLE, so the order that decides which variable
 // gets named should be the order of the variables. Sorting by the mail subject would
 // be deterministic too and would name `verify_email` first, because "Confirm your
-// cafaye email address" precedes "Reset your cafaye password" — an answer that depends
+// anywaye email address" precedes "Reset your anywaye password" — an answer that depends
 // on courier's prose rather than on anything identity can state.
 //
 // SORTED rather than a hand-written list, because a second list is a second thing to

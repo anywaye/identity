@@ -12,11 +12,11 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/cafaye/identity/internal/platform/clock"
-	"github.com/cafaye/identity/internal/platform/db"
-	"github.com/cafaye/identity/internal/platform/dbtest"
-	"github.com/cafaye/identity/internal/platform/id"
-	"github.com/cafaye/identity/internal/users"
+	"github.com/anywaye/identity/internal/platform/clock"
+	"github.com/anywaye/identity/internal/platform/db"
+	"github.com/anywaye/identity/internal/platform/dbtest"
+	"github.com/anywaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/users"
 )
 
 // The store, over a real Postgres in a private schema.
@@ -124,7 +124,7 @@ func (f *fixture) issue(t *testing.T, name string, scopes ...string) Key {
 		UserID:    f.user,
 		AccountID: f.account,
 		Name:      name,
-		Digest:    Digest("cafaye_" + strings.Repeat("k", 43) + name),
+		Digest:    Digest("anywaye_" + strings.Repeat("k", 43) + name),
 		Scopes:    scopes,
 		ExpiresAt: testInstant.Add(DefaultTTL),
 		CreatedAt: testInstant,
@@ -352,7 +352,7 @@ func TestRevokedAndExpiredAreBothJustNotFound(t *testing.T) {
 
 	t.Run("unknown", func(t *testing.T) {
 		if _, err := f.store.ByDigest(context.Background(), f.pool,
-			Digest("cafaye_"+strings.Repeat("z", 43)), testInstant); !errors.Is(err, ErrNotFound) {
+			Digest("anywaye_"+strings.Repeat("z", 43)), testInstant); !errors.Is(err, ErrNotFound) {
 			t.Errorf("an unknown token resolved to %v, want ErrNotFound", err)
 		}
 	})
@@ -429,7 +429,7 @@ func TestOneLiveNamePerAccountAndRotationIsPossible(t *testing.T) {
 
 	_, err := f.store.Create(ctx, f.pool, NewKey{
 		UserID: f.user, AccountID: f.account, Name: "ci-deploy",
-		Digest: Digest("cafaye_" + strings.Repeat("a", 43)),
+		Digest: Digest("anywaye_" + strings.Repeat("a", 43)),
 		Scopes: []string{ScopeAccountsRead}, ExpiresAt: testInstant.Add(DefaultTTL), CreatedAt: testInstant,
 	})
 	if !errors.Is(err, ErrNameTaken) {
@@ -439,7 +439,7 @@ func TestOneLiveNamePerAccountAndRotationIsPossible(t *testing.T) {
 	// The index is on lower(name), so a capital is the same name.
 	_, err = f.store.Create(ctx, f.pool, NewKey{
 		UserID: f.user, AccountID: f.account, Name: "CI-Deploy",
-		Digest: Digest("cafaye_" + strings.Repeat("b", 43)),
+		Digest: Digest("anywaye_" + strings.Repeat("b", 43)),
 		Scopes: []string{ScopeAccountsRead}, ExpiresAt: testInstant.Add(DefaultTTL), CreatedAt: testInstant,
 	})
 	if !errors.Is(err, ErrNameTaken) {
@@ -450,7 +450,7 @@ func TestOneLiveNamePerAccountAndRotationIsPossible(t *testing.T) {
 	// because two customers having a token called ci-deploy is not a collision.
 	if _, err := f.store.Create(ctx, f.pool, NewKey{
 		UserID: f.owner, AccountID: f.other, Name: "ci-deploy",
-		Digest: Digest("cafaye_" + strings.Repeat("c", 43)),
+		Digest: Digest("anywaye_" + strings.Repeat("c", 43)),
 		Scopes: []string{ScopeAccountsRead}, ExpiresAt: testInstant.Add(DefaultTTL), CreatedAt: testInstant,
 	}); err != nil {
 		t.Errorf("the same name in another account was refused: %v", err)
@@ -470,7 +470,7 @@ func TestOneLiveNamePerAccountAndRotationIsPossible(t *testing.T) {
 	}
 	if _, err := f.store.Create(ctx, f.pool, NewKey{
 		UserID: f.user, AccountID: f.account, Name: "ci-deploy",
-		Digest: Digest("cafaye_" + strings.Repeat("d", 43)),
+		Digest: Digest("anywaye_" + strings.Repeat("d", 43)),
 		Scopes: []string{ScopeAccountsRead}, ExpiresAt: testInstant.Add(DefaultTTL), CreatedAt: testInstant,
 	}); err != nil {
 		t.Errorf("creating the replacement after a revocation: %v", err)
@@ -588,7 +588,7 @@ func TestTheSchemaRefusesAPermanentCredential(t *testing.T) {
 				INSERT INTO api_keys (user_id, account_id, name, token_digest, scopes, created_at, expires_at)
 				VALUES ($1, $2, $3, $4, $5, $6, $7)`,
 				f.user, f.account, "boundary-"+tc.name,
-				Digest("cafaye_"+strings.Repeat("e", 43)),
+				Digest("anywaye_"+strings.Repeat("e", 43)),
 				[]string{ScopeAccountsRead}, testInstant, tc.expiresAt)
 			if err == nil {
 				t.Fatalf("the table accepted expires_at = %s, which the migration says it must not", tc.expiresAt)
@@ -609,7 +609,7 @@ func TestTheSchemaRefusesAnEmptyScopeList(t *testing.T) {
 	_, err := f.pool.Exec(context.Background(), `
 		INSERT INTO api_keys (user_id, account_id, name, token_digest, scopes, created_at, expires_at)
 		VALUES ($1, $2, 'no-scopes', $3, $4, $5, $6)`,
-		f.user, f.account, Digest("cafaye_"+strings.Repeat("f", 43)),
+		f.user, f.account, Digest("anywaye_"+strings.Repeat("f", 43)),
 		[]string{}, testInstant, testInstant.Add(DefaultTTL))
 	if err == nil {
 		t.Fatal("the table accepted a token with no scopes")
@@ -626,7 +626,7 @@ func TestTheSchemaRefusesAHalfRevocation(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 
-	digest := Digest("cafaye_" + strings.Repeat("9", 43))
+	digest := Digest("anywaye_" + strings.Repeat("9", 43))
 	if _, err := f.pool.Exec(ctx, `
 		INSERT INTO api_keys (user_id, account_id, name, token_digest, scopes, created_at, expires_at, revoked_at)
 		VALUES ($1, $2, 'half-revoked', $3, $4, $5, $6, $5)`,
@@ -636,7 +636,7 @@ func TestTheSchemaRefusesAHalfRevocation(t *testing.T) {
 	if _, err := f.pool.Exec(ctx, `
 		INSERT INTO api_keys (user_id, account_id, name, token_digest, scopes, created_at, expires_at, revoked_by)
 		VALUES ($1, $2, 'half-revoked-2', $3, $4, $5, $6, $7)`,
-		f.user, f.account, Digest("cafaye_"+strings.Repeat("8", 43)), []string{ScopeAccountsRead},
+		f.user, f.account, Digest("anywaye_"+strings.Repeat("8", 43)), []string{ScopeAccountsRead},
 		testInstant, testInstant.Add(DefaultTTL), f.user); err == nil {
 		t.Fatal("the table accepted a revoker with no revocation")
 	}
@@ -752,7 +752,7 @@ func TestTheStoreTakesAQuerierAndRunsInsideTheCallersTransaction(t *testing.T) {
 	rolledBack := db.TxRunner{Pool: f.pool}.Do(ctx, func(ctx context.Context, q db.Querier) error {
 		_, err := f.store.Create(ctx, q, NewKey{
 			UserID: f.user, AccountID: f.account, Name: "rolled-back",
-			Digest: Digest("cafaye_" + strings.Repeat("1", 43)),
+			Digest: Digest("anywaye_" + strings.Repeat("1", 43)),
 			Scopes: []string{ScopeAccountsRead}, ExpiresAt: testInstant.Add(DefaultTTL), CreatedAt: testInstant,
 		})
 		if err != nil {
@@ -809,7 +809,7 @@ func (f *fixture) issueAs(t *testing.T, userID, accountID id.UUID, name string, 
 		UserID:    userID,
 		AccountID: accountID,
 		Name:      name,
-		Digest:    Digest("cafaye_" + strings.Repeat("r", 43) + name),
+		Digest:    Digest("anywaye_" + strings.Repeat("r", 43) + name),
 		Scopes:    scopes,
 		ExpiresAt: testInstant.Add(DefaultTTL),
 		CreatedAt: testInstant,

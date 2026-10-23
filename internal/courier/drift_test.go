@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cafaye/identity/internal/recovery"
+	"github.com/anywaye/identity/internal/recovery"
 )
 
 // These are the test-only helpers the leak sweep and the drift checks need, kept

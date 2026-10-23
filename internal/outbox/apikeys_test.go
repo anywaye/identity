@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // The api key events: a scoped machine credential was issued, and it stopped
@@ -165,7 +165,7 @@ func TestAPIKeyEventsCarryNoCredential(t *testing.T) {
 	}
 
 	for _, e := range []Envelope{created, revoked} {
-		for _, forbidden := range []string{"token", "secret", "digest", "prefix", "cafaye_", "password"} {
+		for _, forbidden := range []string{"token", "secret", "digest", "prefix", "anywaye_", "password"} {
 			if strings.Contains(string(e.Data), forbidden) {
 				t.Errorf("%s payload %s mentions %q", e.Type, e.Data, forbidden)
 			}

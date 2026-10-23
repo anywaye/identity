@@ -3,7 +3,7 @@ package client
 // WHERE REQUESTS GO, IN A DOCUMENTED ORDER, WITH NO DEFAULT THAT GUESSES.
 //
 // The generated client does not decide this. `api.gen.go` carries a `Server`
-// default of `https://identity.cafaye.com`, read out of the document's `servers:`
+// default of `https://identity.anywaye.com`, read out of the document's `servers:`
 // block, and that default is a trap rather than a convenience: a self-hoster
 // running their own identity who never set a base URL would have their traffic —
 // and their credentials — sent to somebody else's deployment, and the first
@@ -16,8 +16,8 @@ package client
 // # THE PRECEDENCE, HIGHEST FIRST
 //
 //  1. `BaseURL` on the options — explicit beats ambient
-//  2. `CAFAYE_IDENTITY_BASE_URL` — this service, specifically
-//  3. `CAFAYE_BASE_URL` — every cafaye service, one variable
+//  2. `ANYWAYE_IDENTITY_BASE_URL` — this service, specifically
+//  3. `ANYWAYE_BASE_URL` — every anywaye service, one variable
 //  4. throw
 //
 // Steps 2 and 3 are one source in two granularities: a per-service variable is more
@@ -25,8 +25,8 @@ package client
 // self-hoster with one deployment of everything should not have to spell out six
 // variable names.
 //
-// This mirrors `cafaye-ts`'s `baseUrlEnvFor` precedence rather than inventing one.
-// cafaye-ts has an extra step this client does not — `globalThis.location.origin`,
+// This mirrors `anywaye-ts`'s `baseUrlEnvFor` precedence rather than inventing one.
+// anywaye-ts has an extra step this client does not — `globalThis.location.origin`,
 // which is right for a browser bundle served from the same origin as the fleet and
 // has no meaning at all in a Go binary. A divergence between three clients for one
 // platform is a defect in the platform, so the steps that mean the same thing are
@@ -34,7 +34,7 @@ package client
 //
 // # WHY THERE IS NO LOCALHOST, AND WHY STEP 4 THROWS
 //
-// The brief asks for "explicit, then `CAFAYE_BASE_URL`, then the default". The
+// The brief asks for "explicit, then `ANYWAYE_BASE_URL`, then the default". The
 // default is the part this file refuses, and the refusal is the design.
 //
 // A localhost default is attractive for exactly the wrong reason — it makes a
@@ -58,14 +58,14 @@ import (
 	"strings"
 )
 
-// BaseURLEnvVar applies to every cafaye service.
-const BaseURLEnvVar = "CAFAYE_BASE_URL"
+// BaseURLEnvVar applies to every anywaye service.
+const BaseURLEnvVar = "ANYWAYE_BASE_URL"
 
 // ServiceBaseURLEnvVar applies to identity specifically, and is derived rather
 // than written out — see `BaseURLEnvVarFor`.
-const ServiceBaseURLEnvVar = "CAFAYE_IDENTITY_BASE_URL"
+const ServiceBaseURLEnvVar = "ANYWAYE_IDENTITY_BASE_URL"
 
-// BaseURLEnvVarFor derives `CAFAYE_<SERVICE>_BASE_URL` from a service name.
+// BaseURLEnvVarFor derives `ANYWAYE_<SERVICE>_BASE_URL` from a service name.
 //
 // Derived rather than written out per service because six string literals would be a
 // second list of the six services next to the vendored documents, and this
@@ -74,7 +74,7 @@ func BaseURLEnvVarFor(service string) string {
 	if !regexp.MustCompile(`^[a-z]+$`).MatchString(service) {
 		return ""
 	}
-	return "CAFAYE_" + strings.ToUpper(service) + "_BASE_URL"
+	return "ANYWAYE_" + strings.ToUpper(service) + "_BASE_URL"
 }
 
 // ErrNoBaseURL is returned when nothing is configured.
@@ -155,7 +155,7 @@ func ResolveBaseURL(opts BaseURLOptions) (string, error) {
 			"Each of those is a decision somebody made. A default would be a guess, and "+
 			"a guess about which deployment to send a customer's credentials to is the "+
 			"one kind of guess this package refuses to make.\n\n"+
-			"identity's own document lists https://identity.cafaye.com as a server, and "+
+			"identity's own document lists https://identity.anywaye.com as a server, and "+
 			"that value is deliberately NOT used as a default: it would send a "+
 			"self-hoster's traffic to somebody else's deployment, and it would succeed, "+
 			"so nothing would look wrong until somebody read a log",
@@ -165,7 +165,7 @@ func ResolveBaseURL(opts BaseURLOptions) (string, error) {
 	parsed, err := url.Parse(chosen.value)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
 		return "", fmt.Errorf("the base URL from %s is %q, which is not an absolute http(s) URL\n\n"+
-			"cafaye's generated clients concatenate the base URL with an operation's path "+
+			"anywaye's generated clients concatenate the base URL with an operation's path "+
 			"rather than resolving one against the other, so a bare host would produce "+
 			"something that is not a URL and an error naming neither the value nor the "+
 			"cause. Give an absolute URL including the scheme",
@@ -183,7 +183,7 @@ func ResolveBaseURL(opts BaseURLOptions) (string, error) {
 	// Trailing slashes are stripped so the URL this reports is the URL that goes
 	// out. The generated client concatenates rather than resolving, so a trailing
 	// slash becomes a doubled separator in the path — and a path prefix is KEPT,
-	// which a self-hoster serving the fleet under `/cafaye` needs and which
+	// which a self-hoster serving the fleet under `/anywaye` needs and which
 	// `parsed.Scheme + "://" + parsed.Host` would helpfully but wrongly delete.
 	return strings.TrimRight(chosen.value, "/"), nil
 }

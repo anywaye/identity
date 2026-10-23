@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/cafaye/identity/internal/platform/dbtest"
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/platform/dbtest"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // MIGRATION 00030's TEST, on disabled_test.go's terms: the suite is red on a

@@ -29,9 +29,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cafaye/identity/internal/auth"
-	"github.com/cafaye/identity/internal/platform/id"
-	"github.com/cafaye/identity/internal/users"
+	"github.com/anywaye/identity/internal/auth"
+	"github.com/anywaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/users"
 )
 
 // staffFixture is the staff surface's router: one auth double whose user the

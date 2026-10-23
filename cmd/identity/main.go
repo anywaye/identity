@@ -1,4 +1,4 @@
-// Command identity runs the cafaye identity service.
+// Command identity runs the anywaye identity service.
 //
 // main stays thin on purpose: read the configuration, build the app, hand the
 // process lifetime to the app. Everything testable lives in the app and in
@@ -26,37 +26,37 @@ import (
 	// the `tenancy` local below, which is the accounts SERVICE. The distinction
 	// matters to a reader: one is the database boundary, the other is the use
 	// cases that sit inside it.
-	acctboundary "github.com/cafaye/identity/internal/tenancy"
+	acctboundary "github.com/anywaye/identity/internal/tenancy"
 
-	"github.com/cafaye/identity/internal/accounts"
-	"github.com/cafaye/identity/internal/agents"
-	"github.com/cafaye/identity/internal/apikeys"
-	"github.com/cafaye/identity/internal/auth"
-	"github.com/cafaye/identity/internal/config"
-	"github.com/cafaye/identity/internal/courier"
-	"github.com/cafaye/identity/internal/deletion"
-	"github.com/cafaye/identity/internal/httpapi"
-	"github.com/cafaye/identity/internal/mfa"
-	"github.com/cafaye/identity/internal/migrate"
-	"github.com/cafaye/identity/internal/oauth"
-	"github.com/cafaye/identity/internal/oidc"
-	"github.com/cafaye/identity/internal/outbox"
-	"github.com/cafaye/identity/internal/platform/clock"
-	"github.com/cafaye/identity/internal/platform/db"
-	"github.com/cafaye/identity/internal/ratelimit"
-	"github.com/cafaye/identity/internal/recovery"
-	"github.com/cafaye/identity/internal/sessions"
-	"github.com/cafaye/identity/internal/signup"
-	"github.com/cafaye/identity/internal/telemetry"
-	"github.com/cafaye/identity/internal/useraudit"
-	"github.com/cafaye/identity/internal/users"
+	"github.com/anywaye/identity/internal/accounts"
+	"github.com/anywaye/identity/internal/agents"
+	"github.com/anywaye/identity/internal/apikeys"
+	"github.com/anywaye/identity/internal/auth"
+	"github.com/anywaye/identity/internal/config"
+	"github.com/anywaye/identity/internal/courier"
+	"github.com/anywaye/identity/internal/deletion"
+	"github.com/anywaye/identity/internal/httpapi"
+	"github.com/anywaye/identity/internal/mfa"
+	"github.com/anywaye/identity/internal/migrate"
+	"github.com/anywaye/identity/internal/oauth"
+	"github.com/anywaye/identity/internal/oidc"
+	"github.com/anywaye/identity/internal/outbox"
+	"github.com/anywaye/identity/internal/platform/clock"
+	"github.com/anywaye/identity/internal/platform/db"
+	"github.com/anywaye/identity/internal/ratelimit"
+	"github.com/anywaye/identity/internal/recovery"
+	"github.com/anywaye/identity/internal/sessions"
+	"github.com/anywaye/identity/internal/signup"
+	"github.com/anywaye/identity/internal/telemetry"
+	"github.com/anywaye/identity/internal/useraudit"
+	"github.com/anywaye/identity/internal/users"
 
 	// The schema, embedded. It is imported here rather than by internal/migrate
 	// because `go:embed` can only reach files at or below its own package
 	// directory, and this is the one place that decides WHICH migrations the
 	// binary applies — internal/migrate takes an fs.FS so a test can hand it a
 	// different one.
-	"github.com/cafaye/identity/migrations"
+	"github.com/anywaye/identity/migrations"
 )
 
 // shutdownTimeout is how long in-flight requests get to finish once a

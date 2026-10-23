@@ -26,12 +26,12 @@ func TestLoadSigningKey(t *testing.T) {
 	t.Run("a PKCS#1 PEM loads", func(t *testing.T) {
 		t.Parallel()
 
-		key, err := LoadSigningKey(pemFor(t, 2048, pkcs1), "cafaye-2026-09")
+		key, err := LoadSigningKey(pemFor(t, 2048, pkcs1), "anywaye-2026-09")
 		if err != nil {
 			t.Fatalf("LoadSigningKey: %v", err)
 		}
-		if key.ID() != "cafaye-2026-09" {
-			t.Errorf("ID = %q, want cafaye-2026-09", key.ID())
+		if key.ID() != "anywaye-2026-09" {
+			t.Errorf("ID = %q, want anywaye-2026-09", key.ID())
 		}
 		if key.SignatureAlgorithm() != jose.RS256 {
 			t.Errorf("algorithm = %q, want RS256; the JWKS and every token header say the same thing", key.SignatureAlgorithm())
@@ -48,7 +48,7 @@ func TestLoadSigningKey(t *testing.T) {
 	t.Run("a PKCS#8 PEM loads to the same shape", func(t *testing.T) {
 		t.Parallel()
 
-		key, err := LoadSigningKey(pemFor(t, 2048, pkcs8), "cafaye-2026-09")
+		key, err := LoadSigningKey(pemFor(t, 2048, pkcs8), "anywaye-2026-09")
 		if err != nil {
 			t.Fatalf("LoadSigningKey: %v", err)
 		}
@@ -75,8 +75,8 @@ func TestLoadSigningKeyRejects(t *testing.T) {
 		{name: "a PEM that is not a key", give: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte("hello")})), kid: "kid-1"},
 		{name: "a 1024-bit key", give: pemFor(t, 1024, pkcs8), kid: "kid-1"},
 		{name: "no key id", give: pemFor(t, 2048, pkcs8), kid: ""},
-		{name: "a key id with a slash", give: pemFor(t, 2048, pkcs8), kid: "cafaye/2026"},
-		{name: "a key id with a space", give: pemFor(t, 2048, pkcs8), kid: "cafaye 2026"},
+		{name: "a key id with a slash", give: pemFor(t, 2048, pkcs8), kid: "anywaye/2026"},
+		{name: "a key id with a space", give: pemFor(t, 2048, pkcs8), kid: "anywaye 2026"},
 		{name: "an over-long key id", give: pemFor(t, 2048, pkcs8), kid: string(make([]byte, 0, 65)) + repeat("k", 65)},
 	}
 
@@ -99,7 +99,7 @@ func TestLoadSigningKeyRejects(t *testing.T) {
 func TestJWKSIsTheDocumentGatewayReads(t *testing.T) {
 	t.Parallel()
 
-	key, err := LoadSigningKey(pemFor(t, 2048, pkcs8), "cafaye-2026-09")
+	key, err := LoadSigningKey(pemFor(t, 2048, pkcs8), "anywaye-2026-09")
 	if err != nil {
 		t.Fatalf("LoadSigningKey: %v", err)
 	}
@@ -132,7 +132,7 @@ func TestJWKSIsTheDocumentGatewayReads(t *testing.T) {
 	if got.Kty != "RSA" {
 		t.Errorf("kty = %q, want RSA", got.Kty)
 	}
-	if got.Kid != "cafaye-2026-09" {
+	if got.Kid != "anywaye-2026-09" {
 		t.Errorf("kid = %q, want the configured key id", got.Kid)
 	}
 	if got.Alg != "RS256" {
@@ -157,7 +157,7 @@ func TestJWKSIsTheDocumentGatewayReads(t *testing.T) {
 func TestJWKSNeverCarriesThePrivateKey(t *testing.T) {
 	t.Parallel()
 
-	key, err := LoadSigningKey(pemFor(t, 2048, pkcs8), "cafaye-2026-09")
+	key, err := LoadSigningKey(pemFor(t, 2048, pkcs8), "anywaye-2026-09")
 	if err != nil {
 		t.Fatalf("LoadSigningKey: %v", err)
 	}

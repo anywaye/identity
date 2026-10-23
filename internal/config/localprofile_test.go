@@ -41,8 +41,8 @@ const localEnvPath = "../../config/local.env"
 // profile's whole argument is about, named once so the assertions below say what
 // they mean.
 const (
-	localIssuer       = "https://auth.cafaye.test"
-	localCallbackBase = "https://auth.cafaye.test"
+	localIssuer       = "https://auth.anywaye.test"
+	localCallbackBase = "https://auth.anywaye.test"
 	localStubHost     = "localhost"
 )
 

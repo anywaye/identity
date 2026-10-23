@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cafaye/identity/internal/platform/db"
-	"github.com/cafaye/identity/internal/platform/dbtest"
-	"github.com/cafaye/identity/internal/platform/id"
-	"github.com/cafaye/identity/internal/sessions"
-	"github.com/cafaye/identity/internal/tenancy"
+	"github.com/anywaye/identity/internal/platform/db"
+	"github.com/anywaye/identity/internal/platform/dbtest"
+	"github.com/anywaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/sessions"
+	"github.com/anywaye/identity/internal/tenancy"
 )
 
 // THE PASSWORD RESET FLOW, AND EVERY NEGATIVE IT HAS TO HAVE.
@@ -299,7 +299,7 @@ func TestAResetDoesNotRevokeAScopedAPIKey(t *testing.T) {
 	// that is the same rule the service follows rather than a concession to the
 	// substrate. `account_users` and `api_keys` are protected by row-level
 	// security, so an INSERT into them meets
-	// `with check (account_id = (select cafaye.current_account_id()))`, and a
+	// `with check (account_id = (select anywaye.current_account_id()))`, and a
 	// fixture that inserted with no identity was refused with SQLSTATE 42501 —
 	// the substrate correctly refusing an account-scoped write that claims no
 	// account.

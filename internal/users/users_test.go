@@ -58,7 +58,7 @@ func TestValidateEmail(t *testing.T) {
 		wantCode string
 	}{
 		{name: "a plain address", give: "kaka@example.com"},
-		{name: "plus addressing is preserved", give: "kaka+cafaye@example.com"},
+		{name: "plus addressing is preserved", give: "kaka+anywaye@example.com"},
 		{name: "subdomains are fine", give: "kaka@mail.eu.example.com"},
 		{name: "digits and hyphens in the local part", give: "kaka-2@example.com"},
 		{name: "digits in the domain", give: "kaka@example2.com"},

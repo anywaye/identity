@@ -15,11 +15,11 @@ import (
 	"github.com/go-chi/chi/v5"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/cafaye/identity/internal/auth"
-	"github.com/cafaye/identity/internal/platform/id"
-	"github.com/cafaye/identity/internal/signup"
-	"github.com/cafaye/identity/internal/telemetry"
-	"github.com/cafaye/identity/internal/users"
+	"github.com/anywaye/identity/internal/auth"
+	"github.com/anywaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/signup"
+	"github.com/anywaye/identity/internal/telemetry"
+	"github.com/anywaye/identity/internal/users"
 )
 
 const (

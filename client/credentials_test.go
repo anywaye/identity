@@ -2,7 +2,7 @@ package client
 
 // BOTH AUTH MODELS, IN BOTH DIRECTIONS.
 //
-// The brief requires "both auth models — bearer `cafaye_` token and session cookie,
+// The brief requires "both auth models — bearer `anywaye_` token and session cookie,
 // the decision explicit and tested in both directions". Both directions means: an
 // apiToken goes in the header and NOT the cookie, and a session goes in BOTH. Each is
 // asserted from the server's side — the request that actually went out — rather than
@@ -23,8 +23,8 @@ import (
 // to.
 const sessionCredential = "0dN3aQ2vF8kLmXpR7sT1uWzYb4cE6hJ9gK2mP5rS8tV"
 
-// A scoped api token: `cafaye_` plus 43 base64url characters, per `IssuedAPIKey`.
-const apiCredential = "cafaye_Zq3vK7mXpR2tY8wB4cN6dF0gH1jK5lM9oP3qS7uV2wX4yZ8"
+// A scoped api token: `anywaye_` plus 43 base64url characters, per `IssuedAPIKey`.
+const apiCredential = "anywaye_Zq3vK7mXpR2tY8wB4cN6dF0gH1jK5lM9oP3qS7uV2wX4yZ8"
 
 // A JWS: three base64url segments whose header decodes to a JSON object with an
 // `alg`. The header here is `{"alg":"HS256"}` in base64url — the real one, so the
@@ -44,7 +44,7 @@ func TestClassifyCredentialTellsTheThreeShapesApart(t *testing.T) {
 			name:  "a scoped api token is an api token",
 			token: apiCredential,
 			want:  KindAPIToken,
-			reason: "the `cafaye_` prefix is identity's own discriminator, and " +
+			reason: "the `anywaye_` prefix is identity's own discriminator, and " +
 				"`internal/apikeys/apikeys.go` says it decides which table a value is " +
 				"looked up in before any query runs",
 		},
@@ -129,7 +129,7 @@ func TestClassifyCredentialRefusesValuesThatCouldBreakAHeader(t *testing.T) {
 //
 // core's conventions reserve cookies for browser sessions — "No cookies for API
 // traffic" — and a credential in a cookie is one a browser silently attaches to a
-// request its holder did not intend. Putting a `cafaye_` value there would publish a
+// request its holder did not intend. Putting a `anywaye_` value there would publish a
 // machine credential onto the browser surface.
 func TestAttachCredentialPutsAnAPITokenInTheHeaderAndNotInACookie(t *testing.T) {
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/me", nil)

@@ -14,7 +14,7 @@ package client
 // SHAPES, which is not the same count and the difference is the interesting part:
 //
 //	session     opaque, 43 base64url characters. A human's browser credential.
-//	apiToken    `cafaye_` + 43 base64url characters. A scoped machine credential.
+//	apiToken    `anywaye_` + 43 base64url characters. A scoped machine credential.
 //	jwt         three dot-separated base64url segments. The other five services'
 //	            service-to-service credential, verified against a JWKS.
 //
@@ -52,7 +52,7 @@ package client
 // An apiToken attaches `Authorization: Bearer` and NOTHING else. core's
 // conventions are explicit that API traffic does not travel in cookies, and a
 // credential in a cookie is one a browser silently attaches to a request its holder
-// did not intend. A `cafaye_` value has no business in a `Cookie` header, and
+// did not intend. A `anywaye_` value has no business in a `Cookie` header, and
 // putting one there would publish a machine credential onto the browser surface.
 //
 // A jwt attaches `Authorization: Bearer` and nothing else, for the same reason.
@@ -81,7 +81,7 @@ import (
 // — and the whole module is the service, whose binary must not depend on a client.
 // `TestThePrefixIsTheOneIdentityUses` states the two must agree, so the copy
 // cannot drift silently.
-const APITokenPrefix = "cafaye_"
+const APITokenPrefix = "anywaye_"
 
 // SessionCookieName is identity's `httpapi.SessionCookieName`.
 //
@@ -97,7 +97,7 @@ const (
 	// KindSession is an opaque session token: a human's browser credential, and the
 	// only shape that may travel in a cookie.
 	KindSession CredentialKind = iota
-	// KindAPIToken is a `cafaye_` scoped API token: a machine credential, refused
+	// KindAPIToken is a `anywaye_` scoped API token: a machine credential, refused
 	// by identity on the session surface and on the credential surface.
 	KindAPIToken
 	// KindJWT is a JWS compact serialization, which is what the other five
@@ -164,7 +164,7 @@ func ClassifyCredential(token string) (CredentialKind, error) {
 	// ErrInvalidCredential)` is false and every caller that branches on it falls
 	// through. A test that only checked `err != nil` passed.
 	if token == "" || forbiddenInCredential.MatchString(token) {
-		return KindSession, fmt.Errorf("%w: a cafaye credential must be a non-empty string "+
+		return KindSession, fmt.Errorf("%w: a anywaye credential must be a non-empty string "+
 			"containing no control characters, spaces, CR or LF. Refusing it here rather "+
 			"than sending it, because a value carrying CR or LF would be a header-injection "+
 			"attempt and a blank one is a configuration mistake that would otherwise surface "+
@@ -172,7 +172,7 @@ func ClassifyCredential(token string) (CredentialKind, error) {
 	}
 
 	// The prefix first, and before the JWT shape, because identity's discriminator
-	// is the prefix and a `cafaye_` value is never a JWT whatever else it looks
+	// is the prefix and a `anywaye_` value is never a JWT whatever else it looks
 	// like.
 	if strings.HasPrefix(token, APITokenPrefix) {
 		return KindAPIToken, nil

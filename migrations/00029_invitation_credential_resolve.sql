@@ -8,7 +8,7 @@
 -- adds the fifth: one `for select` policy whose qualifier is the digest the
 -- caller presented:
 --
---     using (token_digest = (select cafaye.current_credential_digest()))
+--     using (token_digest = (select anywaye.current_credential_digest()))
 --
 -- WHY IT IS THIS CALL AND NOT protect_table AGAIN. The redemption lookup is
 -- `WHERE token_digest = $1` with no `account_id` predicate and none it could
@@ -44,7 +44,7 @@
 -- environments; see 00018's header for why the append-only rule holds.
 
 -- +goose Up
-select cafaye.protect_credential_table('account_invitations', 'token_digest');
+select anywaye.protect_credential_table('account_invitations', 'token_digest');
 
 -- +goose Down
 
@@ -54,5 +54,5 @@ select cafaye.protect_credential_table('account_invitations', 'token_digest');
 -- land in. The four account policies (00016) are untouched: a Down that removed
 -- them would leave the table unprotected rather than restoring the previous
 -- boundary. The digest index goes with the policy that needed it.
-DROP POLICY IF EXISTS account_invitations_cafaye_resolve ON account_invitations;
-DROP INDEX IF EXISTS account_invitations_cafaye_token_digest_idx;
+DROP POLICY IF EXISTS account_invitations_anywaye_resolve ON account_invitations;
+DROP INDEX IF EXISTS account_invitations_anywaye_token_digest_idx;

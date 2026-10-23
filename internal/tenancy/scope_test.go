@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/cafaye/identity/internal/platform/db"
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/platform/db"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // The runtime seam, tested without a database. Every assertion here is about

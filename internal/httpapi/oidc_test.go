@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cafaye/identity/internal/oidc"
-	"github.com/cafaye/identity/internal/platform/dbtest"
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/oidc"
+	"github.com/anywaye/identity/internal/platform/dbtest"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // The authorization code + PKCE round trip, and every refusal the security
@@ -1024,8 +1024,8 @@ func TestOIDCUnknownScope(t *testing.T) {
 			if p.Status != http.StatusBadRequest {
 				t.Errorf("status field = %d, want 400", p.Status)
 			}
-			if p.Type != "https://docs.cafaye.com/errors/"+CodeInvalidRequest {
-				t.Errorf("type = %q, want the cafaye error URI for %q", p.Type, CodeInvalidRequest)
+			if p.Type != "https://docs.anywaye.com/errors/"+CodeInvalidRequest {
+				t.Errorf("type = %q, want the anywaye error URI for %q", p.Type, CodeInvalidRequest)
 			}
 			if p.TraceID == "" {
 				t.Error("the problem has no trace_id; core requires it on every non-2xx")
@@ -1143,7 +1143,7 @@ func TestOIDCUnimplementedParametersAreRefused(t *testing.T) {
 // answer is the specified one: an error REDIRECTED to the client's registered
 // redirect_uri, because RFC 6749 §4.1.2.1 says an authorization failure after a
 // valid redirect_uri is reported to the client and not rendered here. Rendering
-// it would put a cafaye error page on a URL the client owns, and the client
+// it would put a anywaye error page on a URL the client owns, and the client
 // would never learn why.
 func TestOIDCPromptNoneIsLoginRequired(t *testing.T) {
 	t.Parallel()
@@ -1258,7 +1258,7 @@ func TestOIDCUnmountedEndpointsAre404(t *testing.T) {
 			t.Errorf("POST %s = %d, want 404", target, rec.Code)
 		}
 		if rec.Header().Get("Content-Type") != "application/problem+json" {
-			t.Errorf("POST %s Content-Type = %q, want the cafaye problem envelope rather than the library's",
+			t.Errorf("POST %s Content-Type = %q, want the anywaye problem envelope rather than the library's",
 				target, rec.Header().Get("Content-Type"))
 		}
 	}
@@ -1522,7 +1522,7 @@ func TestOIDCDiscoveryOverHTTP(t *testing.T) {
 // A request for a route that does not exist is this service's problem document,
 // not the library's. The library's router is mounted path by path precisely so
 // that this stays true, and this is the test that holds the line.
-func TestOIDCUnknownPathIsTheCafayeProblemEnvelope(t *testing.T) {
+func TestOIDCUnknownPathIsTheAnywayeProblemEnvelope(t *testing.T) {
 	t.Parallel()
 
 	f := newOIDCFixture(t)

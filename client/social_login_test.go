@@ -28,7 +28,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cafaye/identity/client/generated"
+	"github.com/anywaye/identity/client/generated"
 )
 
 const (
@@ -127,7 +127,7 @@ func TestAStartRedirectWithNoLocationIsAFailureRatherThanAnEmptyString(t *testin
 // on, and the reason is written here rather than left as a comment that claims
 // more than the test checks.
 func TestAnUnconfiguredProviderIsTheSame404AsOneThatDoesNotExist(t *testing.T) {
-	const body = `{"type":"https://cafaye.com/problems/not_found","title":"Not found",` +
+	const body = `{"type":"https://anywaye.com/problems/not_found","title":"Not found",` +
 		`"status":404,"code":"not_found","detail":"no route","trace_id":"3f1c9a2e-7b4d-4c8e-9a1b-2d5e6f708192"}`
 
 	server := newSocialServer(t, http.StatusNotFound, body, "")
@@ -329,7 +329,7 @@ func TestTheCallbackWrapperRefusesToGuessAtAShapeItDoesNotRecognise(t *testing.T
 // swallow it. A caller that gets a nil error and an empty session here has been
 // told a sign-in happened when the service refused one.
 func TestAnEmailCollisionComesBackAsA409AndNotASession(t *testing.T) {
-	const body = `{"type":"https://cafaye.com/problems/conflict","title":"Conflict","status":409,` +
+	const body = `{"type":"https://anywaye.com/problems/conflict","title":"Conflict","status":409,` +
 		`"code":"conflict","detail":"an account already exists for the email address that ` +
 		`oauth account reports, so this sign-in was refused rather than linked. Sign in ` +
 		`with that account instead","trace_id":"3f1c9a2e-7b4d-4c8e-9a1b-2d5e6f708192"}`

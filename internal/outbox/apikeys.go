@@ -3,7 +3,7 @@ package outbox
 import (
 	"time"
 
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // The api key events: a scoped machine credential was issued, and it stopped

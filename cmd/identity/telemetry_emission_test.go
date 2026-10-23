@@ -14,8 +14,8 @@ import (
 
 	"go.opentelemetry.io/otel"
 
-	"github.com/cafaye/identity/internal/config"
-	"github.com/cafaye/identity/internal/httpapi"
+	"github.com/anywaye/identity/internal/config"
+	"github.com/anywaye/identity/internal/httpapi"
 )
 
 // The end-to-end emission proof, and the test the fleet's measurement asked for.

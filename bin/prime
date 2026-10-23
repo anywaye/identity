@@ -1,5 +1,5 @@
 #!/bin/sh
-# The gate for a Go repository in the cafaye org. Download, build, test.
+# The gate for a Go repository in the anywaye org. Download, build, test.
 #
 #   bin/prime          the whole gate: every package, against the real database
 #   bin/prime --fast   the non-database tier only, for the inner loop
@@ -52,7 +52,7 @@ go mod download
 # ---------------------------------------------------------------------
 # WARM THE GENERATOR'S MODULE GRAPH OUT OF BAND — library shape.
 #
-# identity is a LIBRARY: other services import `github.com/cafaye/identity/client`,
+# identity is a LIBRARY: other services import `github.com/anywaye/identity/client`,
 # so the generator cannot be a `require` in go.mod
 # (`TestTheGeneratorIsNotAModuleDependency`). `client/generate.go` therefore pins
 # the tool as `go run <module>@<version>`, which resolves in a throwaway module

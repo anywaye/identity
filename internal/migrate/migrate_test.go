@@ -31,8 +31,8 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/cafaye/identity/internal/platform/dbtest"
-	"github.com/cafaye/identity/migrations"
+	"github.com/anywaye/identity/internal/platform/dbtest"
+	"github.com/anywaye/identity/migrations"
 )
 
 // TestRunRefusesWithNoDSN is the contract with the substrate's step, which sets
@@ -222,7 +222,7 @@ func TestTheDatabaseTierActuallyRan(t *testing.T) {
 // newScratchDatabase creates a database for one test and returns a DSN for it.
 //
 // A DATABASE AND NOT A SCHEMA. The migrations qualify objects (`public.users`,
-// `cafaye.protect_table`) and carry their own version table, so a private
+// `anywaye.protect_table`) and carry their own version table, so a private
 // `search_path` would be a second, quieter schema model that production does not
 // have. The database is dropped on the way out.
 func newScratchDatabase(t *testing.T) string {

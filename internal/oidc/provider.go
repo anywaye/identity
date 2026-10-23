@@ -12,7 +12,7 @@ import (
 	"github.com/zitadel/oidc/v3/pkg/oidc"
 	"github.com/zitadel/oidc/v3/pkg/op"
 
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // The provider: the library's state machine, pointed at this service's storage,
@@ -30,7 +30,7 @@ import (
 
 // Endpoint paths.
 //
-// The protocol endpoints live under /oidc so that the two cafaye surfaces stay
+// The protocol endpoints live under /oidc so that the two anywaye surfaces stay
 // distinguishable at a glance in an access log: /v1 is the JSON API this service
 // defines and /oidc is the OAuth 2.0 surface a standard client expects. The two
 // well-known paths are not under /oidc because the specifications fix them.
@@ -125,7 +125,7 @@ func NewProvider(cfg Config, storage *Storage) (*Provider, error) {
 	// at a product's sign-in button.
 	if err := ValidateLoginUIURL(cfg.LoginUIURL); err != nil {
 		return nil, fmt.Errorf("%w: set %s to the page that asks a person for their password, "+
-			"for example https://parlor.cafaye.com/sign-in/oidc", err, LoginUIEnvVar)
+			"for example https://parlor.anywaye.com/sign-in/oidc", err, LoginUIEnvVar)
 	}
 	loginUI, parseErr := url.Parse(cfg.LoginUIURL)
 	if parseErr != nil {
@@ -313,7 +313,7 @@ func deriveEncryptionKey(k *SigningKey) ([32]byte, string) {
 		// derived from something unique to this deployment.
 		der = []byte(k.ID())
 	}
-	sum := sha256.Sum256(append([]byte("cafaye/identity/oidc/token-encryption/v1\x00"), der...))
+	sum := sha256.Sum256(append([]byte("anywaye/identity/oidc/token-encryption/v1\x00"), der...))
 	return sum, k.ID() + "-enc"
 }
 

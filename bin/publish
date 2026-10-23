@@ -4,14 +4,14 @@
 #
 #   bin/publish --help
 #   bin/publish --dry-run
-#   bin/publish --service-dir . --chart-dir chart --image ghcr.io/cafaye/myservice
-#   bin/publish --sandbox --sandbox-name cafaye-build
+#   bin/publish --service-dir . --chart-dir chart --image ghcr.io/anywaye/myservice
+#   bin/publish --sandbox --sandbox-name anywaye-build
 #
 # WHY THIS EXISTS, IN ONE SENTENCE. The org's free Actions minutes are
 # exhausted (measured 2026-10-15: the billing publish failed with "You have
 # used 90% of the Actions minutes"); in the same hour a complete
 # Actions-free publish was performed by hand — docker build+push, stamp the
-# chart's image.digest, helm package+push to oci://ghcr.io/cafaye/charts,
+# chart's image.digest, helm package+push to oci://ghcr.io/anywaye/charts,
 # then flip package visibility in the browser. This script codifies that
 # run so any machine with docker can do it.
 #
@@ -48,7 +48,7 @@ SELF="$0"
 # ---------------------------------------------------------------------------
 SERVICE_DIR="."
 CHART_DIR="chart"
-REGISTRY="oci://ghcr.io/cafaye/charts"
+REGISTRY="oci://ghcr.io/anywaye/charts"
 GHCR_HOST="ghcr.io"
 IMAGE=""
 TAG=""
@@ -56,7 +56,7 @@ GIT_REF="HEAD"
 PLATFORMS=""
 DRY_RUN=0
 SANDBOX=0
-SANDBOX_NAME="cafaye-build"
+SANDBOX_NAME="anywaye-build"
 # shellcheck disable=SC2034
 SANDBOX_RUN_PUBLISH=0 # reserved for --sandbox --run
 
@@ -96,10 +96,10 @@ Usage:
 
 Options:
   --service-dir DIR     service root (where Dockerfile lives) [.]
-  --image NAME          image name, e.g. ghcr.io/cafaye/myservice
-                        default: ghcr.io/cafaye/<chart-name> or ghcr.io/cafaye/<dir-basename>
+  --image NAME          image name, e.g. ghcr.io/anywaye/myservice
+                        default: ghcr.io/anywaye/<chart-name> or ghcr.io/anywaye/<dir-basename>
   --chart-dir DIR       chart directory relative to service dir [chart]
-  --registry URL        OCI registry for charts [oci://ghcr.io/cafaye/charts]
+  --registry URL        OCI registry for charts [oci://ghcr.io/anywaye/charts]
   --tag TAG             image+chart tag [Chart.yaml version, default 0.1.0]
   --git-ref REF         git ref to derive sha tag from [HEAD]
   --platforms LIST      comma-separated platforms, e.g. linux/amd64,linux/arm64
@@ -108,12 +108,12 @@ Options:
   --dry-run             print every command that would run, do not execute
   --sandbox             provision (or reuse) an instabox sandbox named
                         --sandbox-name and prepare it for publishing
-  --sandbox-name NAME   instabox sandbox name [cafaye-build]
+  --sandbox-name NAME   instabox sandbox name [anywaye-build]
   --help                this text
 
 Examples:
   bin/publish --dry-run
-  bin/publish --service-dir . --image ghcr.io/cafaye/gateway
+  bin/publish --service-dir . --image ghcr.io/anywaye/gateway
   bin/publish --sandbox --dry-run
   echo "$GH_TOKEN" | bin/publish --sandbox   # token via stdin, never argv
 
@@ -281,7 +281,7 @@ do_sandbox() {
     info "sandbox: logging in to ghcr.io and gh"
     # Need a username for docker/helm login. gh auth login --with-token does
     # not need one; docker/helm do. Use GITHUB_ACTOR or $USER, default to git actor.
-    gh_user="${GITHUB_ACTOR:-${USER:-cafaye}}"
+    gh_user="${GITHUB_ACTOR:-${USER:-anywaye}}"
     info "sandbox: docker login ghcr.io as $gh_user (token via stdin)"
     cat "$SANDBOX_TOKEN_FILE" | instabox exec "$SANDBOX_NAME" --stdin -- docker login ghcr.io -u "$gh_user" --password-stdin >/dev/null 2>&1 || warn "docker login failed"
     info "sandbox: helm registry login ghcr.io as $gh_user (token via stdin)"
@@ -410,9 +410,9 @@ if [ -z "$TAG" ]; then
 fi
 info "tag: $TAG (chart version; not bumped — Argo targetRevision pins this)"
 
-# image defaults to ghcr.io/cafaye/<chart-name> (lowercased)
+# image defaults to ghcr.io/anywaye/<chart-name> (lowercased)
 if [ -z "$IMAGE" ]; then
-  IMAGE="ghcr.io/cafaye/$chart_name"
+  IMAGE="ghcr.io/anywaye/$chart_name"
   IMAGE="$(printf '%s' "$IMAGE" | tr '[:upper:]' '[:lower:]')"
 fi
 info "image: $IMAGE"
@@ -548,7 +548,7 @@ derive_digest() {
   local d=""
   # Prefer RepoDigests from inspect (works after push)
   d="$(docker inspect --format='{{index .RepoDigests 0}}' "$img" 2>/dev/null || true)"
-  # d is like ghcr.io/cafaye/svc@sha256:abc...
+  # d is like ghcr.io/anywaye/svc@sha256:abc...
   d="${d#*@}"
   if printf '%s' "$d" | grep -qE '^sha256:[0-9a-f]{64}$'; then
     printf '%s' "$d"
@@ -671,7 +671,7 @@ fi
 # GHCR packages are private by default. No API with a normal token can flip
 # visibility; it needs a browser once per new package.
 REGISTRY_PATH="$(printf '%s' "$REGISTRY" | sed 's|^oci://[^/]*||; s|^/||')"
-# REGISTRY_PATH is e.g. cafaye/charts
+# REGISTRY_PATH is e.g. anywaye/charts
 ENCODED_CHART="$(printf '%s' "$REGISTRY_PATH/$chart_name" | sed 's|/|%2F|g')"
 ENCODED_IMAGE="$(printf '%s' "$IMAGE" | sed "s|^$GHCR_HOST/||; s|/|%2F|g")"
 
@@ -688,12 +688,12 @@ publish: done
     with a normal token can do it — open the package page and set it to
     public (or internal):
 
-      image: https://github.com/orgs/cafaye/packages/container/${ENCODED_IMAGE}/settings
-      chart: https://github.com/orgs/cafaye/packages/container/${ENCODED_CHART}/settings
+      image: https://github.com/orgs/anywaye/packages/container/${ENCODED_IMAGE}/settings
+      chart: https://github.com/orgs/anywaye/packages/container/${ENCODED_CHART}/settings
 
     Or from the repo view:
-      https://github.com/cafaye/$chart_name/pkgs/container/$chart_name
-      https://github.com/cafaye/charts/pkgs/container/charts%2F$chart_name
+      https://github.com/anywaye/$chart_name/pkgs/container/$chart_name
+      https://github.com/anywaye/charts/pkgs/container/charts%2F$chart_name
 
   Argo CD Application pulls:
     repoURL: $REGISTRY/$chart_name  chart: $chart_name  targetRevision: $chart_version

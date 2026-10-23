@@ -46,7 +46,7 @@ import (
 
 	openapiTypes "github.com/oapi-codegen/runtime/types"
 
-	"github.com/cafaye/identity/client/generated"
+	"github.com/anywaye/identity/client/generated"
 )
 
 // Transport is the generated transport's shape, restated as this package's own
@@ -54,7 +54,7 @@ import (
 //
 // One method per `operationId`. The names are the contract: `operationId` is what
 // every generated client in the fleet names its method after, so a Go client that
-// called this `GetMe` where `cafaye-ts` says `getCurrentUser` would be a divergence
+// called this `GetMe` where `anywaye-ts` says `getCurrentUser` would be a divergence
 // in three clients for one platform — which the fleet treats as a defect in the
 // platform, not a style difference.
 type Transport interface {

@@ -3,7 +3,7 @@ package outbox
 import (
 	"time"
 
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // The OIDC events: a relying party registered itself, and one was revoked.
@@ -17,7 +17,7 @@ import (
 //
 // core's catalog has no row for either type yet. core is a different repository
 // and this packet does not touch it, so the reconciliation is the one
-// EventMemberAccepted already documents: the publisher entry in cafaye.yml and
+// EventMemberAccepted already documents: the publisher entry in anywaye.yml and
 // the code here agree, and core's catalog gains the rows when the manager merges
 // them.
 

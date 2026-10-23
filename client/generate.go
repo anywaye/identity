@@ -31,7 +31,7 @@ package client
 // # The document is this repository's own
 //
 // There is no vendored copy and no provenance file, and that is unlike
-// cafaye-ts on purpose. This client is generated from the document this
+// anywaye-ts on purpose. This client is generated from the document this
 // repository ships, in the same commit, so a vendored copy would be a second
 // copy of a file that is already committed two directories away and already read
 // by internal/httpapi's drift check. A vendored copy can lag its source; this

@@ -7,12 +7,12 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/cafaye/identity/internal/mfa"
-	"github.com/cafaye/identity/internal/outbox"
-	"github.com/cafaye/identity/internal/platform/clock"
-	"github.com/cafaye/identity/internal/platform/db"
-	"github.com/cafaye/identity/internal/platform/id"
-	"github.com/cafaye/identity/internal/sessions"
+	"github.com/anywaye/identity/internal/mfa"
+	"github.com/anywaye/identity/internal/outbox"
+	"github.com/anywaye/identity/internal/platform/clock"
+	"github.com/anywaye/identity/internal/platform/db"
+	"github.com/anywaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/sessions"
 )
 
 // The second-factor dependency, twice over: a fake for the branching tests and the
@@ -126,7 +126,7 @@ func realSecondFactor(t *testing.T, pool *pgxpool.Pool, clk clock.Clock) *mfa.Se
 		sessions.NewStore(pool),
 		vault,
 		clk,
-		"cafaye identity",
+		"anywaye identity",
 	)
 }
 

@@ -50,9 +50,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cafaye/identity/internal/config"
-	"github.com/cafaye/identity/internal/courier"
-	"github.com/cafaye/identity/internal/recovery"
+	"github.com/anywaye/identity/internal/config"
+	"github.com/anywaye/identity/internal/courier"
+	"github.com/anywaye/identity/internal/recovery"
 )
 
 // composeVar matches the three interpolation forms this repository uses.

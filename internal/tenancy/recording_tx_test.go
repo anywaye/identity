@@ -7,7 +7,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
-	"github.com/cafaye/identity/internal/platform/db"
+	"github.com/anywaye/identity/internal/platform/db"
 )
 
 // A pool and a transaction that are SEPARATE OBJECTS and record separately.
@@ -33,7 +33,7 @@ type recordingPool struct {
 
 type recordingTx struct {
 	// failBeginAccountWith makes the identity statement fail, which is how a
-	// refused `cafaye.begin_account` reaches the code under test without a
+	// refused `anywaye.begin_account` reaches the code under test without a
 	// database.
 	failBeginAccountWith error
 

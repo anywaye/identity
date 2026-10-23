@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cafaye/identity/internal/platform/dbtest"
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/platform/dbtest"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // These are integration tests: they need a real Postgres with the migrations

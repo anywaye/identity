@@ -53,8 +53,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cafaye/identity/internal/oidc"
-	"github.com/cafaye/identity/internal/platform/dbtest"
+	"github.com/anywaye/identity/internal/oidc"
+	"github.com/anywaye/identity/internal/platform/dbtest"
 )
 
 // oidcFlowBindingFixture is an oidcFixture plus a second browser.

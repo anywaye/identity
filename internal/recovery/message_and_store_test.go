@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cafaye/identity/internal/sessions"
+	"github.com/anywaye/identity/internal/sessions"
 )
 
 // THE MESSAGES, AND THE STORE'S TWO CLAIMS.

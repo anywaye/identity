@@ -28,7 +28,7 @@ const testLoginUIURL = "https://login.example.com/sign-in/oidc"
 func testProviderFor(t *testing.T, loginUI string) *Provider {
 	t.Helper()
 
-	key, err := LoadSigningKey(pemFor(t, 2048, pkcs8), "cafaye-test-key")
+	key, err := LoadSigningKey(pemFor(t, 2048, pkcs8), "anywaye-test-key")
 	if err != nil {
 		t.Fatalf("LoadSigningKey: %v", err)
 	}
@@ -52,7 +52,7 @@ func testProviderFor(t *testing.T, loginUI string) *Provider {
 func TestNewProviderRefusesToBuildWithoutALoginUI(t *testing.T) {
 	t.Parallel()
 
-	key, err := LoadSigningKey(pemFor(t, 2048, pkcs8), "cafaye-test-key")
+	key, err := LoadSigningKey(pemFor(t, 2048, pkcs8), "anywaye-test-key")
 	if err != nil {
 		t.Fatalf("LoadSigningKey: %v", err)
 	}

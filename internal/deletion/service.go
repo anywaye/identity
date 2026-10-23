@@ -33,11 +33,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cafaye/identity/internal/accounts"
-	"github.com/cafaye/identity/internal/outbox"
-	"github.com/cafaye/identity/internal/platform/db"
-	"github.com/cafaye/identity/internal/platform/id"
-	"github.com/cafaye/identity/internal/tenancy"
+	"github.com/anywaye/identity/internal/accounts"
+	"github.com/anywaye/identity/internal/outbox"
+	"github.com/anywaye/identity/internal/platform/db"
+	"github.com/anywaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/tenancy"
 )
 
 // ErrSolelyOwnedAccounts is the refusal: this user is the only owner of a team
@@ -250,10 +250,10 @@ func (s *Service) Delete(ctx context.Context, in DeleteInput) error {
 		// account, because the subject of it is a person who belongs to as many
 		// accounts as they like (DECISIONS.md D14).
 		//
-		// `account_users_cafaye_members` (00018) is the fifth policy, and it filters
-		// on `user_id = cafaye.current_user_id()` — which is admitted for SELECT and
+		// `account_users_anywaye_members` (00018) is the fifth policy, and it filters
+		// on `user_id = anywaye.current_user_id()` — which is admitted for SELECT and
 		// nothing else, deliberately ("discovery is not authorisation"). (00028
-		// adds a sixth, `account_users_cafaye_resolve`, for the credential
+		// adds a sixth, `account_users_anywaye_resolve`, for the credential
 		// transaction; no digest is set here so it admits nothing.) Two of the
 		// writes below do not need it: `users` and `accounts` carry no policy at all
 		// (00016 says so and explains why — `accounts` has no `account_id` column for

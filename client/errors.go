@@ -10,7 +10,7 @@ package client
 //
 // # `ProblemError` IS AN INTERFACE, AND THAT IS THE WHOLE DESIGN
 //
-// It is the Go equivalent of TypeScript's `instanceof CafayeProblemError`, and it
+// It is the Go equivalent of TypeScript's `instanceof AnywayeProblemError`, and it
 // has to be an interface rather than a base struct for a reason that is easy to get
 // wrong. This was tried as a base struct first, embedded BY VALUE:
 //
@@ -46,7 +46,7 @@ package client
 //
 // # WHY `code` CHOOSES THE TYPE AND `status` IS THE FALLBACK
 //
-// core's conventions: "`type` is a stable `https://docs.cafaye.com/errors/<code>` URI —
+// core's conventions: "`type` is a stable `https://docs.anywaye.com/errors/<code>` URI —
 // the machine-readable contract" and "`code` is the same slug as the last segment of
 // `type`". So `code` is the contract and `status` is a fact about one response, which
 // a service could get wrong or omit, since RFC 9457 makes `status` advisory.
@@ -87,7 +87,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/cafaye/identity/client/generated"
+	"github.com/anywaye/identity/client/generated"
 )
 
 // ProblemContentType is the media type every non-2xx response carries.
@@ -111,7 +111,7 @@ const RetryAfterHeader = "Retry-After"
 type ProblemError interface {
 	error
 
-	// Code is the cafaye problem code: the last segment of `type`, in snake_case.
+	// Code is the anywaye problem code: the last segment of `type`, in snake_case.
 	// Empty when the service omitted it, which is legal under RFC 9457 and is
 	// mapped from the status instead.
 	Code() string
@@ -498,7 +498,7 @@ func notAProblem(operation string, status int, contentType string, body []byte, 
 		Operation: operation, Status: status, contentType: contentType, redactor: redact,
 		message: "the response did not carry an RFC 9457 problem document (Content-Type: " +
 			shown + "). Something between this client and identity answered — a proxy, a " +
-			"gateway, a rate limiter — so there is no cafaye code to branch on.",
+			"gateway, a rate limiter — so there is no anywaye code to branch on.",
 		// The excerpt is kept because a reverse proxy's HTML 502 is otherwise
 		// undiagnosable from the client side, and dropped when redaction removed all
 		// of it: `Redacted` means there was something credential-shaped in there and
@@ -614,7 +614,7 @@ func IsRetryable(err error) bool {
 	return errors.Is(err, ErrUnavailable)
 }
 
-// ErrUnavailable is returned for a 503 with no cafaye problem body, which is what
+// ErrUnavailable is returned for a 503 with no anywaye problem body, which is what
 // `GET /readyz` answers when a dependency is down.
 //
 // This repository's document calls that response out as the one non-2xx in the

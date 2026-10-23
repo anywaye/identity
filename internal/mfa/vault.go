@@ -10,7 +10,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // THE TOTP SECRET CANNOT BE HASHED, AND THAT IS WHY THIS FILE EXISTS.
@@ -75,7 +75,7 @@ const SealPrefix = "mfa1."
 //     Alice's sealed secret onto Bob's credential fails to open, because the
 //     AAD no longer matches — so "an administrator installed a known secret for
 //     this user" is not a state the database can be talked into holding.
-const aadPrefix = "cafaye/identity/mfa/totp-secret/v1\x00"
+const aadPrefix = "anywaye/identity/mfa/totp-secret/v1\x00"
 
 // ErrInvalidKey means the configured key is not 32 bytes. It is never padded or
 // truncated: an operator who pasted a 16-byte key has configured half the

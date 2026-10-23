@@ -101,9 +101,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cafaye/identity/internal/httpapi"
-	"github.com/cafaye/identity/internal/oidc"
-	"github.com/cafaye/identity/internal/platform/clock"
+	"github.com/anywaye/identity/internal/httpapi"
+	"github.com/anywaye/identity/internal/oidc"
+	"github.com/anywaye/identity/internal/platform/clock"
 )
 
 // htmlExtensions is a file that is a page, whatever it is called.
@@ -371,7 +371,7 @@ func throwawaySigningKey(t *testing.T) *oidc.SigningKey {
 		t.Fatalf("marshaling the signing key: %v", err)
 	}
 	encoded := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})
-	key, err := oidc.LoadSigningKey(string(encoded), "cafaye-no-html-test")
+	key, err := oidc.LoadSigningKey(string(encoded), "anywaye-no-html-test")
 	if err != nil {
 		t.Fatalf("loading the signing key: %v", err)
 	}

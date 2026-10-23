@@ -84,7 +84,7 @@ func TestAllow(t *testing.T) {
 			// not decidable here. The allowed set is relative paths only,
 			// precisely so the answer never depends on a host allow-list.
 			name: "an absolute URL to the product's own host",
-			give: "https://identity.cafaye.com/x",
+			give: "https://identity.anywaye.com/x",
 			want: false,
 		},
 		{

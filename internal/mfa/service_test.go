@@ -10,13 +10,13 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/cafaye/identity/internal/outbox"
-	"github.com/cafaye/identity/internal/platform/clock"
-	"github.com/cafaye/identity/internal/platform/db"
-	"github.com/cafaye/identity/internal/platform/dbtest"
-	"github.com/cafaye/identity/internal/platform/id"
-	"github.com/cafaye/identity/internal/sessions"
-	"github.com/cafaye/identity/internal/users"
+	"github.com/anywaye/identity/internal/outbox"
+	"github.com/anywaye/identity/internal/platform/clock"
+	"github.com/anywaye/identity/internal/platform/db"
+	"github.com/anywaye/identity/internal/platform/dbtest"
+	"github.com/anywaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/sessions"
+	"github.com/anywaye/identity/internal/users"
 )
 
 // EVERY TEST IN THIS FILE IS A DATABASE TEST, for the reason the packet gives: the
@@ -25,7 +25,7 @@ import (
 // two live credentials can exist — none of that is answerable without the schema
 // that forbids it, and a double would only say what it was told.
 
-const testIssuer = "cafaye identity"
+const testIssuer = "anywaye identity"
 
 // harness is one enrolled-or-not user and the service over a private schema.
 type harness struct {

@@ -497,7 +497,7 @@ func TestSpanNamesAreTheFleetsGrammar(t *testing.T) {
 		{"a", "b", "c", "d"},               // four segments
 		{"/v1/session"},                    // a path
 		{"v1.session"},                     // a dotted path
-		{"usr_01J9Z8QK5M4N7P2R3T6V8W9X0A"}, // a cafaye id
+		{"usr_01J9Z8QK5M4N7P2R3T6V8W9X0A"}, // a anywaye id
 		{"a b"},                            // a space
 		{"a;b"},                            // a statement
 	} {
@@ -549,7 +549,7 @@ func TestTheEndpointContractIsOneVariable(t *testing.T) {
 			want: DefaultEndpoint,
 		},
 		{
-			name: "the cafaye variable wins over the standard one",
+			name: "the anywaye variable wins over the standard one",
 			env: map[string]string{
 				EndpointVariable:              "https://otlp.example.com:4318",
 				"OTEL_EXPORTER_OTLP_ENDPOINT": "https://other.example.com:4318",
@@ -577,7 +577,7 @@ func TestTheEndpointContractIsOneVariable(t *testing.T) {
 }
 
 // TestTheKillSwitchIsTheSpecsOwn checks that "disabled" is the OTel spec's
-// definition of disabled and not a cafaye reimplementation.
+// definition of disabled and not a anywaye reimplementation.
 //
 // Re-implementing "disabled" in six languages is how six services acquire six
 // different definitions of it, and the difference between them is somebody's
@@ -754,10 +754,10 @@ func TestTheNormalisedEndpointNamesTheSignalPath(t *testing.T) {
 		// A self-hoster behind a reverse proxy keeps their base path — this is
 		// path.Join, the SDK's own rule, so a base path is preserved rather than
 		// overwritten.
-		{"https://otlp.example.com/cafaye", "https://otlp.example.com/cafaye/v1/traces"},
+		{"https://otlp.example.com/anywaye", "https://otlp.example.com/anywaye/v1/traces"},
 		// Already naming it: left exactly as it is.
 		{"http://otel-collector:4318/v1/traces", "http://otel-collector:4318/v1/traces"},
-		{"https://otlp.example.com/cafaye/v1/traces", "https://otlp.example.com/cafaye/v1/traces"},
+		{"https://otlp.example.com/anywaye/v1/traces", "https://otlp.example.com/anywaye/v1/traces"},
 	} {
 		t.Run(tc.endpoint, func(t *testing.T) {
 			got, err := normaliseEndpoint(tc.endpoint)

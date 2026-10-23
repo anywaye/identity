@@ -6,12 +6,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cafaye/identity/internal/outbox"
-	"github.com/cafaye/identity/internal/platform/db"
-	"github.com/cafaye/identity/internal/platform/dbtest"
-	"github.com/cafaye/identity/internal/platform/id"
-	"github.com/cafaye/identity/internal/tenancy"
-	"github.com/cafaye/identity/internal/users"
+	"github.com/anywaye/identity/internal/outbox"
+	"github.com/anywaye/identity/internal/platform/db"
+	"github.com/anywaye/identity/internal/platform/dbtest"
+	"github.com/anywaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/tenancy"
+	"github.com/anywaye/identity/internal/users"
 )
 
 // The account-scoped WRITES under the real policies, and the fourth kind of test
@@ -39,9 +39,9 @@ import (
 // # WHY THESE ARE NOT REDUNDANT WITH THE READ FILES
 //
 // A read that loses its identity answers the wrong thing (`[]`, a 404); a write
-// that loses its identity is REFUSED — `account_users_cafaye_insert` and
-// `_cafaye_update` are `with check (account_id = (select
-// cafaye.current_account_id()))`, so the membership write meets SQLSTATE 42501
+// that loses its identity is REFUSED — `account_users_anywaye_insert` and
+// `_anywaye_update` are `with check (account_id = (select
+// anywaye.current_account_id()))`, so the membership write meets SQLSTATE 42501
 // and the use case fails. That is a loud failure, and it is the correct one, but
 // it is a failure the Schema copies never produced: they ran with no `with
 // check` to refuse them. So the writes were tested for their LOGIC (the
@@ -65,7 +65,7 @@ import (
 // The invariant is service logic, but its ENFORCEMENT reads the membership
 // table: `ChangeRole` reads the target and counts the owners, `RemoveMember`
 // reads the target and the actor. Under the real policies those reads are
-// admitted by `account_users_cafaye_select`, so the test now fails — with
+// admitted by `account_users_anywaye_select`, so the test now fails — with
 // `ErrNotAMember`, not the invariant's own error — if the transaction stops
 // carrying the account. That is the regression this file exists to catch, and
 // it is invisible on `dbtest.Schema`, where the reads always succeed.

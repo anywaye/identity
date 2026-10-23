@@ -13,11 +13,11 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/cafaye/identity/internal/platform/db"
-	"github.com/cafaye/identity/internal/platform/dbtest"
-	"github.com/cafaye/identity/internal/platform/id"
-	"github.com/cafaye/identity/internal/sessions"
-	"github.com/cafaye/identity/internal/users"
+	"github.com/anywaye/identity/internal/platform/db"
+	"github.com/anywaye/identity/internal/platform/dbtest"
+	"github.com/anywaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/sessions"
+	"github.com/anywaye/identity/internal/users"
 )
 
 // EVERY TEST IN THIS FILE IS A DATABASE TEST, and none of them can run without
@@ -57,7 +57,7 @@ func newCredential(t *testing.T, pool *pgxpool.Pool, user users.User) Credential
 		Digits:           Digits,
 		PeriodSeconds:    int(Period / time.Second),
 		Algorithm:        AlgorithmSHA1,
-		Label:            "cafaye",
+		Label:            "anywaye",
 		ExpiresAt:        &expires,
 		CreatedAt:        issuedAt,
 	})
@@ -606,49 +606,49 @@ func TestTheSchemaRefusesWhatTheGoCodeRefuses(t *testing.T) {
 	}{
 		{
 			name:   "a method this service does not implement",
-			method: "sms", digits: "6", period: "30", algorithm: "SHA1", label: "cafaye",
+			method: "sms", digits: "6", period: "30", algorithm: "SHA1", label: "anywaye",
 			expires: expires, attempts: 0,
 		},
 		{
 			name:   "a digit count no verifier can handle",
-			method: "totp", digits: "7", period: "30", algorithm: "SHA1", label: "cafaye",
+			method: "totp", digits: "7", period: "30", algorithm: "SHA1", label: "anywaye",
 			expires: expires, attempts: 0,
 		},
 		{
 			name:   "a digit count far outside the spec",
-			method: "totp", digits: "60", period: "30", algorithm: "SHA1", label: "cafaye",
+			method: "totp", digits: "60", period: "30", algorithm: "SHA1", label: "anywaye",
 			expires: expires, attempts: 0,
 		},
 		{
 			name:   "an algorithm no authenticator app speaks",
-			method: "totp", digits: "6", period: "30", algorithm: "SHA512", label: "cafaye",
+			method: "totp", digits: "6", period: "30", algorithm: "SHA512", label: "anywaye",
 			expires: expires, attempts: 0,
 		},
 		{
 			name:   "a period of zero, which divides by zero in the counter arithmetic",
-			method: "totp", digits: "6", period: "0", algorithm: "SHA1", label: "cafaye",
+			method: "totp", digits: "6", period: "0", algorithm: "SHA1", label: "anywaye",
 			expires: expires, attempts: 0,
 		},
 		{
 			name:   "a period long enough that a code is a day old",
-			method: "totp", digits: "6", period: "86400", algorithm: "SHA1", label: "cafaye",
+			method: "totp", digits: "6", period: "86400", algorithm: "SHA1", label: "anywaye",
 			expires: expires, attempts: 0,
 		},
 		{
 			name:   "a negative failure count",
-			method: "totp", digits: "6", period: "30", algorithm: "SHA1", label: "cafaye",
+			method: "totp", digits: "6", period: "30", algorithm: "SHA1", label: "anywaye",
 			expires: expires, attempts: -1,
 		},
 		{
 			// confirmed_at without expires_at is the half of the pair the table
 			// refuses, and it is the state a careless UPDATE would produce.
 			name:   "a confirmation that kept its enrollment expiry",
-			method: "totp", digits: "6", period: "30", algorithm: "SHA1", label: "cafaye",
+			method: "totp", digits: "6", period: "30", algorithm: "SHA1", label: "anywaye",
 			expires: expires, confirmed: issuedAt, attempts: 0,
 		},
 		{
 			name:   "an enrollment with no deadline at all",
-			method: "totp", digits: "6", period: "30", algorithm: "SHA1", label: "cafaye",
+			method: "totp", digits: "6", period: "30", algorithm: "SHA1", label: "anywaye",
 			expires: nil, attempts: 0,
 		},
 		{
@@ -658,7 +658,7 @@ func TestTheSchemaRefusesWhatTheGoCodeRefuses(t *testing.T) {
 		},
 		{
 			name:   "a label longer than an authenticator app has room for",
-			method: "totp", digits: "6", period: "30", algorithm: "SHA1", label: strings.Repeat("cafaye", 100),
+			method: "totp", digits: "6", period: "30", algorithm: "SHA1", label: strings.Repeat("anywaye", 100),
 			expires: expires, attempts: 0,
 		},
 	}
@@ -679,7 +679,7 @@ func TestTheSchemaRefusesWhatTheGoCodeRefuses(t *testing.T) {
 	t.Run("a credential with no sealed secret at all", func(t *testing.T) {
 		const withoutSecret = `INSERT INTO mfa_credentials
 			(user_id, method, secret_ciphertext, digits, period_seconds, algorithm, label, expires_at)
-			VALUES ($1, 'totp', '', 6, 30, 'SHA1', 'cafaye', $2)`
+			VALUES ($1, 'totp', '', 6, 30, 'SHA1', 'anywaye', $2)`
 		if _, err := pool.Exec(ctx, withoutSecret, user.ID, expires); err == nil {
 			t.Error("the database accepted a credential with no sealed secret")
 		}
@@ -715,7 +715,7 @@ func TestADatabaseDumpYieldsNoWorkingSecondFactor(t *testing.T) {
 	credential, err := store.CreateCredential(ctx, pool, CreateCredentialParams{
 		UserID: user.ID, Method: MethodTOTP, SecretCiphertext: sealed,
 		Digits: Digits, PeriodSeconds: int(Period / time.Second),
-		Algorithm: AlgorithmSHA1, Label: "cafaye", ExpiresAt: &expires, CreatedAt: issuedAt,
+		Algorithm: AlgorithmSHA1, Label: "anywaye", ExpiresAt: &expires, CreatedAt: issuedAt,
 	})
 	if err != nil {
 		t.Fatalf("creating a credential: %v", err)

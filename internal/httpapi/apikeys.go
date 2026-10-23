@@ -10,9 +10,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/cafaye/identity/internal/accounts"
-	"github.com/cafaye/identity/internal/apikeys"
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/accounts"
+	"github.com/anywaye/identity/internal/apikeys"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // The scoped API token surface: mint one, list an account's, withdraw one.
@@ -571,7 +571,7 @@ func (o options) mayIntrospect(w http.ResponseWriter, r *http.Request, caller ap
 
 // presentedAPIKey returns the scoped token the request is carrying, or "".
 //
-// THE PREFIX IS THE DISCRIMINATOR, and that is the second thing the `cafaye_`
+// THE PREFIX IS THE DISCRIMINATOR, and that is the second thing the `anywaye_`
 // prefix buys. A request arrives with either a session token or an api key, and
 // the two live in different tables with different lifetimes and different
 // revocation stories. Something has to decide which one this is before the

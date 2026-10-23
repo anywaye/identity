@@ -1,4 +1,4 @@
-# oapi-codegen's configuration for the cafaye Go client.
+# oapi-codegen's configuration for the anywaye Go client.
 #
 # THE GENERATOR IS PINNED AT v2.8.0 by the `//go:generate` line in generate.go, not
 # by this file, and that split is deliberate: `go run <module>@<version>` resolves
@@ -37,7 +37,7 @@
 #       `account_id` becomes `AccountId` rather than `AccountID`, and `oidc_clients`
 #       becomes `OidcClients`. The generator's own identifiers follow Go's
 #       initialism convention (`APIKeyScope`, `IntrospectRequest`), and a fleet
-#       where `cafaye-ts` exports `OIDCClient` and the Go client exported
+#       where `anywaye-ts` exports `OIDCClient` and the Go client exported
 #       `OidcClient` would be a divergence in three clients for one platform,
 #       which the fleet treats as a defect. This is the DEFAULT, written down
 #       because the alternative is silent: the next person to add

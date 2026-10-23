@@ -1,7 +1,7 @@
 // Package users owns the user aggregate: the row, the credential, and the rules
 // about what a valid email and password are.
 //
-// It knows nothing about HTTP. Handlers translate domain errors into the cafaye
+// It knows nothing about HTTP. Handlers translate domain errors into the anywaye
 // error envelope; they do not define the rules.
 package users
 
@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // Errors returned by the store and the validators. Callers match them with
@@ -28,7 +28,7 @@ var (
 )
 
 // Field validation codes. These land verbatim in the `errors[]` array of the
-// cafaye error envelope (core: docs/openapi-conventions.md), so they are part of
+// anywaye error envelope (core: docs/openapi-conventions.md), so they are part of
 // the contract and clients may switch on them.
 const (
 	CodeRequired      = "required"

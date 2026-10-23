@@ -9,7 +9,7 @@
 // properties of the use case, not of a handler and not of a table.
 //
 // Nothing here knows about HTTP. The handlers translate the errors below into the
-// cafaye error envelope (core: docs/openapi-conventions.md).
+// anywaye error envelope (core: docs/openapi-conventions.md).
 package auth
 
 import (
@@ -19,16 +19,16 @@ import (
 	"net/netip"
 	"time"
 
-	"github.com/cafaye/identity/internal/accounts"
-	"github.com/cafaye/identity/internal/mfa"
-	"github.com/cafaye/identity/internal/outbox"
-	"github.com/cafaye/identity/internal/platform/clock"
-	"github.com/cafaye/identity/internal/platform/db"
-	"github.com/cafaye/identity/internal/platform/id"
-	"github.com/cafaye/identity/internal/sessions"
-	"github.com/cafaye/identity/internal/tenancy"
-	"github.com/cafaye/identity/internal/useraudit"
-	"github.com/cafaye/identity/internal/users"
+	"github.com/anywaye/identity/internal/accounts"
+	"github.com/anywaye/identity/internal/mfa"
+	"github.com/anywaye/identity/internal/outbox"
+	"github.com/anywaye/identity/internal/platform/clock"
+	"github.com/anywaye/identity/internal/platform/db"
+	"github.com/anywaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/sessions"
+	"github.com/anywaye/identity/internal/tenancy"
+	"github.com/anywaye/identity/internal/useraudit"
+	"github.com/anywaye/identity/internal/users"
 )
 
 // Errors the HTTP layer maps onto status codes.
@@ -462,7 +462,7 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (RegisteredUse
 // request — it comes from the row that was just created.
 //
 // WITHOUT IT the owner membership INSERT meets
-// `with check (account_id = (select cafaye.current_account_id()))` with a NULL
+// `with check (account_id = (select anywaye.current_account_id()))` with a NULL
 // identity, NULL is not true, and Postgres refuses the write with SQLSTATE 42501.
 // That is the substrate working: it is refusing an account-scoped write that
 // claims no account. The symptom it produced was `POST /v1/users` answering 500,

@@ -35,11 +35,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cafaye/identity/internal/apikeys"
-	"github.com/cafaye/identity/internal/auth"
-	"github.com/cafaye/identity/internal/platform/id"
-	"github.com/cafaye/identity/internal/sessions"
-	"github.com/cafaye/identity/internal/users"
+	"github.com/anywaye/identity/internal/apikeys"
+	"github.com/anywaye/identity/internal/auth"
+	"github.com/anywaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/sessions"
+	"github.com/anywaye/identity/internal/users"
 )
 
 // sessionWorld is the fixture: a real router over the fake auth service.
@@ -251,7 +251,7 @@ func TestAScopedApiKeyCannotListSessions(t *testing.T) {
 	)
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/sessions", nil)
-	req.Header.Set("Authorization", "Bearer cafaye_a-key")
+	req.Header.Set("Authorization", "Bearer anywaye_a-key")
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
@@ -460,7 +460,7 @@ func TestAScopedApiKeyCannotRevokeASession(t *testing.T) {
 	)
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "/v1/sessions/"+id.MustNew().String(), nil)
-	req.Header.Set("Authorization", "Bearer cafaye_a-key")
+	req.Header.Set("Authorization", "Bearer anywaye_a-key")
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 

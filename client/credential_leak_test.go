@@ -20,7 +20,7 @@ package client
 //
 // It is not a plausible real credential: the entropy is a repeated character, the
 // prefix says `FAKE`, and if it ever escaped into a log the first seven characters
-// would identify it as a test value. That is the same property identity's `cafaye_`
+// would identify it as a test value. That is the same property identity's `anywaye_`
 // prefix buys for real credentials, pointed the other way.
 //
 // # WHY IT IS NOT A GREP
@@ -58,19 +58,19 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cafaye/identity/client/generated"
+	"github.com/anywaye/identity/client/generated"
 )
 
 // fakeToken is the credential the whole file hunts for.
 //
-// 43 base64url characters after the `cafaye_` prefix, which is the shape
+// 43 base64url characters after the `anywaye_` prefix, which is the shape
 // identity's `IssuedAPIKey.token` documents and the shape `ClassifyCredential` keys
 // on. The body is a repeated character so it is impossible to mistake for a real
 // value at a glance and impossible to generate by accident.
-const fakeToken = "cafaye_FAKE_FAKE_FAKE_FAKE_FAKE_FAKE_FAKE_FAKE_FAKE_FA"
+const fakeToken = "anywaye_FAKE_FAKE_FAKE_FAKE_FAKE_FAKE_FAKE_FAKE_FAKE_FA"
 
 // fakeSessionToken is the same idea for the OTHER auth model: a session token has
-// no prefix, so the shape that identifies it is "not a `cafaye_` value and not a
+// no prefix, so the shape that identifies it is "not a `anywaye_` value and not a
 // JWS". It is swept separately because a client can hold one and the two take
 // different code paths through AttachCredential.
 const fakeSessionToken = "FAKEfakeSessionTokenFAKEfakeSessionTokenFAKEfake"
@@ -98,7 +98,7 @@ var leakyResponseHeaders = map[string]string{
 // string on a `ProblemError` goes through the redactor rather than only the ones
 // this package builds itself.
 const leakyProblemBody = `{
-  "type": "https://docs.cafaye.com/errors/validation_failed",
+  "type": "https://docs.anywaye.com/errors/validation_failed",
   "title": "Validation failed",
   "status": 422,
   "detail": "the field 'token' was rejected: '` + fakeToken + `'",
@@ -115,7 +115,7 @@ const leakyProblemBody = `{
 // can be made to print about the resulting client and errors.
 //
 // Table-driven over the two credentials and the two outcomes, because "the token
-// never appears" has to hold for a `cafaye_` value and a session value and for a
+// never appears" has to hold for a `anywaye_` value and a session value and for a
 // success and a failure, and asserting it once for one combination is asserting it
 // for one combination.
 func TestTheClientNeverPrintsACredential(t *testing.T) {
@@ -355,7 +355,7 @@ func secretBearingValues() map[string]any {
 	}
 	enrollment := generated.StartedEnrollment{
 		Secret:          fakeToken,
-		ProvisioningURI: "otpauth://totp/cafaye:" + fakeToken,
+		ProvisioningURI: "otpauth://totp/anywaye:" + fakeToken,
 		EnrollmentID:    uuidOf("ab000000-0000-0000-0000-0000000000e1"),
 		Method:          "totp",
 		Digits:          6,

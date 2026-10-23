@@ -131,7 +131,7 @@ func TestTenancyAccountIsolation(t *testing.T) {
 
 	rows, err := conn.Query(ctx, `
 		select assertion, expected, actual, verdict, why
-		  from pg_temp.cafaye_probe_result
+		  from pg_temp.anywaye_probe_result
 		 order by assertion`)
 	if err != nil {
 		t.Fatalf("read the assertion results: %v", err)
@@ -266,7 +266,7 @@ func TestTenancyIdentityOwnsItsFiveTables(t *testing.T) {
 		// are in `public`, and that is the schema this assertion is about.
 		rows, err := conn.Query(ctx, `
 			select table_schema, table_name, why
-			  from cafaye.unprotected_tables()
+			  from anywaye.unprotected_tables()
 			 where table_schema = 'public'`)
 		if err != nil {
 			t.Fatalf("running the sweep: %v", err)
@@ -284,7 +284,7 @@ func TestTenancyIdentityOwnsItsFiveTables(t *testing.T) {
 			t.Fatalf("iterate the sweep: %v", err)
 		}
 		if len(unprotected) > 0 {
-			t.Errorf("cafaye.unprotected_tables() found %d account-scoped table(s) in public with "+
+			t.Errorf("anywaye.unprotected_tables() found %d account-scoped table(s) in public with "+
 				"no boundary - an account-scoped table that no policy covers:\n  %s",
 				len(unprotected), strings.Join(unprotected, "\n  "))
 		}
@@ -318,14 +318,14 @@ func TestTenancyIdentityOwnsItsFiveTables(t *testing.T) {
 
 			// Two tenants, one row each, written by the OWNER before the identity is
 			// set and before the role is dropped - because the insert policy is
-			// `with check (account_id = (select cafaye.current_account_id()))`, so a
+			// `with check (account_id = (select anywaye.current_account_id()))`, so a
 			// writer with no identity is refused, which is the write-side twin of the
 			// read denial and is itself correct.
 			tenantA, tenantB := seedAuditRows(ctx, t, conn, role)
 
 			// ARM ONE. No identity. `begin_account(NULL)` clears, which is the state a
 			// request that never authenticated is in.
-			if _, err := conn.Exec(ctx, `select cafaye.begin_account(NULL)`); err != nil {
+			if _, err := conn.Exec(ctx, `select anywaye.begin_account(NULL)`); err != nil {
 				t.Fatalf("clearing the account identity: %v", err)
 			}
 			if got := countAuditRows(ctx, t, conn); got != 0 {
@@ -336,7 +336,7 @@ func TestTenancyIdentityOwnsItsFiveTables(t *testing.T) {
 			// ARM TWO. The other tenant's VALID identity. This is the arm that carries
 			// the information: the credential is real, it belongs to another account,
 			// and it must be indistinguishable from one that does not exist.
-			if _, err := conn.Exec(ctx, `select cafaye.begin_account($1)`, tenantB); err != nil {
+			if _, err := conn.Exec(ctx, `select anywaye.begin_account($1)`, tenantB); err != nil {
 				t.Fatalf("setting the other tenant's identity: %v", err)
 			}
 			if got := countAuditRows(ctx, t, conn); got != 1 {
@@ -350,7 +350,7 @@ func TestTenancyIdentityOwnsItsFiveTables(t *testing.T) {
 
 			// ARM THREE. Its own identity. The positive control, and the only arm a
 			// deny-everything table can pass.
-			if _, err := conn.Exec(ctx, `select cafaye.begin_account($1)`, tenantA); err != nil {
+			if _, err := conn.Exec(ctx, `select anywaye.begin_account($1)`, tenantA); err != nil {
 				t.Fatalf("setting the account's own identity: %v", err)
 			}
 			if got := countAuditRowsIn(ctx, t, conn, tenantA); got != 1 {
@@ -367,7 +367,7 @@ func TestTenancyIdentityOwnsItsFiveTables(t *testing.T) {
 			// half a boundary: `using` denies an UPDATE by matching zero rows and
 			// raising nothing, so "the other tenant's row came back unchanged" is the
 			// only proof that the denial happened rather than the write being a no-op.
-			if _, err := conn.Exec(ctx, `select cafaye.begin_account($1)`, tenantB); err != nil {
+			if _, err := conn.Exec(ctx, `select anywaye.begin_account($1)`, tenantB); err != nil {
 				t.Fatalf("setting the other tenant's identity: %v", err)
 			}
 			tag, err := conn.Exec(ctx,
@@ -618,7 +618,7 @@ func TestTenancyCatalogProofReadsThePublicRowNotAClone(t *testing.T) {
 // side of the same boundary, arriving in the fixture. `protect_table` names the OWNER
 // in every policy (FORCE removed the owner's exemption, so an owner with no identity
 // would read nothing at all), which means the owner's INSERT is subject to
-// `with check (account_id = (select cafaye.current_account_id()))` too. Seeding
+// `with check (account_id = (select anywaye.current_account_id()))` too. Seeding
 // without an identity fails with:
 //
 //	ERROR: new row violates row-level security policy for table "account_audit_log"
@@ -646,7 +646,7 @@ func seedAuditRows(ctx context.Context, t *testing.T, conn *pgx.Conn, role strin
 	}
 
 	for _, id := range ids {
-		if _, err := conn.Exec(ctx, `select cafaye.begin_account($1)`, id); err != nil {
+		if _, err := conn.Exec(ctx, `select anywaye.begin_account($1)`, id); err != nil {
 			t.Fatalf("setting the identity for the seeded row: %v", err)
 		}
 		if _, err := conn.Exec(ctx, `

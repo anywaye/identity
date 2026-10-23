@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cafaye/identity/internal/platform/db"
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/platform/db"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // THE REGISTRATION AND THE REFRESH, over a real Postgres in a private schema.
@@ -20,7 +20,7 @@ import (
 // because "no plaintext at rest" and "the status guard holds" are SQL facts, not
 // logic a fake could assert.
 
-const claimUIRegisterTest = "https://cafaye.example"
+const claimUIRegisterTest = "https://anywaye.example"
 
 type registerFixture struct {
 	base *serviceFixture

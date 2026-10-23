@@ -10,7 +10,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/cafaye/identity/internal/recovery"
+	"github.com/anywaye/identity/internal/recovery"
 )
 
 // # THE WIRING, PROVABLE WITHOUT A COURIER
@@ -467,7 +467,7 @@ func TestTheResetLinkComesFromConfigurationAndNotFromARequest(t *testing.T) {
 // delivered by accident through a fallback that guessed.
 func TestARefusedMessageNeverReachesTheWire(t *testing.T) {
 	message := recoveryMessage("Confirm your new security key", "kaka@example.com",
-		"Somebody added a security key to your cafaye account.\n\n    "+testToken+"\n")
+		"Somebody added a security key to your anywaye account.\n\n    "+testToken+"\n")
 
 	server, seen := recordingCourier(t)
 	mailer := testMailer(t, server.URL, nil)

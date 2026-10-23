@@ -12,14 +12,14 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/cafaye/identity/internal/mfa"
-	"github.com/cafaye/identity/internal/oauth"
-	"github.com/cafaye/identity/internal/oidc"
-	"github.com/cafaye/identity/internal/outbox"
-	"github.com/cafaye/identity/internal/platform/clock"
-	"github.com/cafaye/identity/internal/platform/db"
-	"github.com/cafaye/identity/internal/platform/dbtest"
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/mfa"
+	"github.com/anywaye/identity/internal/oauth"
+	"github.com/anywaye/identity/internal/oidc"
+	"github.com/anywaye/identity/internal/outbox"
+	"github.com/anywaye/identity/internal/platform/clock"
+	"github.com/anywaye/identity/internal/platform/db"
+	"github.com/anywaye/identity/internal/platform/dbtest"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // THE OIDC LOGIN INTERACTION AND THE SECOND FACTOR.
@@ -591,7 +591,7 @@ func TestTheOIDCChallengeStepLockoutCarriesItsWaitToTheLoginUI(t *testing.T) {
 
 // TestTheChallengeStepIsReachableOnlyThroughTheOIDCPath asserts the routing
 // decision: POST /v1/session/mfa is on /v1 and NOT on /oidc, because /oidc answers
-// RFC 6749's error shape and a cafaye problem document there would be a shape a
+// RFC 6749's error shape and a anywaye problem document there would be a shape a
 // client library cannot parse.
 func TestTheChallengeStepIsReachableOnlyThroughTheOIDCPath(t *testing.T) {
 	f := newOIDCMFAFixture(t, true)

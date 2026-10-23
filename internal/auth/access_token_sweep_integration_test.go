@@ -27,8 +27,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cafaye/identity/internal/oidc"
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/oidc"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // seedAccessToken puts one live access-token row in the table for one subject, and

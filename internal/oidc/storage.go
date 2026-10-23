@@ -11,10 +11,10 @@ import (
 	"github.com/zitadel/oidc/v3/pkg/oidc"
 	"github.com/zitadel/oidc/v3/pkg/op"
 
-	"github.com/cafaye/identity/internal/oauth"
-	"github.com/cafaye/identity/internal/platform/clock"
-	"github.com/cafaye/identity/internal/platform/db"
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/oauth"
+	"github.com/anywaye/identity/internal/platform/clock"
+	"github.com/anywaye/identity/internal/platform/db"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // The library's Storage, over this service's tables.
@@ -883,7 +883,7 @@ const (
 //     recorded in README.md and is a one-line change if the manager rules the
 //     other way.
 //   - `accounts`, the array. core's prose asks for `account_id`, singular, and
-//     this service has no single one: a user of a cafaye product is a member of a
+//     this service has no single one: a user of a anywaye product is a member of a
 //     personal account and usually of several team accounts, and a token
 //     carrying one of them would be wrong for all the others.
 //   - `github_id`, a string. On the `publish` scope, for MD21's publisher path.

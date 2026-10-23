@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cafaye/identity/internal/mfa"
+	"github.com/anywaye/identity/internal/mfa"
 )
 
 // NOTHING LOGGED IS A SECRET.

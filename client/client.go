@@ -1,4 +1,4 @@
-// Package client is the cafaye Go client for identity: a generated transport over
+// Package client is the anywaye Go client for identity: a generated transport over
 // `openapi/v1.yaml`, and a hand-written wrapper over that transport.
 //
 // # WHY GO GENERATES AND PYTHON DOES NOT
@@ -68,7 +68,7 @@ import (
 
 	openapiTypes "github.com/oapi-codegen/runtime/types"
 
-	"github.com/cafaye/identity/client/generated"
+	"github.com/anywaye/identity/client/generated"
 )
 
 // DefaultTimeout bounds a request when the caller sets none.
@@ -96,8 +96,8 @@ const maxResponseBytes = 8 << 20
 // A struct so a caller names what they set, and so the next field is additive rather
 // than a positional argument somebody has to remember the order of.
 type Options struct {
-	// BaseURL is where identity is. Required unless `CAFAYE_IDENTITY_BASE_URL` or
-	// `CAFAYE_BASE_URL` is set — see ResolveBaseURL for the precedence and for why
+	// BaseURL is where identity is. Required unless `ANYWAYE_IDENTITY_BASE_URL` or
+	// `ANYWAYE_BASE_URL` is set — see ResolveBaseURL for the precedence and for why
 	// there is no default.
 	BaseURL string
 
@@ -123,7 +123,7 @@ type Options struct {
 	HTTPClient *http.Client
 }
 
-// Client is the hand-written cafaye identity client.
+// Client is the hand-written anywaye identity client.
 //
 // Immutable after construction: every method takes a context and returns, and
 // nothing mutates the struct. One Client may therefore be shared across goroutines
@@ -335,7 +335,7 @@ func callVoid(ctx context.Context, c *Client, operation string, send func() (*ht
 // One per `operationId`, named exactly as the document names them. That naming is
 // not a style choice: `operationId` is the contract, it is what every generated
 // client in the fleet uses as its method name, and a Go client calling this `GetMe`
-// where `cafaye-ts` says `getCurrentUser` would be a divergence in three clients for
+// where `anywaye-ts` says `getCurrentUser` would be a divergence in three clients for
 // one platform, which the fleet treats as a defect in the platform.
 //
 // Each is one call through `call`. There is no per-operation validation, no retry
@@ -1246,7 +1246,7 @@ func (c *Client) ClaimAgent(ctx context.Context, accountId openapiTypes.UUID, bo
 // `GET /v1/agents/claim/{token}`.
 //
 // **Anonymous.** The claim link in the path is the credential — 256 bits of
-// `cafaye_` entropy whose SHA-256 is the only part stored — so no Authorization
+// `anywaye_` entropy whose SHA-256 is the only part stored — so no Authorization
 // header goes out, exactly as an invitation redemption sends none. A human has
 // to be told whose agent it is before they have signed in, and there is no
 // other bearer value in the request to identify them with.
@@ -1348,8 +1348,8 @@ func (c *Client) RevokeOIDCClient(ctx context.Context, accountId, clientId opena
 // **The response is the only place the plaintext token will ever exist.** It is not
 // stored, only a SHA-256 of it is, and there is no endpoint that re-reads one — so a
 // caller who loses this value mints another. The document makes the same point about
-// the `cafaye_` prefix being a feature: a secret that reaches a CI log is recognized
-// as a cafaye credential by its first seven characters.
+// the `anywaye_` prefix being a feature: a secret that reaches a CI log is recognized
+// as a anywaye credential by its first seven characters.
 //
 // The generated `IssuedAPIKey` carries `Token` and has no redacting `String()`, so
 // this is the single most loggable value in the package. See

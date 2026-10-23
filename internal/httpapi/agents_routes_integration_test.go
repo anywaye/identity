@@ -9,11 +9,11 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/cafaye/identity/internal/agents"
-	"github.com/cafaye/identity/internal/platform/clock"
-	"github.com/cafaye/identity/internal/platform/dbtest"
-	"github.com/cafaye/identity/internal/platform/id"
-	"github.com/cafaye/identity/internal/ratelimit"
+	"github.com/anywaye/identity/internal/agents"
+	"github.com/anywaye/identity/internal/platform/clock"
+	"github.com/anywaye/identity/internal/platform/dbtest"
+	"github.com/anywaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/ratelimit"
 )
 
 // THE AGENT SURFACE OVER THE REAL ROUTER AND THE REAL SQL.
@@ -25,7 +25,7 @@ import (
 // and writes through the agent's own bearer credential. The rate limit rides the
 // real limiter, so the 429 is the one a deployment answers.
 
-const agentHTTPClaimUI = "https://cafaye.example"
+const agentHTTPClaimUI = "https://anywaye.example"
 
 // agentServer is the real service over a private schema, configured the way main
 // configures it for the agent surface: the claim UI base and the use case that

@@ -9,7 +9,7 @@
 //     account to predicate on — resolving a presented secret to its row. It is a
 //     separate file rather than two more functions in this one because this file's
 //     whole argument is that there is exactly ONE place that writes
-//     `cafaye.account_id`, and a reader hunting that one place should not have to
+//     `anywaye.account_id`, and a reader hunting that one place should not have to
 //     decide whether the second statement is part of it.
 //   - the proof beside them: isolation.sql, assertions.txt and tenancy_test.go,
 //     which assert that the substrate in migrations/00016 actually holds.
@@ -17,7 +17,7 @@
 // # WHY begin_account IS CALLED HERE AND NOWHERE ELSE
 //
 // kit's templates/database/tenancy/README.md §Adopting step 3 asks for
-// `cafaye.begin_account/1` "once per request, inside your transaction, from
+// `anywaye.begin_account/1` "once per request, inside your transaction, from
 // whatever already authenticates the request". In this service the thing that
 // already authenticates a request and resolves its account is
 // `requireAccountRole` in internal/httpapi, which is middleware rather than a
@@ -47,7 +47,7 @@
 //
 // # THE ONE PLACE THAT WRITES THIS GUC
 //
-// Every statement that sets `cafaye.account_id` in this service is the one
+// Every statement that sets `anywaye.account_id` in this service is the one
 // `beginAccount` below, which is why it is not a constant query string a caller
 // can pass around. A second spelling of it is a second place to forget.
 package tenancy
@@ -57,8 +57,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/cafaye/identity/internal/platform/db"
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/platform/db"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // ErrNoIdentity is returned when the GUC could not be set.
@@ -76,7 +76,7 @@ var ErrNoIdentity = errors.New("setting the account identity on the transaction"
 // verbatim and this is the one entry point that substrate declares. A service
 // that hand-rolled the GUC would have two sources of truth for the boundary, and
 // the one that drifts is the one nothing checks.
-const beginAccountSQL = `select cafaye.begin_account($1)`
+const beginAccountSQL = `select anywaye.begin_account($1)`
 
 // accountKey is the context key the account travels on.
 //
@@ -135,7 +135,7 @@ func beginAccount(ctx context.Context, q db.Querier, account id.UUID) error {
 // TxRunner can set the identity from the context. Registration does not have an
 // account at all until the middle of its transaction: it creates a personal
 // account and then writes the owner's membership into it, and the membership
-// INSERT meets `with check (account_id = (select cafaye.current_account_id()))`
+// INSERT meets `with check (account_id = (select anywaye.current_account_id()))`
 // with a NULL identity, which is not true and is refused with SQLSTATE 42501.
 //
 // So the account has to be named before the membership is written, and the value

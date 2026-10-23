@@ -39,7 +39,7 @@ func TestSettingsValidateRejectsAHalfConfiguredProvider(t *testing.T) {
 		{
 			name: "google without a secret",
 			s: Settings{
-				RedirectBaseURL: "https://identity.cafaye.com",
+				RedirectBaseURL: "https://identity.anywaye.com",
 				EncryptionKey:   testKeyBase64(1),
 				Google:          ProviderSettings{ClientID: "id"},
 			},
@@ -47,7 +47,7 @@ func TestSettingsValidateRejectsAHalfConfiguredProvider(t *testing.T) {
 		{
 			name: "github without an id",
 			s: Settings{
-				RedirectBaseURL: "https://identity.cafaye.com",
+				RedirectBaseURL: "https://identity.anywaye.com",
 				EncryptionKey:   testKeyBase64(2),
 				GitHub:          ProviderSettings{ClientSecret: "secret"},
 			},
@@ -58,7 +58,7 @@ func TestSettingsValidateRejectsAHalfConfiguredProvider(t *testing.T) {
 			// and the refusal is the same whichever provider made it.
 			name: "microsoft without a secret",
 			s: Settings{
-				RedirectBaseURL: "https://identity.cafaye.com",
+				RedirectBaseURL: "https://identity.anywaye.com",
 				EncryptionKey:   testKeyBase64(3),
 				Microsoft:       ProviderSettings{ClientID: "id"},
 			},
@@ -70,7 +70,7 @@ func TestSettingsValidateRejectsAHalfConfiguredProvider(t *testing.T) {
 			// the same mistake whichever provider made it.
 			name: "apple without a secret",
 			s: Settings{
-				RedirectBaseURL: "https://identity.cafaye.com",
+				RedirectBaseURL: "https://identity.anywaye.com",
 				EncryptionKey:   testKeyBase64(4),
 				Apple:           ProviderSettings{ClientID: "id"},
 			},
@@ -101,7 +101,7 @@ func TestSettingsValidateRejectsAProviderMissingItsSharedSettings(t *testing.T) 
 		s    Settings
 	}{
 		{name: "no redirect base url", s: Settings{EncryptionKey: testKeyBase64(1), Google: google}},
-		{name: "no encryption key", s: Settings{RedirectBaseURL: "https://identity.cafaye.com", Google: google}},
+		{name: "no encryption key", s: Settings{RedirectBaseURL: "https://identity.anywaye.com", Google: google}},
 		{name: "neither", s: Settings{Google: google}},
 	}
 
@@ -134,7 +134,7 @@ func TestSettingsValidateRejectsABadEncryptionKey(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			s := Settings{RedirectBaseURL: "https://identity.cafaye.com", EncryptionKey: tt.key}
+			s := Settings{RedirectBaseURL: "https://identity.anywaye.com", EncryptionKey: tt.key}
 			if err := s.Validate(); !errors.Is(err, ErrInvalidEncKey) {
 				t.Errorf("Validate = %v, want ErrInvalidEncKey", err)
 			}
@@ -158,11 +158,11 @@ func TestSettingsValidateRejectsABadRedirectBase(t *testing.T) {
 	t.Parallel()
 
 	for _, base := range []string{
-		"identity.cafaye.com",
-		"ftp://identity.cafaye.com",
+		"identity.anywaye.com",
+		"ftp://identity.anywaye.com",
 		"https://",
-		"https://identity.cafaye.com?next=/v1",
-		"https://identity.cafaye.com#frag",
+		"https://identity.anywaye.com?next=/v1",
+		"https://identity.anywaye.com#frag",
 	} {
 		t.Run(base, func(t *testing.T) {
 			t.Parallel()
@@ -179,7 +179,7 @@ func TestSettingsValidateAcceptsAWorkingConfiguration(t *testing.T) {
 	t.Parallel()
 
 	s := Settings{
-		RedirectBaseURL: "https://identity.cafaye.com",
+		RedirectBaseURL: "https://identity.anywaye.com",
 		EncryptionKey:   testKeyBase64(1),
 		Google:          ProviderSettings{ClientID: "id", ClientSecret: "secret"},
 		GitHub:          ProviderSettings{ClientID: "id2", ClientSecret: "secret2"},
@@ -227,8 +227,8 @@ func TestProviderRedirectURIIsStable(t *testing.T) {
 		base string
 		want string
 	}{
-		{base: "https://identity.cafaye.com", want: "https://identity.cafaye.com/v1/auth/oauth/google/callback"},
-		{base: "https://identity.cafaye.com/", want: "https://identity.cafaye.com/v1/auth/oauth/google/callback"},
+		{base: "https://identity.anywaye.com", want: "https://identity.anywaye.com/v1/auth/oauth/google/callback"},
+		{base: "https://identity.anywaye.com/", want: "https://identity.anywaye.com/v1/auth/oauth/google/callback"},
 		// A base behind a path prefix is a legitimate deployment shape.
 		{base: "https://example.test/identity", want: "https://example.test/identity/v1/auth/oauth/google/callback"},
 	}
@@ -250,7 +250,7 @@ func TestConfiguredProvidersAreAllKnown(t *testing.T) {
 	t.Parallel()
 
 	s := Settings{
-		RedirectBaseURL: "https://identity.cafaye.com",
+		RedirectBaseURL: "https://identity.anywaye.com",
 		EncryptionKey:   testKeyBase64(1),
 		Google:          ProviderSettings{ClientID: "id", ClientSecret: "secret"},
 		GitHub:          ProviderSettings{ClientID: "id2", ClientSecret: "secret2"},
@@ -280,7 +280,7 @@ func TestRegistryLookupDoesNotDistinguishUnconfiguredFromUnknown(t *testing.T) {
 	configured.ClientID = "id"
 	configured.ClientSecret = "secret"
 
-	registry, err := NewRegistry("https://identity.cafaye.com", configured)
+	registry, err := NewRegistry("https://identity.anywaye.com", configured)
 	if err != nil {
 		t.Fatalf("NewRegistry: %v", err)
 	}
@@ -315,7 +315,7 @@ func TestNewRegistryDropsUnconfiguredProviders(t *testing.T) {
 	google.ClientID = "id"
 	google.ClientSecret = "secret"
 
-	registry, err := NewRegistry("https://identity.cafaye.com", google, GitHub())
+	registry, err := NewRegistry("https://identity.anywaye.com", google, GitHub())
 	if err != nil {
 		t.Fatalf("NewRegistry: %v", err)
 	}
@@ -331,7 +331,7 @@ func TestNewRegistryDropsUnconfiguredProviders(t *testing.T) {
 func TestEmptyRegistryIsEmpty(t *testing.T) {
 	t.Parallel()
 
-	registry, err := NewRegistry("https://identity.cafaye.com")
+	registry, err := NewRegistry("https://identity.anywaye.com")
 	if err != nil {
 		t.Fatalf("NewRegistry: %v", err)
 	}

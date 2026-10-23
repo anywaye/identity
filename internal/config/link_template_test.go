@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cafaye/identity/internal/recovery"
+	"github.com/anywaye/identity/internal/recovery"
 )
 
 // # PER-PURPOSE LINK TEMPLATES, AS A DEPLOYMENT SEES THEM

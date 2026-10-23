@@ -1,9 +1,9 @@
 -- 00004_outbox_events.sql — the transactional outbox.
 --
 -- NOTE ON PROVENANCE: the packet for this migration cited
--- cafaye/core@master:docs/event-outbox.md. That file does not exist in core —
+-- anywaye/core@master:docs/event-outbox.md. That file does not exist in core —
 -- core ships docs/{event-naming,manifest-conventions,openapi-conventions}.md and
--- schemas/{event-envelope,cafaye.manifest}.schema.json, and nothing mentions an
+-- schemas/{event-envelope,anywaye.manifest}.schema.json, and nothing mentions an
 -- outbox. The table below is therefore designed here, from the two things that
 -- do exist and are authoritative:
 --

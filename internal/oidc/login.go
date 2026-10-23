@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // The two operations the login page needs from the provider, kept off the HTTP

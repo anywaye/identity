@@ -155,15 +155,15 @@ func TestValuesCarryTheFactsADeploymentEdits(t *testing.T) {
 		}
 	})
 
-	t.Run("the ingress routes auth.cafaye.com with TLS via letsencrypt-prod", func(t *testing.T) {
+	t.Run("the ingress routes auth.anywaye.com with TLS via letsencrypt-prod", func(t *testing.T) {
 		ingress := mustChildMap(t, values, "ingress")
 		if enabled := mustChild(t, ingress, "enabled"); enabled != "true" {
-			t.Errorf("ingress.enabled is %q, want %q — identity's OIDC discovery and JWKS must be reachable on auth.cafaye.com; the issuer is baked into every token and verifiers fetch it at the issuer origin",
+			t.Errorf("ingress.enabled is %q, want %q — identity's OIDC discovery and JWKS must be reachable on auth.anywaye.com; the issuer is baked into every token and verifiers fetch it at the issuer origin",
 				enabled, "true")
 		}
-		if host := mustChild(t, ingress, "host"); host != "auth.cafaye.com" {
+		if host := mustChild(t, ingress, "host"); host != "auth.anywaye.com" {
 			t.Errorf("ingress.host is %q, want %q — the OIDC issuer host that verifiers fetch for discovery and JWKS",
-				host, "auth.cafaye.com")
+				host, "auth.anywaye.com")
 		}
 		if issuer := mustChild(t, ingress, "clusterIssuer"); issuer != "letsencrypt-prod" {
 			t.Errorf("ingress.clusterIssuer is %q, want %q — the "+
@@ -263,7 +263,7 @@ func TestTheDeploymentServesThePortTheDockerfileExposesAndReadyz(t *testing.T) {
 	t.Run("the readiness path is the fleet's contract", func(t *testing.T) {
 		probe := mustChildMap(t, mustChildMap(t, container, "readinessProbe"), "httpGet")
 		if path := mustChild(t, probe, "path"); path != "/readyz" {
-			t.Errorf("readiness path is %q, want %q — every cafaye "+
+			t.Errorf("readiness path is %q, want %q — every anywaye "+
 				"service serves /readyz and the substrate's rollout waits "+
 				"on it; /healthz is the wrong answer (it answers "+
 				"\"the process is up\" before the service can serve), and "+

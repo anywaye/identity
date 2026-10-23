@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cafaye/identity/internal/config"
+	"github.com/anywaye/identity/internal/config"
 )
 
 // testTimeout bounds every wait in this file. Nothing here sleeps: every wait

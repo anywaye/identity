@@ -10,12 +10,12 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/cafaye/identity/internal/mfa"
-	"github.com/cafaye/identity/internal/outbox"
-	"github.com/cafaye/identity/internal/platform/clock"
-	"github.com/cafaye/identity/internal/platform/db"
-	"github.com/cafaye/identity/internal/platform/id"
-	"github.com/cafaye/identity/internal/sessions"
+	"github.com/anywaye/identity/internal/mfa"
+	"github.com/anywaye/identity/internal/outbox"
+	"github.com/anywaye/identity/internal/platform/clock"
+	"github.com/anywaye/identity/internal/platform/db"
+	"github.com/anywaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/sessions"
 )
 
 // The second-factor helpers, for the httpapi tests.
@@ -32,7 +32,7 @@ import (
 var testMFAKey = testKey32("identity-httpapi-mfa-key-32-byte")
 
 // testMFAIssuer is what an authenticator app would display.
-const testMFAIssuer = "cafaye identity"
+const testMFAIssuer = "anywaye identity"
 
 // testMFAService builds the real mfa.Service over a pool.
 func testMFAService(pool *pgxpool.Pool, clk clock.Clock) *mfa.Service {

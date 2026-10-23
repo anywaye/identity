@@ -80,7 +80,7 @@ func TestTenancyTheProfileReadSeesOneUsersMembershipsAndNothingElse(t *testing.T
 	tenantA, userA, tenantB, userB := seedProfileRows(ctx, t, owner)
 
 	// The read itself. `profiles.go`'s shape, verbatim — plus the transaction the
-	// identity needs. `cafaye.begin_user/1` is `set_config(..., is_local => true)`,
+	// identity needs. `anywaye.begin_user/1` is `set_config(..., is_local => true)`,
 	// so its value lasts as long as the TRANSACTION that set it and no longer: on
 	// an autocommit statement it is gone before the next statement starts, which
 	// is the same trap `tenancy.BeginUser`'s own doc comment describes. A test
@@ -148,7 +148,7 @@ func TestTenancyTheProfileReadSeesOneUsersMembershipsAndNothingElse(t *testing.T
 		if err != nil {
 			t.Fatalf("beginning the fixture count: %v", err)
 		}
-		if _, err := tx.Exec(ctx, `select cafaye.begin_account($1)`, tc.tenant); err != nil {
+		if _, err := tx.Exec(ctx, `select anywaye.begin_account($1)`, tc.tenant); err != nil {
 			_ = tx.Rollback(ctx)
 			t.Fatalf("setting the tenant identity for the count: %v", err)
 		}
@@ -169,7 +169,7 @@ func TestTenancyTheProfileReadSeesOneUsersMembershipsAndNothingElse(t *testing.T
 
 	// 1. NO IDENTITY — the state production's userinfo path actually runs in. A
 	// bare pool carries no GUC, and both policies filter an unnamed caller out.
-	cleared := []step{{sql: `select cafaye.begin_user(null)`}, {sql: `select cafaye.begin_account(null)`}}
+	cleared := []step{{sql: `select anywaye.begin_user(null)`}, {sql: `select anywaye.begin_account(null)`}}
 	if got := readWith(t, userA, cleared); len(got) != 0 {
 		t.Errorf("with NO identity the profile read returned %v: a request that "+
 			"authenticated nobody is reading account data", got)
@@ -177,7 +177,7 @@ func TestTenancyTheProfileReadSeesOneUsersMembershipsAndNothingElse(t *testing.T
 
 	// 2. THE SUBJECT'S OWN IDENTITY. The positive control, and the only arm a
 	// deny-everything policy set cannot pass.
-	ownUser := []step{{sql: `select cafaye.begin_user($1)`, arg: userA}, {sql: `select cafaye.begin_account(null)`}}
+	ownUser := []step{{sql: `select anywaye.begin_user($1)`, arg: userA}, {sql: `select anywaye.begin_account(null)`}}
 	if got := readWith(t, userA, ownUser); len(got) != 1 || got[0] != tenantA+":owner" {
 		t.Errorf("with the subject's own identity the profile read returned %v, "+
 			"want exactly [%s:owner]", got, tenantA)
@@ -187,7 +187,7 @@ func TestTenancyTheProfileReadSeesOneUsersMembershipsAndNothingElse(t *testing.T
 	// identity a session carries must not widen a WHERE clause it does not name.
 	// The twin query — user B's predicate under user B's identity — is the
 	// positive control, so a zero here cannot be RLS being broken.
-	otherUser := []step{{sql: `select cafaye.begin_user($1)`, arg: userB}, {sql: `select cafaye.begin_account(null)`}}
+	otherUser := []step{{sql: `select anywaye.begin_user($1)`, arg: userB}, {sql: `select anywaye.begin_account(null)`}}
 	if got := readWith(t, userA, otherUser); len(got) != 0 {
 		t.Errorf("with ANOTHER user's identity the profile read returned %v, want "+
 			"none: an identity widened a predicate it does not name", got)
@@ -200,7 +200,7 @@ func TestTenancyTheProfileReadSeesOneUsersMembershipsAndNothingElse(t *testing.T
 
 	// 4. THE OTHER TENANT'S ACCOUNT IDENTITY against the subject's predicate.
 	// Zero rows: the account side of the boundary holds the read too.
-	otherAccount := []step{{sql: `select cafaye.begin_user(null)`}, {sql: `select cafaye.begin_account($1)`, arg: tenantB}}
+	otherAccount := []step{{sql: `select anywaye.begin_user(null)`}, {sql: `select anywaye.begin_account($1)`, arg: tenantB}}
 	if got := readWith(t, userA, otherAccount); len(got) != 0 {
 		t.Errorf("with ANOTHER tenant's account identity the profile read returned "+
 			"%v, want none", got)
@@ -209,7 +209,7 @@ func TestTenancyTheProfileReadSeesOneUsersMembershipsAndNothingElse(t *testing.T
 	// 5. AND THE READ IS NOT SIMPLY BROKEN UNDER THE APP ROLE: an account
 	// identity naming tenant A returns tenant A's row. This is the arm that
 	// tells narrowness apart from an empty set.
-	ownAccount := []step{{sql: `select cafaye.begin_user(null)`}, {sql: `select cafaye.begin_account($1)`, arg: tenantA}}
+	ownAccount := []step{{sql: `select anywaye.begin_user(null)`}, {sql: `select anywaye.begin_account($1)`, arg: tenantA}}
 	if got := readWith(t, userA, ownAccount); len(got) != 1 || got[0] != tenantA+":owner" {
 		t.Errorf("with tenant A's own account identity the profile read returned "+
 			"%v, want exactly [%s:owner]", got, tenantA)
@@ -219,7 +219,7 @@ func TestTenancyTheProfileReadSeesOneUsersMembershipsAndNothingElse(t *testing.T
 // seedProfileRows writes two accounts, one user each and one membership each, and
 // removes them when the test ends. The shape of the other seeders in this package:
 // fixture rows are written by the OWNER under `begin_account`, because the insert
-// policy is `with check (account_id = (select cafaye.current_account_id()))` and a
+// policy is `with check (account_id = (select anywaye.current_account_id()))` and a
 // writer with no identity is refused — the write-side twin of the denial these
 // tests are about.
 func seedProfileRows(ctx context.Context, t *testing.T, owner *pgx.Conn) (tenantA, userA, tenantB, userB string) {
@@ -248,7 +248,7 @@ func seedProfileRows(ctx context.Context, t *testing.T, owner *pgx.Conn) (tenant
 			_ = tx.Rollback(ctx)
 			t.Fatalf("reading back the fixture user: %v", err)
 		}
-		if _, err := tx.Exec(ctx, `select cafaye.begin_account($1)`, accountID); err != nil {
+		if _, err := tx.Exec(ctx, `select anywaye.begin_account($1)`, accountID); err != nil {
 			_ = tx.Rollback(ctx)
 			t.Fatalf("setting the identity: %v", err)
 		}

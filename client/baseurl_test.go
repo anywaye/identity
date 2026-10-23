@@ -70,8 +70,8 @@ func TestResolveBaseURLPrefersTheServiceVariableOverTheFleetVariable(t *testing.
 	if got != "https://identity.example.com" {
 		t.Errorf("got %q, want the per-service variable to win.\n"+
 			"Within one source the more specific beats the less. A self-hoster running "+
-			"two deployments sets $CAFAYE_BASE_URL for the fleet and "+
-			"$CAFAYE_IDENTITY_BASE_URL for this one; if the fleet-wide value won, the "+
+			"two deployments sets $ANYWAYE_BASE_URL for the fleet and "+
+			"$ANYWAYE_IDENTITY_BASE_URL for this one; if the fleet-wide value won, the "+
 			"per-service variable would be a setting that does nothing.",
 			got)
 	}
@@ -95,7 +95,7 @@ func TestResolveBaseURLUsesTheFleetVariableWhenNoServiceVariableIsSet(t *testing
 
 // TestResolveBaseURLRefusesToGuess covers the fourth branch: there is no default.
 //
-// The document's `servers:` block lists `https://identity.cafaye.com`, and this
+// The document's `servers:` block lists `https://identity.anywaye.com`, and this
 // branch is the decision NOT to use it. A self-hoster running their own identity
 // would have their traffic — and their credentials — sent to somebody else's
 // deployment, and it would SUCCEED, so nothing would be visibly wrong until somebody
@@ -110,7 +110,7 @@ func TestResolveBaseURLRefusesToGuess(t *testing.T) {
 		t.Fatal("resolution succeeded with nothing configured.\n" +
 			"A default would be a guess about which deployment to send a customer's " +
 			"credentials to, and that is the one guess this package refuses to make. If " +
-			"you want identity.cafaye.com, set it.")
+			"you want identity.anywaye.com, set it.")
 	}
 
 	if !errors.Is(err, ErrNoBaseURL) {
@@ -144,7 +144,7 @@ func TestResolveBaseURLRefusesABareHost(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if _, err := ResolveBaseURL(BaseURLOptions{BaseURL: tc.value}); err == nil {
 				t.Errorf("%q was accepted as a base URL.\n"+
-					"cafaye's generated clients concatenate rather than resolve, so a bare "+
+					"anywaye's generated clients concatenate rather than resolve, so a bare "+
 					"host produces something that is not a URL and an error naming neither "+
 					"the value nor the cause.", tc.value)
 			}
@@ -157,7 +157,7 @@ func TestResolveBaseURLRefusesABareHost(t *testing.T) {
 //
 // The generated client concatenates, so a trailing slash becomes a doubled separator
 // in the path. And a path PREFIX is kept: a self-hoster serving the fleet under
-// `/cafaye` needs it, which `parsed.Scheme + "://" + parsed.Host` would helpfully but
+// `/anywaye` needs it, which `parsed.Scheme + "://" + parsed.Host` would helpfully but
 // wrongly delete — so the reduction is a `TrimRight` on the whole string and not a
 // rebuild from the parsed parts.
 func TestResolveBaseURLStripsTrailingSlashesAndKeepsAPathPrefix(t *testing.T) {
@@ -165,8 +165,8 @@ func TestResolveBaseURLStripsTrailingSlashesAndKeepsAPathPrefix(t *testing.T) {
 		{"a trailing slash", "https://identity.example.com/", "https://identity.example.com"},
 		{"several trailing slashes", "https://identity.example.com///", "https://identity.example.com"},
 		{"surrounding whitespace", "  https://identity.example.com  ", "https://identity.example.com"},
-		{"a path prefix", "https://example.com/cafaye/", "https://example.com/cafaye"},
-		{"a path prefix without a trailing slash", "https://example.com/cafaye", "https://example.com/cafaye"},
+		{"a path prefix", "https://example.com/anywaye/", "https://example.com/anywaye"},
+		{"a path prefix without a trailing slash", "https://example.com/anywaye", "https://example.com/anywaye"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := ResolveBaseURL(BaseURLOptions{BaseURL: tc.in})
@@ -216,9 +216,9 @@ func TestResolveBaseURLPrefersTheExplicitOptionEvenWhenItIsBlank(t *testing.T) {
 // documents, and this repository is organized entirely around not having those.
 func TestBaseURLEnvVarForDerivesRatherThanLists(t *testing.T) {
 	for _, tc := range []struct{ service, want string }{
-		{"identity", "CAFAYE_IDENTITY_BASE_URL"},
-		{"billing", "CAFAYE_BILLING_BASE_URL"},
-		{"courier", "CAFAYE_COURIER_BASE_URL"},
+		{"identity", "ANYWAYE_IDENTITY_BASE_URL"},
+		{"billing", "ANYWAYE_BILLING_BASE_URL"},
+		{"courier", "ANYWAYE_COURIER_BASE_URL"},
 	} {
 		t.Run(tc.service, func(t *testing.T) {
 			if got := BaseURLEnvVarFor(tc.service); got != tc.want {
@@ -227,12 +227,12 @@ func TestBaseURLEnvVarForDerivesRatherThanLists(t *testing.T) {
 		})
 	}
 
-	// And a name that cannot become a cafaye service name refuses rather than
+	// And a name that cannot become a anywaye service name refuses rather than
 	// producing something that looks like one.
 	for _, bad := range []string{"Identity", "identity-api", "identity2", "", "id entity"} {
 		if got := BaseURLEnvVarFor(bad); got != "" {
 			t.Errorf("BaseURLEnvVarFor(%q) = %q, want the empty string.\n"+
-				"A name that cannot identify a cafaye service should not have an "+
+				"A name that cannot identify a anywaye service should not have an "+
 				"environment variable derived from it: a typo would resolve to a "+
 				"variable nobody sets, and the mistake would surface as a connection "+
 				"refused rather than as a name.", bad, got)

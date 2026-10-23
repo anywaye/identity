@@ -3,16 +3,16 @@
 # This is a SEPARATE document from openapi/v1.yaml, and the separation is the
 # point rather than tidiness.
 #
-# core's docs/openapi-conventions.md says every path in a cafaye service's
+# core's docs/openapi-conventions.md says every path in a anywaye service's
 # contract is under a single /v1 prefix. RFC 8414 and OpenID Connect Discovery
 # fix the paths of the metadata and key endpoints at /.well-known/…, and this
 # service puts its protocol endpoints under /oidc so the two surfaces stay
 # distinguishable in an access log. A document containing both would break one of
 # the two rules, so it is two documents:
 #
-#   openapi/v1.yaml   the cafaye JSON API. /v1/*. Every non-2xx is
+#   openapi/v1.yaml   the anywaye JSON API. /v1/*. Every non-2xx is
 #                     application/problem+json, and it is what `exposes.api` in
-#                     cafaye.yml points at.
+#                     anywaye.yml points at.
 #   openid/openid.yaml  the OAuth 2.0 and OIDC protocol surface. Errors are
 #                     RFC 6749's {"error": …} and nothing else, because an
 #                     off-the-shelf client library cannot parse a problem
@@ -24,13 +24,13 @@
 #  * The error envelope. RFC 6749 §5.2 for the endpoints, and ONE exception: the
 #    pre-checks on /oidc/authorize (an unknown scope, a missing or non-S256
 #    code_challenge, prompt=login, max_age) answer 400 with core's problem
-#    envelope and code `invalid_request`. Those are cafaye decisions about a
-#    cafaye request rather than OAuth protocol responses, and the sentence in
+#    envelope and code `invalid_request`. Those are anywaye decisions about a
+#    anywaye request rather than OAuth protocol responses, and the sentence in
 #    `detail` is what a developer configuring a product needs to see. Every other
 #    refusal on these paths, including every one the library makes, is RFC 6749.
 #  * No `/v1` prefix, for the reason above.
 #  * This document is NOT `exposes.api`. core's manifest schema has one field for
-#    it and it points at the cafaye API, which is where SDK generation and the
+#    it and it points at the anywaye API, which is where SDK generation and the
 #    contract tests want to look. This document is a published contract for
 #    third-party and first-party products to code against and nothing generates
 #    from it.
@@ -39,24 +39,24 @@
 #
 #   openapi-spec-validator openid/openid.yaml
 #
-# and against OpenAPI 3.1.0, which is the version cafaye core specifies.
+# and against OpenAPI 3.1.0, which is the version anywaye core specifies.
 openapi: 3.1.0
 
 info:
-  title: cafaye identity — OpenID Connect provider
+  title: anywaye identity — OpenID Connect provider
   version: 1.0.0
   summary: |
     The OpenID Connect provider side of `identity`: discovery, the
     authorization-code flow with PKCE, the key set, and userinfo.
   description: |
     `identity` is a first-class OpenID Connect **provider**. Any product —
-    anytalk, anymark, anygate — signs users in against cafaye itself rather than
+    anytalk, anymark, anygate — signs users in against anywaye itself rather than
     configuring Google OAuth separately per product, and the verification every
-    other cafaye service already does against identity's JWKS becomes a standard,
+    other anywaye service already does against identity's JWKS becomes a standard,
     interoperable surface rather than a private arrangement.
 
     The registrations that decide who may use this surface are managed through the
-    cafaye API in `openapi/v1.yaml` at `/v1/accounts/{account_id}/oidc-clients`,
+    anywaye API in `openapi/v1.yaml` at `/v1/accounts/{account_id}/oidc-clients`,
     owner-only.
 
     ## One key, one issuer, one document
@@ -185,8 +185,8 @@ info:
     `redirect_uri` with a `code`. No discovery metadata changes.
   contact:
     name: identity
-    url: https://github.com/cafaye/identity
-    email: identity@cafaye.com
+    url: https://github.com/anywaye/identity
+    email: identity@anywaye.com
   license:
     # Business Source Licence 1.1, SPDX BUSL-1.1. Free to run, free to
     # self-host, and never to offer identity as a competing service -- the grant
@@ -204,7 +204,7 @@ info:
     identifier: BUSL-1.1
 
 servers:
-  - url: https://identity.cafaye.com
+  - url: https://identity.anywaye.com
     description: production
   - url: http://localhost:8080
     description: |
@@ -254,11 +254,11 @@ paths:
               schema:
                 $ref: '#/components/schemas/Discovery'
               example:
-                issuer: https://identity.cafaye.com
-                authorization_endpoint: https://identity.cafaye.com/oidc/authorize
-                token_endpoint: https://identity.cafaye.com/oidc/token
-                userinfo_endpoint: https://identity.cafaye.com/oidc/userinfo
-                jwks_uri: https://identity.cafaye.com/.well-known/jwks.json
+                issuer: https://identity.anywaye.com
+                authorization_endpoint: https://identity.anywaye.com/oidc/authorize
+                token_endpoint: https://identity.anywaye.com/oidc/token
+                userinfo_endpoint: https://identity.anywaye.com/oidc/userinfo
+                jwks_uri: https://identity.anywaye.com/.well-known/jwks.json
                 scopes_supported: [openid, email, profile, accounts]
                 response_types_supported: [code]
                 grant_types_supported: [authorization_code]
@@ -334,7 +334,7 @@ paths:
               example:
                 keys:
                   - kty: RSA
-                    kid: cafaye-2026-09
+                    kid: anywaye-2026-09
                     alg: RS256
                     use: sig
                     n: uS3V…(base64url of the modulus)
@@ -439,7 +439,7 @@ paths:
             The pre-checks (an unknown scope, a missing or non-S256
             `code_challenge`, `prompt=login`/`consent`/`select_account`, `max_age`)
             are the exception and use core's problem envelope with code
-            `invalid_request`. They are a cafaye decision about a cafaye request
+            `invalid_request`. They are a anywaye decision about a anywaye request
             rather than an OAuth protocol response, and the sentence in `detail`
             names the offending parameter.
           content:
@@ -450,7 +450,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Problem'
               example:
-                type: https://docs.cafaye.com/errors/invalid_request
+                type: https://docs.anywaye.com/errors/invalid_request
                 title: Invalid request
                 status: 400
                 detail: 'unknown scope "phone"; this provider implements openid email profile accounts'
@@ -554,7 +554,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Problem'
               example:
-                type: https://docs.cafaye.com/errors/invalid_request
+                type: https://docs.anywaye.com/errors/invalid_request
                 title: Invalid request
                 status: 400
                 detail: 'unknown scope "phone"; this provider implements openid email profile accounts'
@@ -1143,7 +1143,7 @@ components:
           type: string
           description: |
             An RS256 JWT. Presented as `Authorization: Bearer` at `/oidc/userinfo`,
-            and verifiable locally by any cafaye service against the published key
+            and verifiable locally by any anywaye service against the published key
             set — no round trip to this one.
         id_token:
           type: string
@@ -1201,7 +1201,7 @@ components:
             they hold it under.
 
             It is an array and not a single `account_id` because a user of a
-            cafaye product is a member of a personal account and usually of several
+            anywaye product is a member of a personal account and usually of several
             team accounts, and a token carrying one of them would be wrong for all
             the others. This is the multi-account form of the fact core's
             conventions ask for as `account_id`.
@@ -1252,10 +1252,10 @@ components:
     Problem:
       type: object
       description: |
-        The cafaye error envelope — RFC 9457 plus core's `code` and `trace_id` —
+        The anywaye error envelope — RFC 9457 plus core's `code` and `trace_id` —
         used on this surface in exactly three places: the `/oidc/authorize`
         pre-checks, the refusals on `/oidc/login/{request_id}` that cannot be
-        re-shown, and the 404 for an unknown request. All three are cafaye
+        re-shown, and the 404 for an unknown request. All three are anywaye
         decisions rather than OAuth protocol responses, which is the distinction;
         everything else on these paths is RFC 6749.
 

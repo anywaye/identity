@@ -2,7 +2,7 @@
 // boot at all, and that bin/rollback's contract is the one the workflow assumes.
 //
 // THE FINDING THIS FILE EXISTS FOR. `migrations/00016_account_isolation.sql`
-// ends its Up with `select cafaye.protect_table('account_users')`. `protect_table`
+// ends its Up with `select anywaye.protect_table('account_users')`. `protect_table`
 // defaults its login role to `current_user || '_app'` and refuses to create a
 // policy for a role that cannot log in, so the migration needs a LOGIN role
 // named `<caller>_app`. `docker compose up` provides it — kit's cluster init
@@ -11,7 +11,7 @@
 // runs a bare `postgres:17-alpine` service container with no init script.
 // `goose up` on that job died at 00016 with
 //
-//	ERROR: cafaye.protect_table(account_users, identity_app):
+//	ERROR: anywaye.protect_table(account_users, identity_app):
 //	       identity_app is not a LOGIN role on this cluster.
 //
 // measured against a cluster built the way this job builds one. The gap is
@@ -145,11 +145,11 @@ func TestTheLoginRoleTheMigrationsProtectTablesForIsProvisionedBeforeTheyAreAppl
 	}
 	if provisionedAt == 0 {
 		t.Fatalf("ci/ci.yml never creates the `%s` login role.\n"+
-			"migrations/00016_account_isolation.sql ends its Up with `select cafaye.protect_table('account_users')`,\n"+
+			"migrations/00016_account_isolation.sql ends its Up with `select anywaye.protect_table('account_users')`,\n"+
 			"and protect_table defaults its login role to `current_user || '_app'` and REFUSES to write a\n"+
 			"policy for a role that cannot log in. This job's cluster is a bare postgres:17-alpine service\n"+
 			"container with no init script, so nothing else provides the role: `goose up` fails at 00016\n"+
-			"with \"cafaye.protect_table(account_users, %s): %s is not a LOGIN role on this cluster\".\n"+
+			"with \"anywaye.protect_table(account_users, %s): %s is not a LOGIN role on this cluster\".\n"+
 			"docker compose is unaffected — kit's cluster init provisions it from KIT_POSTGRES_DATABASES —\n"+
 			"which is exactly why this stayed invisible until bin/rollback ran the migrations on a CI-shaped\n"+
 			"cluster.", role, role, role)

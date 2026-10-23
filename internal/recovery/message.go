@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // THE MESSAGES.
@@ -74,7 +74,7 @@ If this was not you, nothing has changed. Nobody can sign in with this code
 without it, and it stops working as soon as it is used or when it expires.
 `
 
-	verifyEmailBody = `Confirm the address {{email}} for your cafaye account.
+	verifyEmailBody = `Confirm the address {{email}} for your anywaye account.
 
 Your confirmation code is:
 
@@ -90,7 +90,7 @@ read mail sent to it, which is what this code is for.
 	// its body says what is waiting and what happens next. Silence would be the
 	// comfortable answer and it is the wrong one: the only warning the owner of an
 	// account has that somebody is moving its address is this message.
-	emailChangeCurrentBody = `Somebody signed in to the cafaye account on {{email}} and asked to
+	emailChangeCurrentBody = `Somebody signed in to the anywaye account on {{email}} and asked to
 change the address it uses.
 
 If that was you, confirm it with this code:
@@ -104,7 +104,7 @@ It works once, and only until {{expiry}}. Confirming it sends one more message,
 to the NEW address — the change only completes when that one is confirmed too.
 `
 
-	emailChangeNewBody = `Somebody asked to move the cafaye account on {{email}} to this address.
+	emailChangeNewBody = `Somebody asked to move the anywaye account on {{email}} to this address.
 
 Confirm it with this code:
 
@@ -129,10 +129,10 @@ var messageBodies = map[messageKind]struct {
 	Subject string
 	Body    string
 }{
-	messageReset:       {Subject: "Reset your cafaye password", Body: passwordResetBody},
-	messageVerify:      {Subject: "Confirm your cafaye email address", Body: verifyEmailBody},
+	messageReset:       {Subject: "Reset your anywaye password", Body: passwordResetBody},
+	messageVerify:      {Subject: "Confirm your anywaye email address", Body: verifyEmailBody},
 	messageChangeFirst: {Subject: "Confirm an email address change", Body: emailChangeCurrentBody},
-	messageChangeNew:   {Subject: "Confirm your new cafaye email address", Body: emailChangeNewBody},
+	messageChangeNew:   {Subject: "Confirm your new anywaye email address", Body: emailChangeNewBody},
 }
 
 // messageData is what a body is rendered against.

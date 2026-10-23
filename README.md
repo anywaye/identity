@@ -1,9 +1,9 @@
 # identity
 
-**Current direction (2026-10-19):** Ship is the product. The cafaye stack is internal infrastructure; we are not selling or supporting it as a standalone product as of this date. We continue to develop and improve it, treating the founder as the primary customer and keeping "build once, run everywhere" true, with the expectation that it may be offered again later.
+**Current direction (2026-10-19):** Ship is the product. The anywaye stack is internal infrastructure; we are not selling or supporting it as a standalone product as of this date. We continue to develop and improve it, treating the founder as the primary customer and keeping "build once, run everywhere" true, with the expectation that it may be offered again later.
 
-`identity` is the cafaye service that knows who someone is: auth, sessions,
-MFA, accounts and tenancy, social login, and OIDC. Every other cafaye service —
+`identity` is the anywaye service that knows who someone is: auth, sessions,
+MFA, accounts and tenancy, social login, and OIDC. Every other anywaye service —
 billing, courier, gateway, parlor — asks this one who is calling and what they may
 do. It is the platform's security boundary, and the reason `PLAN.md` §3 singles it
 out for a user-run security review before the phase closes.
@@ -12,7 +12,7 @@ out for a user-run security review before the phase closes.
 both.** This service is an OpenID Connect **provider** — it issues tokens to
 products that register with it — and it is also a **client** of Google and GitHub,
 which is what the two `/v1/auth/oauth/*` routes are. Conflating the two is how
-"OAuth" came to sit in this paragraph and in `cafaye.yml`'s `description` while
+"OAuth" came to sit in this paragraph and in `anywaye.yml`'s `description` while
 nothing served it: a bare "OAuth" beside "OIDC" reads as one capability wearing
 two names. See [Social login](#social-login-what-it-was-and-what-it-is) for the
 record.
@@ -120,7 +120,7 @@ set. Treat it as a liveness signal, not a dependency check.
 **Business Source Licence 1.1** — [LICENSE](LICENSE). Free to run, free to
 self-host, and never to offer identity as a competing service.
 
-That is `OPS-D2` in `cafaye/notes/ops.md` (line 176): the framework stays open,
+That is `OPS-D2` in `anywaye/notes/ops.md` (line 176): the framework stays open,
 the services move to BSL, and BSL rather than AGPL "because the buyers are
 teams and AGPL makes their lawyers twitchy". The principle behind the split is
 stated there too (line 429) and is worth quoting to a prospect rather than
@@ -141,22 +141,22 @@ What that means in practice, and the two dates in the file that matter:
   and the one BSL's own Terms name as the default.
 - **There is no Additional Use Grant**, and the `Parameters` block says `None`
   on purpose. An Additional Use Grant is a *narrowing* — "limited production
-  use", a named subset — and what Cafaye Ops promises is the whole of
+  use", a named subset — and what Anywaye Ops promises is the whole of
   non-competing production use rather than a carve-out of it.
 
 **Third-party components keep their own licences and notices**, preserved in the
-applicable source files. Nothing here asserts Cafaye ownership over third-party
+applicable source files. Nothing here asserts Anywaye ownership over third-party
 work.
 
 The grant is declared in three places that must agree, and each of them is a
 file a reader actually opens: [LICENSE](LICENSE), and the `info.license` block of
 both contracts — [openapi/v1.yaml](openapi/v1.yaml) and
-[openid/openid.yaml](openid/openid.yaml). `cafaye.yml` carries a comment rather
+[openid/openid.yaml](openid/openid.yaml). `anywaye.yml` carries a comment rather
 than a field: core owns the manifest schema
-(`../core/schemas/cafaye.manifest.schema.json`), it sets
+(`../core/schemas/anywaye.manifest.schema.json`), it sets
 `additionalProperties: false` and lists no `license` key, and a document with
 one fails validation — measured, not inferred. The reason is written down in
-`cafaye.yml` itself, so that the next person to look for a licence field there
+`anywaye.yml` itself, so that the next person to look for a licence field there
 finds out why there is not one instead of adding a violation.
 
 ## Why chi
@@ -324,7 +324,7 @@ service quietly listening on the wrong port.
 | `OIDC_LOGIN_UI_URL` | *(unset)* | **The page that asks a person for their password.** `identity` renders no HTML, so this is required and there is no default: a provider that cannot send a browser anywhere to authenticate refuses to start. Absolute, `http`/`https`, a path is fine, and **no query and no fragment** — identity merges its own parameters into the query. See [the redirect contract](#the-sign-in-interaction-and-the-login-ui). |
 | `OIDC_ALLOW_INSECURE` | `false` | Permits an `http` issuer. For `localhost` and compose stacks only. |
 | `MFA_ENCRYPTION_KEY` | *(unset)* | base64url, **exactly 32 bytes**. Seals the TOTP secret at rest. Never generated. Unset means MFA is not turned on: the management routes are absent and the login challenge is still enforced. A value of the wrong length is a startup failure. |
-| `MFA_ISSUER` | `cafaye identity` | The account label an authenticator app displays. A display string, not a secret; changing it does not affect any confirmed credential. |
+| `MFA_ISSUER` | `anywaye identity` | The account label an authenticator app displays. A display string, not a secret; changing it does not affect any confirmed credential. |
 | `COURIER_BASE_URL` | *(unset)* | The mail service's base URL. With `COURIER_TOKEN` and a link template it makes recovery deliverable; unset, the recovery routes stay mounted and answer `503` with a sentence naming the problem. `http` is accepted for a compose stack. |
 | `COURIER_TOKEN` | *(unset)* | The service credential courier authenticates `POST /v1/messages` with. Never logged, never rendered. **This must hold the same identity-issued API key that courier holds as `COURIER_IDENTITY_TOKEN`** — courier introspects the token identity presented on the inbound request, and identity lets a token caller introspect only itself, so two distinct keys produce identity's `403` and courier's `503` with nothing in either repository to explain it. `docker-compose.yml` requires the variable from the host environment, and its failure message is that sentence. |
 | `OAUTH_REDIRECT_BASE_URL` | *(unset)* | **This service's own public base URL**, and every provider callback is built from it — never from a request's `Host`. Point it at the app's origin and not at identity's address unless identity *is* the origin the browser returns to. `http`/`https`, a path prefix is fine, no query and no fragment. |
@@ -364,7 +364,7 @@ service quietly listening on the wrong port.
 | `POST /v1/invitations/accept` | `200 {…}` | Accept an invitation, signed in as the invited user. `404` for anything that is not a live token, `410` for one that expired or was spent. **Session only.** |
 | `POST /v1/accounts/:id/agents/claim` | `200 {id, name, status, claimed_at}` | Bind an **agent principal** to the account. The claim link is the only thing in the body and the only thing that names the agent — the account is the path, the human is the session — and it is the one credential a stranger ever presents here. `404` for a wrong token, an expired link, an already-claimed agent and an agent that never existed: one answer for all four, so a guessed link says nothing about which agent it might have been. `422` for an empty body. The claim is **single-use and conditional** — the update carries the digest and the status in its `WHERE`, so two clicks produce one claim. **Session only:** a scoped api key is `403`. The 200 carries the agent **and the bearer credential the claim minted for it** — one transaction, because an agent that is bound and holds no credential is a claim a human completed and an agent cannot use. `token.token` appears there and nowhere else. It is not an entitlement: the entitlement grant on a claim is conductor's (W2-P3), and D4 keeps an agent from granting itself one. Member. |
 
-| `GET /v1/agents/claim/:token` | `200 {id, name, username, status, created_at, device, claim_expires_at}` | **Preview an agent claim** — the first frame of the website's claim screen, and what `getAgentClaim` calls. **Anonymous and unauthenticated**: the link in the path IS the credential (256 bits of `cafaye_` entropy, stored only as a SHA-256 digest), and a human has to be told whose agent it is before they have signed in. It is a **read that changes nothing** — no claim, no credential, no event row; the use case has no access to the credential machinery, and the proof is that a link still claims after it has been previewed. `device` is the agent's own free-form document and carries no schema: the keys are its vocabulary, and the client keeps the string values and skips the rest. `claim_expires_at` is a fact about the LINK, never a countdown — when it passes the same 404 arrives. `404 not_found` for a **wrong token, an expired link, an already-claimed agent and an agent that never existed: one answer for all four**, the same collapse the claim route makes, because the read filters the digest, the status and the expiry in one statement. No 410, no 409, and the token in the path is never parsed so a malformed segment is a 404 and not a 422. `429` rate-limited on the client and the route. |
+| `GET /v1/agents/claim/:token` | `200 {id, name, username, status, created_at, device, claim_expires_at}` | **Preview an agent claim** — the first frame of the website's claim screen, and what `getAgentClaim` calls. **Anonymous and unauthenticated**: the link in the path IS the credential (256 bits of `anywaye_` entropy, stored only as a SHA-256 digest), and a human has to be told whose agent it is before they have signed in. It is a **read that changes nothing** — no claim, no credential, no event row; the use case has no access to the credential machinery, and the proof is that a link still claims after it has been previewed. `device` is the agent's own free-form document and carries no schema: the keys are its vocabulary, and the client keeps the string values and skips the rest. `claim_expires_at` is a fact about the LINK, never a countdown — when it passes the same 404 arrives. `404 not_found` for a **wrong token, an expired link, an already-claimed agent and an agent that never existed: one answer for all four**, the same collapse the claim route makes, because the read filters the digest, the status and the expiry in one statement. No 410, no 409, and the token in the path is never parsed so a malformed segment is a 404 and not a 422. `429` rate-limited on the client and the route. |
 | `GET /v1/agents/home` | `200 {id, name, username, status, claimed, claimed_by_account_id?, claimed_at?}` | **Who this agent credential is**, and the `cafe agent whoami` read. Authenticated with the agent's own bearer token, resolved through the agent table. The body is the caller's own identity, its lifecycle status and the account that claimed it — **by row id and nothing more**: not the account's name or members, because this route does not read the account through an agent's credential. `claimed` is the ownership question, not the liveness one — a disabled agent is claimed. **Open to an unclaimed principal, and that is the point:** it is gated by `agentCredentialOnly` and not `agentClaimedOnly`, so an agent that registered itself runs whoami and gets `claimed: false`, which is the answer it exists to read. Gating it the other way would answer "you are not claimed" by refusing to say who is asking. No token and no digest in the body. `401` with no credential, before any path is read. |
 | `POST /v1/agents` | `201 {agent, api_key, claim}` | **Register an agent** — public, unauthenticated, and the step-① endpoint `cafe agent register` calls. Body `{name}`, optional `username`. The response carries **two secrets, each shown once**: `api_key.token` (the bootstrap bearer credential) and `claim.url` (the link a human opens to claim). Both are stored only as SHA-256 digests; no endpoint re-reads either. The agent comes back `unclaimed` (D4) with no account. A **generated username collision is retried** under the hood, so the endpoint never answers "taken" and cannot be used to probe which handles exist; a malformed handle, or a *supplied* one that survives the retry budget, is a `422` naming `username`. `429` rate-limited on the client and the route, `503` when no claim screen (`AGENT_CLAIM_UI_URL`) is configured — refused rather than minting an unclaimable agent. |
 | `POST /v1/agents/claim-link/refresh` | `200 {agent, claim}` | **Reissue an agent's claim link without claiming it.** Authenticated with the agent's own bearer token, which resolves against the agent table. Gives a fresh claim URL and changes nothing else — the agent stays `unclaimed`. A refresh against a **claimed** agent is a `404`, the same answer a wrong token gets, so "give me a new link" can never act as "claim me" (D4). The `Idempotency-Key` correlates the agent's retries in the audit trail but does **not** cache: every refresh mints a new link. `401` with no credential. |
@@ -1116,17 +1116,17 @@ scope set. Routing one through another's machinery would give each of them the
 wrong properties — a JWT cannot be revoked before its `exp` arrives, and a session
 cannot carry a scope set an operator curated.
 
-**The wire format** is `cafaye_` plus 43 base64url characters:
+**The wire format** is `anywaye_` plus 43 base64url characters:
 
 ```
-cafaye_Zq3vK7mXpR2tY8wB4cN6dF0gH1jK5lM9oP3qS7uV2wX4yZ8
+anywaye_Zq3vK7mXpR2tY8wB4cN6dF0gH1jK5lM9oP3qS7uV2wX4yZ8
 └──────┘└──────────────────────────────────────────────────┘
   7              43 characters of 32 bytes of crypto/rand
 ```
 
 The prefix is a feature and the feature is **recognition**. A secret that leaks
 into a CI log, a shell history, a support ticket or a paste buffer is recognised
-as a cafaye credential by its first seven characters, which turns "somebody has to
+as a anywaye credential by its first seven characters, which turns "somebody has to
 work out which of these strings is working" into a `grep`. It is the prefix rather
 than a marker in the middle because a scanner — and a truncated log line — looks at
 the first bytes.
@@ -1355,8 +1355,8 @@ identity never produces a token that needs it.
 ### The OpenID Connect provider
 
 `identity` is a first-class OIDC **provider**, so any product signs users in
-against cafaye itself rather than configuring Google OAuth per product — and the
-JWT verification every other cafaye service already does against identity's JWKS
+against anywaye itself rather than configuring Google OAuth per product — and the
+JWT verification every other anywaye service already does against identity's JWKS
 becomes a standard, interoperable surface.
 
 These routes exist only when the four `OIDC_*` variables above are all set AND
@@ -1394,7 +1394,7 @@ The claims:
   email's local part. A stand-in, not a user-chosen name.
 - `accounts` — on the `accounts` scope. An **array** of `{account_id, name, slug,
   role, personal}`. An array and not a single `account_id` because a user of a
-  cafaye product is in a personal account and usually several team accounts, and a
+  anywaye product is in a personal account and usually several team accounts, and a
   token carrying one of them would be wrong for the others. core's conventions ask
   for `account_id`; this is the multi-account form of that fact.
 - `scope` — the capability scopes, space-delimited. `email` and `profile` are
@@ -1520,7 +1520,7 @@ migrations/            goose SQL files
 config/                THE DEPLOYMENT CONFIG: deploy.yml (the Kamal config, and the
                        backup accessory that runs the backup) and kamal-backup.yml
                        (what is backed up, where, for how long). Both copied from
-                       cafaye/kit at the ref in kit.ref; see "Backups"
+                       anywaye/kit at the ref in kit.ref; see "Backups"
 ```
 
 `cmd/` + `internal/` is the layout from `refs/goreleaser`. `main` owns nothing
@@ -1535,7 +1535,7 @@ is what keeps the client's dependencies out of the service's binary.
 
 ## The Go client
 
-`client/` is the third of the fleet's clients, after `cafaye-ts` and `cafaye-py`, and
+`client/` is the third of the fleet's clients, after `anywaye-ts` and `anywaye-py`, and
 the one where the generator is right. Two layers, and the split is MD6's:
 
 ```
@@ -1566,7 +1566,7 @@ close call.
 this is, where requests go, RFC 9457 mapping, and being the public surface.
 
 **Base URLs have no default.** `ResolveBaseURL` consults, in order: the `BaseURL`
-option, `$CAFAYE_IDENTITY_BASE_URL`, `$CAFAYE_BASE_URL`, and then **throws**. The
+option, `$ANYWAYE_IDENTITY_BASE_URL`, `$ANYWAYE_BASE_URL`, and then **throws**. The
 document's own `servers:` entry is deliberately not a default — it would send a
 self-hoster's traffic to somebody else's deployment and it would *succeed*, so nothing
 would look wrong until somebody read a log.
@@ -1657,7 +1657,7 @@ The database tier, once the schema is applied:
 ```sh
 docker compose up -d --wait postgres
 goose -dir migrations postgres "$DATABASE_URL" up
-TEST_DATABASE_URL="postgres://identity:cafaye@localhost:15500/identity?sslmode=disable" go test ./...
+TEST_DATABASE_URL="postgres://identity:anywaye@localhost:15500/identity?sslmode=disable" go test ./...
 ```
 
 **That DSN was wrong in two ways until 2026-10-05, and both were measured rather than
@@ -1668,12 +1668,12 @@ its cause.
 
 | | was | is | what the wrong value does |
 |---|---|---|---|
-| password | `identity` | `cafaye` | `password authentication failed for user "identity"` |
+| password | `identity` | `anywaye` | `password authentication failed for user "identity"` |
 | port | `5432` | `15500` | connects to a *different cluster* — or to none |
 
 **THE PASSWORD IS THE CLUSTER'S, NOT THE SERVICE'S**, which is what
 [AGENTS.md](AGENTS.md)'s identity-27 note says and what `docker-compose.yml` states
-where it interpolates `${KIT_POSTGRES_PASSWORD:-cafaye}`: kit's shared cluster gives
+where it interpolates `${KIT_POSTGRES_PASSWORD:-anywaye}`: kit's shared cluster gives
 every role `$POSTGRES_PASSWORD`, and isolation is by privilege and never by secret.
 The literal `identity` was correct only while identity ran its own container with its
 own password.
@@ -1692,7 +1692,7 @@ correction:
 # one source, interpolated, follows an overridden cluster password
 dsn=$(grep -o 'postgres://identity_app[^ ]*@postgres:5432/identity' docker-compose.yml)
 # host-side equivalent: same credentials, kit's published port
-TEST_DATABASE_URL="postgres://identity:${KIT_POSTGRES_PASSWORD:-cafaye}@localhost:15500/identity?sslmode=disable" go test ./...
+TEST_DATABASE_URL="postgres://identity:${KIT_POSTGRES_PASSWORD:-anywaye}@localhost:15500/identity?sslmode=disable" go test ./...
 ```
 
 Migrations are a deploy step, so they are not a test step — `goose up` is its own
@@ -1788,7 +1788,7 @@ is the name of the method on every generated client in the fleet. The gate says 
 
 A perfect OpenAPI document is not the same as an honest repository. `README.md`
 said this service does OAuth social login, its roadmap checked the box off, and
-`cafaye.yml` — the manifest a customer is handed — claimed the capability. The
+`anywaye.yml` — the manifest a customer is handed — claimed the capability. The
 documents were **honest the whole time**: not one of them ever declared a
 social-login operation, because there was no route for one. Every claim was in
 prose, and `openapi_drift_test.go` reads `paths:` blocks, so it could not see any of
@@ -1829,7 +1829,7 @@ same router walk, **in both directions**:
 |---|---|
 | README endpoint tables | `TestTheReadmeEndpointTablesAreTheRoutesTheRouterServes` |
 | README roadmap checkboxes | `TestEveryCheckedRoadmapItemIsBackedByTheRouter` |
-| `cafaye.yml` capability list | `TestTheManifestDescribesOnlyCapabilitiesThisServiceHas` |
+| `anywaye.yml` capability list | `TestTheManifestDescribesOnlyCapabilitiesThisServiceHas` |
 
 It **found the manifest claim and the roadmap claim by name on its first run**,
 which is the evidence that it would have found them before. A fourth file,
@@ -1877,7 +1877,7 @@ a failure deadline (PLAN.md §3).
 runs this repository's own for the rest:
 
 ```yaml
-uses: cafaye/kit/.github/workflows/ci.reusable.yml@master
+uses: anywaye/kit/.github/workflows/ci.reusable.yml@master
 ```
 
 `ci (kit: go)` is **expected red**, and that is a conflict with kit's own rules
@@ -2016,7 +2016,7 @@ for a generated client, and `until=2027-03-31` fails the build in the meantime.
 claims one has.** This section is written so that sentence is impossible to
 miss, because the failure mode is a README that reads as reassurance.
 
-Two files, committed together and copied from cafaye/kit at the ref in
+Two files, committed together and copied from anywaye/kit at the ref in
 `kit.ref`:
 
 | File | What it is |
@@ -2153,7 +2153,7 @@ kamal accessory exec --reuse backup kamal-backup evidence   # keep this output
 ```
 
 **Then drill it before you need it.** A backup nobody has restored is a
-hypothesis. `cafaye/kit`'s `templates/kamal/drill.sh`, copied to `bin/drill`,
+hypothesis. `anywaye/kit`'s `templates/kamal/drill.sh`, copied to `bin/drill`,
 restores into a scratch database, asserts the tables came back with rows, and
 drops the scratch database on every exit path:
 
@@ -2163,8 +2163,8 @@ bin/drill --table users --table sessions --table api_keys
 
 This repository does **not** contain `bin/drill` yet. Copying kit's `drill.sh`
 into `bin/` is a separate, unmade change, and until it is made the restore path
-is described in `cafaye/docs`'s
-[backup-and-restore runbook](https://github.com/cafaye/docs) rather than being
+is described in `anywaye/docs`'s
+[backup-and-restore runbook](https://github.com/anywaye/docs) rather than being
 exercisable from here.
 
 ## Migrations
@@ -2214,7 +2214,7 @@ substrate's line, and the one caveat worth knowing.
 ```yaml
 jobs:
   publish:
-    uses: cafaye/kit/.github/workflows/publish.reusable.yml@master
+    uses: anywaye/kit/.github/workflows/publish.reusable.yml@master
     with:
       push: true
 ```
@@ -2223,7 +2223,7 @@ That is a **caller**, not a copy — kit's template, verbatim. One `uses:`
 publishes **both** artifacts a deploy consumes: the image `config/deploy.yml`
 deploys (`ghcr.io/<org>/<repo>:sha-<commit>`, plus `master`, plus `latest`)
 and the chart the Argo CD `Application` pulls
-(`oci://ghcr.io/cafaye/charts/identity:<chart version>`). The composition
+(`oci://ghcr.io/anywaye/charts/identity:<chart version>`). The composition
 lives in kit, so a fix to how either artifact is built reaches here on
 kit's next push with no pull request against this repository.
 
@@ -2238,7 +2238,7 @@ pipeline wrote.
 Four things worth knowing:
 
 - **The image name is not written here.** The reusable workflow derives it from
-  `github.repository` and lowercases it, because `ghcr.io/Cafaye/Identity` 404s
+  `github.repository` and lowercases it, because `ghcr.io/Anywaye/Identity` 404s
   on a registry that requires lowercase paths.
 - **`packages: write` is granted here**, because a reusable workflow can request
   a permission but cannot grant itself one. The missing line shows up at the push
@@ -2315,7 +2315,7 @@ What each piece is now:
 ### Four places said it shipped, and each was wrong, and fixing it meant mounting it
 
 The claim was not subtle. It was in the opening paragraph, in the roadmap, in
-`cafaye.yml`'s `description`, and — implicitly, and worst of all — in a directory
+`anywaye.yml`'s `description`, and — implicitly, and worst of all — in a directory
 of correct, well-tested, database-backed code. `internal/httpapi/openapi_drift_test.go`
 could not see any of it, because **none of it is in a `paths:` block**: the OpenAPI
 documents were honest the whole time, and a service can have a perfect contract and
@@ -2473,7 +2473,7 @@ express would be a rule with a bypass in it.
 - [x] Accounts, memberships, roles, invitations
 - [x] OIDC provider (zitadel/oidc)
 - [x] MFA: TOTP + recovery codes
-- [x] Scoped API tokens (`cafaye_`-prefixed, four scopes, revocable, expiring)
+- [x] Scoped API tokens (`anywaye_`-prefixed, four scopes, revocable, expiring)
 - [ ] Admin API
 - [x] Authorization matrix suite (route table × role × anonymous)
 

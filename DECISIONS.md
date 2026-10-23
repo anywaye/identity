@@ -5,13 +5,13 @@ the call that was made so the work could continue and the cost of making the
 other one.
 
 This file did not exist before packet `identity-09`. The two places an open
-question in this repository used to live were `cafaye/notes/decisions.md` — which numbers
+question in this repository used to live were `anywaye/notes/decisions.md` — which numbers
 `MD…` and holds questions about the workspace rather than about one service — and
-a `> DECISION NEEDED (…)` callout in `cafaye.yml`, which is where the
+a `> DECISION NEEDED (…)` callout in `anywaye.yml`, which is where the
 `openapi/v1.yaml` scope-claim question lives and which core's D6 shape moved
 away from. Neither is identity's own record, and a packet that had to escalate
 something had nowhere to put it. So the file is `DECISIONS.md` at the repository
-root, numbered from D1, and the callouts in `cafaye.yml` keep pointing at the
+root, numbered from D1, and the callouts in `anywaye.yml` keep pointing at the
 question they raise.
 
 **A settled decision moves into the [CHANGELOG](CHANGELOG.md)'s decision table
@@ -181,7 +181,7 @@ prose. Three facts make it wrong here.
    The ten names in the table are now the method names on every generated client,
    and the table and the document agree for the first time.
 
-2. **The customer-facing cost was measured, not estimated.** `cafaye-ts` is the
+2. **The customer-facing cost was measured, not estimated.** `anywaye-ts` is the
    TypeScript client `parlor` itself calls and the one a customer writes against.
    Its generated identity methods were `createClient`, `createSession`,
    `deleteSession`, `getCurrentUser`, `getEmailVerificationStatus`, `getMfaStatus`,
@@ -1166,12 +1166,12 @@ and this endpoint needs a third:
 
 | scope | set by | answers |
 |---|---|---|
-| `cafaye.account_id` | `begin_account` | *which account* a request stands in |
-| `cafaye.credential_digest` | `begin_credential` | *which credential* a caller presented |
-| `cafaye.user_id` | `begin_user` | *who* the caller is |
+| `anywaye.account_id` | `begin_account` | *which account* a request stands in |
+| `anywaye.credential_digest` | `begin_credential` | *which credential* a caller presented |
+| `anywaye.user_id` | `begin_user` | *who* the caller is |
 
 `account_users` was protected by `protect_table`, so it carried exactly the
-first scope's policy: `account_id = (select cafaye.current_account_id())`. A
+first scope's policy: `account_id = (select anywaye.current_account_id())`. A
 caller who has signed in and has not yet chosen an account is not standing in
 one — that is what makes them a caller rather than a tenant — so that predicate
 was not true for every row they own, and the row filter took all of them.
@@ -1822,7 +1822,7 @@ the join under the enforced boundary.
 
 ### The ruling: a digest-scoped SELECT policy on `account_users`, and nothing else
 
-Migration `00028` installs `account_users_cafaye_resolve`, `FOR SELECT`, whose
+Migration `00028` installs `account_users_anywaye_resolve`, `FOR SELECT`, whose
 `USING` is an `EXISTS` over `api_keys` matching the membership's own
 `(account_id, user_id)` to the presented digest with `revoked_at IS NULL`.
 The subquery runs under `api_keys`' own policies, so it can only ever match

@@ -15,7 +15,7 @@
 -- Every table below is a real dependency of the running service — the user a
 -- login authenticates, the session it writes, the MFA challenge it raises, the
 -- OIDC request it parks, the outbox row it publishes — and none of them is one
--- of the five, so `cafaye.protect_table` never looked at any of them. It is not
+-- of the five, so `anywaye.protect_table` never looked at any of them. It is not
 -- that the grants are too narrow. They were the only grants that existed, and the
 -- service had been running on the OWNER the whole time, where a grant is not
 -- needed to reach its own tables.
@@ -49,7 +49,7 @@
 -- NO ROW LEVEL SECURITY IS TOUCHED HERE, and no policy is created for any of
 -- these tables. That is not a gap. Every one of them is a table with no
 -- `account_id`, which is the fleet's own definition of an account-scoped table
--- (D7) and the definition `cafaye.protect_table` enforces by refusing a table
+-- (D7) and the definition `anywaye.protect_table` enforces by refusing a table
 -- without one: 00016 declines to protect `accounts` for precisely this reason.
 -- Their boundary is not the account, it is the caller, and the caller's is
 -- resolved by the row's own `user_id` predicate in Go (`tenancy.WithUser`) and by

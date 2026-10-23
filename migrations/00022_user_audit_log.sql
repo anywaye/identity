@@ -42,7 +42,7 @@
 
 -- WHY NO ROW LEVEL SECURITY AND NO REFERENCES accounts
 --
--- `cafaye.protect_table` REFUSES a table with no `account_id` — 00019's header says
+-- `anywaye.protect_table` REFUSES a table with no `account_id` — 00019's header says
 -- so, and 00016 declines to protect `accounts` for exactly this reason. So there is
 -- no substrate call to make here, and pretending otherwise would mean inventing the
 -- account column again one layer down.

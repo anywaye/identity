@@ -56,7 +56,7 @@
 --                          default nobody chose. A migration is the cheap part.
 -- NOT HERE  row-level security. See below.
 
--- WHY THERE IS NO `cafaye.protect_table` ON ANY OF THESE THREE
+-- WHY THERE IS NO `anywaye.protect_table` ON ANY OF THESE THREE
 --
 -- protect_table refuses a table with no `account_id`, and `agents` cannot have
 -- one: an unclaimed agent belongs to nobody, which is the entire point of it.

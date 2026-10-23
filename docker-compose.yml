@@ -188,7 +188,7 @@ services:
       context: .
       args:
         GO_VERSION: "1.26"
-    image: cafaye/identity:dev
+    image: anywaye/identity:dev
     # Published, because a developer runs `curl localhost:8080/healthz` and because
     # a test container on the host has to reach it.
     #
@@ -239,7 +239,7 @@ services:
       # shared cluster it is simply the wrong password: the role's password is
       # the cluster's, so leaving it here is an authentication failure at boot,
       # not a security improvement.
-      DATABASE_URL: postgres://identity_app:${KIT_POSTGRES_PASSWORD:-cafaye}@postgres:5432/identity?sslmode=disable
+      DATABASE_URL: postgres://identity_app:${KIT_POSTGRES_PASSWORD:-anywaye}@postgres:5432/identity?sslmode=disable
 
       # ---------------------------------------------------------------------
       # THE SIGNUP TIMESTAMP KEY — THE ONE SECRET A BOOT CANNOT GO WITHOUT
@@ -387,7 +387,7 @@ services:
       # restart, and a value that is present but undialable fails the boot naming
       # itself rather than falling back to the real provider.
       #
-      #   OAUTH_REDIRECT_BASE_URL: https://identity.cafaye.com
+      #   OAUTH_REDIRECT_BASE_URL: https://identity.anywaye.com
       #   OAUTH_ENCRYPTION_KEY: <standard base64 of 32 raw bytes>
       #   OAUTH_GOOGLE_CLIENT_ID / OAUTH_GOOGLE_CLIENT_SECRET
       #   OAUTH_GITHUB_CLIENT_ID / OAUTH_GITHUB_CLIENT_SECRET
@@ -487,7 +487,7 @@ services:
     # anything else on the machine.
     #
     # `tag` is the process identity the collector promotes to `service.name` when a
-    # record has none — see `transform/cafaye_logs` in the collector config. It
+    # record has none — see `transform/anywaye_logs` in the collector config. It
     # has to match the service name or a crash is filed against `unknown`.
     #
     # WHERE THIS STANZA WORKS, AND WHERE IT DOES NOT. The decision above is
@@ -506,7 +506,7 @@ services:
     #       failed to create task for container: failed to initialize logging
     #       driver: dial tcp: lookup otel-collector on 0.250.250.200:53: no such host
     #
-    #     Measured with no compose file and no cafaye involved: `docker run --rm
+    #     Measured with no compose file and no anywaye involved: `docker run --rm
     #     --log-driver syslog --log-opt syslog-address=tcp://otel-collector:15514
     #     alpine:3 echo hi` fails identically. The same command with the
     #     collector's CONTAINER IP instead of its name exits 0.
@@ -519,7 +519,7 @@ services:
     #   docker inspect -f '{{.NetworkSettings.Networks.identity-compose_platform.IPAddress}}' \
     #     identity-compose-otel-collector-1
     #
-    # (the key is `<project>_platform`, prefixed with `${KIT_STACK_NAME:-cafaye}`,
+    # (the key is `<project>_platform`, prefixed with `${KIT_STACK_NAME:-anywaye}`,
     # which is why it is worth reading off `docker inspect` rather than being
     # guessed) — and the crash layer is fully in place,
     # because the bytes arrive at the same receiver over the same transport.

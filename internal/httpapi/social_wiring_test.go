@@ -23,10 +23,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cafaye/identity/internal/auth"
-	"github.com/cafaye/identity/internal/oauth"
-	"github.com/cafaye/identity/internal/platform/db"
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/auth"
+	"github.com/anywaye/identity/internal/oauth"
+	"github.com/anywaye/identity/internal/platform/db"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // --- the minimum doubles a SocialService can be built from --------------------

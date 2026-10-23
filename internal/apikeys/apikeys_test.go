@@ -87,7 +87,7 @@ func TestThePrefixIsRecognisable(t *testing.T) {
 		t.Fatalf("NewToken: %v", err)
 	}
 
-	if !strings.HasPrefix(token, "cafaye_") {
+	if !strings.HasPrefix(token, "anywaye_") {
 		t.Errorf("the prefix is %q, want something that names the platform", Prefix)
 	}
 	// Short enough to leave the whole credential inside a CI variable's value
@@ -262,7 +262,7 @@ func TestEveryScopeIsWiredToARoute(t *testing.T) {
 
 // TestAllScopesAreInCoreShape checks the naming against core's own convention,
 // which is "scopes for capability (`invoices:write`)". A scope that does not
-// look like the ones every other cafaye service writes is one a developer will
+// look like the ones every other anywaye service writes is one a developer will
 // not guess at an integration.
 func TestAllScopesAreInCoreShape(t *testing.T) {
 	for _, scope := range AllScopes() {

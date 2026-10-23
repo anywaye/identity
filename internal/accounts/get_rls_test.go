@@ -7,12 +7,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cafaye/identity/internal/platform/clock"
-	"github.com/cafaye/identity/internal/platform/db"
-	"github.com/cafaye/identity/internal/platform/dbtest"
-	"github.com/cafaye/identity/internal/platform/id"
-	"github.com/cafaye/identity/internal/tenancy"
-	"github.com/cafaye/identity/internal/users"
+	"github.com/anywaye/identity/internal/platform/clock"
+	"github.com/anywaye/identity/internal/platform/db"
+	"github.com/anywaye/identity/internal/platform/dbtest"
+	"github.com/anywaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/tenancy"
+	"github.com/anywaye/identity/internal/users"
 )
 
 // `Get` UNDER THE REAL POLICIES, and the reason this file exists separately from
@@ -38,15 +38,15 @@ import (
 // migrations/00018 adds a fifth policy to `account_users`, and 00028 a sixth.
 // The first four are on `account_id`; the fifth is on the caller:
 //
-//	account_users_cafaye_members  for select  using (user_id = cafaye.current_user_id())
+//	account_users_anywaye_members  for select  using (user_id = anywaye.current_user_id())
 //
-// (The sixth, `account_users_cafaye_resolve`, admits the membership pair of a
+// (The sixth, `account_users_anywaye_resolve`, admits the membership pair of a
 // presented live credential and is invisible here: no digest is set on these
 // transactions, so its EXISTS is never true.)
 //
 // A caller who has not chosen an account has no `current_account_id()`, so the
 // four account policies hide the row. The fifth is what lets a caller see their
-// OWN memberships, and it is only in force once `cafaye.begin_user` has been
+// OWN memberships, and it is only in force once `anywaye.begin_user` has been
 // called ON THE SAME TRANSACTION.
 //
 // `ListMine` opens a transaction and calls `tenancy.BeginUser` first, so its
@@ -59,7 +59,7 @@ import (
 // # LISTMINE IS THE THIRD USE CASE WITH THE SAME SHAPE, AND IT IS HERE FOR THE SAME REASON
 //
 // `ListMine` answers "which accounts is THIS PERSON in", so it is scoped by the
-// CALLER — `account_users_cafaye_members` (00018) — and it opens a transaction
+// CALLER — `account_users_anywaye_members` (00018) — and it opens a transaction
 // and calls `tenancy.BeginUser` first, exactly as `Get` does. The copy in
 // service_test.go ran on `dbtest.Schema`, so it passed against a table with no
 // policy at all: the query's own `where au.user_id = $1` did the scoping, and
@@ -145,8 +145,8 @@ func TestGetFindsTheCallersOwnAccountUnderTheRealPolicies(t *testing.T) {
 	got, role, err := h.svc.Get(t.Context(), account.ID, member)
 	if err != nil {
 		t.Fatalf("Get(%s, its own owner) = %v, want the account. account_users carries "+
-			"`account_users_cafaye_members` (00018), which filters on "+
-			"`user_id = cafaye.current_user_id()`, so a read that has not called "+
+			"`account_users_anywaye_members` (00018), which filters on "+
+			"`user_id = anywaye.current_user_id()`, so a read that has not called "+
 			"tenancy.BeginUser ON ITS OWN TRANSACTION cannot see its own membership row: "+
 			"the database filters it and the handler renders that as a 404.",
 			account.ID, err)
@@ -181,8 +181,8 @@ func TestGetFindsTheCallersOwnAccountUnderTheRealPolicies(t *testing.T) {
 // for the empty account list, and the reason this file is not only about `Get`
 // and `Member`.
 //
-// `ListMine` is scoped by the CALLER — `account_users_cafaye_members` (00018,
-// `user_id = cafaye.current_user_id()`) — so a read that has not called
+// `ListMine` is scoped by the CALLER — `account_users_anywaye_members` (00018,
+// `user_id = anywaye.current_user_id()`) — so a read that has not called
 // `tenancy.BeginUser` ON ITS OWN TRANSACTION returns nothing: the database
 // filters every row out and the product renders "you are not a member of any
 // account". It is the same defect `Get` had, on the one use case that answers
@@ -287,15 +287,15 @@ func TestTheMembershipUserPolicyIsInstalledUnderRealPolicies(t *testing.T) {
 	err := pool.QueryRow(t.Context(),
 		`SELECT pg_get_expr(polqual, polrelid) FROM pg_policy
 		  WHERE polrelid = 'account_users'::regclass
-		    AND polname = 'account_users_cafaye_members'`,
+		    AND polname = 'account_users_anywaye_members'`,
 	).Scan(&qual)
 	if err != nil {
 		t.Fatalf("reading the membership user policy: %v. Without it, every test in this "+
 			"file passes for the wrong reason — the policy is their whole subject.", err)
 	}
 	if !strings.Contains(strings.ToLower(qual), "current_user_id") {
-		t.Errorf("account_users_cafaye_members filters on %q, want a predicate naming "+
-			"cafaye.current_user_id(). A policy that does not scope by the CALLER is a "+
+		t.Errorf("account_users_anywaye_members filters on %q, want a predicate naming "+
+			"anywaye.current_user_id(). A policy that does not scope by the CALLER is a "+
 			"different boundary, and the 404 this file exists for would be a different bug.",
 			qual)
 	}

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cafaye/identity/internal/platform/db"
+	"github.com/anywaye/identity/internal/platform/db"
 )
 
 // THE REGISTRATION AND THE CLAIM-LINK REFRESH — the two things a caller with no

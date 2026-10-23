@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cafaye/identity/internal/config"
-	"github.com/cafaye/identity/internal/platform/dbtest"
-	"github.com/cafaye/identity/internal/signup"
+	"github.com/anywaye/identity/internal/config"
+	"github.com/anywaye/identity/internal/platform/dbtest"
+	"github.com/anywaye/identity/internal/signup"
 )
 
 // discardLogger matches the helper the app tests use: assertions on log output

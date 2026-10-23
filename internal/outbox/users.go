@@ -3,12 +3,12 @@ package outbox
 import (
 	"time"
 
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // # THE USER-SCOPED LIFECYCLE EVENTS.
 //
-// `identity.user.created` is declared in cafaye.yml because core ships a payload
+// `identity.user.created` is declared in anywaye.yml because core ships a payload
 // schema for it. This file's event does not have one — core 0.2's catalog has no
 // row for a deletion at all — so it is emitted undeclared and pinned in
 // `internal/platform/ci/event_grammar_test.go`'s `knownUndeclaredEvents`, which

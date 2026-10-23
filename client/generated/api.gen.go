@@ -761,7 +761,7 @@ type AccountSummary struct {
 }
 
 // AgentClaim The claim link, rendered once. `url` is the absolute address a human opens;
-// the link is 256 bits of `cafaye_`-prefixed entropy whose SHA-256 is the
+// the link is 256 bits of `anywaye_`-prefixed entropy whose SHA-256 is the
 // only part stored.
 type AgentClaim struct {
 	ExpiresAt time.Time `json:"expires_at"`
@@ -880,7 +880,7 @@ type AgentRegistrationResult struct {
 	APIKey IssuedAgentToken `json:"api_key"`
 
 	// Claim The claim link, rendered once. `url` is the absolute address a human opens;
-	// the link is 256 bits of `cafaye_`-prefixed entropy whose SHA-256 is the
+	// the link is 256 bits of `anywaye_`-prefixed entropy whose SHA-256 is the
 	// only part stored.
 	Claim AgentClaim `json:"claim"`
 }
@@ -1062,7 +1062,7 @@ type ClaimAgentRequest struct {
 	// exist.
 	//
 	//
-	// Examples: cafaye_9Xk2Qm7RfT4vB1nJ8pL5wY3hD6sZ0aC
+	// Examples: anywaye_9Xk2Qm7RfT4vB1nJ8pL5wY3hD6sZ0aC
 	Token string `json:"token"`
 }
 
@@ -1397,14 +1397,14 @@ type IssuedAPIKey struct {
 	// out of a token. They are the same set.
 	Scopes []APIKeyScope `json:"scopes"`
 
-	// Token The credential: `cafaye_` plus 43 base64url characters. Shown once,
+	// Token The credential: `anywaye_` plus 43 base64url characters. Shown once,
 	// here, and unrecoverable afterwards — not because an endpoint is
 	// missing but because the row holds a SHA-256 of a 256-bit value.
 	// A caller that loses it mints another.
 	//
 	// The prefix is a feature and the feature is recognition: a secret
 	// that leaks into a CI log, a shell history or a support ticket is
-	// recognised as a cafaye credential by its first seven characters,
+	// recognised as a anywaye credential by its first seven characters,
 	// which turns "somebody has to work out which of these strings is
 	// working" into a grep.
 	Token string `json:"token"`
@@ -1422,7 +1422,7 @@ type IssuedAgentToken struct {
 	ID        openapi_types.UUID `json:"id"`
 	Name      string             `json:"name"`
 
-	// Token The credential: `cafaye_` followed by base64url random bytes. Shown
+	// Token The credential: `anywaye_` followed by base64url random bytes. Shown
 	// exactly once, here. Never in a cookie — a credential in a cookie is
 	// one a browser silently attaches to a request its holder did not intend.
 	Token string `json:"token"`
@@ -1794,7 +1794,7 @@ type OwnershipTransfer struct {
 	PreviousOwner Membership `json:"previous_owner"`
 }
 
-// Problem The cafaye error envelope: RFC 9457 plus core's `code` and `trace_id`.
+// Problem The anywaye error envelope: RFC 9457 plus core's `code` and `trace_id`.
 // Every non-2xx response from this service is this shape. No service invents
 // its own error body.
 type Problem struct {
@@ -1821,7 +1821,7 @@ type Problem struct {
 	// TraceID Always present, always equal to the `X-Trace-Id` response header.
 	TraceID string `json:"trace_id"`
 
-	// Type A stable `https://docs.cafaye.com/errors/<code>` URI — the machine-readable contract.
+	// Type A stable `https://docs.anywaye.com/errors/<code>` URI — the machine-readable contract.
 	Type string `json:"type"`
 }
 
@@ -1958,7 +1958,7 @@ type RefreshAgentClaimResponse struct {
 	Agent AgentSummary `json:"agent"`
 
 	// Claim The claim link, rendered once. `url` is the absolute address a human opens;
-	// the link is 256 bits of `cafaye_`-prefixed entropy whose SHA-256 is the
+	// the link is 256 bits of `anywaye_`-prefixed entropy whose SHA-256 is the
 	// only part stored.
 	Claim AgentClaim `json:"claim"`
 }
@@ -2435,47 +2435,47 @@ type AccountID = openapi_types.UUID
 // UserID defines model for UserId.
 type UserID = openapi_types.UUID
 
-// BodyTooLarge The cafaye error envelope: RFC 9457 plus core's `code` and `trace_id`.
+// BodyTooLarge The anywaye error envelope: RFC 9457 plus core's `code` and `trace_id`.
 // Every non-2xx response from this service is this shape. No service invents
 // its own error body.
 type BodyTooLarge = Problem
 
-// Forbidden The cafaye error envelope: RFC 9457 plus core's `code` and `trace_id`.
+// Forbidden The anywaye error envelope: RFC 9457 plus core's `code` and `trace_id`.
 // Every non-2xx response from this service is this shape. No service invents
 // its own error body.
 type Forbidden = Problem
 
-// InternalError The cafaye error envelope: RFC 9457 plus core's `code` and `trace_id`.
+// InternalError The anywaye error envelope: RFC 9457 plus core's `code` and `trace_id`.
 // Every non-2xx response from this service is this shape. No service invents
 // its own error body.
 type InternalError = Problem
 
-// MailUnavailable The cafaye error envelope: RFC 9457 plus core's `code` and `trace_id`.
+// MailUnavailable The anywaye error envelope: RFC 9457 plus core's `code` and `trace_id`.
 // Every non-2xx response from this service is this shape. No service invents
 // its own error body.
 type MailUnavailable = Problem
 
-// MalformedBody The cafaye error envelope: RFC 9457 plus core's `code` and `trace_id`.
+// MalformedBody The anywaye error envelope: RFC 9457 plus core's `code` and `trace_id`.
 // Every non-2xx response from this service is this shape. No service invents
 // its own error body.
 type MalformedBody = Problem
 
-// NotFound The cafaye error envelope: RFC 9457 plus core's `code` and `trace_id`.
+// NotFound The anywaye error envelope: RFC 9457 plus core's `code` and `trace_id`.
 // Every non-2xx response from this service is this shape. No service invents
 // its own error body.
 type NotFound = Problem
 
-// RateLimited The cafaye error envelope: RFC 9457 plus core's `code` and `trace_id`.
+// RateLimited The anywaye error envelope: RFC 9457 plus core's `code` and `trace_id`.
 // Every non-2xx response from this service is this shape. No service invents
 // its own error body.
 type RateLimited = Problem
 
-// Unauthenticated The cafaye error envelope: RFC 9457 plus core's `code` and `trace_id`.
+// Unauthenticated The anywaye error envelope: RFC 9457 plus core's `code` and `trace_id`.
 // Every non-2xx response from this service is this shape. No service invents
 // its own error body.
 type Unauthenticated = Problem
 
-// ValidationFailed The cafaye error envelope: RFC 9457 plus core's `code` and `trace_id`.
+// ValidationFailed The anywaye error envelope: RFC 9457 plus core's `code` and `trace_id`.
 // Every non-2xx response from this service is this shape. No service invents
 // its own error body.
 type ValidationFailed = Problem
@@ -4084,7 +4084,7 @@ type ClientInterface interface {
 	//
 	// **Authenticated with the agent's own bearer token**, which resolves
 	// through the agent table and not the account api-keys table even though
-	// both begin `cafaye_`: an agent may refresh its own link precisely because
+	// both begin `anywaye_`: an agent may refresh its own link precisely because
 	// the credential it presents names a principal, and a principal that has
 	// lost its link is the one thing this route exists to save. A token that
 	// does not resolve — wrong, revoked, expired, or belonging to a disabled
@@ -4117,7 +4117,7 @@ type ClientInterface interface {
 	//
 	// **Anonymous and unauthenticated, and rate-limited** on the same terms
 	// `POST /v1/agents` is. The claim link in the path is the credential: it is
-	// 256 bits of `cafaye_`-prefixed entropy whose SHA-256 is the only part
+	// 256 bits of `anywaye_`-prefixed entropy whose SHA-256 is the only part
 	// stored, and guessing it is not a search anybody can run — which is what
 	// makes the one bit a 200 discloses affordable. The limiter's key is the
 	// client and the route and never a token, so a 429 is identical for
@@ -4152,7 +4152,7 @@ type ClientInterface interface {
 	// the answer is the server's own word about the principal the bearer token
 	// resolved to, read fresh rather than served out of the client's cache.
 	//
-	// **Authenticated with the agent's own bearer token** — the same `cafaye_`
+	// **Authenticated with the agent's own bearer token** — the same `anywaye_`
 	// value the registration or the claim minted, resolving against the agent
 	// table and not the account api-keys table. A token that does not resolve —
 	// wrong, revoked, expired, or belonging to a disabled principal — is the
@@ -4195,7 +4195,7 @@ type ClientInterface interface {
 	//
 	// Mints a named bearer credential for the calling agent, in the same shape
 	// `POST /v1/accounts/{account_id}/api-keys` renders its mint: an opaque
-	// `cafaye_` token, SHA-256 at rest, revocable and expiring, with `token`
+	// `anywaye_` token, SHA-256 at rest, revocable and expiring, with `token`
 	// returned here and nowhere else.
 	//
 	// **Authenticated with the agent's own bearer token**, and the credential it
@@ -4223,7 +4223,7 @@ type ClientInterface interface {
 	//
 	// Mints a named bearer credential for the calling agent, in the same shape
 	// `POST /v1/accounts/{account_id}/api-keys` renders its mint: an opaque
-	// `cafaye_` token, SHA-256 at rest, revocable and expiring, with `token`
+	// `anywaye_` token, SHA-256 at rest, revocable and expiring, with `token`
 	// returned here and nowhere else.
 	//
 	// **Authenticated with the agent's own bearer token**, and the credential it
@@ -4742,7 +4742,7 @@ type ClientInterface interface {
 	// IntrospectAPIKeyWithBody Resolve a presented API token to its claims
 	//
 	// Asks "what may this token do, and for which account". It exists because the
-	// token is **opaque**: it is `cafaye_` plus 32 random bytes and the row holds
+	// token is **opaque**: it is `anywaye_` plus 32 random bytes and the row holds
 	// a SHA-256 of it, so there is no claim document inside it and no published
 	// key set to verify it against. Asking identity is the only way a resource
 	// server can learn a scope. The response is RFC 7662's shape.
@@ -4777,7 +4777,7 @@ type ClientInterface interface {
 	// This is a deliberate interim, not a contract. The fleet does not agree on the
 	// name: core's `docs/openapi-conventions.md` requires `scopes`, and gateway's
 	// `src/middleware/jwt.ts` reads `scope` and splits it on whitespace. The
-	// question is open (MD7 in the manager's `cafaye/notes/decisions.md`) and answering it
+	// question is open (MD7 in the manager's `anywaye/notes/decisions.md`) and answering it
 	// unilaterally would mean rotating every credential already in a customer's
 	// hand. Emitting both means whichever name wins, the other is a one-line
 	// removal and no credential has to be reissued. A space-separated **string**
@@ -4799,7 +4799,7 @@ type ClientInterface interface {
 	// IntrospectAPIKey Resolve a presented API token to its claims
 	//
 	// Asks "what may this token do, and for which account". It exists because the
-	// token is **opaque**: it is `cafaye_` plus 32 random bytes and the row holds
+	// token is **opaque**: it is `anywaye_` plus 32 random bytes and the row holds
 	// a SHA-256 of it, so there is no claim document inside it and no published
 	// key set to verify it against. Asking identity is the only way a resource
 	// server can learn a scope. The response is RFC 7662's shape.
@@ -4834,7 +4834,7 @@ type ClientInterface interface {
 	// This is a deliberate interim, not a contract. The fleet does not agree on the
 	// name: core's `docs/openapi-conventions.md` requires `scopes`, and gateway's
 	// `src/middleware/jwt.ts` reads `scope` and splits it on whitespace. The
-	// question is open (MD7 in the manager's `cafaye/notes/decisions.md`) and answering it
+	// question is open (MD7 in the manager's `anywaye/notes/decisions.md`) and answering it
 	// unilaterally would mean rotating every credential already in a customer's
 	// hand. Emitting both means whichever name wins, the other is a one-line
 	// removal and no credential has to be reissued. A space-separated **string**
@@ -5225,7 +5225,7 @@ type ClientInterface interface {
 	// status, so there is nothing here to enumerate.
 	//
 	// A cookie and a bearer session token are both accepted, exactly as on
-	// `GET /v1/me`. A `cafaye_` API key presented as a bearer token is not a
+	// `GET /v1/me`. A `anywaye_` API key presented as a bearer token is not a
 	// session and is refused with 403, not 401.
 	//
 	// Corresponds with GET /v1/operator/me (the `GetOperatorMe` operationId).
@@ -5899,7 +5899,7 @@ type ClientInterface interface {
 	// sessions.
 	//
 	// **The challenge is accepted in the cookie or in the body**, and both are
-	// supported on purpose: cafaye's conventions say "no cookies for API traffic",
+	// supported on purpose: anywaye's conventions say "no cookies for API traffic",
 	// and `POST /v1/session` returns the session token in the body as well as in
 	// the cookie precisely so a non-browser client has a way in. The explicit body
 	// value wins when both are present, for the reason `GET /v1/me` prefers the
@@ -5935,7 +5935,7 @@ type ClientInterface interface {
 	// sessions.
 	//
 	// **The challenge is accepted in the cookie or in the body**, and both are
-	// supported on purpose: cafaye's conventions say "no cookies for API traffic",
+	// supported on purpose: anywaye's conventions say "no cookies for API traffic",
 	// and `POST /v1/session` returns the session token in the body as well as in
 	// the cookie precisely so a non-browser client has a way in. The explicit body
 	// value wins when both are present, for the reason `GET /v1/me` prefers the
@@ -7924,7 +7924,7 @@ func (c *Client) RegisterAgent(ctx context.Context, body RegisterAgentJSONReques
 //
 // **Authenticated with the agent's own bearer token**, which resolves
 // through the agent table and not the account api-keys table even though
-// both begin `cafaye_`: an agent may refresh its own link precisely because
+// both begin `anywaye_`: an agent may refresh its own link precisely because
 // the credential it presents names a principal, and a principal that has
 // lost its link is the one thing this route exists to save. A token that
 // does not resolve — wrong, revoked, expired, or belonging to a disabled
@@ -7967,7 +7967,7 @@ func (c *Client) RefreshAgentClaimLink(ctx context.Context, reqEditors ...Reques
 //
 // **Anonymous and unauthenticated, and rate-limited** on the same terms
 // `POST /v1/agents` is. The claim link in the path is the credential: it is
-// 256 bits of `cafaye_`-prefixed entropy whose SHA-256 is the only part
+// 256 bits of `anywaye_`-prefixed entropy whose SHA-256 is the only part
 // stored, and guessing it is not a search anybody can run — which is what
 // makes the one bit a 200 discloses affordable. The limiter's key is the
 // client and the route and never a token, so a 429 is identical for
@@ -8012,7 +8012,7 @@ func (c *Client) GetAgentClaimPreview(ctx context.Context, token string, reqEdit
 // the answer is the server's own word about the principal the bearer token
 // resolved to, read fresh rather than served out of the client's cache.
 //
-// **Authenticated with the agent's own bearer token** — the same `cafaye_`
+// **Authenticated with the agent's own bearer token** — the same `anywaye_`
 // value the registration or the claim minted, resolving against the agent
 // table and not the account api-keys table. A token that does not resolve —
 // wrong, revoked, expired, or belonging to a disabled principal — is the
@@ -8075,7 +8075,7 @@ func (c *Client) ListAgentTokens(ctx context.Context, reqEditors ...RequestEdito
 //
 // Mints a named bearer credential for the calling agent, in the same shape
 // `POST /v1/accounts/{account_id}/api-keys` renders its mint: an opaque
-// `cafaye_` token, SHA-256 at rest, revocable and expiring, with `token`
+// `anywaye_` token, SHA-256 at rest, revocable and expiring, with `token`
 // returned here and nowhere else.
 //
 // **Authenticated with the agent's own bearer token**, and the credential it
@@ -8113,7 +8113,7 @@ func (c *Client) MintAgentTokenWithBody(ctx context.Context, contentType string,
 //
 // Mints a named bearer credential for the calling agent, in the same shape
 // `POST /v1/accounts/{account_id}/api-keys` renders its mint: an opaque
-// `cafaye_` token, SHA-256 at rest, revocable and expiring, with `token`
+// `anywaye_` token, SHA-256 at rest, revocable and expiring, with `token`
 // returned here and nowhere else.
 //
 // **Authenticated with the agent's own bearer token**, and the credential it
@@ -8812,7 +8812,7 @@ func (c *Client) ConfirmEmailVerification(ctx context.Context, body ConfirmEmail
 // IntrospectAPIKeyWithBody Resolve a presented API token to its claims
 //
 // Asks "what may this token do, and for which account". It exists because the
-// token is **opaque**: it is `cafaye_` plus 32 random bytes and the row holds
+// token is **opaque**: it is `anywaye_` plus 32 random bytes and the row holds
 // a SHA-256 of it, so there is no claim document inside it and no published
 // key set to verify it against. Asking identity is the only way a resource
 // server can learn a scope. The response is RFC 7662's shape.
@@ -8847,7 +8847,7 @@ func (c *Client) ConfirmEmailVerification(ctx context.Context, body ConfirmEmail
 // This is a deliberate interim, not a contract. The fleet does not agree on the
 // name: core's `docs/openapi-conventions.md` requires `scopes`, and gateway's
 // `src/middleware/jwt.ts` reads `scope` and splits it on whitespace. The
-// question is open (MD7 in the manager's `cafaye/notes/decisions.md`) and answering it
+// question is open (MD7 in the manager's `anywaye/notes/decisions.md`) and answering it
 // unilaterally would mean rotating every credential already in a customer's
 // hand. Emitting both means whichever name wins, the other is a one-line
 // removal and no credential has to be reissued. A space-separated **string**
@@ -8879,7 +8879,7 @@ func (c *Client) IntrospectAPIKeyWithBody(ctx context.Context, contentType strin
 // IntrospectAPIKey Resolve a presented API token to its claims
 //
 // Asks "what may this token do, and for which account". It exists because the
-// token is **opaque**: it is `cafaye_` plus 32 random bytes and the row holds
+// token is **opaque**: it is `anywaye_` plus 32 random bytes and the row holds
 // a SHA-256 of it, so there is no claim document inside it and no published
 // key set to verify it against. Asking identity is the only way a resource
 // server can learn a scope. The response is RFC 7662's shape.
@@ -8914,7 +8914,7 @@ func (c *Client) IntrospectAPIKeyWithBody(ctx context.Context, contentType strin
 // This is a deliberate interim, not a contract. The fleet does not agree on the
 // name: core's `docs/openapi-conventions.md` requires `scopes`, and gateway's
 // `src/middleware/jwt.ts` reads `scope` and splits it on whitespace. The
-// question is open (MD7 in the manager's `cafaye/notes/decisions.md`) and answering it
+// question is open (MD7 in the manager's `anywaye/notes/decisions.md`) and answering it
 // unilaterally would mean rotating every credential already in a customer's
 // hand. Emitting both means whichever name wins, the other is a one-line
 // removal and no credential has to be reissued. A space-separated **string**
@@ -9465,7 +9465,7 @@ func (c *Client) RegenerateMFARecoveryCodes(ctx context.Context, body Regenerate
 // status, so there is nothing here to enumerate.
 //
 // A cookie and a bearer session token are both accepted, exactly as on
-// `GET /v1/me`. A `cafaye_` API key presented as a bearer token is not a
+// `GET /v1/me`. A `anywaye_` API key presented as a bearer token is not a
 // session and is refused with 403, not 401.
 //
 // Corresponds with GET /v1/operator/me (the `GetOperatorMe` operationId).
@@ -10289,7 +10289,7 @@ func (c *Client) RedeemSessionLink(ctx context.Context, body RedeemSessionLinkJS
 // sessions.
 //
 // **The challenge is accepted in the cookie or in the body**, and both are
-// supported on purpose: cafaye's conventions say "no cookies for API traffic",
+// supported on purpose: anywaye's conventions say "no cookies for API traffic",
 // and `POST /v1/session` returns the session token in the body as well as in
 // the cookie precisely so a non-browser client has a way in. The explicit body
 // value wins when both are present, for the reason `GET /v1/me` prefers the
@@ -10335,7 +10335,7 @@ func (c *Client) CompleteSecondFactorWithBody(ctx context.Context, contentType s
 // sessions.
 //
 // **The challenge is accepted in the cookie or in the body**, and both are
-// supported on purpose: cafaye's conventions say "no cookies for API traffic",
+// supported on purpose: anywaye's conventions say "no cookies for API traffic",
 // and `POST /v1/session` returns the session token in the body as well as in
 // the cookie precisely so a non-browser client has a way in. The explicit body
 // value wins when both are present, for the reason `GET /v1/me` prefers the
@@ -14767,7 +14767,7 @@ type ClientWithResponsesInterface interface {
 	//
 	// **Authenticated with the agent's own bearer token**, which resolves
 	// through the agent table and not the account api-keys table even though
-	// both begin `cafaye_`: an agent may refresh its own link precisely because
+	// both begin `anywaye_`: an agent may refresh its own link precisely because
 	// the credential it presents names a principal, and a principal that has
 	// lost its link is the one thing this route exists to save. A token that
 	// does not resolve — wrong, revoked, expired, or belonging to a disabled
@@ -14802,7 +14802,7 @@ type ClientWithResponsesInterface interface {
 	//
 	// **Anonymous and unauthenticated, and rate-limited** on the same terms
 	// `POST /v1/agents` is. The claim link in the path is the credential: it is
-	// 256 bits of `cafaye_`-prefixed entropy whose SHA-256 is the only part
+	// 256 bits of `anywaye_`-prefixed entropy whose SHA-256 is the only part
 	// stored, and guessing it is not a search anybody can run — which is what
 	// makes the one bit a 200 discloses affordable. The limiter's key is the
 	// client and the route and never a token, so a 429 is identical for
@@ -14839,7 +14839,7 @@ type ClientWithResponsesInterface interface {
 	// the answer is the server's own word about the principal the bearer token
 	// resolved to, read fresh rather than served out of the client's cache.
 	//
-	// **Authenticated with the agent's own bearer token** — the same `cafaye_`
+	// **Authenticated with the agent's own bearer token** — the same `anywaye_`
 	// value the registration or the claim minted, resolving against the agent
 	// table and not the account api-keys table. A token that does not resolve —
 	// wrong, revoked, expired, or belonging to a disabled principal — is the
@@ -14886,7 +14886,7 @@ type ClientWithResponsesInterface interface {
 	//
 	// Mints a named bearer credential for the calling agent, in the same shape
 	// `POST /v1/accounts/{account_id}/api-keys` renders its mint: an opaque
-	// `cafaye_` token, SHA-256 at rest, revocable and expiring, with `token`
+	// `anywaye_` token, SHA-256 at rest, revocable and expiring, with `token`
 	// returned here and nowhere else.
 	//
 	// **Authenticated with the agent's own bearer token**, and the credential it
@@ -14914,7 +14914,7 @@ type ClientWithResponsesInterface interface {
 	//
 	// Mints a named bearer credential for the calling agent, in the same shape
 	// `POST /v1/accounts/{account_id}/api-keys` renders its mint: an opaque
-	// `cafaye_` token, SHA-256 at rest, revocable and expiring, with `token`
+	// `anywaye_` token, SHA-256 at rest, revocable and expiring, with `token`
 	// returned here and nowhere else.
 	//
 	// **Authenticated with the agent's own bearer token**, and the credential it
@@ -15439,7 +15439,7 @@ type ClientWithResponsesInterface interface {
 	// IntrospectAPIKeyWithBodyWithResponse Resolve a presented API token to its claims
 	//
 	// Asks "what may this token do, and for which account". It exists because the
-	// token is **opaque**: it is `cafaye_` plus 32 random bytes and the row holds
+	// token is **opaque**: it is `anywaye_` plus 32 random bytes and the row holds
 	// a SHA-256 of it, so there is no claim document inside it and no published
 	// key set to verify it against. Asking identity is the only way a resource
 	// server can learn a scope. The response is RFC 7662's shape.
@@ -15474,7 +15474,7 @@ type ClientWithResponsesInterface interface {
 	// This is a deliberate interim, not a contract. The fleet does not agree on the
 	// name: core's `docs/openapi-conventions.md` requires `scopes`, and gateway's
 	// `src/middleware/jwt.ts` reads `scope` and splits it on whitespace. The
-	// question is open (MD7 in the manager's `cafaye/notes/decisions.md`) and answering it
+	// question is open (MD7 in the manager's `anywaye/notes/decisions.md`) and answering it
 	// unilaterally would mean rotating every credential already in a customer's
 	// hand. Emitting both means whichever name wins, the other is a one-line
 	// removal and no credential has to be reissued. A space-separated **string**
@@ -15496,7 +15496,7 @@ type ClientWithResponsesInterface interface {
 	// IntrospectAPIKeyWithResponse Resolve a presented API token to its claims
 	//
 	// Asks "what may this token do, and for which account". It exists because the
-	// token is **opaque**: it is `cafaye_` plus 32 random bytes and the row holds
+	// token is **opaque**: it is `anywaye_` plus 32 random bytes and the row holds
 	// a SHA-256 of it, so there is no claim document inside it and no published
 	// key set to verify it against. Asking identity is the only way a resource
 	// server can learn a scope. The response is RFC 7662's shape.
@@ -15531,7 +15531,7 @@ type ClientWithResponsesInterface interface {
 	// This is a deliberate interim, not a contract. The fleet does not agree on the
 	// name: core's `docs/openapi-conventions.md` requires `scopes`, and gateway's
 	// `src/middleware/jwt.ts` reads `scope` and splits it on whitespace. The
-	// question is open (MD7 in the manager's `cafaye/notes/decisions.md`) and answering it
+	// question is open (MD7 in the manager's `anywaye/notes/decisions.md`) and answering it
 	// unilaterally would mean rotating every credential already in a customer's
 	// hand. Emitting both means whichever name wins, the other is a one-line
 	// removal and no credential has to be reissued. A space-separated **string**
@@ -15928,7 +15928,7 @@ type ClientWithResponsesInterface interface {
 	// status, so there is nothing here to enumerate.
 	//
 	// A cookie and a bearer session token are both accepted, exactly as on
-	// `GET /v1/me`. A `cafaye_` API key presented as a bearer token is not a
+	// `GET /v1/me`. A `anywaye_` API key presented as a bearer token is not a
 	// session and is refused with 403, not 401.
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -16612,7 +16612,7 @@ type ClientWithResponsesInterface interface {
 	// sessions.
 	//
 	// **The challenge is accepted in the cookie or in the body**, and both are
-	// supported on purpose: cafaye's conventions say "no cookies for API traffic",
+	// supported on purpose: anywaye's conventions say "no cookies for API traffic",
 	// and `POST /v1/session` returns the session token in the body as well as in
 	// the cookie precisely so a non-browser client has a way in. The explicit body
 	// value wins when both are present, for the reason `GET /v1/me` prefers the
@@ -16648,7 +16648,7 @@ type ClientWithResponsesInterface interface {
 	// sessions.
 	//
 	// **The challenge is accepted in the cookie or in the body**, and both are
-	// supported on purpose: cafaye's conventions say "no cookies for API traffic",
+	// supported on purpose: anywaye's conventions say "no cookies for API traffic",
 	// and `POST /v1/session` returns the session token in the body as well as in
 	// the cookie precisely so a non-browser client has a way in. The explicit body
 	// value wins when both are present, for the reason `GET /v1/me` prefers the
@@ -26052,7 +26052,7 @@ func (c *ClientWithResponses) RegisterAgentWithResponse(ctx context.Context, bod
 //
 // **Authenticated with the agent's own bearer token**, which resolves
 // through the agent table and not the account api-keys table even though
-// both begin `cafaye_`: an agent may refresh its own link precisely because
+// both begin `anywaye_`: an agent may refresh its own link precisely because
 // the credential it presents names a principal, and a principal that has
 // lost its link is the one thing this route exists to save. A token that
 // does not resolve — wrong, revoked, expired, or belonging to a disabled
@@ -26093,7 +26093,7 @@ func (c *ClientWithResponses) RefreshAgentClaimLinkWithResponse(ctx context.Cont
 //
 // **Anonymous and unauthenticated, and rate-limited** on the same terms
 // `POST /v1/agents` is. The claim link in the path is the credential: it is
-// 256 bits of `cafaye_`-prefixed entropy whose SHA-256 is the only part
+// 256 bits of `anywaye_`-prefixed entropy whose SHA-256 is the only part
 // stored, and guessing it is not a search anybody can run — which is what
 // makes the one bit a 200 discloses affordable. The limiter's key is the
 // client and the route and never a token, so a 429 is identical for
@@ -26136,7 +26136,7 @@ func (c *ClientWithResponses) GetAgentClaimPreviewWithResponse(ctx context.Conte
 // the answer is the server's own word about the principal the bearer token
 // resolved to, read fresh rather than served out of the client's cache.
 //
-// **Authenticated with the agent's own bearer token** — the same `cafaye_`
+// **Authenticated with the agent's own bearer token** — the same `anywaye_`
 // value the registration or the claim minted, resolving against the agent
 // table and not the account api-keys table. A token that does not resolve —
 // wrong, revoked, expired, or belonging to a disabled principal — is the
@@ -26195,7 +26195,7 @@ func (c *ClientWithResponses) ListAgentTokensWithResponse(ctx context.Context, r
 //
 // Mints a named bearer credential for the calling agent, in the same shape
 // `POST /v1/accounts/{account_id}/api-keys` renders its mint: an opaque
-// `cafaye_` token, SHA-256 at rest, revocable and expiring, with `token`
+// `anywaye_` token, SHA-256 at rest, revocable and expiring, with `token`
 // returned here and nowhere else.
 //
 // **Authenticated with the agent's own bearer token**, and the credential it
@@ -26229,7 +26229,7 @@ func (c *ClientWithResponses) MintAgentTokenWithBodyWithResponse(ctx context.Con
 //
 // Mints a named bearer credential for the calling agent, in the same shape
 // `POST /v1/accounts/{account_id}/api-keys` renders its mint: an opaque
-// `cafaye_` token, SHA-256 at rest, revocable and expiring, with `token`
+// `anywaye_` token, SHA-256 at rest, revocable and expiring, with `token`
 // returned here and nowhere else.
 //
 // **Authenticated with the agent's own bearer token**, and the credential it
@@ -26862,7 +26862,7 @@ func (c *ClientWithResponses) ConfirmEmailVerificationWithResponse(ctx context.C
 // IntrospectAPIKeyWithBodyWithResponse Resolve a presented API token to its claims
 //
 // Asks "what may this token do, and for which account". It exists because the
-// token is **opaque**: it is `cafaye_` plus 32 random bytes and the row holds
+// token is **opaque**: it is `anywaye_` plus 32 random bytes and the row holds
 // a SHA-256 of it, so there is no claim document inside it and no published
 // key set to verify it against. Asking identity is the only way a resource
 // server can learn a scope. The response is RFC 7662's shape.
@@ -26897,7 +26897,7 @@ func (c *ClientWithResponses) ConfirmEmailVerificationWithResponse(ctx context.C
 // This is a deliberate interim, not a contract. The fleet does not agree on the
 // name: core's `docs/openapi-conventions.md` requires `scopes`, and gateway's
 // `src/middleware/jwt.ts` reads `scope` and splits it on whitespace. The
-// question is open (MD7 in the manager's `cafaye/notes/decisions.md`) and answering it
+// question is open (MD7 in the manager's `anywaye/notes/decisions.md`) and answering it
 // unilaterally would mean rotating every credential already in a customer's
 // hand. Emitting both means whichever name wins, the other is a one-line
 // removal and no credential has to be reissued. A space-separated **string**
@@ -26925,7 +26925,7 @@ func (c *ClientWithResponses) IntrospectAPIKeyWithBodyWithResponse(ctx context.C
 // IntrospectAPIKeyWithResponse Resolve a presented API token to its claims
 //
 // Asks "what may this token do, and for which account". It exists because the
-// token is **opaque**: it is `cafaye_` plus 32 random bytes and the row holds
+// token is **opaque**: it is `anywaye_` plus 32 random bytes and the row holds
 // a SHA-256 of it, so there is no claim document inside it and no published
 // key set to verify it against. Asking identity is the only way a resource
 // server can learn a scope. The response is RFC 7662's shape.
@@ -26960,7 +26960,7 @@ func (c *ClientWithResponses) IntrospectAPIKeyWithBodyWithResponse(ctx context.C
 // This is a deliberate interim, not a contract. The fleet does not agree on the
 // name: core's `docs/openapi-conventions.md` requires `scopes`, and gateway's
 // `src/middleware/jwt.ts` reads `scope` and splits it on whitespace. The
-// question is open (MD7 in the manager's `cafaye/notes/decisions.md`) and answering it
+// question is open (MD7 in the manager's `anywaye/notes/decisions.md`) and answering it
 // unilaterally would mean rotating every credential already in a customer's
 // hand. Emitting both means whichever name wins, the other is a one-line
 // removal and no credential has to be reissued. A space-separated **string**
@@ -27453,7 +27453,7 @@ func (c *ClientWithResponses) RegenerateMFARecoveryCodesWithResponse(ctx context
 // status, so there is nothing here to enumerate.
 //
 // A cookie and a bearer session token are both accepted, exactly as on
-// `GET /v1/me`. A `cafaye_` API key presented as a bearer token is not a
+// `GET /v1/me`. A `anywaye_` API key presented as a bearer token is not a
 // session and is refused with 403, not 401.
 //
 // Returns a wrapper object for the known response body format(s).
@@ -28227,7 +28227,7 @@ func (c *ClientWithResponses) RedeemSessionLinkWithResponse(ctx context.Context,
 // sessions.
 //
 // **The challenge is accepted in the cookie or in the body**, and both are
-// supported on purpose: cafaye's conventions say "no cookies for API traffic",
+// supported on purpose: anywaye's conventions say "no cookies for API traffic",
 // and `POST /v1/session` returns the session token in the body as well as in
 // the cookie precisely so a non-browser client has a way in. The explicit body
 // value wins when both are present, for the reason `GET /v1/me` prefers the
@@ -28269,7 +28269,7 @@ func (c *ClientWithResponses) CompleteSecondFactorWithBodyWithResponse(ctx conte
 // sessions.
 //
 // **The challenge is accepted in the cookie or in the body**, and both are
-// supported on purpose: cafaye's conventions say "no cookies for API traffic",
+// supported on purpose: anywaye's conventions say "no cookies for API traffic",
 // and `POST /v1/session` returns the session token in the body as well as in
 // the cookie precisely so a non-browser client has a way in. The explicit body
 // value wins when both are present, for the reason `GET /v1/me` prefers the

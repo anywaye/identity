@@ -11,15 +11,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cafaye/identity/internal/accounts"
-	"github.com/cafaye/identity/internal/apikeys"
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/accounts"
+	"github.com/anywaye/identity/internal/apikeys"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // POST /v1/introspections.
 //
 // The surface exists because the credential is opaque: a resource server has no
-// other way to learn what a cafaye api key may do. Two things are asserted here
+// other way to learn what a anywaye api key may do. Two things are asserted here
 // that are easy to get wrong — the dual claim name over the wire, and the fact
 // that the caller's standing is decided separately from the token's own state.
 

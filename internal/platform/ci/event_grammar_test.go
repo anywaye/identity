@@ -205,7 +205,7 @@ func TestEveryEmittedEventTypeIsThreeSegmentAndOwnPrefixed(t *testing.T) {
 // TestTheManifestDeclaresEveryEmittedEvent is the check core cannot write.
 //
 // Set equality between what internal/outbox publishes and what
-// cafaye.yml's exposes.events declares, with the difference pinned to
+// anywaye.yml's exposes.events declares, with the difference pinned to
 // knownUndeclaredEvents. The failure message names both sides because the whole
 // defect is that one of them is invisible from the other.
 func TestTheManifestDeclaresEveryEmittedEvent(t *testing.T) {
@@ -231,7 +231,7 @@ func TestTheManifestDeclaresEveryEmittedEvent(t *testing.T) {
 	for _, typ := range undeclared {
 		reason, known := knownUndeclaredEvents[typ]
 		if !known {
-			t.Errorf("%q is emitted by internal/outbox and is not in cafaye.yml's exposes.events, and it is not in knownUndeclaredEvents.\nThat is the defect this file exists to catch: every core rule reads the manifest, so an event nobody declared is invisible to all of them. Declare it, or pin it here with the reason it cannot be declared yet.", typ)
+			t.Errorf("%q is emitted by internal/outbox and is not in anywaye.yml's exposes.events, and it is not in knownUndeclaredEvents.\nThat is the defect this file exists to catch: every core rule reads the manifest, so an event nobody declared is invisible to all of them. Declare it, or pin it here with the reason it cannot be declared yet.", typ)
 			continue
 		}
 		// Logged rather than asserted: this is a real gap, and a gap that

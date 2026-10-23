@@ -7,8 +7,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/cafaye/identity/internal/platform/db"
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/platform/db"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // What identity knows about a user, in the shape a token carries it.
@@ -174,7 +174,7 @@ type claimAccount struct {
 // claimAccounts projects memberships onto the wire, as an array and never null.
 //
 // An array is a different answer from a single id, and it is the right one: a
-// user of a cafaye product is a member of a personal account and usually of
+// user of a anywaye product is a member of a personal account and usually of
 // several team accounts, so there is no single `account_id` to put in a token.
 // core's conventions ask for `account_id` on authenticated service traffic; this
 // is the multi-account form of that fact, and the disagreement is recorded in

@@ -12,9 +12,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cafaye/identity/internal/config"
-	"github.com/cafaye/identity/internal/oidc"
-	"github.com/cafaye/identity/internal/platform/dbtest"
+	"github.com/anywaye/identity/internal/config"
+	"github.com/anywaye/identity/internal/oidc"
+	"github.com/anywaye/identity/internal/platform/dbtest"
 )
 
 // The OIDC wiring. What matters here is that the two configurations are
@@ -51,7 +51,7 @@ func oidcConfig(t *testing.T, dsn string) config.Config {
 		DatabaseURL:    dsn,
 		OIDCIssuer:     "https://identity.test",
 		OIDCSigningKey: testKeyPEM(t),
-		OIDCKeyID:      "cafaye-wiring-test",
+		OIDCKeyID:      "anywaye-wiring-test",
 		OIDCLoginUIURL: "https://login.example.com/sign-in/oidc",
 		// The one secret a boot cannot go without, carried here so the app mints
 		// and verifies under a real key rather than the nil a zero Config holds.

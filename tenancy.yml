@@ -1,11 +1,11 @@
 # tenancy.yml — what identity declares about its own account boundary.
 #
-# Checked by cafaye/core's contract harness:
+# Checked by anywaye/core's contract harness:
 #
-#     /Users/kaka/Code/any/cafaye/core/harness/bin/tenancy-check .
+#     /Users/kaka/Code/any/anywaye/core/harness/bin/tenancy-check .
 #
 # It REPLACES `tenancy.probe.yml`, which was the pilot's measurement rather than a
-# declaration: core's scanner could not see `cafaye.protect_table`, so a file
+# declaration: core's scanner could not see `anywaye.protect_table`, so a file
 # describing what this migration really writes was reported as "the migrations
 # create no policy at all". That is fixed in core (577b3f3), the probe is deleted
 # in the same commit as this file, and nothing about the database changed to make
@@ -14,12 +14,12 @@
 #
 # THE `rls` BLOCK IS THE SUBSTRATE'S, NOT OURS. `migrations/00016_account_isolation.sql`
 # is kit's `templates/database/tenancy/substrate.sql` copied verbatim, so this
-# block records five `select cafaye.protect_table(...)` calls and what the template
+# block records five `select anywaye.protect_table(...)` calls and what the template
 # writes for each. It does not claim any policy, any predicate or any `force` bit
 # that this repository wrote: every one of the twenty-four policies `pg_policies`
 # holds on these five tables is generated — twenty from `protect_table` and
-# `protect_credential_table`, plus `account_users_cafaye_members` and
-# `account_users_cafaye_resolve`, which are measured in tg-a1's report and
+# `protect_credential_table`, plus `account_users_anywaye_members` and
+# `account_users_anywaye_resolve`, which are measured in tg-a1's report and
 # unreadable by the checker for the reasons given at each table below — and the
 # `constrained` lines below are the five CALLS, which is the only place the
 # template's shape is written down in this tree.
@@ -99,10 +99,10 @@ scope:
     # (`internal/tenancy/profile_read_test.go`): with no identity set — which is
     # the state production runs it in, because the userinfo path reads through
     # `db.Direct{Pool: pool}` and a bare pool carries no GUC — the read returns
-    # ZERO rows; with `cafaye.begin_user` naming the subject it returns exactly
+    # ZERO rows; with `anywaye.begin_user` naming the subject it returns exactly
     # that subject's rows; with another user's identity it returns none; with an
     # `begin_account` set it returns that account's rows only. So it is NOT a
-    # hole — `account_users_cafaye_members` (00018) and the four account policies
+    # hole — `account_users_anywaye_members` (00018) and the four account policies
     # hold it in every state, and the Go predicate is a second copy of the same
     # bound. It is NOT an entry point either: the read is scoped by USER, which
     # `operation`/`enforced.line` cannot express for the same reason the three
@@ -123,14 +123,14 @@ rls:
   # service cannot.
   databaseEnforced: true
   # The template's own function, and not `app.current_account()`: `protect_table`
-  # writes every predicate as `account_id = (select cafaye.current_account_id())`,
+  # writes every predicate as `account_id = (select anywaye.current_account_id())`,
   # so naming anything else here would make `tenancy.rls-permissive` correct.
   #
   # It is the WRAPPED spelling that matters, and this field cannot express the
   # wrapper because the schema's pattern requires the bare name ending in `()`. The
   # wrap is `(select …)`, and it is why the substrate's policies are evaluated once
   # per statement rather than once per row.
-  identity: cafaye.current_account_id()
+  identity: anywaye.current_account_id()
   # The DDL tree, and separate from `scope.sources` above because the two checks
   # read different things: this one reads `create policy` and
   # `alter table … row level security`, the other reads statements.
@@ -163,24 +163,24 @@ rls:
         #     psql "$TEST_DATABASE_URL" -tAc "select tablename, policyname from
         #       pg_policies where schemaname='public' order by 1,2"
         #
-        #   account_users  account_users_cafaye_members   00018:283
-        #   account_users  account_users_cafaye_resolve   00028:92
+        #   account_users  account_users_anywaye_members   00018:283
+        #   account_users  account_users_anywaye_resolve   00028:92
         #
-        # Both are REAL and both are LIVE. `cafaye.protect_membership_table`
+        # Both are REAL and both are LIVE. `anywaye.protect_membership_table`
         # (00018) calls `protect_table` for the same four policies above and adds
-        # `<table>_cafaye_members`, `for select`, `using (user_id = (select
-        # cafaye.current_user_id()))` — a policy scoped by the CALLER, not by the
+        # `<table>_anywaye_members`, `for select`, `using (user_id = (select
+        # anywaye.current_user_id()))` — a policy scoped by the CALLER, not by the
         # account, for the same reason a resolve policy is. 00028's DO block adds
-        # `account_users_cafaye_resolve`, `for select`, `using (EXISTS (SELECT 1
+        # `account_users_anywaye_resolve`, `for select`, `using (EXISTS (SELECT 1
         # FROM api_keys k WHERE k.account_id = account_users.account_id AND
         # k.user_id = account_users.user_id AND k.token_digest = (SELECT
-        # cafaye.current_credential_digest()) AND k.revoked_at IS NULL))`.
+        # anywaye.current_credential_digest()) AND k.revoked_at IS NULL))`.
         #
         # WHY THEY ARE NOT DECLARED, and it is not an oversight wearing a
         # comment. Both are written through `EXECUTE format(...)` inside
         # plpgsql, so no line in this tree BEGINS `create policy` and the DDL
         # scanner's `_POLICY_STATEMENT` cannot attribute either to a table.
-        # `select cafaye.protect_membership_table(...)` is a THIRD writer the
+        # `select anywaye.protect_membership_table(...)` is a THIRD writer the
         # checker's `_PROTECT_TABLE` does not resolve — it matches
         # `protect_(credential_)?table` and `membership_table` is neither. So
         # declaring them is a false red and NOT declaring them is a real gap in
@@ -193,28 +193,28 @@ rls:
         # than being catalog decoration, and both bind the substrate's two roles
         # and neither carries BYPASSRLS. `internal/tenancy/isolation.sql` is
         # where this repository asserts what the catalog actually holds.
-        - name: account_users_cafaye_select
+        - name: account_users_anywaye_select
           command: select
           clause: using
           roles: [identity, identity_app]
           constrained:
             file: migrations/00016_account_isolation.sql
             line: 853
-        - name: account_users_cafaye_insert
+        - name: account_users_anywaye_insert
           command: insert
           clause: with check
           roles: [identity, identity_app]
           constrained:
             file: migrations/00016_account_isolation.sql
             line: 853
-        - name: account_users_cafaye_update
+        - name: account_users_anywaye_update
           command: update
           clause: using
           roles: [identity, identity_app]
           constrained:
             file: migrations/00016_account_isolation.sql
             line: 853
-        - name: account_users_cafaye_delete
+        - name: account_users_anywaye_delete
           command: delete
           clause: using
           roles: [identity, identity_app]
@@ -224,28 +224,28 @@ rls:
     - table: account_invitations
       forced: true
       policies:
-        - name: account_invitations_cafaye_select
+        - name: account_invitations_anywaye_select
           command: select
           clause: using
           roles: [identity, identity_app]
           constrained:
             file: migrations/00016_account_isolation.sql
             line: 867
-        - name: account_invitations_cafaye_insert
+        - name: account_invitations_anywaye_insert
           command: insert
           clause: with check
           roles: [identity, identity_app]
           constrained:
             file: migrations/00016_account_isolation.sql
             line: 867
-        - name: account_invitations_cafaye_update
+        - name: account_invitations_anywaye_update
           command: update
           clause: using
           roles: [identity, identity_app]
           constrained:
             file: migrations/00016_account_isolation.sql
             line: 867
-        - name: account_invitations_cafaye_delete
+        - name: account_invitations_anywaye_delete
           command: delete
           clause: using
           roles: [identity, identity_app]
@@ -256,14 +256,14 @@ rls:
         # reached a credential table in identity-isolation-05: the redemption
         # lookup is `WHERE token_digest = $1` with no account predicate and none
         # it could carry, because the account is WHAT THE QUERY IS FOR. So 00029
-        # calls `cafaye.protect_credential_table('account_invitations',
+        # calls `anywaye.protect_credential_table('account_invitations',
         # 'token_digest')`, which writes the four account policies above AGAIN
         # (idempotently — the same four, byte for byte) and then adds this one:
         # `for select`, `using (token_digest = (select
-        # cafaye.current_credential_digest()))`.
+        # anywaye.current_credential_digest()))`.
         #
         # WHY IT IS DECLARED AND NOT LEFT OUT. It is the same shape as
-        # `api_keys_cafaye_resolve` above and the same argument: a fifth policy
+        # `api_keys_anywaye_resolve` above and the same argument: a fifth policy
         # on a declared protected table, in the roles the other four name, is a
         # row-level-security boundary nobody is accountable for unless it is
         # written down. Permissive policies are OR-ed, so the one left out is the
@@ -280,7 +280,7 @@ rls:
         # A resolution session still meets the four account policies on every
         # write, where a NULL identity is 42501, so presenting a token grants no
         # broader write scope than 00025 had.
-        - name: account_invitations_cafaye_resolve
+        - name: account_invitations_anywaye_resolve
           command: select
           clause: using
           roles: [identity, identity_app]
@@ -288,10 +288,10 @@ rls:
             file: migrations/00029_invitation_credential_resolve.sql
             line: 47
     # FIVE POLICIES, NOT FOUR, and the fifth is not an account policy at all. 00016
-    # calls `cafaye.protect_credential_table('api_keys', 'token_digest')`, which
+    # calls `anywaye.protect_credential_table('api_keys', 'token_digest')`, which
     # CALLS `protect_table` — so the four account policies below are byte-for-byte the
     # ones every other protected table has — and then adds one `for select` policy
-    # whose USING clause is `token_digest = (select cafaye.current_credential_digest())`.
+    # whose USING clause is `token_digest = (select anywaye.current_credential_digest())`.
     #
     # WHY IT IS DECLARED RATHER THAN LEFT OUT. It is a policy on a declared protected
     # table, in the roles the table's other policies name, and a declaration that
@@ -299,7 +299,7 @@ rls:
     # direction — the omission is invisible to the reader and to the checker alike.
     #
     # CORE CANNOT SEE ANY OF THE FIVE, AND `tenancy-check` SAYS SO. Its recogniser is
-    # `^select (cafaye.)?protect_table\(\s*'(table)'` — a literal table name as the
+    # `^select (anywaye.)?protect_table\(\s*'(table)'` — a literal table name as the
     # FIRST argument — and this table's call is
     # `protect_credential_table('api_keys', 'token_digest')`. So the checker reports
     # `rls-not-enabled`, `rls-owner-bypass` and four `rls-policy-absent` against a
@@ -313,28 +313,28 @@ rls:
     - table: api_keys
       forced: true
       policies:
-        - name: api_keys_cafaye_select
+        - name: api_keys_anywaye_select
           command: select
           clause: using
           roles: [identity, identity_app]
           constrained:
             file: migrations/00016_account_isolation.sql
             line: 895
-        - name: api_keys_cafaye_insert
+        - name: api_keys_anywaye_insert
           command: insert
           clause: with check
           roles: [identity, identity_app]
           constrained:
             file: migrations/00016_account_isolation.sql
             line: 895
-        - name: api_keys_cafaye_update
+        - name: api_keys_anywaye_update
           command: update
           clause: using
           roles: [identity, identity_app]
           constrained:
             file: migrations/00016_account_isolation.sql
             line: 895
-        - name: api_keys_cafaye_delete
+        - name: api_keys_anywaye_delete
           command: delete
           clause: using
           roles: [identity, identity_app]
@@ -344,7 +344,7 @@ rls:
         # The resolve policy. Its predicate is the digest the CALLER PRESENTED, not the
         # account, so `clause: using` with the other four is the honest reading and the
         # declaration does not pretend this row is account-scoped.
-        - name: api_keys_cafaye_resolve
+        - name: api_keys_anywaye_resolve
           command: select
           clause: using
           roles: [identity, identity_app]
@@ -354,28 +354,28 @@ rls:
     - table: oidc_clients
       forced: true
       policies:
-        - name: oidc_clients_cafaye_select
+        - name: oidc_clients_anywaye_select
           command: select
           clause: using
           roles: [identity, identity_app]
           constrained:
             file: migrations/00016_account_isolation.sql
             line: 911
-        - name: oidc_clients_cafaye_insert
+        - name: oidc_clients_anywaye_insert
           command: insert
           clause: with check
           roles: [identity, identity_app]
           constrained:
             file: migrations/00016_account_isolation.sql
             line: 911
-        - name: oidc_clients_cafaye_update
+        - name: oidc_clients_anywaye_update
           command: update
           clause: using
           roles: [identity, identity_app]
           constrained:
             file: migrations/00016_account_isolation.sql
             line: 911
-        - name: oidc_clients_cafaye_delete
+        - name: oidc_clients_anywaye_delete
           command: delete
           clause: using
           roles: [identity, identity_app]
@@ -385,28 +385,28 @@ rls:
     - table: account_audit_log
       forced: true
       policies:
-        - name: account_audit_log_cafaye_select
+        - name: account_audit_log_anywaye_select
           command: select
           clause: using
           roles: [identity, identity_app]
           constrained:
             file: migrations/00016_account_isolation.sql
             line: 915
-        - name: account_audit_log_cafaye_insert
+        - name: account_audit_log_anywaye_insert
           command: insert
           clause: with check
           roles: [identity, identity_app]
           constrained:
             file: migrations/00016_account_isolation.sql
             line: 915
-        - name: account_audit_log_cafaye_update
+        - name: account_audit_log_anywaye_update
           command: update
           clause: using
           roles: [identity, identity_app]
           constrained:
             file: migrations/00016_account_isolation.sql
             line: 915
-        - name: account_audit_log_cafaye_delete
+        - name: account_audit_log_anywaye_delete
           command: delete
           clause: using
           roles: [identity, identity_app]

@@ -49,8 +49,8 @@ package httpapi
 import (
 	"context"
 
-	"github.com/cafaye/identity/internal/auth"
-	"github.com/cafaye/identity/internal/oauth"
+	"github.com/anywaye/identity/internal/auth"
+	"github.com/anywaye/identity/internal/oauth"
 )
 
 // fakeSocial is the double behind `walkOptions` and `servedRoutes`.

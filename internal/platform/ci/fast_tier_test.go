@@ -55,7 +55,7 @@ import (
 // opener. It is the only pool constructor the tests use: db.Open is called
 // from cmd/identity and from dbtest itself, so a test that opens a pool
 // reaches it through here.
-const dbtestImportPath = "github.com/cafaye/identity/internal/platform/dbtest"
+const dbtestImportPath = "github.com/anywaye/identity/internal/platform/dbtest"
 
 // dbTierMarker is the line prefix that declares the db tier in gate.yml.
 // bin/prime's sed and this file's parser both read exactly these lines.

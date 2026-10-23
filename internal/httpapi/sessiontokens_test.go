@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cafaye/identity/internal/accounts"
-	"github.com/cafaye/identity/internal/oidc"
-	"github.com/cafaye/identity/internal/platform/clock"
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/accounts"
+	"github.com/anywaye/identity/internal/oidc"
+	"github.com/anywaye/identity/internal/platform/clock"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // The session-to-token exchange, endpoint by endpoint.
@@ -139,7 +139,7 @@ func TestMintSessionTokenFieldRefusals(t *testing.T) {
 			// Uppercase, spaces, a path: none of them is a service name, and a
 			// receiver pinning its own audience will never match one.
 			name:      "an audience that is not a service name",
-			body:      `{"account_id":"` + id.MustNew().String() + `","audience":"https://billing.cafaye.com"}`,
+			body:      `{"account_id":"` + id.MustNew().String() + `","audience":"https://billing.anywaye.com"}`,
 			wantField: "audience",
 			wantCode:  codeTokenFieldInvalid,
 		},
@@ -173,7 +173,7 @@ func TestMintSessionTokenRefusesAnAPIKey(t *testing.T) {
 	provider := newFakeOIDC()
 	handler, _ := sessionTokenRouter(t, newFakeTenancy(), provider, testInstant)
 
-	rec := requestAs(t, handler, "cafaye_scoped_token_value", http.MethodPost, "/v1/session/tokens",
+	rec := requestAs(t, handler, "anywaye_scoped_token_value", http.MethodPost, "/v1/session/tokens",
 		`{"account_id":"`+id.MustNew().String()+`","audience":"billing"}`)
 
 	if rec.Code != http.StatusForbidden {

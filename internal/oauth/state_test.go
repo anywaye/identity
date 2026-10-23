@@ -172,7 +172,7 @@ func TestProviderAuthCodeURLCarriesTheRequiredParameters(t *testing.T) {
 
 	p := Google()
 	p.ClientID = "client-id"
-	redirect := "https://identity.cafaye.com/v1/auth/oauth/google/callback"
+	redirect := "https://identity.anywaye.com/v1/auth/oauth/google/callback"
 
 	parsed, err := url.Parse(p.AuthCodeURL("the-state", redirect))
 	if err != nil {

@@ -56,7 +56,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/cafaye/identity/internal/signup"
+	"github.com/anywaye/identity/internal/signup"
 )
 
 // Signup is the part of signup.Service the v1 routes need.

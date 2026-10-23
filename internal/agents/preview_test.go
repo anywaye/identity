@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // THE CLAIM PREVIEW, OVER A REAL POSTGRES IN A PRIVATE SCHEMA.

@@ -25,7 +25,7 @@ func TestSendMessageReadsCouriersContract(t *testing.T) {
 
 	problem := func(status int, code, detail string, extra map[string]any) string {
 		body := map[string]any{
-			"type":     "https://docs.cafaye.com/errors/" + code,
+			"type":     "https://docs.anywaye.com/errors/" + code,
 			"title":    code,
 			"status":   status,
 			"detail":   detail,
@@ -253,7 +253,7 @@ func TestRetryabilityIsAPropertyOfTheRefusal(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			body := map[string]any{
-				"type":  "https://docs.cafaye.com/errors/" + tc.code,
+				"type":  "https://docs.anywaye.com/errors/" + tc.code,
 				"title": tc.code, "status": tc.status,
 				"detail": "refused", "code": tc.code,
 				"trace_id": "0af7651916cd43dd8448eb211c80319c",

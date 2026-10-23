@@ -3,8 +3,8 @@ package httpapi
 import (
 	"context"
 
-	"github.com/cafaye/identity/internal/platform/db"
-	"github.com/cafaye/identity/internal/platform/id"
+	"github.com/anywaye/identity/internal/platform/db"
+	"github.com/anywaye/identity/internal/platform/id"
 )
 
 // noEnrolledSecondFactor is `mfa.Service.Enabled` answering "no" for every subject.

@@ -2,7 +2,7 @@
 // round trip, the code-for-token exchange, and the `connected_accounts` table
 // that ties a provider's identifier to a user of this service.
 //
-// It is a cafaye concept rather than platform infrastructure, so it lives at
+// It is a anywaye concept rather than platform infrastructure, so it lives at
 // internal/oauth rather than under internal/platform. What it deliberately does
 // not contain is the decision about *which user* a callback resolves to: that is
 // a use case, it sits in internal/auth alongside register and login, and this
@@ -29,7 +29,7 @@
 //   - The code is kept rather than deleted because it is correct, and because the
 //     migration that backs it is applied and an applied migration is not edited.
 //     What it must not be is *invisible*, which is why the package doc, the
-//     README, `cafaye.yml` and TestTheSocialLoginSurfaceIsNotMounted all say the
+//     README, `anywaye.yml` and TestTheSocialLoginSurfaceIsNotMounted all say the
 //     same thing.
 //   - AGENTS.md's "stubs stay honest" rule cuts the other way from the usual
 //     reading of it: a tested-but-unwired method is called a lie, and the honest
