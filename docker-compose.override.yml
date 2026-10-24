@@ -1,0 +1,4 @@
+services:
+  identity:
+    environment:
+      OTEL_SDK_DISABLED: "true"
