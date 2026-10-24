@@ -182,6 +182,8 @@ ingress:
 # wired) are left to the secret if a deployment wants to set them.
 env:
   PORT: "8080"
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://alloy.observability:4318"
+  OTEL_SERVICE_NAME: "identity"
 
 # What the container is allowed to ask for and keep. Requests are what
 # the scheduler places the pod on the basis of; limits are what it is
