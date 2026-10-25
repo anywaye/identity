@@ -73,10 +73,12 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel"
+	metricnoop "go.opentelemetry.io/otel/metric/noop"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/resource"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 	"go.opentelemetry.io/otel/trace"
@@ -684,35 +686,40 @@ func Install(ctx context.Context, opts Options) (Shutdown, error) {
 
 	if opts.Disabled {
 		otel.SetTracerProvider(noop.NewTracerProvider())
+		otel.SetMeterProvider(metricnoop.NewMeterProvider())
 		return func(context.Context) error { return nil }, nil
 	}
 
 	exporter, err := opts.NewExporter(ctx, opts.Endpoint)
 	if err != nil {
-		// A configured collector that could not be built is a boot failure, not a
-		// silent no-op: "telemetry is silently absent" and "telemetry is off" look
-		// identical from outside, and only one of them is what the operator meant.
 		return nil, fmt.Errorf("building the otlp span exporter for %s: %w", opts.Endpoint, err)
 	}
 
 	provider := sdktrace.NewTracerProvider(
 		sdktrace.WithBatcher(exporter),
-		// A sampler that respects the CALLER's decision rather than re-deciding per
-		// hop. ParentBased is the part that matters: a service that samples
-		// independently produces traces with holes, which are worse to debug than
-		// no traces at all.
 		sdktrace.WithSampler(sdktrace.ParentBased(sdktrace.AlwaysSample())),
 		sdktrace.WithResource(Resource(opts.LookupEnv)),
 	)
 	otel.SetTracerProvider(provider)
 
+	// Metrics
+	metricExporter, err := OTLPMetricExporter(ctx, opts.Endpoint)
+	if err != nil {
+		return nil, fmt.Errorf("building the otlp metric exporter for %s: %w", opts.Endpoint, err)
+	}
+	meterProvider := sdkmetric.NewMeterProvider(
+		sdkmetric.WithReader(sdkmetric.NewPeriodicReader(metricExporter)),
+		sdkmetric.WithResource(Resource(opts.LookupEnv)),
+	)
+	otel.SetMeterProvider(meterProvider)
+
 	return func(shutdownCtx context.Context) error {
-		// Bounded, because a telemetry flush must not be able to hold up a
-		// shutdown: a service that takes 30s to stop because a collector is
-		// unreachable is a deploy that times out for a reason nobody can see.
 		flushCtx, cancel := context.WithTimeout(shutdownCtx, opts.ShutdownWait)
 		defer cancel()
-		return provider.Shutdown(flushCtx)
+		err1 := provider.Shutdown(flushCtx)
+		err2 := meterProvider.Shutdown(flushCtx)
+		if err1 != nil { return err1 }
+		return err2
 	}, nil
 }
 

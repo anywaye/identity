@@ -111,15 +111,20 @@ func (r *otlpReceiver) exports() []receivedExport {
 // `>= 1` assertion would report as success.
 func (r *otlpReceiver) oneExport(t *testing.T) receivedExport {
 	t.Helper()
-	calls := r.exports()
-	if len(calls) != 1 {
-		t.Fatalf("the collector received %d exports for one request, want 1.\n\n"+
+	var traces []receivedExport
+	for _, c := range r.exports() {
+		if c.path == "/v1/traces" {
+			traces = append(traces, c)
+		}
+	}
+	if len(traces) != 1 {
+		t.Fatalf("the collector received %d trace exports for one request, want 1.\n\n"+
 			"Zero means the service is not emitting, or is emitting somewhere nothing is "+
 			"listening. More than one means telemetry is installed twice, and the second "+
 			"provider's spans are a second, unreconciled copy of every request in the fleet.",
-			len(calls))
+			len(traces))
 	}
-	return calls[0]
+	return traces[0]
 }
 
 // installForTest runs the production install and returns the flush `run` defers.

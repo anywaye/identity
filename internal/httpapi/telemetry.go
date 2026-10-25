@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"go.opentelemetry.io/otel/trace"
@@ -82,6 +83,7 @@ func telemetryMiddleware(next http.Handler) http.Handler {
 		telemetry.Record(span, map[string]any{"http.request.method": r.Method})
 
 		tracked := &statusWriter{ResponseWriter: w, status: http.StatusOK}
+	start := time.Now()
 		// The ONE span, from the ONE deferred block, and the ordering inside it is
 		// load-bearing in a way a fault injection proved.
 		//
@@ -100,6 +102,7 @@ func telemetryMiddleware(next http.Handler) http.Handler {
 		defer func() {
 			telemetry.Record(span, map[string]any{"http.response.status_code": tracked.status})
 			RecordRequestFailure(span, tracked.status)
+			telemetry.RecordRequest(r.Context(), r.Method, routeTemplate(r), tracked.status, time.Since(start))
 			span.End()
 		}()
 
