@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace"
+	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 )
 
@@ -160,3 +161,38 @@ const (
 // a signature change in the SDK is caught here rather than at the first boot of
 // a deployment.
 var _ Exporter = (*otlptrace.Exporter)(nil)
+
+
+// OTLPMetricExporter builds an OTLP/HTTP metric exporter for the given endpoint.
+func OTLPMetricExporter(ctx context.Context, endpoint string) (*otlpmetrichttp.Exporter, error) {
+	target, err := normaliseMetricEndpoint(endpoint)
+	if err != nil {
+		return nil, err
+	}
+	return otlpmetrichttp.New(ctx, otlpmetrichttp.WithEndpointURL(target))
+}
+
+func normaliseMetricEndpoint(endpoint string) (string, error) {
+	trimmed := strings.TrimSpace(endpoint)
+	if trimmed == "" {
+		return "", fmt.Errorf("telemetry: the OTLP endpoint is empty")
+	}
+	if !strings.Contains(trimmed, "://") {
+		trimmed = "http://" + trimmed
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil {
+		return "", fmt.Errorf("telemetry: %q is not a usable OTLP endpoint: %w", endpoint, err)
+	}
+	if parsed.Host == "" {
+		return "", fmt.Errorf("telemetry: %q has no host", endpoint)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return "", fmt.Errorf("telemetry: %q has scheme %q; an OTLP endpoint is http or https", endpoint, parsed.Scheme)
+	}
+	parsed.Path = strings.TrimSuffix(parsed.Path, "/")
+	if !strings.HasSuffix(parsed.Path, "/v1/metrics") {
+		parsed.Path = path.Join(parsed.Path, "/v1/metrics")
+	}
+	return parsed.String(), nil
+}
