@@ -34,6 +34,7 @@ func InitErrorReporting() {
 		Release:          release,
 		Environment:      environment,
 		AttachStacktrace: true,
+		Debug:            true,
 		BeforeSend: func(event *sentry.Event, hint *sentry.EventHint) *sentry.Event {
 			for i := range event.Exception {
 				event.Exception[i].Value = ""
