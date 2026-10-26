@@ -50,6 +50,9 @@ type AccountStore interface {
 	SetRole(ctx context.Context, q db.Querier, accountID, userID id.UUID, role Role) (Membership, error)
 	RemoveMember(ctx context.Context, q db.Querier, accountID, userID id.UUID) error
 	ListForUser(ctx context.Context, q db.Querier, userID id.UUID) ([]MemberSummary, error)
+	// Search is the staff directory's read over the accounts table: a bounded
+	// substring match on name and slug. It authorizes nothing on its own.
+	Search(ctx context.Context, q db.Querier, query string, limit int) ([]Account, error)
 	CreateInvitation(ctx context.Context, q db.Querier, n NewInvitation) (Invitation, error)
 	InvitationByToken(ctx context.Context, q db.Querier, digest string) (Invitation, error)
 	MarkInvitationAccepted(ctx context.Context, q db.Querier, id id.UUID, at time.Time) error
@@ -403,6 +406,17 @@ func (s *Service) ListMine(ctx context.Context, userID id.UUID) ([]MemberSummary
 // the defect's real shape: `ListMine` above had the reasoning in a comment and
 // `Get` did not, so the rule lived in the doc comment of the one function that
 // happened to be fixed. `get_rls_test.go` is what holds it now.
+// SearchAccounts returns the accounts whose name or slug contains query,
+// bounded by limit. It authorizes nothing on its own — the staff gate is the
+// route's — for the same reason auth.Service.SearchUsers does.
+func (s *Service) SearchAccounts(ctx context.Context, query string, limit int) ([]Account, error) {
+	entries, err := s.store.Search(ctx, s.read.Queryer(), query, limit)
+	if err != nil {
+		return nil, fmt.Errorf("searching accounts: %w", err)
+	}
+	return entries, nil
+}
+
 func (s *Service) Get(ctx context.Context, accountID, userID id.UUID) (Account, Role, error) {
 	var out Account
 	var role Role

@@ -41,6 +41,8 @@ const userIDParam = "userID"
 type Tenancy interface {
 	Create(ctx context.Context, in accounts.CreateInput) (accounts.Created, error)
 	ListMine(ctx context.Context, userID id.UUID) ([]accounts.MemberSummary, error)
+	// SearchAccounts is the staff directory's read over the accounts table.
+	SearchAccounts(ctx context.Context, query string, limit int) ([]accounts.Account, error)
 	Get(ctx context.Context, accountID, userID id.UUID) (accounts.Account, accounts.Role, error)
 	Members(ctx context.Context, accountID id.UUID) ([]accounts.MemberSummary, error)
 	Rename(ctx context.Context, accountID id.UUID, name string) (accounts.Account, error)

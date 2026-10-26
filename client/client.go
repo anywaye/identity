@@ -1550,6 +1550,16 @@ func (c *Client) GetOperatorSummary(ctx context.Context) (*generated.OperatorSum
 	return &out, err
 }
 
+// SearchOperatorAccounts searches the bounded account directory. Corresponds
+// to `GET /v1/operator/accounts`.
+func (c *Client) SearchOperatorAccounts(ctx context.Context, params *generated.SearchOperatorAccountsParams) (*generated.OperatorAccountList, error) {
+	var out generated.OperatorAccountList
+	err := call(c, "searchOperatorAccounts", func() (*http.Response, error) {
+		return c.transport.SearchOperatorAccounts(ctx, params)
+	}, &out)
+	return &out, err
+}
+
 // StaffDisableUser turns a person's account off from a staff session.
 // Corresponds to `POST /v1/operator/users/{user_id}/disable`.
 //

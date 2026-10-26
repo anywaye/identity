@@ -657,7 +657,7 @@ func TestTheDocumentIsOpenAPI31AndCarriesAVersion(t *testing.T) {
 	// REPORT-billing-21-authorization records. One operation and two schemas
 	// (`MintSessionTokenRequest`, `MintedSessionToken`); non-breaking, and the
 	// route is session-only like the rest of the surface.
-	const want = "1.16.0"
+	const want = "1.17.0"
 	if doc.InfoVersion != want {
 		t.Errorf("%s declares info.version %q, not %q. core's sync rule is that the /v1 "+
 			"prefix says which contract and this says which build of it, and a non-breaking "+

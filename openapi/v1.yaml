@@ -156,7 +156,7 @@ info:
   # array. It is additive: no existing operation moved and no existing response
   # changed. Session-only, like the rest of the session surface: an api key is
   # refused with 403.
-  version: 1.16.0
+  version: 1.17.0
   summary: Authentication, sessions, multi-factor authentication, account recovery, accounts, tenancy, scoped API tokens, the admin surface, the operator surface, the agent principal and OIDC registrations.
   description: |
     `identity` is the anywaye platform's security boundary: it is what every other
@@ -853,6 +853,52 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /v1/operator/accounts:
+    get:
+      tags: [operator]
+      operationId: searchOperatorAccounts
+      summary: Search the account directory
+      description: |
+        A bounded account search for staff: accounts whose name or slug contains
+        the query, ordered by name. Staff only.
+      security:
+        - sessionCookie: []
+        - bearerToken: []
+      parameters:
+        - name: query
+          in: query
+          required: false
+          description: The substring to search name and slug for. Absent lists all.
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          description: The page size. Absent means 25; over 50 is refused.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 25
+      responses:
+        '200':
+          description: One bounded page of accounts.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperatorAccountList'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
         '500':
           $ref: '#/components/responses/InternalError'
 
@@ -7818,6 +7864,32 @@ components:
           type: string
           format: date-time
           description: When the account was created.
+
+    OperatorAccountList:
+      type: object
+      required: [accounts]
+      properties:
+        accounts:
+          type: array
+          items:
+            $ref: '#/components/schemas/OperatorAccount'
+
+    OperatorAccount:
+      type: object
+      required: [id, name, slug, personal, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        slug:
+          type: string
+        personal:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
 
     OperatorSummary:
       type: object
