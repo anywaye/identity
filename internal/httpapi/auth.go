@@ -102,6 +102,12 @@ type Auth interface {
 	// for the seam's contract.
 	SearchUsers(ctx context.Context, query string, limit int) ([]users.DirectoryEntry, error)
 
+	// UserCounts is the staff directory's aggregate counts. It is on this
+	// interface for the reason SearchUsers is: the staff surface resolves its
+	// callers through it, and a second path to the table would be a second
+	// thing to keep in step.
+	UserCounts(ctx context.Context) (users.UserCounts, error)
+
 	// UpdateDisplayName is the write half of /v1/me, and it is on this interface
 	// for the reason Disable and Enable are: the handler resolves the caller
 	// through Authenticate and then writes the one column the profile screen

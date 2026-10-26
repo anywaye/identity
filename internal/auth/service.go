@@ -104,6 +104,11 @@ type UserStore interface {
 	// surface resolves its callers through it — a second path to the table
 	// would be a second thing to keep in step with the first.
 	Search(ctx context.Context, q db.Querier, query string, limit int) ([]users.DirectoryEntry, error)
+	// Counts is the staff directory's aggregate counts over the users table.
+	// It is on this interface for the reason Search is: this package owns the
+	// session's user and the staff surface resolves its callers through it, so
+	// a second path to the table would be a second thing to keep in step.
+	Counts(ctx context.Context, q db.Querier) (users.UserCounts, error)
 }
 
 // SessionStore is the part of sessions.Store that login, logout and resolution
@@ -1227,6 +1232,18 @@ func (s *Service) SearchUsers(ctx context.Context, query string, limit int) ([]u
 		return nil, fmt.Errorf("searching users: %w", err)
 	}
 	return entries, nil
+}
+
+// UserCounts returns the staff directory's aggregate counts. It authorizes
+// nothing on its own — the staff gate is the route's — for the same reason
+// SearchUsers does: a handler that called it before the gate would hand the
+// deployment's user counts to anybody.
+func (s *Service) UserCounts(ctx context.Context) (users.UserCounts, error) {
+	counts, err := s.users.Counts(ctx, s.read.Queryer())
+	if err != nil {
+		return users.UserCounts{}, fmt.Errorf("counting users: %w", err)
+	}
+	return counts, nil
 }
 
 // UpdateDisplayName sets the caller's display name, or clears it.

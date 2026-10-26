@@ -90,6 +90,7 @@ import (
 func (o options) registerStaffRoutes(r chiRouter) {
 	r.Get("/v1/operator/me", o.requireStaffSession(o.handleOperatorMe))
 	r.Get("/v1/operator/users", o.requireStaffSession(o.handleSearchOperatorUsers))
+	r.Get("/v1/operator/summary", o.requireStaffSession(o.handleOperatorSummary))
 	r.Post("/v1/operator/users/{userID}/disable", o.requireStaffSession(o.handleStaffDisableUser))
 	r.Post("/v1/operator/users/{userID}/enable", o.requireStaffSession(o.handleStaffEnableUser))
 }
@@ -211,6 +212,11 @@ type staffUserListResponse struct {
 	Users []staffUserEntry `json:"users"`
 }
 
+// operatorSummaryResponse is the 200 from GET /v1/operator/summary.
+type operatorSummaryResponse struct {
+	Users users.UserCounts `json:"users"`
+}
+
 // ---------------------------------------------------------------------------
 // handlers
 // ---------------------------------------------------------------------------
@@ -309,6 +315,23 @@ func (o options) handleSearchOperatorUsers(w http.ResponseWriter, r *http.Reques
 // tell a client its session was insufficient when the real fault is that the
 // gate did not run.
 var errNoStaffCaller = errors.New("a staff route reached its handler with no staff user in context")
+
+// handleOperatorSummary reports the staff directory's aggregate counts.
+//
+//	GET /v1/operator/summary  ->  200 {users: {total, disabled, verified, staff}}
+//
+// THE GATE HAS ALREADY ESTABLISHED STAFF, so a 200 here names the counts and a
+// 403 is the answer for everybody else. The counts are platform-wide rather
+// than caller-scoped, because the surface is the staff surface and its scope
+// is the whole directory.
+func (o options) handleOperatorSummary(w http.ResponseWriter, r *http.Request) {
+	counts, err := o.auth.UserCounts(r.Context())
+	if err != nil {
+		unexpected(w, r, o.logger, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, operatorSummaryResponse{Users: counts})
+}
 
 // handleStaffDisableUser turns an account off, from a staff human's session.
 //

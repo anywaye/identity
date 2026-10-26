@@ -156,7 +156,7 @@ info:
   # array. It is additive: no existing operation moved and no existing response
   # changed. Session-only, like the rest of the session surface: an api key is
   # refused with 403.
-  version: 1.15.0
+  version: 1.16.0
   summary: Authentication, sessions, multi-factor authentication, account recovery, accounts, tenancy, scoped API tokens, the admin surface, the operator surface, the agent principal and OIDC registrations.
   description: |
     `identity` is the anywaye platform's security boundary: it is what every other
@@ -940,6 +940,34 @@ paths:
                     instance: /v1/operator/me
                     code: forbidden
                     trace_id: 0af7651916cd43dd8448eb211c80319c
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /v1/operator/summary:
+    get:
+      tags: [operator]
+      operationId: getOperatorSummary
+      summary: Staff directory aggregate counts
+      description: |
+        Platform-wide counts over the user directory: total, disabled,
+        verified, and staff. Staff only.
+      security:
+        - sessionCookie: []
+        - bearerToken: []
+      responses:
+        '200':
+          description: Aggregate counts.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperatorSummary'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalError'
 
@@ -7790,6 +7818,23 @@ components:
           type: string
           format: date-time
           description: When the account was created.
+
+    OperatorSummary:
+      type: object
+      required: [users]
+      properties:
+        users:
+          type: object
+          required: [total, disabled, verified, staff]
+          properties:
+            total:
+              type: integer
+            disabled:
+              type: integer
+            verified:
+              type: integer
+            staff:
+              type: integer
 
     StaffDirectory:
       type: object
