@@ -1,10 +1,11 @@
 package httpapi
 
 import (
+	"log/slog"
 	"net/http"
-	"time"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/getsentry/sentry-go"
 )
@@ -28,7 +29,7 @@ func InitErrorReporting() {
 	if environment == "" {
 		environment = "production"
 	}
-	_ = sentry.Init(sentry.ClientOptions{
+	err := sentry.Init(sentry.ClientOptions{
 		Dsn:              dsn,
 		Release:          release,
 		Environment:      environment,
@@ -44,6 +45,9 @@ func InitErrorReporting() {
 			return event
 		},
 	})
+	if err != nil {
+		slog.Error("error reporting init failed", "error", err)
+	}
 }
 
 // ErrorReportingEnabled reports whether a reporting DSN is configured, so a test can
@@ -69,5 +73,7 @@ func CaptureError(err error, r *http.Request) {
 	}
 	hub.CaptureException(err)
 	// Flush is bounded so a slow store cannot hold a request open.
-	sentry.Flush(2 * time.Second)
+	if !sentry.Flush(2 * time.Second) {
+		slog.Warn("error reporting flush timed out")
+	}
 }

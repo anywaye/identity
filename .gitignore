@@ -17,7 +17,7 @@ coverage.txt
 .idea/
 .vscode/
 
-# `cafe dev` GENERATES this from anywaye.yml and rewrites it on every run — the
+# `any dev` GENERATES this from anywaye.yml and rewrites it on every run — the
 # file says so in its own first line ("Do not edit: every run rewrites this
 # file"). It is build output shaped like a source file, which is why it needs
 # saying here rather than relying on it being untracked by accident: an

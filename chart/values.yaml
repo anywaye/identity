@@ -53,7 +53,7 @@ image:
   # is REFUSED by the template rather than rendered — see
   # templates/deployment.yaml, and kit's step, which refuses it at the
   # write.
-  digest: "sha256:a674e2634e0e7a5ce76fa3e393d7a48e3469939d220764fcce08de00b5689265"
+  digest: "sha256:29c671f4dd83298a05d965f5dd718274c7f18b084f06c233ad3e53ddb86016a3"
   pullPolicy: IfNotPresent
 
 # The read-only pull secret on the box, created once, out of band:
@@ -182,7 +182,7 @@ ingress:
 # wired) are left to the secret if a deployment wants to set them.
 env:
   PORT: "8080"
-  IDENTITY_ERROR_REPORTING_DSN: "http://da15bbe5-6b70-4b2f-92a5-ce8a8365fecf@glitchtip.default:8095/2"
+  IDENTITY_ERROR_REPORTING_DSN: "http://da15bbe5-6b70-4b2f-92a5-ce8a8365fecf@glitchtip.default.svc.cluster.local:8095/2"
   IDENTITY_RELEASE: "0.1.0"
   OTEL_EXPORTER_OTLP_ENDPOINT: "http://alloy.observability:4318"
   OTEL_SERVICE_NAME: "identity"

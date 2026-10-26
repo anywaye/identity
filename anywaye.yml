@@ -266,7 +266,7 @@ owner:
 #
 #   dev: {services: []}
 #       Belongs to docker-compose.yml, which is the declared local stack, and to
-#       `cafe dev`. It is not part of the service's published contract, and a
+#       `any dev`. It is not part of the service's published contract, and a
 #       manifest that described the dev stack would be a manifest that churns
 #       every time somebody adds a container.
 # ---------------------------------------------------------------------------
