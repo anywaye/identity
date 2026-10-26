@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 	"io"
 	"time"
 
@@ -953,4 +954,57 @@ func isUniqueViolation(err error) bool {
 		return false
 	}
 	return pgErr.Code == uniqueViolation
+}
+
+
+// Search returns the accounts whose name or slug contains query, ordered by
+// name, bounded by limit. It is the staff directory's read over the accounts
+// table: a bounded substring match, with the same LIKE-escape discipline as
+// users.Store.Search so a query for "%" matches a literal percent rather than
+// the whole table.
+//
+// limit is clamped into [1, 50] here as well as at the handler, because a
+// store that trusted its callers would hand an unbounded query to the table
+// the day somebody added one.
+func (s *Store) Search(ctx context.Context, q db.Querier, query string, limit int) ([]Account, error) {
+	if limit < 1 {
+		limit = 25
+	}
+	if limit > 50 {
+		limit = 50
+	}
+
+	trimmed := strings.TrimSpace(query)
+	var pattern string
+	if trimmed == "" {
+		pattern = "%"
+	} else {
+		pattern = "%" + strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(trimmed) + "%"
+	}
+
+	const sql = `
+		SELECT id, name, slug, personal, created_at, updated_at
+		FROM accounts
+		WHERE ($1 = '' OR name ILIKE $2 ESCAPE '\' OR slug ILIKE $2 ESCAPE '\')
+		ORDER BY name ASC, id ASC
+		LIMIT $3`
+
+	rows, err := q.Query(ctx, sql, trimmed, pattern, limit)
+	if err != nil {
+		return nil, fmt.Errorf("searching accounts: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]Account, 0, limit)
+	for rows.Next() {
+		var a Account
+		if err := rows.Scan(&a.ID, &a.Name, &a.Slug, &a.Personal, &a.CreatedAt, &a.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scanning an account: %w", err)
+		}
+		out = append(out, a)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("searching accounts: %w", err)
+	}
+	return out, nil
 }

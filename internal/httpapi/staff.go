@@ -91,6 +91,7 @@ func (o options) registerStaffRoutes(r chiRouter) {
 	r.Get("/v1/operator/me", o.requireStaffSession(o.handleOperatorMe))
 	r.Get("/v1/operator/users", o.requireStaffSession(o.handleSearchOperatorUsers))
 	r.Get("/v1/operator/summary", o.requireStaffSession(o.handleOperatorSummary))
+	r.Get("/v1/operator/accounts", o.requireStaffSession(o.handleOperatorAccounts))
 	r.Post("/v1/operator/users/{userID}/disable", o.requireStaffSession(o.handleStaffDisableUser))
 	r.Post("/v1/operator/users/{userID}/enable", o.requireStaffSession(o.handleStaffEnableUser))
 }
@@ -217,6 +218,20 @@ type operatorSummaryResponse struct {
 	Users users.UserCounts `json:"users"`
 }
 
+// operatorAccountEntry is one row of the operator account list.
+type operatorAccountEntry struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Slug      string    `json:"slug"`
+	Personal  bool      `json:"personal"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// operatorAccountsResponse is the 200 from GET /v1/operator/accounts.
+type operatorAccountsResponse struct {
+	Accounts []operatorAccountEntry `json:"accounts"`
+}
+
 // ---------------------------------------------------------------------------
 // handlers
 // ---------------------------------------------------------------------------
@@ -331,6 +346,57 @@ func (o options) handleOperatorSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, operatorSummaryResponse{Users: counts})
+}
+
+// handleOperatorAccounts answers the staff account search.
+//
+//	GET /v1/operator/accounts?query=&limit=  ->  200 {accounts: [...]}
+func (o options) handleOperatorAccounts(w http.ResponseWriter, r *http.Request) {
+	if o.tenancy == nil {
+		unexpected(w, r, o.logger, errors.New("tenancy service is not configured"))
+		return
+	}
+
+	query := strings.TrimSpace(r.URL.Query().Get("query"))
+
+	limit := 25
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 {
+			writeProblem(w, r, newProblem(http.StatusUnprocessableEntity, CodeValidationFailed).
+				withDetail("the account search limit is not one this endpoint accepts").
+				withFieldErrors([]FieldError{{Field: "limit", Code: apikeys.CodeInvalidFormat}}))
+			return
+		}
+		if parsed > 50 {
+			writeProblem(w, r, newProblem(http.StatusUnprocessableEntity, CodeValidationFailed).
+				withDetail("the account search limit is not one this endpoint accepts").
+				withFieldErrors([]FieldError{{Field: "limit", Code: apikeys.CodeOutOfRange}}))
+			return
+		}
+		limit = parsed
+	}
+
+	entries, err := o.tenancy.SearchAccounts(r.Context(), query, limit)
+	if err != nil {
+		unexpected(w, r, o.logger, err)
+		return
+	}
+
+	out := make([]operatorAccountEntry, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, operatorAccountEntry{
+			ID:        e.ID.String(),
+			Name:      e.Name,
+			Slug:      e.Slug,
+			Personal:  e.Personal,
+			CreatedAt: e.CreatedAt,
+		})
+	}
+	if out == nil {
+		out = []operatorAccountEntry{}
+	}
+	writeJSON(w, http.StatusOK, operatorAccountsResponse{Accounts: out})
 }
 
 // handleStaffDisableUser turns an account off, from a staff human's session.

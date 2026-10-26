@@ -484,6 +484,13 @@ func anonymousFamilyAudit() []auditRoute {
 				"aggregate counts and nothing about any individual user",
 		},
 		{
+			name: "staff account search", method: http.MethodGet, pattern: "/v1/operator/accounts",
+			anonymous: http.StatusUnauthorized,
+			discloses: "nothing: 401 without a staff session, so no account data arrives " +
+				"from a stranger. Behind a session the route answers the bounded account " +
+				"list and nothing an individual caller could not already see",
+		},
+		{
 			// THE AGENT CLAIM, and it is the one row on this surface whose question
 			// is not about an account. A claim link is the only credential a
 			// stranger ever presents, and it names a PRINCIPAL — so the question the

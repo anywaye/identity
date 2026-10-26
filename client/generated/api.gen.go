@@ -1735,6 +1735,20 @@ type OIDCClientGrantTypes string
 // OIDCClientScopes defines model for OIDCClient.Scopes.
 type OIDCClientScopes string
 
+// OperatorAccount defines model for OperatorAccount.
+type OperatorAccount struct {
+	CreatedAt time.Time          `json:"created_at"`
+	ID        openapi_types.UUID `json:"id"`
+	Name      string             `json:"name"`
+	Personal  bool               `json:"personal"`
+	Slug      string             `json:"slug"`
+}
+
+// OperatorAccountList defines model for OperatorAccountList.
+type OperatorAccountList struct {
+	Accounts []OperatorAccount `json:"accounts"`
+}
+
 // OperatorMe The caller's own operator status, under a `user` key. `staff` is always
 // true on a 200 — the gate established it, and a 403 IS the status for
 // everybody else. It names nobody but the caller, so there is nothing
@@ -2549,6 +2563,15 @@ type UpdateCurrentUserJSONBody struct {
 
 // UpdateCurrentUserJSONBodyTheme defines parameters for UpdateCurrentUser.
 type UpdateCurrentUserJSONBodyTheme string
+
+// SearchOperatorAccountsParams defines parameters for SearchOperatorAccounts.
+type SearchOperatorAccountsParams struct {
+	// Query The substring to search name and slug for. Absent lists all.
+	Query *string `form:"query,omitempty" json:"query,omitempty"`
+
+	// Limit The page size. Absent means 25; over 50 is refused.
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+}
 
 // SearchOperatorUsersParams defines parameters for SearchOperatorUsers.
 type SearchOperatorUsersParams struct {
@@ -5220,6 +5243,14 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/mfa/recovery-codes (the `RegenerateMFARecoveryCodes` operationId).
 	RegenerateMFARecoveryCodes(ctx context.Context, body RegenerateMFARecoveryCodesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SearchOperatorAccounts Search the account directory
+	//
+	// A bounded account search for staff: accounts whose name or slug contains
+	// the query, ordered by name. Staff only.
+	//
+	// Corresponds with GET /v1/operator/accounts (the `SearchOperatorAccounts` operationId).
+	SearchOperatorAccounts(ctx context.Context, params *SearchOperatorAccountsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetOperatorMe The signed-in staff user's own operator status
 	//
@@ -9469,6 +9500,24 @@ func (c *Client) RegenerateMFARecoveryCodes(ctx context.Context, body Regenerate
 	return c.Client.Do(req)
 }
 
+// SearchOperatorAccounts Search the account directory
+//
+// A bounded account search for staff: accounts whose name or slug contains
+// the query, ordered by name. Staff only.
+//
+// Corresponds with GET /v1/operator/accounts (the `SearchOperatorAccounts` operationId).
+func (c *Client) SearchOperatorAccounts(ctx context.Context, params *SearchOperatorAccountsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSearchOperatorAccountsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // GetOperatorMe The signed-in staff user's own operator status
 //
 // Reports the current session's operator status: the caller's own id and
@@ -12777,6 +12826,72 @@ func NewRegenerateMFARecoveryCodesRequestWithBody(server string, contentType str
 	return req, nil
 }
 
+// NewSearchOperatorAccountsRequest constructs an http.Request for the SearchOperatorAccounts method
+func NewSearchOperatorAccountsRequest(server string, params *SearchOperatorAccountsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/operator/accounts")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Query != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "query", *params.Query, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetOperatorMeRequest constructs an http.Request for the GetOperatorMe method
 func NewGetOperatorMeRequest(server string) (*http.Request, error) {
 	var err error
@@ -15976,6 +16091,16 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/mfa/recovery-codes (the `RegenerateMFARecoveryCodes` operationId).
 	RegenerateMFARecoveryCodesWithResponse(ctx context.Context, body RegenerateMFARecoveryCodesJSONRequestBody, reqEditors ...RequestEditorFn) (*RegenerateMFARecoveryCodesResponse, error)
+
+	// SearchOperatorAccountsWithResponse Search the account directory
+	//
+	// A bounded account search for staff: accounts whose name or slug contains
+	// the query, ordered by name. Staff only.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/operator/accounts (the `SearchOperatorAccounts` operationId).
+	SearchOperatorAccountsWithResponse(ctx context.Context, params *SearchOperatorAccountsParams, reqEditors ...RequestEditorFn) (*SearchOperatorAccountsResponse, error)
 
 	// GetOperatorMeWithResponse The signed-in staff user's own operator status
 	//
@@ -22663,6 +22788,110 @@ func (r RegenerateMFARecoveryCodesResponse) ContentType() string {
 	return ""
 }
 
+// SearchOperatorAccountsResponse200Headers the declared response headers of an HTTP 200 response for SearchOperatorAccounts
+type SearchOperatorAccountsResponse200Headers struct {
+	XTraceID string
+}
+
+// SearchOperatorAccountsResponse401Headers the declared response headers of an HTTP 401 response for SearchOperatorAccounts
+type SearchOperatorAccountsResponse401Headers struct {
+	XTraceID string
+}
+
+// SearchOperatorAccountsResponse403Headers the declared response headers of an HTTP 403 response for SearchOperatorAccounts
+type SearchOperatorAccountsResponse403Headers struct {
+	XTraceID string
+}
+
+// SearchOperatorAccountsResponse422Headers the declared response headers of an HTTP 422 response for SearchOperatorAccounts
+type SearchOperatorAccountsResponse422Headers struct {
+	XTraceID string
+}
+
+// SearchOperatorAccountsResponse500Headers the declared response headers of an HTTP 500 response for SearchOperatorAccounts
+type SearchOperatorAccountsResponse500Headers struct {
+	XTraceID string
+}
+
+type SearchOperatorAccountsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *OperatorAccountList
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthenticated
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON422 the response for an HTTP 422 `application/problem+json` response
+	ApplicationProblemJSON422 *ValidationFailed
+	// ApplicationProblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationProblemJSON500 *InternalError
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *SearchOperatorAccountsResponse200Headers
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *SearchOperatorAccountsResponse401Headers
+	// Headers403 the parsed response headers for an HTTP 403 response
+	Headers403 *SearchOperatorAccountsResponse403Headers
+	// Headers422 the parsed response headers for an HTTP 422 response
+	Headers422 *SearchOperatorAccountsResponse422Headers
+	// Headers500 the parsed response headers for an HTTP 500 response
+	Headers500 *SearchOperatorAccountsResponse500Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r SearchOperatorAccountsResponse) GetJSON200() *OperatorAccountList {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r SearchOperatorAccountsResponse) GetApplicationProblemJSON401() *Unauthenticated {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r SearchOperatorAccountsResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON422 returns the response for an HTTP 422 `application/problem+json` response
+func (r SearchOperatorAccountsResponse) GetApplicationProblemJSON422() *ValidationFailed {
+	return r.ApplicationProblemJSON422
+}
+
+// GetApplicationProblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r SearchOperatorAccountsResponse) GetApplicationProblemJSON500() *InternalError {
+	return r.ApplicationProblemJSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r SearchOperatorAccountsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SearchOperatorAccountsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SearchOperatorAccountsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SearchOperatorAccountsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // GetOperatorMeResponse200Headers the declared response headers of an HTTP 200 response for GetOperatorMe
 type GetOperatorMeResponse200Headers struct {
 	XTraceID string
@@ -27600,6 +27829,22 @@ func (c *ClientWithResponses) RegenerateMFARecoveryCodesWithResponse(ctx context
 		return nil, err
 	}
 	return ParseRegenerateMFARecoveryCodesResponse(rsp)
+}
+
+// SearchOperatorAccountsWithResponse Search the account directory
+//
+// A bounded account search for staff: accounts whose name or slug contains
+// the query, ordered by name. Staff only.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/operator/accounts (the `SearchOperatorAccounts` operationId).
+func (c *ClientWithResponses) SearchOperatorAccountsWithResponse(ctx context.Context, params *SearchOperatorAccountsParams, reqEditors ...RequestEditorFn) (*SearchOperatorAccountsResponse, error) {
+	rsp, err := c.SearchOperatorAccounts(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSearchOperatorAccountsResponse(rsp)
 }
 
 // GetOperatorMeWithResponse The signed-in staff user's own operator status
@@ -34784,6 +35029,113 @@ func ParseRegenerateMFARecoveryCodesResponse(rsp *http.Response) (*RegenerateMFA
 		response.Headers423 = &headers
 	case rsp.StatusCode == 500:
 		var headers RegenerateMFARecoveryCodesResponse500Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers500 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseSearchOperatorAccountsResponse parses an HTTP response from a SearchOperatorAccountsWithResponse call
+func ParseSearchOperatorAccountsResponse(rsp *http.Response) (*SearchOperatorAccountsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SearchOperatorAccountsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest OperatorAccountList
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthenticated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ValidationFailed
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON500 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers SearchOperatorAccountsResponse200Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 401:
+		var headers SearchOperatorAccountsResponse401Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers401 = &headers
+	case rsp.StatusCode == 403:
+		var headers SearchOperatorAccountsResponse403Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers403 = &headers
+	case rsp.StatusCode == 422:
+		var headers SearchOperatorAccountsResponse422Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers422 = &headers
+	case rsp.StatusCode == 500:
+		var headers SearchOperatorAccountsResponse500Headers
 		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {

@@ -34,6 +34,11 @@ type fakeTenancy struct {
 	getErr        error
 	listErr       error
 	membersErr    error
+	// searchedAccounts* record the operator account search.
+	searchedAccountsQuery  string
+	searchedAccountsLimit  int
+	searchedAccounts       []accounts.Account
+	searchAccountsErr      error
 	renameErr     error
 	deleteErr     error
 	inviteErr     error
@@ -112,6 +117,15 @@ func (f *fakeTenancy) ListMine(_ context.Context, userID id.UUID) ([]accounts.Me
 		return nil, f.listErr
 	}
 	return f.list, nil
+}
+
+func (f *fakeTenancy) SearchAccounts(_ context.Context, query string, limit int) ([]accounts.Account, error) {
+	f.searchedAccountsQuery = query
+	f.searchedAccountsLimit = limit
+	if f.searchAccountsErr != nil {
+		return nil, f.searchAccountsErr
+	}
+	return f.searchedAccounts, nil
 }
 
 // Get answers for the account id it was ASKED ABOUT.
