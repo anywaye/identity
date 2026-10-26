@@ -1752,6 +1752,16 @@ type OperatorMe struct {
 	} `json:"user"`
 }
 
+// OperatorSummary defines model for OperatorSummary.
+type OperatorSummary struct {
+	Users struct {
+		Disabled int `json:"disabled"`
+		Staff    int `json:"staff"`
+		Total    int `json:"total"`
+		Verified int `json:"verified"`
+	} `json:"users"`
+}
+
 // OwnershipTransfer A completed transfer: the account, and **both** memberships at the roles
 // they now hold.
 //
@@ -5230,6 +5240,14 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /v1/operator/me (the `GetOperatorMe` operationId).
 	GetOperatorMe(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetOperatorSummary Staff directory aggregate counts
+	//
+	// Platform-wide counts over the user directory: total, disabled,
+	// verified, and staff. Staff only.
+	//
+	// Corresponds with GET /v1/operator/summary (the `GetOperatorSummary` operationId).
+	GetOperatorSummary(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// SearchOperatorUsers Search the user directory
 	//
@@ -9481,6 +9499,24 @@ func (c *Client) GetOperatorMe(ctx context.Context, reqEditors ...RequestEditorF
 	return c.Client.Do(req)
 }
 
+// GetOperatorSummary Staff directory aggregate counts
+//
+// Platform-wide counts over the user directory: total, disabled,
+// verified, and staff. Staff only.
+//
+// Corresponds with GET /v1/operator/summary (the `GetOperatorSummary` operationId).
+func (c *Client) GetOperatorSummary(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetOperatorSummaryRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // SearchOperatorUsers Search the user directory
 //
 // A bounded, minimal user directory search for staff: the users whose
@@ -12768,6 +12804,33 @@ func NewGetOperatorMeRequest(server string) (*http.Request, error) {
 	return req, nil
 }
 
+// NewGetOperatorSummaryRequest constructs an http.Request for the GetOperatorSummary method
+func NewGetOperatorSummaryRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/operator/summary")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewSearchOperatorUsersRequest constructs an http.Request for the SearchOperatorUsers method
 func NewSearchOperatorUsersRequest(server string, params *SearchOperatorUsersParams) (*http.Request, error) {
 	var err error
@@ -15935,6 +15998,16 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /v1/operator/me (the `GetOperatorMe` operationId).
 	GetOperatorMeWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetOperatorMeResponse, error)
+
+	// GetOperatorSummaryWithResponse Staff directory aggregate counts
+	//
+	// Platform-wide counts over the user directory: total, disabled,
+	// verified, and staff. Staff only.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/operator/summary (the `GetOperatorSummary` operationId).
+	GetOperatorSummaryWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetOperatorSummaryResponse, error)
 
 	// SearchOperatorUsersWithResponse Search the user directory
 	//
@@ -22680,6 +22753,96 @@ func (r GetOperatorMeResponse) ContentType() string {
 	return ""
 }
 
+// GetOperatorSummaryResponse200Headers the declared response headers of an HTTP 200 response for GetOperatorSummary
+type GetOperatorSummaryResponse200Headers struct {
+	XTraceID string
+}
+
+// GetOperatorSummaryResponse401Headers the declared response headers of an HTTP 401 response for GetOperatorSummary
+type GetOperatorSummaryResponse401Headers struct {
+	XTraceID string
+}
+
+// GetOperatorSummaryResponse403Headers the declared response headers of an HTTP 403 response for GetOperatorSummary
+type GetOperatorSummaryResponse403Headers struct {
+	XTraceID string
+}
+
+// GetOperatorSummaryResponse500Headers the declared response headers of an HTTP 500 response for GetOperatorSummary
+type GetOperatorSummaryResponse500Headers struct {
+	XTraceID string
+}
+
+type GetOperatorSummaryResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *OperatorSummary
+	// ApplicationProblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationProblemJSON401 *Unauthenticated
+	// ApplicationProblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationProblemJSON403 *Forbidden
+	// ApplicationProblemJSON500 the response for an HTTP 500 `application/problem+json` response
+	ApplicationProblemJSON500 *InternalError
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *GetOperatorSummaryResponse200Headers
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *GetOperatorSummaryResponse401Headers
+	// Headers403 the parsed response headers for an HTTP 403 response
+	Headers403 *GetOperatorSummaryResponse403Headers
+	// Headers500 the parsed response headers for an HTTP 500 response
+	Headers500 *GetOperatorSummaryResponse500Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetOperatorSummaryResponse) GetJSON200() *OperatorSummary {
+	return r.JSON200
+}
+
+// GetApplicationProblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r GetOperatorSummaryResponse) GetApplicationProblemJSON401() *Unauthenticated {
+	return r.ApplicationProblemJSON401
+}
+
+// GetApplicationProblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r GetOperatorSummaryResponse) GetApplicationProblemJSON403() *Forbidden {
+	return r.ApplicationProblemJSON403
+}
+
+// GetApplicationProblemJSON500 returns the response for an HTTP 500 `application/problem+json` response
+func (r GetOperatorSummaryResponse) GetApplicationProblemJSON500() *InternalError {
+	return r.ApplicationProblemJSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r GetOperatorSummaryResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetOperatorSummaryResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetOperatorSummaryResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetOperatorSummaryResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // SearchOperatorUsersResponse200Headers the declared response headers of an HTTP 200 response for SearchOperatorUsers
 type SearchOperatorUsersResponse200Headers struct {
 	XTraceID string
@@ -27465,6 +27628,22 @@ func (c *ClientWithResponses) GetOperatorMeWithResponse(ctx context.Context, req
 		return nil, err
 	}
 	return ParseGetOperatorMeResponse(rsp)
+}
+
+// GetOperatorSummaryWithResponse Staff directory aggregate counts
+//
+// Platform-wide counts over the user directory: total, disabled,
+// verified, and staff. Staff only.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/operator/summary (the `GetOperatorSummary` operationId).
+func (c *ClientWithResponses) GetOperatorSummaryWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetOperatorSummaryResponse, error) {
+	rsp, err := c.GetOperatorSummary(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetOperatorSummaryResponse(rsp)
 }
 
 // SearchOperatorUsersWithResponse Search the user directory
@@ -34695,6 +34874,96 @@ func ParseGetOperatorMeResponse(rsp *http.Response) (*GetOperatorMeResponse, err
 		response.Headers403 = &headers
 	case rsp.StatusCode == 500:
 		var headers GetOperatorMeResponse500Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers500 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetOperatorSummaryResponse parses an HTTP response from a GetOperatorSummaryWithResponse call
+func ParseGetOperatorSummaryResponse(rsp *http.Response) (*GetOperatorSummaryResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetOperatorSummaryResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest OperatorSummary
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthenticated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON500 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers GetOperatorSummaryResponse200Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 401:
+		var headers GetOperatorSummaryResponse401Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers401 = &headers
+	case rsp.StatusCode == 403:
+		var headers GetOperatorSummaryResponse403Headers
+		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XTraceID = value
+		}
+		response.Headers403 = &headers
+	case rsp.StatusCode == 500:
+		var headers GetOperatorSummaryResponse500Headers
 		if values := rsp.Header.Values("X-Trace-Id"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "X-Trace-Id", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""}); err != nil {

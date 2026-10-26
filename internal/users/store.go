@@ -571,3 +571,34 @@ func isEmailTaken(err error) bool {
 	}
 	return pgErr.Code == uniqueViolation
 }
+// UserCounts is the staff directory's aggregate counts.
+//
+// Four numbers and nothing else: the console renders them as a summary, and a
+// field that is not here is a field the console cannot render. Adding one is a
+// contract change on /v1/operator/summary, not a convenience.
+type UserCounts struct {
+	Total    int `json:"total"`
+	Disabled int `json:"disabled"`
+	Verified int `json:"verified"`
+	Staff    int `json:"staff"`
+}
+
+// Counts returns the directory's aggregate counts. It is a single row, so there
+// is no pagination and no query: an operator who wants a subset filters the
+// list, and a count that depended on a filter would be a number nobody could
+// reproduce from the list beside it.
+func (s *Store) Counts(ctx context.Context, q db.Querier) (UserCounts, error) {
+	const sql = `
+		SELECT
+			COUNT(*)::int,
+			COUNT(*) FILTER (WHERE disabled_at IS NOT NULL)::int,
+			COUNT(*) FILTER (WHERE email_verified_at IS NOT NULL)::int,
+			COUNT(*) FILTER (WHERE is_staff)::int
+		FROM users`
+
+	var c UserCounts
+	if err := q.QueryRow(ctx, sql).Scan(&c.Total, &c.Disabled, &c.Verified, &c.Staff); err != nil {
+		return UserCounts{}, fmt.Errorf("counting users: %w", err)
+	}
+	return c, nil
+}

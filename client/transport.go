@@ -142,6 +142,7 @@ type Transport interface {
 	// methods above instead.
 	GetOperatorMe(ctx context.Context, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	SearchOperatorUsers(ctx context.Context, params *generated.SearchOperatorUsersParams, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
+	GetOperatorSummary(ctx context.Context, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	StaffDisableUser(ctx context.Context, userId openapiTypes.UUID, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	StaffEnableUser(ctx context.Context, userId openapiTypes.UUID, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	RevokeAccountInvitation(ctx context.Context, accountId openapiTypes.UUID, invitationId openapiTypes.UUID, reqEditors ...generated.RequestEditorFn) (*http.Response, error)

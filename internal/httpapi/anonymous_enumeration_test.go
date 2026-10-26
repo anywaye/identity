@@ -473,6 +473,17 @@ func anonymousFamilyAudit() []auditRoute {
 				"address reaches the directory from outside the trust boundary",
 		},
 		{
+			// A row because the `/v1/operator` PREFIX catches this route. The staff
+			// gate resolves the session before anything else, so 401 is what the
+			// service answers — and the counts are platform-wide, which a stranger
+			// has no standing to read.
+			name: "staff directory summary", method: http.MethodGet, pattern: "/v1/operator/summary",
+			anonymous: http.StatusUnauthorized,
+			discloses: "nothing: 401 without a staff session, so no counts arrive " +
+				"from a stranger. Behind a session the route answers the platform's " +
+				"aggregate counts and nothing about any individual user",
+		},
+		{
 			// THE AGENT CLAIM, and it is the one row on this surface whose question
 			// is not about an account. A claim link is the only credential a
 			// stranger ever presents, and it names a PRINCIPAL — so the question the

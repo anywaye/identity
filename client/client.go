@@ -1540,6 +1540,16 @@ func (c *Client) SearchOperatorUsers(ctx context.Context, params *generated.Sear
 	return &out, err
 }
 
+// GetOperatorSummary reports the staff directory's aggregate counts. Corresponds
+// to `GET /v1/operator/summary`.
+func (c *Client) GetOperatorSummary(ctx context.Context) (*generated.OperatorSummary, error) {
+	var out generated.OperatorSummary
+	err := call(c, "getOperatorSummary", func() (*http.Response, error) {
+		return c.transport.GetOperatorSummary(ctx)
+	}, &out)
+	return &out, err
+}
+
 // StaffDisableUser turns a person's account off from a staff session.
 // Corresponds to `POST /v1/operator/users/{user_id}/disable`.
 //

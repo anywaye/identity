@@ -113,6 +113,9 @@ type fakeAuth struct {
 	searched      []searchCall
 	searchResults []users.DirectoryEntry
 	searchErr     error
+	// counts is what UserCounts returns, and countsErr is its refusal.
+	counts    users.UserCounts
+	countsErr error
 	// disabled and enabled are the user ids the operator surface asked about, in
 	// order, kept because most existing assertions are about the subject and reading
 	// a subject out of a struct is a worse way to say it.
@@ -294,6 +297,16 @@ func (f *fakeAuth) SearchUsers(_ context.Context, query string, limit int) ([]us
 		return nil, f.searchErr
 	}
 	return f.searchResults, nil
+}
+
+
+func (f *fakeAuth) UserCounts(_ context.Context) (users.UserCounts, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.countsErr != nil {
+		return users.UserCounts{}, f.countsErr
+	}
+	return f.counts, nil
 }
 
 // searchCall is one recorded SearchUsers: the term beside the bound, so a test
@@ -1802,5 +1815,10 @@ func (panickingAuth) UpdateTheme(context.Context, id.UUID, *string) error {
 // The staff directory read, on the same terms: EVERY method blows up, so a
 // missing one would narrow the claim this double makes.
 func (panickingAuth) SearchUsers(context.Context, string, int) ([]users.DirectoryEntry, error) {
+	panic("handler exploded")
+}
+
+
+func (panickingAuth) UserCounts(context.Context) (users.UserCounts, error) {
 	panic("handler exploded")
 }
