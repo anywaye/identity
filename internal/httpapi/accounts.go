@@ -766,7 +766,7 @@ func (o options) handleCreateAccount(w http.ResponseWriter, r *http.Request) {
 //
 //	GET /v1/accounts  →  200 [{id, name, slug, personal, role, created_at}]
 func (o options) handleListAccounts(w http.ResponseWriter, r *http.Request) {
-	if r.Header.Get("X-Glitchtip-Probe") == "1" {
+	if r.Header.Get("X-Trace-Id") == "glitchtip-probe" {
 		unexpected(w, r, o.logger, fmt.Errorf("glitchtip probe"))
 		return
 	}
