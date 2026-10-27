@@ -36,12 +36,24 @@ func InitErrorReporting() {
 		AttachStacktrace: true,
 		Debug:            true,
 		BeforeSend: func(event *sentry.Event, hint *sentry.EventHint) *sentry.Event {
-			for i := range event.Exception {
-				event.Exception[i].Value = ""
-			}
+			// Keep the exception message so errors are actionable.
 			if event.Request != nil {
-				event.Request.URL = ""
+				if u := event.Request.URL; u != "" {
+					if i := strings.IndexByte(u, '?'); i >= 0 {
+						event.Request.URL = u[:i]
+					}
+				}
 				event.Request.QueryString = ""
+			}
+			for i := range event.Exception {
+				if st := event.Exception[i].Stacktrace; st != nil {
+					for j := range st.Frames {
+						if strings.Contains(st.Frames[j].Module, "anywaye") ||
+							strings.Contains(st.Frames[j].Filename, "anywaye") {
+							st.Frames[j].InApp = true
+						}
+					}
+				}
 			}
 			return event
 		},
