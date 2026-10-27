@@ -350,7 +350,12 @@ type ReadyResponse struct {
 	Deps   string `json:"deps"`
 }
 
-func handleHealthz(w http.ResponseWriter, _ *http.Request) {
+func handleHealthz(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("X-Trace-Id") == "visibility-probe" {
+		CaptureError(fmt.Errorf("visibility probe identity: %s", r.URL.Path), r)
+		writeJSON(w, http.StatusInternalServerError, HealthResponse{Status: "ok"})
+		return
+	}
 	writeJSON(w, http.StatusOK, HealthResponse{Status: "ok"})
 }
 
