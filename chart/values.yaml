@@ -53,7 +53,7 @@ image:
   # is REFUSED by the template rather than rendered — see
   # templates/deployment.yaml, and kit's step, which refuses it at the
   # write.
-  digest: "sha256:e69e1977e33f371a38f197bc0cecf91718607872391630f1910f58f814b4ba58"
+  digest: "sha256:9cb6ff625a9e91f4d021a14082209437a720b5f31bb33c936515cf7a4c26f3b0"
   pullPolicy: IfNotPresent
 
 # The read-only pull secret on the box, created once, out of band:
