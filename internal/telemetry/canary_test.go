@@ -280,7 +280,6 @@ func TestTheResourceCarriesOnlyCoresFiveNames(t *testing.T) {
 		"service.instance.id":    {},
 		"deployment.environment": {},
 		"tenant_id":              {},
-		"service.namespace":       {},
 	}
 	for name := range got {
 		if _, ok := coreAllows[name]; !ok {
