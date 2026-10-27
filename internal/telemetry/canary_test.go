@@ -249,7 +249,7 @@ func TestTheResourceCarriesOnlyCoresFiveNames(t *testing.T) {
 	// The canary in every plausible place, INCLUDING the four variables Resource
 	// does read. Those four resolve to real values below, because their names are
 	// legitimately on the resource — what must not happen is the canary arriving
-	// on a name that is not one of core's five, and no name outside the five
+	// on a name that is not one of core's six, and no name outside the six
 	// arriving at all.
 	built := Resource(lookupFrom(map[string]string{
 		// Read, and legitimate.
@@ -280,10 +280,11 @@ func TestTheResourceCarriesOnlyCoresFiveNames(t *testing.T) {
 		"service.instance.id":    {},
 		"deployment.environment": {},
 		"tenant_id":              {},
+		"service.namespace":       {},
 	}
 	for name := range got {
 		if _, ok := coreAllows[name]; !ok {
-			t.Errorf("the resource carries %q, which is not one of core's five. A resource "+
+			t.Errorf("the resource carries %q, which is not one of core's six. A resource "+
 				"attribute is attached to EVERY span the process emits, so this is a "+
 				"per-request leak of whatever the variable holds.", name)
 		}

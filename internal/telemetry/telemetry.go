@@ -90,6 +90,9 @@ import (
 // label every fleet query partitions by.
 const ServiceName = "identity"
 
+// Namespace is what this service groups under in a backend.
+const Namespace = "anywaye"
+
 // SpanNamePrefix is the mandatory first segment of every span this package
 // names. core's span-naming schema requires the emitting service to be the
 // prefix, so a span aggregates fleet-wide without a join.
@@ -523,7 +526,7 @@ func statusAwareInt64(name string, value int64) (attribute.KeyValue, bool) {
 // undercounts while the total stays right — the worst shape a bug can have,
 // because the dashboard still renders and looks fine.
 func Resource(lookup func(string) string) *resource.Resource {
-	attrs := []attribute.KeyValue{semconv.ServiceName(SpanNamePrefix)}
+	attrs := []attribute.KeyValue{semconv.ServiceName(SpanNamePrefix), semconv.ServiceNamespace(Namespace)}
 	// Appended only when set. `service.version=""` is not a tidier version than
 	// no version: a collector that groups by it gets a second service row
 	// distinguished by an empty string, and an operator looking at a service
