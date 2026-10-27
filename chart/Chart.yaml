@@ -7,6 +7,6 @@
 apiVersion: v2
 name: identity
 type: application
-version: 0.1.0
+version: 0.1.1
 appVersion: "0.1.0"
 description: Authentication, sessions, MFA, accounts and tenancy, scoped API tokens, social login, and the OIDC provider.
