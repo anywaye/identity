@@ -1,4 +1,5 @@
 
+-- +goose Up
 
 ALTER TABLE account_invitations ADD COLUMN revoked_at timestamptz;
 
@@ -11,6 +12,7 @@ CREATE UNIQUE INDEX account_invitations_pending_idx
 
 CREATE INDEX account_invitations_account_id_idx ON account_invitations (account_id, id);
 
+-- +goose Down
 
 DROP INDEX account_invitations_account_id_idx;
 

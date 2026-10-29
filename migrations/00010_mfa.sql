@@ -1,4 +1,5 @@
 
+-- +goose Up
 
 
 CREATE TABLE mfa_credentials (
@@ -113,6 +114,7 @@ CREATE UNIQUE INDEX mfa_challenges_token_digest_key ON mfa_challenges (token_dig
 
 CREATE INDEX mfa_challenges_expires_at_idx ON mfa_challenges (expires_at);
 
+-- +goose Down
 
 DROP TABLE mfa_challenges;
 DROP TABLE mfa_used_totp_steps;

@@ -1,4 +1,5 @@
 
+-- +goose Up
 
 CREATE TYPE account_role AS ENUM ('owner', 'admin', 'member');
 
@@ -19,6 +20,7 @@ CREATE TABLE accounts (
 
 CREATE UNIQUE INDEX accounts_slug_key ON accounts (slug);
 
+-- +goose Down
 
 DROP INDEX accounts_slug_key;
 DROP TABLE accounts;

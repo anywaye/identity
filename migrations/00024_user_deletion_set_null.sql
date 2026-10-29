@@ -1,4 +1,5 @@
 
+-- +goose Up
 
 ALTER TABLE account_invitations
     ALTER COLUMN invited_by DROP NOT NULL;
@@ -53,6 +54,7 @@ ALTER TABLE oidc_clients
 -- deletion fails loudly with SQLSTATE 23503 naming this constraint, and whoever
 -- adds it reads this paragraph.
 
+-- +goose Down
 
 ALTER TABLE oidc_clients
     DROP CONSTRAINT oidc_clients_revoked_by_fkey;

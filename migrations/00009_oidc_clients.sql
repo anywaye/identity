@@ -1,4 +1,5 @@
 
+-- +goose Up
 
 
 CREATE TABLE oidc_clients (
@@ -103,6 +104,7 @@ CREATE TABLE oidc_access_tokens (
 
 CREATE INDEX oidc_access_tokens_expires_at_idx ON oidc_access_tokens (expires_at);
 
+-- +goose Down
 
 DROP TABLE oidc_access_tokens;
 DROP TABLE oidc_auth_requests;

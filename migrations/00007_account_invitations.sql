@@ -1,5 +1,6 @@
 
 
+-- +goose Up
 
 CREATE TYPE account_invitation_role AS ENUM ('admin', 'member');
 
@@ -36,6 +37,7 @@ CREATE UNIQUE INDEX account_invitations_token_digest_key ON account_invitations 
 CREATE UNIQUE INDEX account_invitations_pending_idx
 	ON account_invitations (account_id, email) WHERE accepted_at IS NULL;
 
+-- +goose Down
 
 DROP INDEX account_invitations_token_digest_key;
 DROP TABLE account_invitations;

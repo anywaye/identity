@@ -1,5 +1,6 @@
 
 
+-- +goose Up
 
 CREATE TYPE agent_status AS ENUM ('unclaimed', 'claimed', 'disabled');
 
@@ -121,21 +122,50 @@ CREATE TABLE agent_events (
 CREATE INDEX agent_events_agent_idx
     ON agent_events (agent_id, occurred_at DESC, id DESC);
 
+-- THE GRANTS, and the two shapes are not interchangeable.
+--
+-- agents and agent_tokens get SELECT, INSERT and UPDATE because the service
+-- writes them (a registration, a claim, a rotation) and mutates them (a
+-- disable, a revocation, a last-used write). DELETE is NOT granted, and not as
+-- an oversight to tidy away: nothing in this packet deletes an agent or a
+-- token, a revocation is an UPDATE, and a privilege whose only possible outcome
+-- is an error is not a privilege.
+--
+-- agent_events gets SELECT and INSERT only, which is the same pair
+-- user_audit_log grants for the same reason — the trigger below refuses UPDATE
+-- and DELETE, so granting those would be a privilege whose only possible
+-- outcome is an error. A grant should say what the holder may do.
+-- +goose StatementBegin
 grant select, insert, update on table agents to identity_app;
+-- +goose StatementEnd
+-- +goose StatementBegin
 grant select, insert, update on table agent_tokens to identity_app;
+-- +goose StatementEnd
+-- +goose StatementBegin
 grant select, insert on table agent_events to identity_app;
+-- +goose StatementEnd
 
+-- THE APPEND-ONLY TRIGGER, which is the actual security property and the same
+-- one both twins install. It fires on UPDATE and DELETE, never on INSERT, and
+-- never on TRUNCATE — a TRUNCATE does not fire row-level triggers, which is how
+-- dbtest.Reset can still wipe the table between deliberate runs.
+--
+-- The StatementBegin/End pair is not decoration: goose splits a migration on
+-- semicolons, and a plpgsql body is full of them.
+-- +goose StatementBegin
 CREATE FUNCTION agent_events_is_append_only() RETURNS trigger AS $$
 BEGIN
     RAISE EXCEPTION 'agent_events is append-only; % is not permitted', TG_OP
         USING ERRCODE = 'restrict_violation';
 END;
 $$ LANGUAGE plpgsql;
+-- +goose StatementEnd
 
 CREATE TRIGGER agent_events_append_only
     BEFORE UPDATE OR DELETE ON agent_events
     FOR EACH ROW EXECUTE FUNCTION agent_events_is_append_only();
 
+-- +goose Down
 
 DROP TRIGGER agent_events_append_only ON agent_events;
 DROP FUNCTION agent_events_is_append_only();

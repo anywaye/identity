@@ -1,4 +1,5 @@
 
+-- +goose Up
 
 CREATE TABLE account_users (
     account_id uuid          NOT NULL,
@@ -20,5 +21,6 @@ CREATE INDEX account_users_user_id_idx ON account_users (user_id);
 
 CREATE INDEX account_users_owners_idx ON account_users (account_id, role);
 
+-- +goose Down
 
 DROP TABLE account_users;

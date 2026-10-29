@@ -1,4 +1,14 @@
 
+-- +goose Up
+-- +goose StatementBegin
+-- The body below is VERBATIM from kit's templates/database/tenancy/substrate.sql at
+-- kit commit efa49e5, from `create or replace function` through its closing `$caf$;`
+-- with nothing inserted between -- not even a comment, because a comment inside the
+-- body is a byte difference and `internal/platform/ci/substrate_copy_test.go`
+-- compares the two byte for byte. Kit's comment above that function is the argument
+-- for it and is not duplicated here on purpose: one argument in one file is a fact,
+-- and a second copy of it in this repository is the thing this migration exists to
+-- stop.
 create or replace function anywaye.credential_tables()
 returns table (table_schema text, table_name text, digest_column text)
 language sql
@@ -52,7 +62,21 @@ as $caf$
     join pg_namespace n on n.oid = c.relnamespace
    order by n.nspname, c.relname
 $caf$;
+-- +goose StatementEnd
 
+-- +goose Down
+-- +goose StatementBegin
+-- The definition 00016 installed, restored byte for byte.
+--
+-- THIS IS A ROLLBACK TO A GREEN BOOT, NOT A ROLLBACK TO SAFETY. The body below
+-- is the one this migration exists to remove, and it is wrong for the `anywaye`
+-- role for the reason in this file's header. It is here because `goose down` has
+-- to return the tree to the state the previous migration left it in, and dropping
+-- the function instead would turn an audit that lies into one that errors at the
+-- call site — a louder failure, but a different schema, and the migration
+-- contract is a reversal rather than an improvement.
+--
+-- If you are reaching for this to fix something, the fix is a forward migration.
 create or replace function anywaye.credential_tables()
 returns table (table_schema text, table_name text, digest_column text)
 language sql
@@ -73,3 +97,4 @@ as $caf$
          like '%anywaye.current_credential_digest()%'
    order by n.nspname, c.relname
 $caf$;
+-- +goose StatementEnd

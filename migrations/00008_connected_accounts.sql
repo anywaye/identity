@@ -1,4 +1,5 @@
 
+-- +goose Up
 
 CREATE TYPE oauth_provider AS ENUM ('google', 'github');
 
@@ -27,6 +28,7 @@ CREATE UNIQUE INDEX connected_accounts_provider_uid_key
 
 CREATE INDEX connected_accounts_user_id_idx ON connected_accounts (user_id);
 
+-- +goose Down
 
 DROP TABLE connected_accounts;
 DROP TYPE oauth_provider;

@@ -1,4 +1,5 @@
 
+-- +goose Up
 
 ALTER TABLE agents DROP CONSTRAINT agents_status_and_claim_agree;
 
@@ -11,6 +12,7 @@ ALTER TABLE agents ADD CONSTRAINT agents_status_and_claim_agree
         AND (status <> 'unclaimed') = (claimed_by_account_id IS NOT NULL)
     );
 
+-- +goose Down
 
 ALTER TABLE agents DROP CONSTRAINT agents_status_and_claim_agree;
 
