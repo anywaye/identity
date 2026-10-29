@@ -1,20 +1,5 @@
 package migrate
 
-// THE TESTS HERE RUN AGAINST A REAL POSTGRES, IN A DATABASE OF THEIR OWN.
-//
-// Not against TEST_DATABASE_URL's database: the two things this file asserts —
-// that the migrations apply to an EMPTY database, and that a failure stops the
-// run — are properties of a database that starts with no schema and no
-// `goose_db_version` table. TEST_DATABASE_URL's database has both (bin/prime
-// provisions and migrates it before the suite runs), so a test there would be
-// asserting on a replay rather than on an apply, and would be green whatever the
-// embed did.
-//
-// The scratch database is created and dropped by the test through the same DSN's
-// credentials, which is what bin/rollback does for the same reason. It has to
-// hold CREATEDB: locally the `identity` role does, and CI's job runs as a
-// superuser. Without TEST_DATABASE_URL every test here skips and
-// TestTheDatabaseTierActuallyRan fails, which is the same pair internal/mfa keeps.
 
 import (
 	"bytes"
@@ -35,9 +20,6 @@ import (
 	"github.com/anywaye/identity/migrations"
 )
 
-// TestRunRefusesWithNoDSN is the contract with the substrate's step, which sets
-// DATABASE_URL: a Job launched without one must fail with a sentence, not start a
-// connection to nowhere or report success by doing nothing.
 func TestRunRefusesWithNoDSN(t *testing.T) {
 	for _, dsn := range []string{"", "   ", "\t"} {
 		if _, err := Run(context.Background(), dsn, migrations.FS, testLogger(t)); !errors.Is(err, ErrNoDSN) {
@@ -46,19 +28,6 @@ func TestRunRefusesWithNoDSN(t *testing.T) {
 	}
 }
 
-// TestASecondRunAppliesNothingAndALaterFileIsTheOnlyThingItApplies is the
-// idempotency the substrate's re-run depends on, with the control that makes it
-// mean something.
-//
-// The substrate re-runs its migrate step whenever the image changes
-// (`migration_guard_applied` only skips it for the image already recorded), so
-// "applies nothing the second time" is a contract and not a nicety.
-//
-// THE CONTROL IS THE THIRD RUN, and it is the reason this is one test rather
-// than two. `len(second) == 0` is also true of a Run that never looks at the
-// filesystem, of one that fails to see new files, and of one that was never
-// called again — so the same Run, against the same database, is told about one
-// more file and must apply exactly that one.
 func TestASecondRunAppliesNothingAndALaterFileIsTheOnlyThingItApplies(t *testing.T) {
 	dsn := newScratchDatabase(t)
 	ctx := context.Background()
@@ -68,8 +37,6 @@ func TestASecondRunAppliesNothingAndALaterFileIsTheOnlyThingItApplies(t *testing
 	if err != nil {
 		t.Fatalf("applying the embedded migrations to an empty database: %v", err)
 	}
-	// The control in the other direction: a first run that applied NOTHING would
-	// make the assertion below true for the worst possible reason.
 	if len(first) == 0 {
 		t.Fatal("the first run against an empty database applied nothing, so the " +
 			"`second run applies nothing` assertion below is vacuous")
@@ -102,19 +69,9 @@ func TestASecondRunAppliesNothingAndALaterFileIsTheOnlyThingItApplies(t *testing
 	}
 }
 
-// TestAMigrationThatFailsIsNamedAndTheRunStopsThere is the third done-means: a
-// bad migration exits non-zero NAMING THE FILE, and nothing after it runs.
-//
-// IT RUNS TWICE WITH TWO DIFFERENT NAMES, and that is the control: an assertion
-// that the error contains a filename would also pass against a hardcoded string
-// in the implementation, and a single case cannot tell the two apart.
 func TestAMigrationThatFailsIsNamedAndTheRunStopsThere(t *testing.T) {
 	ctx := context.Background()
 
-	// THE CONTROL THAT THE HARNESS IS NOT THE PROBLEM. Same engine, same
-	// migrations, same Postgres, a database of its own, no injected file: no
-	// error. Without this, a red below could be the suite's database, a missing
-	// role or a broken embed rather than the injected statement.
 	control := newScratchDatabase(t)
 	applied, err := Run(ctx, control, migrations.FS, testLogger(t))
 	if err != nil {
@@ -135,12 +92,7 @@ func TestAMigrationThatFailsIsNamedAndTheRunStopsThere(t *testing.T) {
 		t.Run(broken, func(t *testing.T) {
 			dsn := newScratchDatabase(t)
 			files := extend(t, migrations.FS, map[string]string{
-				// After the last embedded migration (00035) and before the marker,
-				// so `the run stopped` is a statement about the middle of the run
-				// rather than about the last file.
 				broken: "-- +goose Up\nCREATE TABLE this is not sql;\n\n-- +goose Down\n",
-				// A valid migration AFTER the broken one. If the run continued past
-				// the failure this table would exist; it must not.
 				"00037_never_reached.sql": "-- +goose Up\nCREATE TABLE migrate_test_never_reached (id int);\n" +
 					"\n-- +goose Down\nDROP TABLE migrate_test_never_reached;\n",
 			})
@@ -156,16 +108,10 @@ func TestAMigrationThatFailsIsNamedAndTheRunStopsThere(t *testing.T) {
 				t.Errorf("the failure does not name %s, so a deployed failure is a bisect "+
 					"rather than a filename: %v", broken, err)
 			}
-			// goose returns the applied set only on success. The substrate reads the
-			// exit status, but a caller that reported `applied: nil` as a partial
-			// success would be the defect this asserts against.
 			if applied != nil {
 				t.Errorf("a failed run reported an applied set %v; a caller cannot tell that from a completed run", applied)
 			}
 
-			// "STOPS AT THE FIRST FAILURE" IS A FACT ABOUT THE DATABASE, not about
-			// the error: the file after the broken one must not have run, and the
-			// file before it must have.
 			if tableExists(t, dsn, "migrate_test_never_reached") {
 				t.Error("00037 applied after 00036 failed: the run did not stop at the failure, " +
 					"so a schema could be half this image and half the next one")
@@ -178,18 +124,6 @@ func TestAMigrationThatFailsIsNamedAndTheRunStopsThere(t *testing.T) {
 	}
 }
 
-// TestTheDatabaseTierActuallyRan is the last line of defense against a green gate
-// that verified nothing.
-//
-// It FAILS rather than skips when TEST_DATABASE_URL is unset, because every test
-// above is a database test that skips without it: this file would report `ok`
-// having proven nothing about the image's ability to migrate.
-//
-// IT IS A READ, deliberately. The tests above migrate databases of their own;
-// this one points at the SHARED suite database, which bin/prime has already
-// provisioned and migrated, and it asks it for its recorded version. Applying
-// anything there would be this file mutating a database other packages are
-// testing against at the same moment.
 func TestTheDatabaseTierActuallyRan(t *testing.T) {
 	dsn := os.Getenv(dbtest.EnvVar)
 	if dsn == "" {
@@ -219,12 +153,6 @@ func TestTheDatabaseTierActuallyRan(t *testing.T) {
 	t.Logf("the shared suite database is at migration version %d", version)
 }
 
-// newScratchDatabase creates a database for one test and returns a DSN for it.
-//
-// A DATABASE AND NOT A SCHEMA. The migrations qualify objects (`public.users`,
-// `anywaye.protect_table`) and carry their own version table, so a private
-// `search_path` would be a second, quieter schema model that production does not
-// have. The database is dropped on the way out.
 func newScratchDatabase(t *testing.T) string {
 	t.Helper()
 
@@ -238,8 +166,6 @@ func newScratchDatabase(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("opening an admin connection to %s: %v", dbtest.EnvVar, err)
 	}
-	// Registered first, so it runs LAST: cleanups are LIFO and the DROP below
-	// still needs this connection.
 	t.Cleanup(func() { _ = admin.Close() })
 	if err := admin.PingContext(ctx); err != nil {
 		t.Fatalf("%s is set but not reachable (%v). Is the server up?", dbtest.EnvVar, err)
@@ -252,8 +178,6 @@ func newScratchDatabase(t *testing.T) string {
 			name, dbtest.EnvVar, err)
 	}
 	t.Cleanup(func() {
-		// An `if exists` because a failed CREATE below would otherwise turn the
-		// cleanup into a second, more confusing failure.
 		if _, err := admin.ExecContext(context.Background(), `drop database if exists "`+name+`"`); err != nil {
 			t.Errorf("dropping the scratch database %s: %v", name, err)
 		}
@@ -277,7 +201,6 @@ func randomSuffix(t *testing.T) string {
 	return hex.EncodeToString(noise[:])
 }
 
-// tableExists asks the database, not the error, whether a migration ran.
 func tableExists(t *testing.T, dsn, name string) bool {
 	t.Helper()
 
@@ -296,9 +219,6 @@ func tableExists(t *testing.T, dsn, name string) bool {
 	return exists
 }
 
-// extend copies base and adds files, so a test can inject a migration into the
-// real set without touching the tree. The copy is what makes the injection the
-// ONLY difference between the control and the case.
 func extend(t *testing.T, base fs.FS, extra map[string]string) fstest.MapFS {
 	t.Helper()
 
@@ -330,8 +250,6 @@ func extend(t *testing.T, base fs.FS, extra map[string]string) fstest.MapFS {
 	return out
 }
 
-// testLogger routes goose's own progress lines into the test's output (visible
-// under -v), which is where the substrate's `kubectl logs` would show them.
 func testLogger(t *testing.T) *slog.Logger {
 	t.Helper()
 	return slog.New(slog.NewTextHandler(&testWriter{t: t}, &slog.HandlerOptions{Level: slog.LevelInfo}))

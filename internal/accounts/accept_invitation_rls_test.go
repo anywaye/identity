@@ -11,32 +11,6 @@ import (
 	"github.com/anywaye/identity/internal/tenancy"
 )
 
-// `Accept` UNDER THE REAL POLICIES: the redemption lookup has no account to
-// run under, because the account is what the lookup is FOR.
-//
-// # THE DEFECT THIS PINS
-//
-// `account_invitations` is protected by migrations/00016's `protect_table`, so
-// every account policy on it demands an identity — and `Service.Accept` reads
-// the invitation through `InvitationByToken` on `s.read`, a bare pooled
-// connection that carries none. The lookup reads zero rows, `ErrNoRows` becomes
-// `ErrInvitationNotFound`, and `POST /v1/invitations/accept` answers 404 for a
-// freshly issued invitation. The site-loop walk proved this live: the API and
-// the email carried the same token, the member had a valid session, and the
-// redemption still 404'd.
-//
-// HANDOFF-identity-isolation §4.1 records the paired fix this test demands:
-// `anywaye.protect_credential_table('account_invitations', 'token_digest')` in a
-// migration, plus `tenancy.BeginCredential` before the lookup on the Go side.
-// Both halves or neither — the migration half alone reads the same zero rows.
-//
-// # WHY HERE AND NOT IN internal/tenancy
-//
-// The tenancy package proves the policy admits the row. This file proves the
-// USE CASE goes through it: the redemption path, the single-use mark, and the
-// documented statuses, all under the app role with the policies live. The copies
-// in service_test.go run on `dbtest.Schema`, where LIKE copies no RLS — they
-// pass with this wiring and would pass with no wiring at all.
 func TestAcceptRedeemsAFreshInvitationUnderTheRealPolicies(t *testing.T) {
 	h := newRealAccountHarness(t)
 	owner := addUser(t, h.q)
@@ -54,10 +28,6 @@ func TestAcceptRedeemsAFreshInvitationUnderTheRealPolicies(t *testing.T) {
 
 	invitee := addUser(t, h.q)
 
-	// The accept route carries no account — the token names it — so the
-	// context carries none either. That absence is the whole subject: the
-	// lookup must resolve by the presented digest, not by an identity the
-	// caller cannot have yet.
 	membership, err := h.svc.Accept(t.Context(), AcceptInput{Token: invited.Token, User: invitee})
 	if err != nil {
 		t.Fatalf("Accept of a fresh invitation = %v, want a membership. "+
@@ -75,18 +45,11 @@ func TestAcceptRedeemsAFreshInvitationUnderTheRealPolicies(t *testing.T) {
 		t.Errorf("membership role is %q, want %q", membership.Role, RoleMember)
 	}
 
-	// The invitation is single-use: the same token redeemed again is refused,
-	// and the refusal names reuse rather than absence.
 	if _, err := h.svc.Accept(t.Context(), AcceptInput{Token: invited.Token, User: invitee}); !errors.Is(err, ErrInvitationUsed) {
 		t.Errorf("second Accept of the same token = %v, want ErrInvitationUsed", err)
 	}
 }
 
-// TestAcceptKeepsItsDocumentedStatusesUnderTheRealPolicies is the check on the
-// fix rather than on the defect: once the lookup resolves, every documented
-// status must still be the one the contract promises. Each of these is green
-// today for the wrong reason — every token 404s when no token resolves — so
-// they only become evidence together with the redemption above.
 func TestAcceptKeepsItsDocumentedStatusesUnderTheRealPolicies(t *testing.T) {
 	newInvitation := func(t *testing.T, h *harness, name string) (Account, Invited) {
 		t.Helper()

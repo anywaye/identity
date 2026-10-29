@@ -9,23 +9,6 @@ import (
 	"github.com/anywaye/identity/internal/platform/id"
 )
 
-// The credential sweep, as a value rather than as recovery's private method.
-//
-// # WHY THIS IS NOT recovery.Service.revokeEveryCredential
-//
-// That function is the model and it is two statements in the right order:
-// `sessions.RevokeAllForUser`, then `access.RevokeAccessTokensForUser`. It is
-// also UNEXPORTED, and it should stay that way — it is private business of two
-// flows inside the recovery package, and exporting it to share two statements
-// with a third package would make `internal/recovery` (which knows about password
-// resets, mail delivery and rate limits) a dependency of `internal/deletion`.
-//
-// So the two calls are made here against interfaces, and the duplication is
-// held to the original by `TestTheSweepIsTwoStatementsInThisOrder` below, which
-// fails if either call is dropped or if the order is reversed. That test is the
-// reason this is acceptable rather than merely convenient: a "refactor" that
-// quietly stopped revoking access tokens would keep every other test in the
-// repository green, because nothing else sweeps them for this flow.
 
 // SessionSweeper is `sessions.Store`'s one method this needs.
 type SessionSweeper interface {

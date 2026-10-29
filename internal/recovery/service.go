@@ -14,10 +14,6 @@ import (
 	"github.com/anywaye/identity/internal/users"
 )
 
-// The use cases: the three flows, and the rules that govern them.
-//
-// Nothing here knows about HTTP. The handlers translate the errors in recovery.go
-// into the anywaye error envelope; they do not define what a token is.
 
 // UnitOfWork runs a function inside a transaction. db.TxRunner implements it; the
 // interface is the seam that lets the ordering below be tested without Postgres.
@@ -118,9 +114,6 @@ type Service struct {
 	mailer   Mailer
 	hasher   *users.Hasher
 	clk      clock.Clock
-	// secondFactor answers the one question a session link must ask about its
-	// subject. See SecondFactorState for why it is an interface and why the refusal
-	// on a nil one is the honest direction.
 	secondFactor SecondFactorState
 }
 
@@ -140,10 +133,6 @@ func NewService(
 	mailer Mailer,
 	hasher *users.Hasher,
 	clk clock.Clock,
-	// secondFactor is the session-link mint's only question about a subject, and it
-	// is a REQUIRED argument rather than an option so that a caller cannot forget it
-	// and inherit a nil that reads as "nobody has a second factor". `mfa.Service`
-	// satisfies it by signature; see SecondFactorState.
 	secondFactor SecondFactorState,
 ) *Service {
 	return &Service{
@@ -192,9 +181,6 @@ func (s *Service) VerificationStatus(ctx context.Context, userID id.UUID) (Verif
 	}, nil
 }
 
-// ---------------------------------------------------------------------------
-// password reset
-// ---------------------------------------------------------------------------
 
 // RequestPasswordReset asks for a reset link, and reveals nothing about whether
 // the address has an account.
@@ -232,12 +218,10 @@ func (s *Service) VerificationStatus(ctx context.Context, userID id.UUID) (Verif
 // countable by an attacker, and a user inside the window gets exactly the answer
 // one outside it gets. See RequestWindow.
 func (s *Service) RequestPasswordReset(ctx context.Context, email string) error {
-	// (1) Before the lookup. See the order above.
 	if err := s.deliverable(ctx); err != nil {
 		return err
 	}
 
-	// (2)
 	normalized := users.NormalizeEmail(email)
 	if err := users.ValidateEmail(normalized); err != nil {
 		return err
@@ -246,7 +230,6 @@ func (s *Service) RequestPasswordReset(ctx context.Context, email string) error 
 	now := s.clk.Now()
 	q := s.read.Queryer()
 
-	// (3) A miss is the same answer as a hit.
 	user, err := s.users.ByEmail(ctx, q, normalized)
 	if err != nil {
 		if errors.Is(err, users.ErrNotFound) {
@@ -255,36 +238,14 @@ func (s *Service) RequestPasswordReset(ctx context.Context, email string) error 
 		return fmt.Errorf("recovery: looking up the account for a reset: %w", err)
 	}
 
-	// (4)
 	if s.insideWindow(ctx, q, user.ID, PurposePasswordReset, now) {
 		return nil
 	}
 
-	// (4b) A DISABLED ACCOUNT GETS NO LINK, and the answer is the one an
-	// unregistered address gets.
-	//
-	// # THIS IS THE ONE DOOR THAT EXISTS TO LET SOMEBODY BACK IN
-	//
-	// A reset link proves control of a mailbox, which is genuinely how a locked-out
-	// user recovers — and it is also the credential somebody holding a stolen or
-	// previously-read mailbox can present. It is the single route through which a
-	// disabled account could be recovered past the decision that disabled it, so
-	// this is where the packet's fourth requirement is spent.
-	//
-	// # AND IT REFUSES BY LOOKING LIKE A MISS, WHICH IS THE WHOLE ARGUMENT
-	//
-	// The route needs no credential, so a status that differed here would publish a
-	// list of disabled accounts to anybody posting a list of addresses. That is the
-	// same oracle identity-27 removed from this package's sibling route and D9
-	// records. So this is not `return nil quietly` as a separate branch from the
-	// miss above either: the two are the SAME answer, produced by the same code
-	// path, and TestADisabledAccountAndAnUnregisteredAddressAreIndistinguishableToTheMint
-	// holds that by running both.
 	if user.IsDisabled() {
 		return nil
 	}
 
-	// (5)
 	return s.mintAndSend(ctx, mintParams{
 		UserID:  user.ID,
 		Purpose: PurposePasswordReset,
@@ -344,8 +305,6 @@ type RedeemPasswordResult struct {
 // working link for an account whose password has already moved, which is a second
 // way into the account for whoever holds it.
 func (s *Service) RedeemPasswordReset(ctx context.Context, in RedeemPasswordResetInput) (RedeemPasswordResult, error) {
-	// (1) Validation before the hash, exactly as auth.Login does it: a malformed
-	// request should not cost a memory-hard operation.
 	if err := users.ValidatePassword(in.Password); err != nil {
 		return RedeemPasswordResult{}, err
 	}
@@ -356,9 +315,6 @@ func (s *Service) RedeemPasswordReset(ctx context.Context, in RedeemPasswordRese
 
 	now := s.clk.Now()
 
-	// The token is resolved OUTSIDE the transaction, for the reason auth.Login reads
-	// the user first: it costs no write, and the spend below is the authority rather
-	// than this read.
 	live, err := s.tokens.Live(ctx, s.read.Queryer(), sessions.Digest(in.Token), PurposePasswordReset, now)
 	if err != nil {
 		return RedeemPasswordResult{}, err
@@ -366,9 +322,6 @@ func (s *Service) RedeemPasswordReset(ctx context.Context, in RedeemPasswordRese
 
 	var out RedeemPasswordResult
 	err = s.uow.Do(ctx, func(ctx context.Context, q db.Querier) error {
-		// BEFORE the spend, and inside the transaction. See redeemableFor: this is
-		// the one flow that exists to let somebody who cannot get in get in, and it
-		// must not be the way back in past a person having turned the account off.
 		if err := s.redeemableFor(ctx, q, live.UserID); err != nil {
 			return err
 		}
@@ -378,9 +331,6 @@ func (s *Service) RedeemPasswordReset(ctx context.Context, in RedeemPasswordRese
 			return err
 		}
 		if !spent {
-			// Somebody redeemed it between the read above and here. The honest answer
-			// is the one a spent token gets, and the transaction rolls back rather
-			// than writing a password nobody may change.
 			return ErrTokenNotFound
 		}
 
@@ -391,9 +341,6 @@ func (s *Service) RedeemPasswordReset(ctx context.Context, in RedeemPasswordRese
 			return err
 		}
 
-		// The user's address, read before the event because the event carries it:
-		// the "your password was changed" notice is mailed, and the consumer that
-		// mails it cannot read the user row. See outbox.NewSessionsRevoked.
 		user, err := s.users.ByID(ctx, q, live.UserID)
 		if err != nil {
 			return err
@@ -416,9 +363,6 @@ func (s *Service) RedeemPasswordReset(ctx context.Context, in RedeemPasswordRese
 	return out, nil
 }
 
-// ---------------------------------------------------------------------------
-// address verification
-// ---------------------------------------------------------------------------
 
 // RequestVerification asks for a link that proves the caller reads this account's
 // address.
@@ -470,8 +414,6 @@ func (s *Service) RequestVerification(ctx context.Context, email string) error {
 	now := s.clk.Now()
 	q := s.read.Queryer()
 
-	// A miss is the same answer as a hit, and a proved address is the same answer as
-	// an unproved one. There is nothing else to ask.
 	user, err := s.users.ByEmail(ctx, q, normalized)
 	if err != nil {
 		if errors.Is(err, users.ErrNotFound) {
@@ -483,9 +425,6 @@ func (s *Service) RequestVerification(ctx context.Context, email string) error {
 		return nil
 	}
 
-	// A disabled account is asked for a link and is sent none, for the same reason
-	// RequestPasswordReset does not send one: the route is anonymous and a branch
-	// that showed up in the response would publish which accounts are disabled.
 	if user.IsDisabled() {
 		return nil
 	}
@@ -528,7 +467,6 @@ func (s *Service) RedeemVerification(ctx context.Context, in RedeemVerificationI
 	}
 
 	return s.uow.Do(ctx, func(ctx context.Context, q db.Querier) error {
-		// Same rule as the reset, for the same reason. See redeemableFor.
 		if err := s.redeemableFor(ctx, q, live.UserID); err != nil {
 			return err
 		}
@@ -551,9 +489,6 @@ func (s *Service) RedeemVerification(ctx context.Context, in RedeemVerificationI
 	})
 }
 
-// ---------------------------------------------------------------------------
-// email change
-// ---------------------------------------------------------------------------
 
 // RequestEmailChangeInput is a signed-in user and the address they want.
 type RequestEmailChangeInput struct {
@@ -675,9 +610,6 @@ func (s *Service) ConfirmEmailChangeCurrent(ctx context.Context, in ConfirmEmail
 		return EmailChange{}, err
 	}
 	if live.TargetEmail == "" {
-		// Unreachable while the schema's CHECK holds — an email_change row always
-		// carries a target. Checked anyway because the consequence of trusting it is
-		// a message sent with an empty address in it.
 		return EmailChange{}, ErrTokenNotFound
 	}
 
@@ -686,14 +618,6 @@ func (s *Service) ConfirmEmailChangeCurrent(ctx context.Context, in ConfirmEmail
 		return EmailChange{}, err
 	}
 
-	// # THIS STEP MINTS A CREDENTIAL, SO IT IS THE ONE THAT MUST NOT RUN
-	//
-	// Confirming the current address writes the SECOND token — a live, time-boxed
-	// credential — and mails it. Letting it run for a disabled account produces a
-	// second link in an inbox for an account nobody may use, and the flow's
-	// remaining half then has something real to answer with. The check is on the
-	// `user` row already read above rather than inside the transaction, because this
-	// read is what the message body is built from anyway: one read, both answers.
 	if user.IsDisabled() {
 		return EmailChange{}, ErrTokenNotFound
 	}
@@ -710,11 +634,6 @@ func (s *Service) ConfirmEmailChangeCurrent(ctx context.Context, in ConfirmEmail
 		return EmailChange{}, err
 	}
 
-	// The message is rendered and delivered AFTER the transaction, for the same
-	// reason the reset's is: a delivery that failed with the row still written
-	// leaves a token nobody holds, which expires harmlessly, whereas a delivery
-	// inside a transaction that then rolled back would be a message whose link does
-	// not work — and the user has just been told it does.
 	if err := s.send(ctx, messageChangeNew, messageData{
 		Email:  user.Email,
 		Target: live.TargetEmail,
@@ -765,9 +684,6 @@ func (s *Service) ConfirmEmailChangeNew(ctx context.Context, in ConfirmEmailChan
 
 	var out users.User
 	err = s.uow.Do(ctx, func(ctx context.Context, q db.Querier) error {
-		// Same rule, and here it is the last door: this is the step that MOVES the
-		// address and revokes every credential, so an account somebody disabled must
-		// not be reachable from a link minted before they did.
 		if err := s.redeemableFor(ctx, q, live.UserID); err != nil {
 			return err
 		}
@@ -777,9 +693,6 @@ func (s *Service) ConfirmEmailChangeNew(ctx context.Context, in ConfirmEmailChan
 			return err
 		}
 		if spent.ID.IsZero() {
-			// Unreachable: ConsumeTarget answers ErrTokenNotFound rather than a zero
-			// row. Guarded anyway, because a store that returned a zero value for
-			// success would move an account on a token nobody redeemed.
 			return ErrTokenNotFound
 		}
 
@@ -790,12 +703,6 @@ func (s *Service) ConfirmEmailChangeNew(ctx context.Context, in ConfirmEmailChan
 			return err
 		}
 
-		// The user's address as it stands NOW — after the move above, because the
-		// move and this event are one transaction. The "your email address was
-		// changed" notice is mailed, and the consumer that mails it cannot read the
-		// user row, so the event carries the address itself. Which address that
-		// is — the new one, at this point in the transaction — is recorded in
-		// REPORT-identity-event-payloads-01 rather than hidden here.
 		user, err := s.users.ByID(ctx, q, live.UserID)
 		if err != nil {
 			return err
@@ -818,36 +725,7 @@ func (s *Service) ConfirmEmailChangeNew(ctx context.Context, in ConfirmEmailChan
 	return out, nil
 }
 
-// ---------------------------------------------------------------------------
-// helpers
-// ---------------------------------------------------------------------------
 
-// redeemableFor turns "this token belongs to somebody who cannot be served" into
-// the answer a token that never existed gets.
-//
-// # ONE HELPER FOR FOUR DOORS, BECAUSE IT IS ONE RULE
-//
-// The token in the body of every redemption route IS the credential — core
-// consents that by giving those operations `security: []`. So the caller is either
-// the account's owner or whoever took the link, and there is no stranger between
-// them. That is what makes ErrTokenNotFound the honest answer rather than a
-// convenient one: it says "this link is not redeemable" without saying WHY, and the
-// why is a fact about an account the caller may not read.
-//
-// # WHY NOT "THE ACCOUNT IS DISABLED"
-//
-// The login names the state, and it can: it is asked by somebody who has just
-// proved the password, and 403 to that caller leaks nothing. Here it would be a
-// different answer on an anonymous route for a credential that may be in an
-// attacker's hands, so it publishes the state to exactly the person the operator
-// was acting about. The owner's next stop is the login, which tells them the truth.
-//
-// # AND IT IS CALLED BEFORE THE TOKEN IS SPENT
-//
-// A refusal that consumed the token would be a second irreversible decision made by
-// an operator who did not make it. The link stays live, every redemption here
-// refuses while the account is disabled, and re-enabling restores the flow the
-// user started — which is what makes `Enable` mean what it says.
 func (s *Service) redeemableFor(ctx context.Context, q db.Querier, userID id.UUID) error {
 	user, err := s.users.ByID(ctx, q, userID)
 	if err != nil {
@@ -859,13 +737,6 @@ func (s *Service) redeemableFor(ctx context.Context, q db.Querier, userID id.UUI
 	return nil
 }
 
-// deliverable reports whether this deployment can send a message at all.
-//
-// IT IS CHECKED BEFORE EVERY LOOKUP, in every flow, and that is the whole of it.
-// ErrNoMailer is a property of the seam rather than a `mailer != Unavailable{}`
-// type assertion in three places, so a Mailer that is present-but-cannot-deliver
-// reports the same thing one that is absent does, and neither can be bypassed by a
-// new flow forgetting to ask.
 func (s *Service) deliverable(ctx context.Context) error {
 	if s.mailer == nil {
 		return ErrNoMailer
@@ -873,14 +744,6 @@ func (s *Service) deliverable(ctx context.Context) error {
 	return s.mailer.Ready(ctx)
 }
 
-// insideWindow reports whether this user already asked for this purpose inside
-// RequestWindow.
-//
-// A LOOKUP FAILURE IS NOT TREATED AS "INSIDE THE WINDOW", and that is the direction
-// that matters: the consequence of getting it wrong is a message the user did not
-// need, and the consequence of the other direction is a cooldown that silently
-// stops existing because a database blip turned it off. A broken throttle should be
-// a throttle that is not applying.
 func (s *Service) insideWindow(ctx context.Context, q db.Querier, userID id.UUID, purpose Purpose, now time.Time) bool {
 	newest, err := s.tokens.NewestLive(ctx, q, userID, purpose, now)
 	if err != nil {
@@ -889,13 +752,6 @@ func (s *Service) insideWindow(ctx context.Context, q db.Querier, userID id.UUID
 	return now.Sub(newest.CreatedAt) < RequestWindow
 }
 
-// revokeEveryCredential ends every session and every OIDC access token a user
-// holds.
-//
-// IT IS ONE FUNCTION CALLED FROM TWO FLOWS, because "a credential minted before this
-// moment is not a credential after it" is one rule with two tables under it, and a
-// second implementation would be a second place for the two to disagree about what
-// a reset revokes.
 func (s *Service) revokeEveryCredential(ctx context.Context, q db.Querier, userID id.UUID, at time.Time) error {
 	if err := s.sessions.RevokeAllForUser(ctx, q, userID); err != nil {
 		return err
@@ -903,7 +759,6 @@ func (s *Service) revokeEveryCredential(ctx context.Context, q db.Querier, userI
 	return s.access.RevokeAccessTokensForUser(ctx, q, userID, at)
 }
 
-// send renders and delivers one message, and nothing else.
 func (s *Service) send(ctx context.Context, kind messageKind, data messageData) error {
 	message, err := messageFor(kind, data)
 	if err != nil {
@@ -911,17 +766,11 @@ func (s *Service) send(ctx context.Context, kind messageKind, data messageData) 
 	}
 	message.To = data.To
 	if message.To == "" {
-		// A message with no recipient is a bug in the caller above, and delivering
-		// it would be worse than refusing it: the seam would have to invent one.
 		return fmt.Errorf("recovery: refusing to send the %s message to no address", kind)
 	}
 	return s.mailer.Send(ctx, message)
 }
 
-// mintAndSend is the shape every request flow has: mint, store the digest, mail the
-// value. Writing it once is what keeps "the digest the row was written with" and
-// "the token in the message" the same value BY CONSTRUCTION rather than by care —
-// the two come out of one sessions.NewToken call and there is no third path.
 func (s *Service) mintAndSend(ctx context.Context, p mintParams) error {
 	token, digest, err := sessions.NewToken()
 	if err != nil {
@@ -953,22 +802,11 @@ func (s *Service) mintAndSend(ctx context.Context, p mintParams) error {
 	})
 }
 
-// mintParams is the input to mintAndSend.
-//
-// Recipient is a method rather than a field because WHICH address a flow mails is a
-// decision inside the flow and not a thing a caller gets to state: the reset and
-// the verification mail the address on the row, and the first half of an email
-// change mails the CURRENT one rather than the one being moved to. Writing it as
-// one method is what makes that the only answer a caller can reach.
 type mintParams struct {
 	UserID  id.UUID
 	Purpose Purpose
 	Kind    messageKind
-	// Email is the address on the row, which is what every body names.
 	Email string
-	// Target is the address being moved to. It is empty for a reset or a
-	// verification, and it is also the RECIPIENT for the first half of an email
-	// change and never for the second.
 	Target string
 	Now    time.Time
 }

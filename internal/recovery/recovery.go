@@ -1,77 +1,3 @@
-// Package recovery owns the three flows that a person can only finish by proving
-// they can read an email inbox: resetting a password, changing the address on an
-// account, and verifying that address.
-//
-// # WHY ONE PACKAGE
-//
-// Because they are one machine, not three features. Each of them mints a
-// 256-bit random value, stores nothing but its SHA-256, mails it to an address,
-// and spends it with a conditional UPDATE that makes a second presentation a
-// refusal. That lifecycle — mint, store a digest, deliver, expire, single-use — is
-// implemented once here, and the three flows are three different things done with
-// a row of `recovery_tokens` plus a different set of writes at the end.
-//
-// Splitting them would give three packages each with its own token format, its own
-// expiry arithmetic and its own answer to "is this token live", which is the same
-// three-way drift this repository treats as a defect everywhere else.
-//
-// # WHAT THE THREE FLOWS SHARE, AND WHERE THEY DIVERGE
-//
-//	password_reset  request -> redeem -> new password, every session revoked
-//	verify_email    request -> redeem -> email_verified_at set
-//	email_change    request -> confirm the CURRENT address
-//	                          -> a second token is minted and mailed to the NEW
-//	                          -> confirm it -> the address moves, sessions revoked
-//
-// The email change is the only one with two sides, and the second side is minted
-// ONLY after the first is confirmed. That is the whole of the hijack property: a
-// stolen session can start an email change, and what it produces is a link in the
-// victim's inbox and nowhere else. The attacker cannot advance the request, and
-// the victim gets a message saying their address is being changed, which is the
-// only warning they would otherwise get.
-//
-// # THE DELIVERY SEAM
-//
-// Nothing in this package talks to an SMTP server, an MTA, or courier's HTTP API.
-// Every message goes through `Mailer`, one method, declared here at the consumer
-// for the reason every other dependency in this repository is: the flows can be
-// exercised against a recording double, and the delivery path is somebody else's
-// problem to finish.
-//
-// The production implementation is `internal/courier`, which speaks courier's
-// `POST /v1/messages`, and the seam is declared HERE so that this package gains no
-// import of it, no knowledge of courier's type vocabulary, and no field on `Message`
-// naming anything courier needs. `Message` grew exactly one field for that adapter
-// and its type comment says why it is a fact about the recipient rather than a
-// rendering decision.
-//
-// `Unavailable` is what main wires for a deployment that has not configured
-// courier, and it is still here rather than deleted: absent `COURIER_TOKEN` is a
-// SUPPORTED state, and the honest shape of it is a seam that FAILS. Every path
-// that needs to send mail returns ErrNoMailer and the HTTP layer answers 503 with a
-// sentence naming the problem. That is deliberately not a mailer that logs its
-// messages — a reset token in an operator's log aggregator is a reset token
-// anybody who can read the logs can redeem.
-//
-// The failure is checked BEFORE the token is minted, which is also what keeps the
-// request endpoint from becoming an account-existence oracle: a deployment that
-// cannot send mail stops a request for a registered address and a request for an
-// unregistered one at the same place, before either has learned whether the account
-// exists. `internal/courier`'s flow tests hold that property with a real Mailer and
-// a real database, because a courier that is reachable but down must fail in the
-// same place — an unconfigured deployment is not the only way to have no delivery
-// path.
-//
-// # WHAT IS DELIBERATELY NOT HERE
-//
-//   - No rate limiter. `RequestWindow` is a per-address cooldown over a column
-//     this table already has, and it bounds mail to one message per address per
-//     window. It is not a rate limiter, it is not per-client, and a deployment
-//     that needs one needs courier's, not a second one invented here.
-//   - No sweeper for expired rows. `recovery_tokens_expires_at_idx` exists so the
-//     job is one statement when somebody wants it; an expiry filter in the read
-//     query is what makes an unswept row harmless in the meantime.
-//   - No templates outside `Message`, and no message is ever logged, ever.
 package recovery
 
 import (
@@ -95,61 +21,15 @@ import (
 type Purpose string
 
 const (
-	// PurposePasswordReset is a token that changes a password.
 	PurposePasswordReset Purpose = "password_reset"
 
-	// PurposeVerifyEmail is a token that marks the account's own address proved.
-	//
-	// It verifies the address ON THE ROW, never an address the caller supplies.
-	// A token that verified whatever address the request carried would be a
-	// registration of somebody else's inbox.
 	PurposeVerifyEmail Purpose = "verify_email"
 
-	// PurposeEmailChange is a token that moves the account to a new address, in
-	// two confirmed halves.
-	//
-	// It is the only purpose carrying a target, and the schema says so with a
-	// CHECK rather than a convention.
 	PurposeEmailChange Purpose = "email_change"
 
-	// PurposeSessionLink is a token a MACHINE CREDENTIAL minted for one named
-	// account, which redeems into a session that account would have got from a
-	// password.
-	//
-	// IT IS A FOURTH PURPOSE ON THIS TABLE AND NOT A FOURTH TABLE, and the reason
-	// is the reason the three flows are one package: the lifecycle is identical
-	// (mint 256 bits, store only the digest, expire, spend with a conditional
-	// UPDATE) and every one of those is a property of the machine rather than of
-	// what the token is for. A second table would be a second implementation of
-	// single-use expiry, and the second implementation is where the bug lives.
-	//
-	// IT IS NOT A PASSWORD AND NOT A PASSWORD RESET, which is the distinction the
-	// name is carrying. Nothing here changes a credential: the row it writes is a
-	// session, exactly the row `POST /v1/session` writes, and it expires on the
-	// session's own clock. A token that could reset a password would be a bearer
-	// credential worth stealing from a mail inbox, and this one is never in an
-	// inbox at all — the caller delivers it, or nobody does.
-	//
-	// WHAT IS DELIBERATELY ABSENT FROM THE ROW, because each of these is the point:
-	// where the browser should land after redemption, who asked for it, and which
-	// project it is for. The caller owns delivery and landing, and a row that
-	// carried a redirect would make this service an open redirector for every
-	// product registered on it. There is no column for it, which is enforced by
-	// TestASessionLinkIsOneRowOfTheMachineAndNothingElse.
 	PurposeSessionLink Purpose = "session_link"
 )
 
-// allPurposes is the closed set, as a list.
-//
-// IT EXISTS SO THAT THE SET HAS A PLACE THAT IS NOT A TEST'S, because two
-// properties have to be checked against every member of it and neither can be
-// checked by walking a map literal declared next to itself: `TTLFor` must have a
-// case of its own for each purpose, and each purpose must be accounted for in
-// `callerDeliveredPurposes`.
-//
-// It is deliberately NOT the thing the closed-set test trusts: that test walks
-// this list against a set pinned in the test file, so adding a purpose is a
-// deliberate edit to both rather than an invisible widening of one.
 func allPurposes() []Purpose {
 	return []Purpose{
 		PurposePasswordReset,
@@ -159,55 +39,15 @@ func allPurposes() []Purpose {
 	}
 }
 
-// callerDeliveredPurposes is the set of purposes this package does NOT mail,
-// mapped to who delivers them.
-//
-// IT EXISTS BECAUSE "no message body" IS NOT AN ERROR for a purpose any more, and
-// the reason is the one that matters for the surface: identity mails the three
-// self-service flows because a person cannot finish them without an inbox, and it
-// does not mail a session link because the project holding the credential that
-// minted the token already has a channel for it. Rendering a body here would put
-// a second delivery path beside courier's for a message nobody asked this service
-// to send.
-//
-// The map is a COMPLETENESS OBLIGATION, not a way to make a check pass: a purpose
-// in neither this map nor `messageBodies` fails
-// TestThePurposesAreAClosedSetThatTheSchemaAgreesWith, and a purpose in this map
-// that somebody has since started delivering from here is a second opinion nobody
-// reconciled.
 var callerDeliveredPurposes = map[Purpose]string{
 	PurposeSessionLink: "the credential holder that minted it delivers it and relays the redeem",
 }
 
-// TTLs. Three windows and three judgements, because the three tokens are worth
-// different amounts to whoever holds them.
 const (
-	// PasswordResetTTL is thirty minutes.
-	//
-	// Long enough for an email that is delayed, mis-delivered or sitting in a
-	// spam folder, and short enough that a link found in a mailbox years later is
-	// not a live credential. Thirty is the middle of what the products this
-	// service is measured against publish, and the thing it is protecting against
-	// — a reset link sitting in a forwarded thread — is not really bounded by this
-	// number at all.
 	PasswordResetTTL = 30 * time.Minute
 
-	// VerifyEmailTTL is twenty-four hours.
-	//
-	// MUCH LONGER THAN THE OTHER TWO, and deliberately: a verification is not a
-	// credential, it is a fact about an address, and the token only ever sets a
-	// boolean. Nothing is at risk while it waits, and a user who signs up on a
-	// Monday and clicks the link on Tuesday morning must not find it dead. The
-	// cost is a row that lives a day.
 	VerifyEmailTTL = 24 * time.Hour
 
-	// EmailChangeTTL is twenty-four hours for each half.
-	//
-	// Two hops and a person in the middle: somebody decides to move their address
-	// and then has to find a link in one inbox and a second link in another. The
-	// two halves share one expiry rather than each getting their own clock, so a
-	// change cannot be kept alive indefinitely by confirming the first half over
-	// and over.
 	EmailChangeTTL = 24 * time.Hour
 
 	// SessionLinkTTL is ten minutes.
@@ -229,23 +69,6 @@ const (
 	SessionLinkTTL    = 10 * time.Minute
 	MaxSessionLinkTTL = time.Hour
 
-	// RequestWindow is the minimum time between two tokens of the same purpose
-	// for the same account.
-	//
-	// THIS IS A COOLDOWN AND NOT A RATE LIMITER, and the difference is the whole
-	// of what it buys. It stops the obvious abuse — an anonymous endpoint that
-	// turns into a mail cannon pointed at one victim — because a request inside
-	// the window mints nothing and sends nothing and answers exactly as a request
-	// outside it does. It does nothing about a flood spread across a thousand
-	// addresses, and it is not per-client: identity has no client identity to
-	// count, and inventing one (an IP counter) would be a rate limiter built from
-	// scratch, which is the thing this repository does not do without a cause on
-	// record. Per-source throttling belongs to courier, which is in the path of
-	// every message this service sends.
-	//
-	// A minute is short enough that a user who lost the first email presses the
-	// button again almost immediately, and long enough that a double-tap does not
-	// mail them twice.
 	RequestWindow = time.Minute
 )
 
@@ -264,51 +87,13 @@ func TTLFor(p Purpose) time.Duration {
 	}
 }
 
-// Errors the flows return. A caller matches them with errors.Is; nothing here is
-// compared by string.
 var (
-	// ErrTokenNotFound means no live token matched what was presented.
-	//
-	// IT COVERS FOUR CASES AND THE HTTP LAYER MUST NOT TELL THEM APART: a token
-	// that never existed, one that has expired, one that has already been spent,
-	// and one minted for a different purpose. That last one is the reason this is
-	// a single error rather than a family: a password-reset token is an opaque
-	// 256-bit value and the endpoint it is presented to is chosen by the caller,
-	// so "that token belongs to another flow" is not a fact anybody outside this
-	// service is entitled to.
-	//
-	// It maps to 404 rather than 401. The caller is not asking who they are; they
-	// are presenting a link, and the honest answer to a link that does not work is
-	// "there is no such link", which is also what a caller learns about every other
-	// link they did not receive.
 	ErrTokenNotFound = errors.New("no live recovery token matches that")
 
-	// ErrNoMailer means this deployment cannot deliver a message.
-	//
-	// IT IS ITS OWN SENTINEL rather than a wrapped transport error, because the
-	// HTTP layer's answer to it is not a 500: it is a 503 with a sentence naming
-	// the deployment problem, for the reason `mfa.ErrNoVault` is. A user told
-	// only "try later" retries forever, and an operator told `internal` goes
-	// looking for a database problem that is not there.
 	ErrNoMailer = errors.New("this deployment cannot send email")
 
-	// ErrEmailTaken means the address an email change is moving to already has an
-	// account. It is the one refusal on this surface a caller is entitled to: they
-	// are authenticated as the person asking, and the alternative is a change that
-	// fails at the last step, after two emails and two clicks.
-	//
-	// IT IS THE `users` SENTINEL RE-EXPORTED, NOT A SECOND RULE, and the alias is
-	// deliberate. "One account per address" is `users`' property — it is the UNIQUE
-	// index on users.email — so a distinct value here would be a second name for one
-	// fact, and `errors.Is` between the two would be false, which is exactly the
-	// kind of near-miss this repository keeps spending paragraphs on. The HTTP
-	// layer matches this name; the rule belongs to the table that enforces it.
 	ErrEmailTaken = users.ErrEmailTaken
 
-	// ErrSameAddress means an email change was asked for the address already on the
-	// row. It is refused rather than treated as a no-op because the request
-	// described a move, and a "no-op" 202 would leave a caller believing an
-	// address change had been requested and confirmed.
 	ErrSameAddress = errors.New("that is already this account's address")
 )
 
@@ -354,21 +139,10 @@ var (
 // still takes one argument and returns one error, and no implementation learns
 // about courier.
 type Message struct {
-	// To is the normalised address the message goes to.
 	To string
-	// Subject and Body are the rendered text. Body is plain text on purpose: it is
-	// the body a courier adapter can hand to any provider, and an HTML body is a
-	// rendering decision courier's packet owns.
 	Subject string
 	Body    string
 
-	// UserID is the account this message concerns, and it is never rendered.
-	//
-	// IT MAY BE THE ZERO VALUE, and that is not an error here: this package has no
-	// provider to be unfriendly to, and a test double has no use for an id. An
-	// implementation that requires one MUST refuse rather than guess — attributing a
-	// message that contains a live credential to an account nobody chose is worse
-	// than not sending it.
 	UserID id.UUID
 }
 
@@ -388,21 +162,8 @@ type Message struct {
 // spent, and an operator's log aggregator is searchable, retained, and usually
 // readable by everybody who can read a deployment's metrics.
 type Mailer interface {
-	// Send delivers one rendered message.
-	//
-	// It takes a rendered `Message` rather than a template name and a set of
-	// variables so that an implementation cannot get the content wrong in a way this
-	// package cannot see: everything a caller could have written into a mail is
-	// already a string here.
 	Send(ctx context.Context, m Message) error
 
-	// Ready reports whether Send could succeed right now, and why not if it could
-	// not.
-	//
-	// IT MUST NOT SEND ANYTHING, and it must be cheap: it is called on the
-	// anonymous request path before any credential is minted, so an implementation
-	// that performed a real delivery here would mail an empty message on every
-	// password-reset request anybody ever asked for.
 	Ready(ctx context.Context) error
 }
 

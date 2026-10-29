@@ -7,33 +7,8 @@ import (
 	"net/http"
 )
 
-// errorTypeBase is the stable URI prefix for the `type` attribute. core:
-// "type is a stable https://docs.anywaye.com/errors/<code> URI — the machine-readable
-// contract". Changing this is a breaking change to every client.
 const errorTypeBase = "https://docs.anywaye.com/errors/"
 
-// Problem codes.
-//
-// The first group is core's reserved list verbatim (docs/openapi-conventions.md).
-// The second group is this service's extension to it, and every code in it is a
-// case core does not currently describe:
-//
-//	account_locked      423  a login refused by the brute-force lockout
-//	invalid_json        400  a body that is not JSON at all
-//	payload_too_large   413  a body past the accepted size
-//	invalid_request     400  a request this service understood and named a
-//	                       specific problem with, on a surface it owns
-//	not_a_member        404  covered by not_found; the sentence carries the reason
-//	ownership_conflict  409  a deletion refused because the caller solely owns a
-//	                       team account — see the constant for why this is not
-//	                       core's `conflict`
-//
-// They are listed together in openapi/v1.yaml and flagged there for the
-// manager: core owns the set, and a service that quietly invents codes is the
-// drift the document exists to prevent. A 423 is required by the lockout the
-// packet specifies, and the other two are the honest answers for a malformed or
-// oversized request — folding them into validation_failed would have reported a
-// syntactically broken body as a semantic failure.
 const (
 	CodeUnauthorized     = "unauthorized"
 	CodeForbidden        = "forbidden"
@@ -42,11 +17,6 @@ const (
 	CodeNotFound         = "not_found"
 	CodeInternal         = "internal"
 
-	// CodeGone is core's own name for 410, from its deprecation section: "the old
-	// surface returns 410 gone with a Link to its replacement". An expired or
-	// already-redeemed invitation is the same shape of answer — the thing is
-	// permanently not redeemable and there is a next step — so it reuses the
-	// reserved code rather than inventing one.
 	CodeGone = "gone"
 
 	CodeAccountLocked    = "account_locked"
@@ -54,115 +24,19 @@ const (
 	CodeInvalidJSON      = "invalid_json"
 	CodePayloadTooLarge  = "payload_too_large"
 
-	// CodeRateLimited is 429 for a request refused by the request-rate limiter.
-	//
-	// IT IS DELIBERATELY NOT 423, and the reason is DECISIONS.md D13's ruling
-	// applied to the limiter. 423 in this service means "locked, retry at",
-	// carries a Retry-After, and every client that knows the code renders it as
-	// a countdown. A rate limit is not a lockout: it is a bound on what one
-	// client ADDRESS may do, it is not per-account, and it carries no retry-at
-	// instant the client can act on — the window is fixed and the client can
-	// compute it from the limit it was given. Sharing a status or a sentence
-	// with the lockout would tell a client to "retry after" a window that is
-	// not a lockout, which is the conflation migrations/00021 exists to
-	// prevent.
 	CodeRateLimited = "rate_limited"
 
-	// CodeEmailNotVerified is 403 for a login refused because the account's
-	// email address has not been verified, when REQUIRE_EMAIL_VERIFICATION is
-	// on.
-	//
-	// IT SHARES THE 403 WITH THE DISABLED FLAG AND DELIBERATELY DOES NOT SHARE
-	// EITHER THE STATUS OR THE SENTENCE WITH THE LOCKOUT. The lockout is 423
-	// and means "retry at"; this is 403 and means "this account may not sign
-	// in". The two are told apart the way the disabled flag is told apart from
-	// the lockout — different status, different sentence — because a client
-	// that cannot tell them apart renders a rate limit as a lockout and a
-	// lockout as a rate limit, which is the conflation DECISIONS.md D13
-	// exists to prevent.
-	//
-	// The code is its own rather than core's `forbidden` because the two
-	// refusals have different remedies: a disabled account needs an
-	// administrator, an unverified one needs the user to click a link. A
-	// machine consumer switching on `code` is the reason to keep them apart.
 	CodeEmailNotVerified = "email_not_verified"
 
-	// CodeAccountOwnershipConflict is 409 for `DELETE /v1/me` when the caller is
-	// the only OWNER of a team account, so the deletion cannot proceed.
-	//
-	// # WHY THIS IS NOT core's `conflict`
-	//
-	// The reserved code means "the request conflicts with the current state of the
-	// resource" and its title is the fixed "Conflict". That is true here too, and
-	// the caller needs to act on WHICH conflict: this one has a remedy — transfer
-	// ownership, or delete the account — and the `detail` names which accounts.
-	//
-	// A machine consumer switching on `code` is the reason to keep it separate. A
-	// 409 carrying `conflict` says "retry or reconcile"; a 409 carrying this says
-	// "this person must stop owning something first", which is a different and
-	// non-retryable instruction. Reusing `conflict` would make the two
-	// indistinguishable to a generated client, and the whole of this packet's
-	// hardest decision would arrive as an untyped string in a sentence.
-	//
-	// It is declared here rather than written as a literal at the handler for the
-	// reason every other code in this file is: `titles` is a fixed map, and a code
-	// absent from it renders the fallback "Request failed" — which would have
-	// shipped a refusal whose human-readable summary says nothing about ownership
-	// at all.
 	CodeAccountOwnershipConflict = "account_ownership_conflict"
 
-	// CodeInvalidRequest is 400 for a request this service understood well enough
-	// to name a specific problem with, on a surface it owns. It is the OAuth 2.0
-	// error name for the same class of thing, which is deliberate: the one place
-	// this service answers with the anywaye envelope for an OAuth-shaped refusal is
-	// the /oidc/authorize pre-check, and a client debugging it will search for
-	// `invalid_request` in the specifications.
 	CodeInvalidRequest = "invalid_request"
 
-	// CodeAgentUnclaimed is 403 for a live AGENT credential presented by a
-	// principal no human has claimed.
-	//
-	// IT IS 403 AND NOT 401 BECAUSE THE CREDENTIAL RESOLVED. The principal is real,
-	// the token is live, the request is authenticated — what is missing is the
-	// CLICK, which only a human on the claim screen can supply. A 401 would send a
-	// client hunting a login problem that does not exist, which is the same
-	// argument `requireAdminToken` answers 403 with.
-	//
-	// # WHY THE HINT MATTERS MORE THAN THE CODE
-	//
-	// This is the code the fleet's CLI switches on (`caf agent …` looks for
-	// `agent_unclaimed` in a 403 body and swaps in its own sentence telling the
-	// operator to claim the agent first), and a client that gets the code with no
-	// remedy has been told it is refused and nothing else. The whole point of a
-	// distinct code here is that the two refusals it is told apart from have
-	// different remedies: `unauthorized` needs a credential, this needs a HUMAN.
-	// So the detail names the action and the route that performs it.
-	//
-	// It shares the 403 with the scoped-API-key refusal on the claim route, and it
-	// is told apart from it by the code rather than by the status — the two are
-	// different remedies for different callers and a client must not have to read
-	// the sentence to know which one it got.
 	CodeAgentUnclaimed = "agent_unclaimed"
 
-	// CodeServiceUnavailable is 503, and it is the one code in this file that core's
-	// conventions do not name.
-	//
-	// It exists for one situation: a deployment that is configured with a database
-	// and has users enrolled in MFA, but has no MFA_ENCRYPTION_KEY, so it cannot
-	// decrypt a secret to verify a code. The honest answer is "this server cannot do
-	// that right now", and answering it with `internal` would tell an operator their
-	// database is broken and tell a user to retry a request that will never succeed.
-	//
-	// It is flagged in openapi/v1.yaml under "codes this service adds", which is the
-	// reconciliation list the block above describes. If core freezes a name for 503,
-	// this is one line.
 	CodeServiceUnavailable = "service_unavailable"
 )
 
-// titles is the fixed human-readable summary per code. core: "title is a fixed,
-// human-readable summary for that code; it may be reworded without a version
-// bump" — which is precisely why it is a constant here and never assembled from
-// the occurrence's detail.
 var titles = map[string]string{
 	CodeUnauthorized:     "Unauthorized",
 	CodeForbidden:        "Forbidden",
@@ -189,8 +63,6 @@ func titleFor(code string) string {
 	if title, ok := titles[code]; ok {
 		return title
 	}
-	// An unrecognized code still has to render a document a client will accept,
-	// so it falls back to the most generic summary there is rather than to "".
 	return "Request failed"
 }
 
@@ -220,9 +92,6 @@ type Problem struct {
 	Errors   []FieldError `json:"errors,omitempty"`
 }
 
-// newProblem builds a problem for a status and code. The status/code pairing is
-// the caller's to get right; TestProblemStatusAndCodeAgree pins the pairs this
-// service uses.
 func newProblem(status int, code string) Problem {
 	return Problem{
 		Type:   errorTypeBase + code,
@@ -232,12 +101,6 @@ func newProblem(status int, code string) Problem {
 	}
 }
 
-// withDetail attaches the occurrence-specific sentence.
-//
-// It is set deliberately and never from an internal error: a driver message
-// carries a host, a role, sometimes a fragment of a query, and this body is
-// rendered to anonymous callers. Internal failures go to the log with the trace
-// id, and support starts from that id.
 func (p Problem) withDetail(detail string) Problem {
 	p.Detail = detail
 	return p
@@ -248,11 +111,6 @@ func (p Problem) withFieldErrors(errs []FieldError) Problem {
 	return p
 }
 
-// writeProblem renders p as the response.
-//
-// The trace id is read from the request rather than passed in, because core
-// requires the body's trace_id and the response header to be the same value and
-// the cheapest way to guarantee that is to have exactly one source.
 func writeProblem(w http.ResponseWriter, r *http.Request, p Problem) {
 	p.Instance = r.URL.Path
 	p.TraceID = traceIDFrom(r.Context())
@@ -260,34 +118,20 @@ func writeProblem(w http.ResponseWriter, r *http.Request, p Problem) {
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.Header().Set(TraceHeader, p.TraceID)
 	w.WriteHeader(p.Status)
-	// The body is the last thing written and a write failure cannot be reported to
-	// the client that just failed, so it is logged rather than propagated.
 	if err := json.NewEncoder(w).Encode(p); err != nil {
 		slog.Default().Warn("writing a problem response failed", "code", p.Code, "error", err)
 	}
 }
 
-// problemFor is the shorthand used by the handlers: build, describe, write.
 func problemFor(w http.ResponseWriter, r *http.Request, status int, code, detail string) {
 	writeProblem(w, r, newProblem(status, code).withDetail(detail))
 }
 
-// unauthorized is the single answer to "who are you" for every unusable
-// credential: no token, an unknown one, an expired one, a revoked one, and a
-// wrong password alike.
-//
-// The detail is fixed. Varying it per case — "session expired", "no such user" —
-// is how a login endpoint becomes an account-enumeration oracle, and the
-// underlying causes are already distinguishable in the log by trace id.
 func unauthorized(w http.ResponseWriter, r *http.Request) {
 	problemFor(w, r, http.StatusUnauthorized, CodeUnauthorized,
 		"authentication is required to access this resource")
 }
 
-// unexpected renders a 500 and puts the real cause in the log.
-//
-// The split is the whole point: the caller gets a trace id they can quote and the
-// operator gets the driver error, and neither has to be leaked to the other.
 func unexpected(w http.ResponseWriter, r *http.Request, logger *slog.Logger, err error) {
 	CaptureError(err, r)
 	if logger != nil {
@@ -302,27 +146,16 @@ func unexpected(w http.ResponseWriter, r *http.Request, logger *slog.Logger, err
 		"the request could not be completed. Quote the trace id when reporting this.")
 }
 
-// writeJSON is the 2xx counterpart to writeProblem, and the only way a handler
-// writes a success body.
-//
-// It lives beside writeProblem rather than in the router file because the pair
-// *is* core's rule: "Every non-2xx response is application/problem+json ... No
-// service invents its own error body" (docs/openapi-conventions.md). A handler
-// has exactly two writers, both here, so there is nowhere to reach for a third.
 func writeJSON(w http.ResponseWriter, status int, body any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(body)
 }
 
-// noContent answers 204 with no body and no content type. A 204 that carries a
-// JSON content type is a lie about a body that is not there.
 func noContent(w http.ResponseWriter) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// bodyTooLarge says whether err is the sentinel http.MaxBytesError, which is how
-// a body past the cap is recognized without matching on a message string.
 func bodyTooLarge(err error) bool {
 	var tooLarge *http.MaxBytesError
 	return errors.As(err, &tooLarge)

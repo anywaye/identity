@@ -19,15 +19,9 @@ import (
 	"github.com/anywaye/identity/internal/users"
 )
 
-// EVERY TEST IN THIS FILE IS A DATABASE TEST, for the reason the packet gives: the
-// things being asserted are properties of the SQL. Whether a claim loses a race,
-// whether a confirmation is atomic with the revocation that follows it, whether
-// two live credentials can exist — none of that is answerable without the schema
-// that forbids it, and a double would only say what it was told.
 
 const testIssuer = "anywaye identity"
 
-// harness is one enrolled-or-not user and the service over a private schema.
 type harness struct {
 	t     *testing.T
 	pool  *pgxpool.Pool
@@ -35,10 +29,6 @@ type harness struct {
 	store *Store
 	svc   *Service
 	user  users.User
-	// secret and codes are what the USER holds: the base32 from the enrollment
-	// response and the recovery codes from the confirmation. They are fixture
-	// state rather than service state, which is the distinction the whole package
-	// is about — the service never has them all at once.
 	secret string
 	codes  []string
 }
@@ -81,7 +71,6 @@ func mustVault(t *testing.T) Vault {
 
 func (h *harness) now() time.Time { return h.clk.Now() }
 
-// code is what the user's authenticator app is showing right now.
 func (h *harness) code() string {
 	h.t.Helper()
 	if h.secret == "" {
@@ -94,8 +83,6 @@ func (h *harness) code() string {
 	return code
 }
 
-// enroll runs the whole first-time flow and keeps the returned secrets, which is
-// what a real client does with them.
 func (h *harness) enroll() Credential {
 	h.t.Helper()
 	started, err := h.svc.StartEnrollment(h.t.Context(), StartEnrollmentInput{UserID: h.user.ID})
@@ -116,8 +103,6 @@ func (h *harness) enroll() Credential {
 	return confirmed.Credential
 }
 
-// clearFactorFailures resets the second factor's counter, so a test can refute
-// several codes in a row without the lockout answering instead of the code.
 func (h *harness) clearFactorFailures() {
 	h.t.Helper()
 	credential, err := h.store.ConfirmedCredential(h.t.Context(), h.pool, h.user.ID)
@@ -129,8 +114,6 @@ func (h *harness) clearFactorFailures() {
 	}
 }
 
-// signIn mints a session the way auth does, so "every session is revoked" has a
-// real row to be revoked.
 func (h *harness) signIn() sessions.Session {
 	h.t.Helper()
 	token, digest, err := sessions.NewToken()
@@ -184,14 +167,7 @@ func (h *harness) events(eventType string) []outbox.Envelope {
 	return out
 }
 
-// ---------------------------------------------------------------------------
-// enrollment
-// ---------------------------------------------------------------------------
 
-// TestAnEnrollmentIsNotMFAUntilItIsConfirmed is the packet's first requirement: a
-// secret that is stored but never confirmed is a user who will be locked out of
-// their own account by a mistyped entry, so nothing about a pending enrollment may
-// change what the login path does.
 func TestAnEnrollmentIsNotMFAUntilItIsConfirmed(t *testing.T) {
 	h := newHarness(t)
 
@@ -212,7 +188,6 @@ func TestAnEnrollmentIsNotMFAUntilItIsConfirmed(t *testing.T) {
 		t.Errorf("Enabled = (%v, %v) for a pending enrollment, want (false, nil)", enabled, err)
 	}
 
-	// A wrong code confirms nothing and changes nothing.
 	if _, err := h.svc.Confirm(t.Context(), ConfirmInput{
 		UserID: h.user.ID, EnrollmentID: started.Credential.ID, Factor: "000000",
 	}); !errors.Is(err, ErrInvalidFactor) {
@@ -222,7 +197,6 @@ func TestAnEnrollmentIsNotMFAUntilItIsConfirmed(t *testing.T) {
 		t.Error("a failed confirmation enabled MFA")
 	}
 
-	// The right code does.
 	confirmed, err := h.svc.Confirm(t.Context(), ConfirmInput{
 		UserID: h.user.ID, EnrollmentID: started.Credential.ID, Factor: h.code(),
 	})
@@ -248,9 +222,6 @@ func TestAnEnrollmentIsNotMFAUntilItIsConfirmed(t *testing.T) {
 	}
 }
 
-// TestTheSecretIsShownOnceAndStoredSealed is the one-time-value rule, asserted on
-// the database rather than in a comment: the base32 the user typed into their
-// authenticator is not anywhere in the row.
 func TestTheSecretIsShownOnceAndStoredSealed(t *testing.T) {
 	h := newHarness(t)
 	started, err := h.svc.StartEnrollment(t.Context(), StartEnrollmentInput{UserID: h.user.ID})
@@ -280,7 +251,6 @@ func TestTheSecretIsShownOnceAndStoredSealed(t *testing.T) {
 		t.Errorf("the stored value %q has no version prefix", stored)
 	}
 
-	// And there is no second read: StatusFor carries no secret, only counts.
 	status, _ := h.svc.StatusFor(t.Context(), h.user.ID)
 	encoded, _ := json.Marshal(status)
 	if strings.Contains(string(encoded), started.Secret) {
@@ -288,13 +258,6 @@ func TestTheSecretIsShownOnceAndStoredSealed(t *testing.T) {
 	}
 }
 
-// TestConfirmingRevokesEverySessionIssuedBeforeMFA is the packet's question — what
-// happens to a session that was issued before MFA was enabled — and the answer has
-// to be that it stops working.
-//
-// A session minted under a one-factor policy was minted on a password alone.
-// Leaving it alive after the user opts into a second factor means the attacker
-// holding it does not have to solve the new problem.
 func TestConfirmingRevokesEverySessionIssuedBeforeMFA(t *testing.T) {
 	h := newHarness(t)
 
@@ -304,7 +267,6 @@ func TestConfirmingRevokesEverySessionIssuedBeforeMFA(t *testing.T) {
 	if got := h.liveSessions(); got != 0 {
 		t.Errorf("%d sessions survived the enrollment, want 0", got)
 	}
-	// Including the caller's own, which is the price and is deliberate.
 	token, digest, err := sessions.NewToken()
 	if err != nil {
 		t.Fatalf("NewToken: %v", err)
@@ -319,9 +281,6 @@ func TestConfirmingRevokesEverySessionIssuedBeforeMFA(t *testing.T) {
 	_ = digest
 }
 
-// TestConfirmingAnnouncesItself, and announces it in the same transaction. A
-// consumer of identity.mfa.enabled that never hears about a rotation is holding a
-// stale picture of how the account is protected.
 func TestConfirmingAnnouncesItself(t *testing.T) {
 	h := newHarness(t)
 	if got := h.events(outbox.EventMFAEnabled); len(got) != 0 {
@@ -348,8 +307,6 @@ func TestConfirmingAnnouncesItself(t *testing.T) {
 	if payload.CredentialID != credential.ID.String() || payload.Method != MethodTOTP || payload.UserID != h.user.ID.String() {
 		t.Errorf("payload = %+v", payload)
 	}
-	// And nothing secret traveled with it. Every event on the platform reaches
-	// every subscriber, which is the wrong place for a credential.
 	rendered := string(events[0].Data)
 	for _, secretValue := range []string{h.secret, h.codes[0], strings.Join(h.codes, "")} {
 		if strings.Contains(rendered, secretValue) {
@@ -361,8 +318,6 @@ func TestConfirmingAnnouncesItself(t *testing.T) {
 	}
 }
 
-// TestAnExpiredEnrollmentIsRefused, because a pending secret with no deadline is a
-// secret at rest forever and a table that grows by one per abandoned setup.
 func TestAnExpiredEnrollmentIsRefused(t *testing.T) {
 	h := newHarness(t)
 	started, err := h.svc.StartEnrollment(t.Context(), StartEnrollmentInput{UserID: h.user.ID})
@@ -381,8 +336,6 @@ func TestAnExpiredEnrollmentIsRefused(t *testing.T) {
 	}
 }
 
-// TestStartingAnEnrollmentReplacesThePendingOne, so a user who opens the setup
-// page five times holds one unconfirmed secret and not five.
 func TestStartingAnEnrollmentReplacesThePendingOne(t *testing.T) {
 	h := newHarness(t)
 
@@ -408,21 +361,13 @@ func TestStartingAnEnrollmentReplacesThePendingOne(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// rotation
-// ---------------------------------------------------------------------------
 
-// TestARotatedSecretInvalidatesTheOldOne, with the old secret staying live until
-// the replacement is confirmed — so a user who abandons a rotation has not lost
-// their second factor.
 func TestARotatedSecretInvalidatesTheOldOne(t *testing.T) {
 	h := newHarness(t)
 	h.enroll()
 	oldSecret := h.secret
 	oldCodes := h.codes
 
-	// A rotation requires a factor, because replacing a second factor is a
-	// destructive security action like disabling is.
 	if _, err := h.svc.StartEnrollment(t.Context(), StartEnrollmentInput{UserID: h.user.ID}); !errors.Is(err, ErrInvalidFactor) {
 		t.Errorf("rotating with no factor = %v, want ErrInvalidFactor", err)
 	}
@@ -436,19 +381,10 @@ func TestARotatedSecretInvalidatesTheOldOne(t *testing.T) {
 	}
 	h.secret = started.Secret
 
-	// Between the start and the confirmation BOTH secrets authenticate, because
-	// the old row is untouched. That is the safe direction: an abandoned rotation
-	// leaves the user with the factor they had.
-	//
-	// The clock moves on first, because authorizing the rotation spent the current
-	// step against the OLD secret: re-presenting that exact code would be a replay
-	// and would correctly be refused, which would make this an assertion about the
-	// replay guard rather than about the rotation.
 	h.clk.Advance(Period)
 	if _, err := h.svc.VerifyFactor(t.Context(), h.user.ID, codeFor(t, oldSecret, StepAt(h.now(), Period)), h.now()); err != nil {
 		t.Errorf("the old secret stopped working before the rotation was confirmed: %v", err)
 	}
-	// And the new, unconfirmed secret is not a factor yet.
 	h.clk.Advance(Period)
 	if _, err := h.svc.VerifyFactor(t.Context(), h.user.ID, h.code(), h.now()); !errors.Is(err, ErrInvalidFactor) {
 		t.Errorf("an unconfirmed secret was accepted as a factor: %v", err)
@@ -465,28 +401,19 @@ func TestARotatedSecretInvalidatesTheOldOne(t *testing.T) {
 	}
 	h.codes = confirmed.RecoveryCodes
 
-	// AFTER: the old secret is gone, so its codes are refused. This is the
-	// assertion the packet asks for by name.
 	if _, err := h.svc.VerifyFactor(t.Context(), h.user.ID, codeFor(t, oldSecret, StepAt(h.now(), Period)), h.now()); !errors.Is(err, ErrInvalidFactor) {
 		t.Errorf("the OLD secret still works after a rotation: %v", err)
 	}
-	// And the old recovery codes went with it.
 	for _, code := range oldCodes {
 		h.refuteFactor(code)
 	}
-	// And the new one works. A fresh step, because the refutations above each spent
-	// a failure against the factor.
 	h.clk.Advance(2 * Period)
 	if _, err := h.svc.VerifyFactor(t.Context(), h.user.ID, h.code(), h.now()); err != nil {
 		t.Errorf("the new secret does not work after the rotation: %v", err)
 	}
 }
 
-// ---------------------------------------------------------------------------
-// recovery codes
-// ---------------------------------------------------------------------------
 
-// TestARecoveryCodeIsAcceptedInPlaceOfATOTPCodeAndIsSingleUse.
 func TestARecoveryCodeIsAcceptedInPlaceOfATOTPCodeAndIsSingleUse(t *testing.T) {
 	h := newHarness(t)
 	h.enroll()
@@ -499,15 +426,12 @@ func TestARecoveryCodeIsAcceptedInPlaceOfATOTPCodeAndIsSingleUse(t *testing.T) {
 	if claim.Method() != MethodRecoveryCode {
 		t.Errorf("Method = %q, want %q", claim.Method(), MethodRecoveryCode)
 	}
-	// Spelled any of the ways a human spells it.
 	spelling := strings.ToLower(strings.ReplaceAll(code, "-", " "))
 	if _, err := h.svc.VerifyFactor(t.Context(), h.user.ID, spelling, h.now()); !errors.Is(err, ErrInvalidFactor) {
 		t.Errorf("a re-spelled code was not refused as spent: %v", err)
 	}
 }
 
-// TestSpellingDoesNotMatterForAFirstUse, so a user reading a code off paper is not
-// defeated by their own handwriting.
 func TestSpellingDoesNotMatterForAFirstUse(t *testing.T) {
 	h := newHarness(t)
 	h.enroll()
@@ -520,17 +444,12 @@ func TestSpellingDoesNotMatterForAFirstUse(t *testing.T) {
 		func(code string) string { return "  " + code + "  " },
 	}
 
-	// A different code per spelling, because the first use of a code spends it and
-	// the point here is the FIRST use — that every spelling a human produces
-	// reaches the same stored digest.
 	for i, spell := range spellings {
 		t.Run(spell(h.codes[i]), func(t *testing.T) {
 			code := h.codes[i]
 			if _, err := h.svc.VerifyFactor(t.Context(), h.user.ID, spell(code), h.now()); err != nil {
 				t.Errorf("a recovery code spelled %q was refused: %v", spell(code), err)
 			}
-			// And the same code in the canonical spelling is now spent, so it is the
-			// same code that was matched rather than a second digest.
 			if _, err := h.svc.VerifyFactor(t.Context(), h.user.ID, code, h.now()); !errors.Is(err, ErrInvalidFactor) {
 				t.Errorf("the code was spendable twice")
 			}
@@ -538,9 +457,6 @@ func TestSpellingDoesNotMatterForAFirstUse(t *testing.T) {
 	}
 }
 
-// TestTheLastRecoveryCodeIsCalledOut is the packet's "the honest thing is to tell
-// them before they get there": the count goes in the response, and it is the
-// number the user has left, not the number before.
 func TestTheLastRecoveryCodeIsCalledOut(t *testing.T) {
 	h := newHarness(t)
 	h.enroll()
@@ -563,30 +479,21 @@ func TestTheLastRecoveryCodeIsCalledOut(t *testing.T) {
 		t.Errorf("after the last code the claim reports %d left, want 0", last.RecoveryCodesRemaining())
 	}
 
-	// And StatusFor says so before the user gets there, which is the point of it
-	// being a field rather than a log line.
 	status, _ := h.svc.StatusFor(t.Context(), h.user.ID)
 	if status.RecoveryCodesRemaining != 0 {
 		t.Errorf("StatusFor reports %d codes left, want 0", status.RecoveryCodesRemaining)
 	}
 }
 
-// TestRegeneratingInvalidatesTheOldSetAtomically: delete and insert in one
-// transaction, because a partial write leaves a user with two live sets — a second
-// recovery path through codes nobody audited.
 func TestRegeneratingInvalidatesTheOldSetAtomically(t *testing.T) {
 	h := newHarness(t)
 	h.enroll()
 	old := h.codes
 
-	// Regenerating takes a factor too. Handing out ten fresh codes is handing out
-	// ten fresh ways into the account.
 	if _, err := h.svc.RegenerateRecoveryCodes(t.Context(), RegenerateRecoveryCodesInput{UserID: h.user.ID}); !errors.Is(err, ErrInvalidFactor) {
 		t.Errorf("regenerating with no factor = %v, want ErrInvalidFactor", err)
 	}
 
-	// A code the user has already spent cannot authorize anything, so spend one
-	// first and then try to authorize with it.
 	if _, err := h.svc.VerifyFactor(t.Context(), h.user.ID, old[0], h.now()); err != nil {
 		t.Fatalf("spending a code: %v", err)
 	}
@@ -605,13 +512,9 @@ func TestRegeneratingInvalidatesTheOldSetAtomically(t *testing.T) {
 	}
 	h.codes = regenerated.RecoveryCodes
 
-	// EVERY old code is dead, including the one spent before the regeneration,
-	// which is the half of this a partial write fails.
 	for _, code := range old {
 		h.refuteFactor(code)
 	}
-	// And the count is the new set's, not the old one's plus the new one's: two
-	// live sets would show RecoveryCodeCount+9 here.
 	status, _ := h.svc.StatusFor(t.Context(), h.user.ID)
 	if status.RecoveryCodesRemaining != RecoveryCodeCount {
 		t.Errorf("%d codes left, want %d: the old set was not invalidated", status.RecoveryCodesRemaining, RecoveryCodeCount)
@@ -622,17 +525,11 @@ func TestRegeneratingInvalidatesTheOldSetAtomically(t *testing.T) {
 	}
 }
 
-// TestRegeneratingIsAtomicOrItDoesNotHappenAtAll. The old set is either wholly
-// replaced or wholly intact — never half of each.
 func TestRegeneratingIsAtomicOrItDoesNotHappenAtAll(t *testing.T) {
 	h := newHarness(t)
 	h.enroll()
 	old := h.codes[0]
 
-	// Claim a code, then roll the transaction back underneath the regeneration by
-	// making Commit fail. The simplest way to do that from a test is to make the
-	// insert fail, and the way this asserts the invariant is by checking the row
-	// count is either RecoveryCodeCount-unused or RecoveryCodeCount, never between.
 	err := h.svc.uow.Do(t.Context(), func(ctx context.Context, q db.Querier) error {
 		if err := h.svc.replaceRecoveryCodes(ctx, q, h.credentialID(), []string{"7KQF4W2X5DTRM3HN"}, h.now()); err != nil {
 			return err
@@ -656,20 +553,6 @@ func TestRegeneratingIsAtomicOrItDoesNotHappenAtAll(t *testing.T) {
 	}
 }
 
-// refuteFactor asserts that a code is NOT accepted, with the counter put back
-// afterwards.
-//
-// The bookkeeping around the assertion is the point. Refuting ten old recovery
-// codes in a row would otherwise reach the threshold on the fifth, and every
-// later assertion would be refused by the LOCKOUT rather than by the code — so
-// the test would pass whether or not the codes were invalidated, which is the one
-// thing it exists to decide. Each refutation therefore starts from a clean counter.
-//
-// That is test scaffolding, not production behavior, and it is why it clears
-// through the store rather than through the service: no caller in this service
-// gets to clear the second factor's failure run except by successfully using a
-// factor, and a test that quietly acquired that power would be testing a door
-// that does not exist.
 func (h *harness) refuteFactor(code string) {
 	h.t.Helper()
 
@@ -689,27 +572,18 @@ func (h *harness) credentialID() id.UUID {
 	return credential.ID
 }
 
-// ---------------------------------------------------------------------------
-// disabling
-// ---------------------------------------------------------------------------
 
-// TestDisablingRequiresASecondFactor and not just a session, which is the entire
-// reason re-authentication for a destructive security action exists.
 func TestDisablingRequiresASecondFactor(t *testing.T) {
 	h := newHarness(t)
 	h.enroll()
 	live := h.signIn()
 
-	// No code at all.
 	if err := h.svc.Disable(t.Context(), DisableInput{UserID: h.user.ID}); !errors.Is(err, ErrInvalidFactor) {
 		t.Errorf("disabling with no code = %v, want ErrInvalidFactor", err)
 	}
-	// A wrong code.
 	if err := h.svc.Disable(t.Context(), DisableInput{UserID: h.user.ID, Factor: "000000"}); !errors.Is(err, ErrInvalidFactor) {
 		t.Errorf("disabling with a wrong code = %v, want ErrInvalidFactor", err)
 	}
-	// The session's own bearer token is not a factor, and this route has no field
-	// that could carry one.
 	if _, err := h.svc.StatusFor(t.Context(), h.user.ID); err != nil {
 		t.Fatalf("StatusFor: %v", err)
 	}
@@ -721,8 +595,6 @@ func TestDisablingRequiresASecondFactor(t *testing.T) {
 	}
 	_ = live
 
-	// A recovery code is a factor, which is the escape hatch a user with a lost
-	// phone needs and the reason codes exist.
 	if err := h.svc.Disable(t.Context(), DisableInput{UserID: h.user.ID, Factor: h.codes[0]}); err != nil {
 		t.Errorf("disabling with a recovery code: %v", err)
 	}
@@ -731,8 +603,6 @@ func TestDisablingRequiresASecondFactor(t *testing.T) {
 	}
 }
 
-// TestDisablingRevokesSessionsAndAnnouncesIt, because a user who turns MFA off
-// has very often had it turned off FOR them.
 func TestDisablingRevokesSessionsAndAnnouncesIt(t *testing.T) {
 	h := newHarness(t)
 	h.enroll()
@@ -756,7 +626,6 @@ func TestDisablingRevokesSessionsAndAnnouncesIt(t *testing.T) {
 	if strings.Contains(string(events[0].Data), h.secret) {
 		t.Error("the disable event carries the secret")
 	}
-	// The credential, its codes and its spent steps are all gone.
 	for _, table := range []string{"mfa_credentials", "mfa_recovery_codes", "mfa_used_totp_steps"} {
 		var n int
 		if err := h.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+table+` WHERE credential_id = $1`,
@@ -766,8 +635,6 @@ func TestDisablingRevokesSessionsAndAnnouncesIt(t *testing.T) {
 	}
 }
 
-// credentialIDOrZero returns the id of a credential that Disable has just removed,
-// so the assertion above can find its rows by a key that no longer has a parent.
 func (h *harness) credentialIDOrZero() id.UUID {
 	var raw string
 	if err := h.pool.QueryRow(h.t.Context(),
@@ -775,14 +642,9 @@ func (h *harness) credentialIDOrZero() id.UUID {
 		outbox.EventMFADisabled).Scan(&raw); err != nil {
 		h.t.Fatalf("reading the disable event: %v", err)
 	}
-	// The event's subject is the user, and the credential is gone, so query by the
-	// one join that still works: nothing.
 	return id.UUID{}
 }
 
-// TestDisablingRefusesWhenTheSecondFactorIsLocked, and does not count the attempt.
-// A locked factor must not be probeable, which is why the lock check comes before
-// the verification.
 func TestDisablingRefusesWhenTheSecondFactorIsLocked(t *testing.T) {
 	h := newHarness(t)
 	h.enroll()
@@ -802,31 +664,19 @@ func TestDisablingRefusesWhenTheSecondFactorIsLocked(t *testing.T) {
 		t.Errorf("RetryAfter = %s, want %s", locked.RetryAfter, sessions.LockoutDuration)
 	}
 
-	// A LOCKED factor refuses even a CORRECT code, which is the property worth
-	// having: it is what stops an attacker from using a correct code to probe
-	// whether a lock has expired.
 	if _, err := h.svc.VerifyFactor(t.Context(), h.user.ID, h.code(), h.now()); !errors.As(err, &locked) {
 		t.Errorf("a correct code during a lock = %v, want a *sessions.LockedError", err)
 	}
-	// And disabling is refused too, rather than being a way past the lock.
 	if err := h.svc.Disable(t.Context(), DisableInput{UserID: h.user.ID, Factor: h.codes[0]}); !errors.As(err, &locked) {
 		t.Errorf("disabling during a lock = %v, want a *sessions.LockedError", err)
 	}
 
-	// The window closing lifts it, with no sweeper: expiry is decided on read.
 	h.clk.Advance(sessions.LockoutDuration + time.Second)
 	if _, err := h.svc.VerifyFactor(t.Context(), h.user.ID, h.code(), h.now()); err != nil {
 		t.Errorf("the lock did not lapse: %v", err)
 	}
 }
 
-// TestTheFactorLockoutIsThisLockout runs one table of counter transitions through
-// both this package's use of it and internal/sessions' — the same table the
-// password path runs — so the two cannot drift apart silently.
-//
-// They are the same type today, which is the point; this test exists so that if
-// somebody later gives MFA its own numbers, the SHARED semantics are still
-// asserted rather than assumed.
 func TestTheFactorLockoutIsThisLockout(t *testing.T) {
 	cases := []struct {
 		name string
@@ -847,10 +697,6 @@ func TestTheFactorLockoutIsThisLockout(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			// This package reaches the policy through a credential row, so exercise
-			// it that way rather than calling sessions.Lockout directly: the point
-			// is that the credential's counter and the users row's counter are the
-			// same arithmetic.
 			pool := dbtest.Schema(t)
 			store := NewStore(pool)
 			user := newTestUser(t, pool)
@@ -887,16 +733,12 @@ func TestTheFactorLockoutIsThisLockout(t *testing.T) {
 
 func ptr[T any](v T) *T { return &v }
 
-// TestADeploymentWithNoKeyFailsClosed. The failure mode is the whole reason
-// Unavailable is a type rather than a nil: an enrolled user must not be let in on
-// their password by a deployment that cannot decrypt anything.
 func TestADeploymentWithNoKeyFailsClosed(t *testing.T) {
 	pool := dbtest.Schema(t)
 	clk := clock.NewFake(issuedAt)
 	store := NewStore(pool)
 	user := newTestUser(t, pool)
 
-	// Enroll with a key, so there is a real secret in the row.
 	real := NewService(db.TxRunner{Pool: pool}, db.Direct{Pool: pool}, store,
 		outbox.NewStore(pool), sessions.NewStore(pool), mustVault(t), clk, testIssuer)
 	started, err := real.StartEnrollment(t.Context(), StartEnrollmentInput{UserID: user.ID})
@@ -914,7 +756,6 @@ func TestADeploymentWithNoKeyFailsClosed(t *testing.T) {
 		t.Fatalf("Confirm: %v", err)
 	}
 
-	// Now the process loses its key.
 	keyless := NewService(db.TxRunner{Pool: pool}, db.Direct{Pool: pool}, store,
 		outbox.NewStore(pool), sessions.NewStore(pool), Unavailable{}, clk, testIssuer)
 
@@ -930,8 +771,6 @@ func TestADeploymentWithNoKeyFailsClosed(t *testing.T) {
 	if err := keyless.Disable(t.Context(), DisableInput{UserID: user.ID, Factor: code}); !errors.Is(err, ErrNoVault) {
 		t.Errorf("disabling with no key = %v, want ErrNoVault", err)
 	}
-	// And a recovery code needs no key, so a user with a lost phone and no
-	// deployment key is not locked out of their own account.
 	if _, err := real.StatusFor(t.Context(), user.ID); err != nil {
 		t.Fatalf("StatusFor: %v", err)
 	}

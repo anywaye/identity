@@ -10,37 +10,17 @@ import (
 	"github.com/anywaye/identity/internal/platform/db"
 )
 
-// A pool and a transaction that are SEPARATE OBJECTS and record separately.
-//
-// The separation is the whole point of this fake. "The identity was set on the
-// transaction" and "the identity was set on the pool" are opposite properties —
-// one is the boundary, the other is a cross-tenant leak waiting for a pooled
-// connection to change hands — and a fake built as one object would report the
-// same thing for both. So `Begin` hands back a DIFFERENT type, and the two keep
-// their own statement lists.
 type recordingPool struct {
 	tx *recordingTx
 
-	// began records that a transaction was opened at all, so a test can tell
-	// "no statement reached the pool" from "the pool was never asked".
 	began bool
-	// execs is everything issued to the pool directly — which, for this seam, is
-	// only ever a mistake: begin_account is transaction-local and a pool-level
-	// set_config would outlive the request.
 	execs []string
 	args  [][]any
 }
 
 type recordingTx struct {
-	// failBeginAccountWith makes the identity statement fail, which is how a
-	// refused `anywaye.begin_account` reaches the code under test without a
-	// database.
 	failBeginAccountWith error
 
-	// onExec fires for every statement issued to EITHER side. A test uses it to
-	// observe ORDERING — specifically that the identity is set before the use case
-	// runs, since a seam that set it afterwards would leave every account-scoped
-	// INSERT among the use case's first statements refused with 42501.
 	onExec func(sql string, args []any)
 
 	execs []string
@@ -112,10 +92,6 @@ func (t *recordingTx) Rollback(context.Context) error {
 	return nil
 }
 
-// The rest of pgx.Tx is not used by db.TxRunner and is here only to satisfy the
-// interface. Each returns an error or panics rather than a silent zero value,
-// because a no-op Commit or a zero Rows would let a defect in db.TxRunner pass as
-// a green run.
 func (t *recordingTx) CopyFrom(context.Context, pgx.Identifier, []string, pgx.CopyFromSource) (int64, error) {
 	return 0, errors.New("not used by the account seam")
 }

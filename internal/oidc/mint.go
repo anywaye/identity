@@ -24,30 +24,10 @@ const AccountTokenTTL = 15 * time.Minute
 
 // MintedToken is one access token, ready to hand to the service that asked for it.
 type MintedToken struct {
-	// Token is the compact JWS. It is signed with the same key the JWKS
-	// publishes, so any verifier that trusts this provider's key set can check
-	// it without calling identity.
 	Token string
-	// ExpiresAt is the `exp` instant, told to the caller so it does not have to
-	// parse the token it is about to hand on.
 	ExpiresAt time.Time
 }
 
-// accountTokenClaims is the claim set of an exchanged token, written out so the
-// names are greppable rather than living in a `map[string]any`.
-//
-// ## Why these claims and not the profile
-//
-// Minimal claims is the platform's rule for delegated credentials (MD19): what
-// the receiving service is declared to need, not whatever identity happens to
-// know. The receiving service here is one that scopes by a SINGLE account, so the
-// token names one account (`account_id`, singular) and deliberately does NOT carry
-// the `accounts` array a profile-scope access token carries. Sending both would be
-// two answers to one question in the same token, and the first service that read
-// the wrong one would be a tenancy bug that works.
-//
-// `email` is absent for the same rule: no receiver of this token has been
-// declared to need the address, and a claim nothing reads is a claim that leaks.
 type accountTokenClaims struct {
 	Issuer    string `json:"iss"`
 	Audience  string `json:"aud"`
@@ -55,8 +35,6 @@ type accountTokenClaims struct {
 	IssuedAt  int64  `json:"iat"`
 	ExpiresAt int64  `json:"exp"`
 	JWTID     string `json:"jti"`
-	// AccountID is the account this token is bound to, singular, verified to be
-	// one the subject is a member of before anything is signed.
 	AccountID string `json:"account_id"`
 }
 
@@ -90,11 +68,6 @@ func (p *Provider) MintAccountToken(subject, accountID id.UUID, audience string,
 		return MintedToken{}, ErrNoSigningKey
 	}
 
-	// The signer is built per call rather than cached on the provider, and that is
-	// the honest shape: go-jose's signer holds the key and the header, both of
-	// which are process-lifetime constants, and building one is a struct
-	// allocation. Caching it would add a second place the key is held for no
-	// measurable gain.
 	signer, err := jose.NewSigner(
 		jose.SigningKey{Algorithm: key.SignatureAlgorithm(), Key: key.Key()},
 		(&jose.SignerOptions{}).WithType("JWT").WithHeader(jose.HeaderKey("kid"), key.ID()),

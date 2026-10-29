@@ -1,12 +1,5 @@
 package main
 
-// THE OPERATOR COMMAND'S TESTS, in two halves.
-//
-// parse is pure: the table below drives every usage error without a database,
-// so a typo in the argument handling is red here rather than in an operator's
-// terminal. apply needs a database and is in staff_integration_test.go, which
-// runs wherever TEST_DATABASE_URL points — the same split the service's own
-// suites use.
 
 import (
 	"testing"
@@ -22,8 +15,6 @@ func TestParseAcceptsTheThreeActionsWithANormalizedAddress(t *testing.T) {
 			if string(act) != verb {
 				t.Errorf("action = %q, want %q", act, verb)
 			}
-			// Normalized exactly as registration normalizes: the lookup below
-			// must find the row the registration stored.
 			if email != "kaka@example.com" {
 				t.Errorf("email = %q, want the normalized kaka@example.com", email)
 			}

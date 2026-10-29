@@ -14,8 +14,6 @@ func TestNewTokenProducesAURLSafeHighEntropySecret(t *testing.T) {
 		t.Fatalf("NewToken: %v", err)
 	}
 
-	// base64url without padding: the token goes in a cookie value and in a JSON
-	// body, and neither wants '+', '/' or '='.
 	for _, bad := range []string{"+", "/", "="} {
 		if strings.Contains(token, bad) {
 			t.Errorf("token %q contains %q; it must be base64url without padding", token, bad)
@@ -31,8 +29,6 @@ func TestNewTokenProducesAURLSafeHighEntropySecret(t *testing.T) {
 	}
 }
 
-// The digest is what the row stores. If it ever equals the token, the column is
-// holding a bearer credential in the clear.
 func TestNewTokenNeverStoresTheTokenItself(t *testing.T) {
 	t.Parallel()
 
@@ -44,8 +40,6 @@ func TestNewTokenNeverStoresTheTokenItself(t *testing.T) {
 	if digest == token {
 		t.Fatal("the digest equals the token; the raw credential would be in the database")
 	}
-	// The pair NewToken returns has to be the pair the lookup uses, or every
-	// login would mint a session nothing can authenticate against.
 	if want := Digest(token); digest != want {
 		t.Errorf("digest = %q, want Digest(token) = %q", digest, want)
 	}
@@ -70,9 +64,6 @@ func TestNewTokenIsUnique(t *testing.T) {
 	}
 }
 
-// A lookup works by hashing the presented token and matching the digest, so the
-// digest has to be deterministic across calls and processes. A salted digest here
-// would make every request a fresh lookup that finds nothing.
 func TestDigestIsDeterministic(t *testing.T) {
 	t.Parallel()
 
@@ -106,9 +97,6 @@ func TestDigestDistinguishesTokens(t *testing.T) {
 func TestDigestIsLowercaseHexOfSHA256(t *testing.T) {
 	t.Parallel()
 
-	// Pinned so a change of algorithm cannot pass silently: every existing row's
-	// token_digest is computed under this one, and switching would lock
-	// everybody out.
 	const want = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
 
 	if got := Digest("hello"); got != want {
@@ -116,10 +104,6 @@ func TestDigestIsLowercaseHexOfSHA256(t *testing.T) {
 	}
 }
 
-// An absent or garbage token must still produce a well-formed digest, so the
-// lookup is an ordinary indexed equality test that finds nothing. Returning an
-// error or an empty string here would leak, through a different code path and a
-// different response time, whether the caller had supplied anything at all.
 func TestDigestOfGarbageIsStillAWellFormedDigest(t *testing.T) {
 	t.Parallel()
 

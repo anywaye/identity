@@ -15,13 +15,6 @@ import (
 	"github.com/anywaye/identity/internal/platform/id"
 )
 
-// The store, over a real Postgres in a private schema.
-//
-// The tests run the SQL rather than a double because the interesting properties
-// are properties of the SCHEMA and of the CONDITIONAL UPDATE — the partial
-// unique index that makes rotation two requests, the CHECK that makes
-// unclaimed → disabled unrepresentable, the WHERE that makes two concurrent
-// claims one claim — and none of them exist in a fake.
 
 var testInstant = time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
 
@@ -32,8 +25,6 @@ type fixture struct {
 	account id.UUID
 }
 
-// theClaimDigest is a syntactically valid 64-hex digest, so a probe of the shape
-// a caller could send is the same shape a real one is.
 func theClaimDigest(tag string) string {
 	return Digest("anywaye_" + strings.Repeat("c", 43) + tag)
 }
@@ -53,9 +44,6 @@ func newFixture(t *testing.T) *fixture {
 	return f
 }
 
-// seed writes the one account the foreign key needs. An agent registers with no
-// account at all, which is the whole point of the table, so the claim is what
-// gives a fixture its account.
 func (f *fixture) seed(t *testing.T) {
 	t.Helper()
 
@@ -67,7 +55,6 @@ func (f *fixture) seed(t *testing.T) {
 	}
 }
 
-// register writes an unclaimed agent through the store under test.
 func (f *fixture) register(t *testing.T, name string) Agent {
 	t.Helper()
 
@@ -84,9 +71,6 @@ func (f *fixture) register(t *testing.T, name string) Agent {
 	return agent
 }
 
-// TestARegisteredAgentIsUnclaimedAndCarriesNoAuthority is the row W1-P2's
-// registration route writes, asserted at the store so the shape is pinned
-// before any route depends on it.
 func TestARegisteredAgentIsUnclaimedAndCarriesNoAuthority(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
@@ -108,48 +92,29 @@ func TestARegisteredAgentIsUnclaimedAndCarriesNoAuthority(t *testing.T) {
 	if agent.Device["host"] != "box-1" {
 		t.Errorf("the device document did not survive the round trip: %v", agent.Device)
 	}
-	// Equal rather than ==: a time read back from Postgres carries the SESSION's
-	// location, and two representations of one instant are one instant.
 	if !agent.CreatedAt.Equal(testInstant) {
 		t.Errorf("created_at = %v, want the service's clock %v", agent.CreatedAt, testInstant)
 	}
 
-	// The plaintext claim link is nowhere: the struct has no field for it, and
-	// the row holds only the digest.
 	if agent.ClaimTokenDigest != nil && strings.Contains(*agent.ClaimTokenDigest, "anywaye_") {
 		t.Error("the row holds the claim link itself rather than its digest")
 	}
 
-	// And it is not readable by a stranger guessing a digest.
 	if _, err := f.store.ByClaimDigest(ctx, f.store.Pool(), theClaimDigest("wrong"), f.clk.Now()); !errors.Is(err, ErrNotFound) {
 		t.Errorf("an unknown claim digest returned %v, want ErrNotFound", err)
 	}
 }
 
-// TestAClaimLinkResolvesOnlyWhileItIsLiveIsUnclaimedAndIsNotYetSpent is the
-// claim route's lookup, and its three filters are the point: a wrong digest, an
-// already-claimed agent and an expired link are ONE answer.
 func TestAClaimLinkResolvesOnlyWhileItIsLiveIsUnclaimedAndIsNotYetSpent(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 
 	agent := f.register(t, "Noel")
 
-	// A live link resolves.
 	if _, err := f.store.ByClaimDigest(ctx, f.store.Pool(), theClaimDigest("Noel"), f.clk.Now()); err != nil {
 		t.Fatalf("a live claim link did not resolve: %v", err)
 	}
 
-	// THREE REFUSALS, AND THEY ARE THE SAME VALUE.
-	//
-	//   an expired link        the clock has passed the expiry
-	//   an already-claimed     the agent is bound
-	//   a digest that was
-	//   never issued           a stranger guessing
-	//
-	// Each is asserted to be ErrNotFound and nothing else, so a future change
-	// that made one of them distinguishable would be visible here rather than in
-	// a 410 on a route a stranger can reach.
 	cases := []struct {
 		name   string
 		now    time.Time
@@ -190,9 +155,6 @@ func TestAClaimLinkResolvesOnlyWhileItIsLiveIsUnclaimedAndIsNotYetSpent(t *testi
 		})
 	}
 
-	// THE BOUNDARY ITSELF. `expires_at > now`, so an expiry exactly at now is
-	// spent. Two implementations of one boundary is how a link stays redeemable
-	// for a second longer than the response that used it said it would.
 	_, err := f.store.ByClaimDigest(ctx, f.store.Pool(), theClaimDigest("Noel"),
 		testInstant.Add(ClaimLinkTTL))
 	if !errors.Is(err, ErrNotFound) {
@@ -200,11 +162,6 @@ func TestAClaimLinkResolvesOnlyWhileItIsLiveIsUnclaimedAndIsNotYetSpent(t *testi
 	}
 }
 
-// TestTheClaimSpendsTheLinkAndBindsTheAccount is the conditional UPDATE.
-//
-// ZERO ROWS IS THE 404, and the 404 never says "expired": the statement's WHERE
-// carries the digest, the status and the expiry together, so the database is what
-// decides and there is no read to disagree with.
 func TestTheClaimSpendsTheLinkAndBindsTheAccount(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
@@ -227,8 +184,6 @@ func TestTheClaimSpendsTheLinkAndBindsTheAccount(t *testing.T) {
 	if claimed.ClaimedAt == nil || !claimed.ClaimedAt.Equal(testInstant) {
 		t.Errorf("claimed_at = %v, want the service's clock", claimed.ClaimedAt)
 	}
-	// THE LINK IS SPENT, and spent means the digest is gone rather than
-	// merely unreachable.
 	if claimed.ClaimTokenDigest != nil {
 		t.Errorf("the claim link's digest survived the claim: %v", *claimed.ClaimTokenDigest)
 	}
@@ -236,19 +191,14 @@ func TestTheClaimSpendsTheLinkAndBindsTheAccount(t *testing.T) {
 		t.Error("the claim link's expiry survived the claim")
 	}
 
-	// A SECOND CLAIM ON THE SAME LINK updates zero rows, and the answer is
-	// ErrAlreadyClaimed to the caller that holds the row — which the route
-	// renders as the same 404 a wrong token gets.
 	if _, err := f.store.Claim(ctx, f.store.Pool(), agent.ID, theClaimDigest("Noel"), f.account, testInstant); !errors.Is(err, ErrAlreadyClaimed) {
 		t.Errorf("a second claim returned %v, want ErrAlreadyClaimed", err)
 	}
 
-	// And the spent link no longer resolves to the row at all.
 	if _, err := f.store.ByClaimDigest(ctx, f.store.Pool(), theClaimDigest("Noel"), f.clk.Now()); !errors.Is(err, ErrNotFound) {
 		t.Errorf("a spent claim link still resolved: %v", err)
 	}
 
-	// The account now lists it.
 	listed, err := f.store.ListForAccount(ctx, f.store.Pool(), f.account)
 	if err != nil {
 		t.Fatalf("listing the account's agents: %v", err)
@@ -257,8 +207,6 @@ func TestTheClaimSpendsTheLinkAndBindsTheAccount(t *testing.T) {
 		t.Fatalf("the account lists %d agents, want the one just claimed", len(listed))
 	}
 
-	// An account that claimed nothing lists nothing, rather than listing the
-	// unclaimed agents of the world.
 	other := id.MustNew()
 	if _, err := f.store.Pool().Exec(ctx,
 		`INSERT INTO accounts (id, name, slug) VALUES ($1, $2, $3)`,
@@ -274,21 +222,16 @@ func TestTheClaimSpendsTheLinkAndBindsTheAccount(t *testing.T) {
 	}
 }
 
-// TestTheClaimRouteCannotBindAnAccountWithAWrongToken is the 404 the whole
-// surface is shaped around: a wrong digest, an expired link and an agent that
-// never existed are indistinguishable.
 func TestTheClaimRouteCannotBindAnAccountWithAWrongToken(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 
 	agent := f.register(t, "Noel")
 
-	// A wrong digest is refused, and it binds nothing.
 	if _, err := f.store.Claim(ctx, f.store.Pool(), agent.ID, theClaimDigest("wrong"), f.account, testInstant); !errors.Is(err, ErrNotFound) {
 		t.Errorf("a claim with the wrong digest returned %v, want ErrNotFound", err)
 	}
 
-	// The row is untouched by the refusal.
 	reloaded, err := f.store.ByID(ctx, f.store.Pool(), agent.ID)
 	if err != nil {
 		t.Fatalf("reloading after the refusal: %v", err)
@@ -300,16 +243,12 @@ func TestTheClaimRouteCannotBindAnAccountWithAWrongToken(t *testing.T) {
 		t.Error("a refused claim spent the link")
 	}
 
-	// And an agent that never existed is the same value.
 	missing := id.MustNew()
 	if _, err := f.store.Claim(ctx, f.store.Pool(), missing, theClaimDigest("Noel"), f.account, testInstant); !errors.Is(err, ErrNotFound) {
 		t.Errorf("a claim against an agent that never existed returned %v, want ErrNotFound", err)
 	}
 }
 
-// TestRefreshClaimLinkReplacesTheLinkWithoutClaiming is W1-P2's rotation, and
-// the property that matters is that "give me a new link" can never bind an
-// account.
 func TestRefreshClaimLinkReplacesTheLinkWithoutClaiming(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
@@ -330,7 +269,6 @@ func TestRefreshClaimLinkReplacesTheLinkWithoutClaiming(t *testing.T) {
 		t.Fatalf("the row does not carry the new digest")
 	}
 
-	// The OLD link is dead and the NEW one resolves.
 	if _, err := f.store.ByClaimDigest(ctx, f.store.Pool(), first, f.clk.Now()); !errors.Is(err, ErrNotFound) {
 		t.Errorf("the superseded link still resolved: %v", err)
 	}
@@ -338,8 +276,6 @@ func TestRefreshClaimLinkReplacesTheLinkWithoutClaiming(t *testing.T) {
 		t.Errorf("the refreshed link did not resolve: %v", err)
 	}
 
-	// A CLAIMED agent has no link to refresh, and the WHERE says so: zero rows,
-	// ErrNotFound, no credential resurrected.
 	if _, err := f.store.Claim(ctx, f.store.Pool(), agent.ID, second, f.account, testInstant); err != nil {
 		t.Fatalf("claiming with the refreshed link: %v", err)
 	}
@@ -348,16 +284,12 @@ func TestRefreshClaimLinkReplacesTheLinkWithoutClaiming(t *testing.T) {
 	}
 }
 
-// TestSetStatusIsGuardedByTheStateMachine is the second of the two layers that
-// refuse unclaimed → disabled. The table's CHECK is the first; this is the one a
-// caller reaches before either.
 func TestSetStatusIsGuardedByTheStateMachine(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 
 	agent := f.register(t, "Noel")
 
-	// UNCLAIMED → DISABLED is refused in Go, with the transition named.
 	_, err := f.store.SetStatus(ctx, f.store.Pool(), agent.ID, StatusDisabled, testInstant)
 	if !errors.Is(err, ErrIllegalTransition) {
 		t.Fatalf("disabling an unclaimed agent returned %v, want ErrIllegalTransition", err)
@@ -366,17 +298,12 @@ func TestSetStatusIsGuardedByTheStateMachine(t *testing.T) {
 		t.Errorf("the refusal does not name the transition it refused: %v", err)
 	}
 
-	// AND IN THE TABLE, which is the layer a psql session cannot bypass. The Go
-	// guard is proved first; this writes the illegal state directly to show the
-	// CHECK refuses it too, because a caller who got past one would meet the other.
 	_, dbErr := f.store.Pool().Exec(ctx,
 		`UPDATE agents SET status = 'disabled' WHERE id = $1`, agent.ID)
 	if dbErr == nil {
 		t.Fatal("the database accepted unclaimed → disabled, and the CHECK exists to refuse it")
 	}
 
-	// The legal moves work, and the re-enable brings the agent back rather than
-	// making a new one.
 	if _, err := f.store.Claim(ctx, f.store.Pool(), agent.ID, theClaimDigest("Noel"), f.account, testInstant); err != nil {
 		t.Fatalf("claiming: %v", err)
 	}
@@ -384,8 +311,6 @@ func TestSetStatusIsGuardedByTheStateMachine(t *testing.T) {
 	if err != nil {
 		t.Fatalf("disabling a claimed agent: %v", err)
 	}
-	// A DISABLED AGENT IS STILL CLAIMED — "was it claimed" and "is it live" are
-	// two questions, and IsClaimed answers the first.
 	if !disabled.IsClaimed() {
 		t.Error("a disabled agent reports it was never claimed")
 	}
@@ -397,15 +322,11 @@ func TestSetStatusIsGuardedByTheStateMachine(t *testing.T) {
 		t.Error("re-enabling produced a different agent")
 	}
 
-	// And an un-claim is not a transition anybody may ask for.
 	if _, err := f.store.SetStatus(ctx, f.store.Pool(), agent.ID, StatusUnclaimed, testInstant.Add(3*time.Minute)); !errors.Is(err, ErrIllegalTransition) {
 		t.Errorf("un-claiming returned %v, want ErrIllegalTransition", err)
 	}
 }
 
-// TestAnAgentCredentialResolvesOnlyForAClaimedPrincipal is the introspection
-// join, and it is four filters rather than one: a revoked token, a spent token,
-// an agent that is disabled and a digest that was never issued are one answer.
 func TestAnAgentCredentialResolvesOnlyForAClaimedPrincipal(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
@@ -437,8 +358,6 @@ func TestAnAgentCredentialResolvesOnlyForAClaimedPrincipal(t *testing.T) {
 		t.Error("a live credential for a claimed agent reports unusable")
 	}
 
-	// A token held by a DISABLED agent does not resolve. The principal's status
-	// is in the WHERE, so this is the query's answer and not a caller's check.
 	if _, err := f.store.SetStatus(ctx, f.store.Pool(), agent.ID, StatusDisabled, testInstant); err != nil {
 		t.Fatalf("disabling: %v", err)
 	}
@@ -446,7 +365,6 @@ func TestAnAgentCredentialResolvesOnlyForAClaimedPrincipal(t *testing.T) {
 		t.Errorf("a token held by a disabled agent resolved: %v", err)
 	}
 
-	// A revoked token does not resolve, and it is the same answer.
 	if _, err := f.store.SetStatus(ctx, f.store.Pool(), agent.ID, StatusClaimed, testInstant); err != nil {
 		t.Fatalf("re-enabling: %v", err)
 	}
@@ -461,13 +379,10 @@ func TestAnAgentCredentialResolvesOnlyForAClaimedPrincipal(t *testing.T) {
 		t.Errorf("a revoked credential resolved: %v", err)
 	}
 
-	// A second revocation of the same row is told apart, because the caller
-	// already holds the row and "I clicked twice" is worth an honest answer.
 	if _, err := f.store.RevokeToken(ctx, f.store.Pool(), live.ID, agent.ID, testInstant, "again"); !errors.Is(err, ErrAlreadyRevoked) {
 		t.Errorf("a second revocation returned %v, want ErrAlreadyRevoked", err)
 	}
 
-	// A token that expired does not resolve.
 	spent, err := f.store.CreateToken(ctx, f.store.Pool(), NewAgentToken{
 		AgentID:   agent.ID,
 		Name:      "short-lived",
@@ -482,15 +397,11 @@ func TestAnAgentCredentialResolvesOnlyForAClaimedPrincipal(t *testing.T) {
 		t.Errorf("a spent credential resolved: %v", err)
 	}
 
-	// And one that was never issued is the same value as all three above.
 	if _, err := f.store.ByTokenDigest(ctx, f.store.Pool(), theTokenDigest("nobody"), testInstant); !errors.Is(err, ErrNotFound) {
 		t.Errorf("an unknown credential digest returned %v, want ErrNotFound", err)
 	}
 }
 
-// TestOneLiveTokenPerNamePerAgent is what makes rotation two requests rather
-// than a transaction: a revoked "ci-deploy" and the live one that replaced it
-// coexist, and two LIVE ones do not.
 func TestOneLiveTokenPerNamePerAgent(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
@@ -517,8 +428,6 @@ func TestOneLiveTokenPerNamePerAgent(t *testing.T) {
 
 	first := mint("ci-deploy", "first")
 
-	// mintExpectingFail mints a token the store is expected to refuse, so the
-	// collision is asserted on the ERROR rather than on a row that must not exist.
 	mintRefused := func(name, tag string) error {
 		t.Helper()
 		_, err := f.store.CreateToken(ctx, f.store.Pool(), NewAgentToken{
@@ -535,7 +444,6 @@ func TestOneLiveTokenPerNamePerAgent(t *testing.T) {
 		t.Fatalf("a second live token of the same name returned %v, want ErrNameTaken", err)
 	}
 
-	// Revoke the first and the name is free again, which is the whole arrangement.
 	if _, err := f.store.RevokeToken(ctx, f.store.Pool(), first.ID, agent.ID, testInstant, "rotated"); err != nil {
 		t.Fatalf("revoking: %v", err)
 	}
@@ -544,8 +452,6 @@ func TestOneLiveTokenPerNamePerAgent(t *testing.T) {
 		t.Error("the rotation returned the revoked row")
 	}
 
-	// The agent lists both, newest first, revoked ones included: "was this
-	// withdrawn, or was it always broken?" is a support question.
 	listed, err := f.store.ListTokensForAgent(ctx, f.store.Pool(), agent.ID)
 	if err != nil {
 		t.Fatalf("listing: %v", err)
@@ -555,11 +461,6 @@ func TestOneLiveTokenPerNamePerAgent(t *testing.T) {
 	}
 }
 
-// TestTouchIsBoundedAndASuccessEitherWay is the only write on the read path.
-//
-// Zero rows is the rate limit working, not a failure, and a revoked token is
-// never touched — `last_used_at` on a dead credential is a column asserting
-// that it was working.
 func TestTouchIsBoundedAndASuccessEitherWay(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
@@ -590,7 +491,6 @@ func TestTouchIsBoundedAndASuccessEitherWay(t *testing.T) {
 		t.Fatal("the first touch did not record a use")
 	}
 
-	// A second touch inside the window is a SUCCESS and leaves the column alone.
 	if err := f.store.Touch(ctx, f.store.Pool(), token.ID, testInstant.Add(time.Minute)); err != nil {
 		t.Fatalf("a touch inside the window returned an error, and zero rows is the limit working: %v", err)
 	}
@@ -602,7 +502,6 @@ func TestTouchIsBoundedAndASuccessEitherWay(t *testing.T) {
 		t.Errorf("a touch inside the window moved last_used_at from %v to %v", afterFirst.LastUsedAt, afterSecond.LastUsedAt)
 	}
 
-	// Past the window it moves again.
 	if err := f.store.Touch(ctx, f.store.Pool(), token.ID, testInstant.Add(TokenTouchWindow+time.Minute)); err != nil {
 		t.Fatalf("a touch past the window: %v", err)
 	}
@@ -615,10 +514,6 @@ func TestTouchIsBoundedAndASuccessEitherWay(t *testing.T) {
 	}
 }
 
-// TestTheDatabaseTierActuallyRan fails rather than skips when TEST_DATABASE_URL
-// is unset. Everything in this file is a database test, so without the variable
-// this whole file has proven nothing and a suite reporting "ok" has reported
-// something false.
 func TestTheDatabaseTierActuallyRan(t *testing.T) {
 	if os.Getenv(dbtest.EnvVar) == "" {
 		t.Fatalf("%s is not set, so every test in this file skipped. A green run without it verifies nothing: "+

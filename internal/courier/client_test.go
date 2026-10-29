@@ -11,16 +11,7 @@ import (
 	"time"
 )
 
-// The contract, as a table.
-//
-// Every case here is something courier's own `openapi.yaml` declares for
-// `POST /v1/messages`, and each one is paired with a presence assertion: a client
-// that answered `ErrUnavailable` for everything would pass a table of "the send
-// failed" rows and be useless, so the accepted row is asserted as carefully as each
-// refusal.
 func TestSendMessageReadsCouriersContract(t *testing.T) {
-	// A uuid courier will accept: it is only checked for shape, and this one is the
-	// nil uuid written out so the fixture does not depend on a random generator.
 	const userID = "6f5d4c3b-2a19-4e8f-9c07-1b2d3e4f5061"
 
 	problem := func(status int, code, detail string, extra map[string]any) string {
@@ -48,7 +39,7 @@ func TestSendMessageReadsCouriersContract(t *testing.T) {
 		contentType string
 		body        string
 		wantErrIs   error
-		wantStatus  int // 0 when the call should succeed
+		wantStatus  int
 		wantRetry   bool
 		check       func(*testing.T, MessageResult)
 	}{
@@ -206,18 +197,11 @@ func TestSendMessageReadsCouriersContract(t *testing.T) {
 			if seen == nil {
 				t.Fatal("courier was never called")
 			}
-			// Every row must be a real send, or the table is testing a no-op.
 			assertSentShape(t, seen)
 		})
 	}
 }
 
-// TestRetryabilityIsAPropertyOfTheRefusal pins the one thing a caller branches on
-// that the status alone does not give: whether trying again can help.
-//
-// It is a separate test because it is the only claim in this package about the
-// FUTURE rather than about a response, and a table row cannot say "and this one you
-// may retry" without the answer being lost among the statuses.
 func TestRetryabilityIsAPropertyOfTheRefusal(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -288,14 +272,6 @@ func TestRetryabilityIsAPropertyOfTheRefusal(t *testing.T) {
 	}
 }
 
-// TestTheRequestIsExactlyCouriersVocabulary is the assertion that keeps this client
-// from inventing a field.
-//
-// courier's document declares `additionalProperties: false` over a closed list, so
-// one extra key is a 422 and the send does not happen. The marshaled body is
-// therefore compared against the document's list, and `url` is required for
-// `password_reset` — which means an empty `URL` is refused HERE rather than
-// discovered as a 422 from a network round trip.
 func TestTheRequestIsExactlyCouriersVocabulary(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -362,10 +338,6 @@ func TestTheRequestIsExactlyCouriersVocabulary(t *testing.T) {
 	}
 }
 
-// TestTheRequestIsRefusedBeforeTheNetwork is the assertion behind the argument that
-// this client validates what it can: a `password_reset` with no link is a 422 from
-// courier, and finding that out over the network means a token has been minted and
-// a row written for a send that was never going to leave.
 func TestTheRequestIsRefusedBeforeTheNetwork(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -379,7 +351,6 @@ func TestTheRequestIsRefusedBeforeTheNetwork(t *testing.T) {
 		Type:   TypePasswordReset,
 		UserID: "6f5d4c3b-2a19-4e8f-9c07-1b2d3e4f5061",
 		To:     "kaka@example.com",
-		// No URL. courier requires one for password_reset.
 	})
 	if err == nil {
 		t.Fatal("SendMessage accepted a password_reset with no link")
@@ -389,15 +360,6 @@ func TestTheRequestIsRefusedBeforeTheNetwork(t *testing.T) {
 	}
 }
 
-// TestATeamInvitationMissingARequiredFieldIsRefusedBeforeTheNetwork is the
-// team_invitation half of the refusal above, and one row per field is the
-// shape because the four required fields are four different ways to be
-// missing exactly one: a test that named no field would pass on a client
-// that refused them all for the wrong reason, and a test with one case per
-// field names the one that was wrong.
-//
-// THE REASON IS THE password_reset ONE: by the time courier answers a 422, an
-// invitation has been created and the admin has been told it was emailed.
 func TestATeamInvitationMissingARequiredFieldIsRefusedBeforeTheNetwork(t *testing.T) {
 	const validID = "6f5d4c3b-2a19-4e8f-9c07-1b2d3e4f5061"
 	const validURL = "https://app.example.com/invitations/accept?token=abc"
@@ -469,8 +431,6 @@ func TestATeamInvitationMissingARequiredFieldIsRefusedBeforeTheNetwork(t *testin
 	}
 }
 
-// TestTheCredentialIsBearerAndNothingElse pins the one thing courier's
-// `:authenticated` pipeline reads.
 func TestTheCredentialIsBearerAndNothingElse(t *testing.T) {
 	var seen *http.Request
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -518,9 +478,6 @@ func TestTheCredentialIsBearerAndNothingElse(t *testing.T) {
 	}
 }
 
-// TestTheRequestIsBoundedAndTheWaitIsTheUsers is the latency decision made
-// explicit and checkable: a password reset blocks on courier blocking on SMTP, and
-// the bound is what stops a slow relay from holding a browser's request open.
 func TestTheRequestIsBoundedAndTheWaitIsTheUsers(t *testing.T) {
 	release := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -557,15 +514,11 @@ func TestTheRequestIsBoundedAndTheWaitIsTheUsers(t *testing.T) {
 	if !Retryable(err) {
 		t.Error("a timeout was reported as not retryable; courier releases a failed key, so it is")
 	}
-	// A canceled caller must still be recognizable, because the difference between
-	// "the user gave up" and "courier is slow" is what an operator reads.
 	if !isError(err, context.DeadlineExceeded) {
 		t.Error("the error does not match context.DeadlineExceeded, so a canceled caller is indistinguishable")
 	}
 }
 
-// assertSentShape checks the four things every row of the contract table above must
-// have done, so that a row cannot pass by never reaching courier.
 func assertSentShape(t *testing.T, seen *http.Request) {
 	t.Helper()
 	if seen.Method != http.MethodPost {

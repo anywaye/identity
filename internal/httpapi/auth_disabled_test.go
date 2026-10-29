@@ -1,22 +1,5 @@
 package httpapi
 
-// PACKET identity-disabled-01: THE LOGIN ROUTE'S ANSWER FOR A DISABLED ACCOUNT.
-//
-// # WHAT IS BEING DECIDED HERE, AND WHERE THE REASONING LIVES
-//
-// `writeAuthError`'s comment carries the argument. This file holds it: 403,
-// `forbidden`, one fixed sentence, no Retry-After, and — the part that makes it
-// free — no cookie.
-//
-// # WHY THESE ASSERTIONS AND NOT JUST THE STATUS
-//
-// A test that checked `403` alone would pass against a handler that answered 403
-// with the account's address in the detail, or with a session cookie set, or with
-// a Retry-After that promises a retry. Each of those is a different defect and
-// each is invisible to a status-code assertion. So the shape is compared as a
-// whole Problem, the cookie set is asserted empty, and the absence of
-// Retry-After is asserted explicitly — a header this service knows how to send and
-// that would mean something false here.
 
 import (
 	"net/http"
@@ -27,7 +10,6 @@ import (
 	"github.com/anywaye/identity/internal/auth"
 )
 
-// A disabled login is 403 forbidden, with core's own code and no new one.
 func TestLoginDisabledIs403Forbidden(t *testing.T) {
 	t.Parallel()
 
@@ -54,13 +36,6 @@ func TestLoginDisabledIs403Forbidden(t *testing.T) {
 	}
 }
 
-// THE SENTENCE NAMES THE STATE, because that is the whole point of answering
-// differently from a wrong password.
-//
-// It has to be FIXED as well: a detail that varied with the reason would vary with
-// the account's state, and the enumeration argument this refusal rests on is that
-// the only caller who reaches it has already proved the password. So there is one
-// sentence, asserted as one sentence.
 func TestTheDisabledRefusalNamesTheStateInAFixedSentence(t *testing.T) {
 	t.Parallel()
 
@@ -86,20 +61,11 @@ func TestTheDisabledRefusalNamesTheStateInAFixedSentence(t *testing.T) {
 			"that varies is a detail that leaks", first.Detail, second.Detail)
 	}
 
-	// No errors[]: core scopes that array to 422 and to fields of the request, and
-	// "disabled" is not a field anyone typed. Same rule the 423 states for
-	// `retry_after`, and for the same reason.
 	if first.Errors != nil {
 		t.Errorf("errors = %v on a 403, want none", first.Errors)
 	}
 }
 
-// NO RETRY-AFTER, and this is the assertion that keeps 423 and 403 apart.
-//
-// A `Retry-After` here would be a promise nothing keeps: 423 in this service means
-// "locked, retry at", and every client that knows the code renders it as a
-// countdown. A disabled account is not coming back at any time, so a client that
-// believed the header would poll a route whose answer cannot change.
 func TestTheDisabledRefusalCarriesNoRetryAfter(t *testing.T) {
 	t.Parallel()
 
@@ -116,8 +82,6 @@ func TestTheDisabledRefusalCarriesNoRetryAfter(t *testing.T) {
 	}
 }
 
-// NO COOKIE. A `__Host-session` header on a refusal is a credential in a browser
-// that authenticates nothing, and the login route's refusals have never set one.
 func TestTheDisabledRefusalSetsNoSessionCookie(t *testing.T) {
 	t.Parallel()
 
@@ -137,12 +101,6 @@ func TestTheDisabledRefusalSetsNoSessionCookie(t *testing.T) {
 	}
 }
 
-// 403 AND 423 ARE DIFFERENT ANSWERS TO DIFFERENT STATES, held in both directions.
-//
-// The table exists because the two are one boolean apart in the handler and the
-// consequence of picking the wrong one is a user told to wait for a window that
-// will not close, or a user told to contact an administrator for something that
-// expires on its own.
 func TestTheTwoAccountStatesAnswerTwoDifferentStatuses(t *testing.T) {
 	t.Parallel()
 
@@ -186,13 +144,6 @@ func TestTheTwoAccountStatesAnswerTwoDifferentStatuses(t *testing.T) {
 	}
 }
 
-// A wrong password on a disabled account is STILL the generic 401, end to end.
-//
-// The use case guarantees this and the census in anonymous_enumeration_test.go
-// relies on it, but the guarantee is made in a different package from the one that
-// renders the answer, and this is the seam: a handler that mapped the disabled
-// error before the password was verified would turn this route into a
-// one-request existence oracle for every disabled account on the service.
 func TestAWrongPasswordIsStillGenericWhateverTheAccountsState(t *testing.T) {
 	t.Parallel()
 

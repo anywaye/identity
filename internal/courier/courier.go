@@ -1,103 +1,3 @@
-// Package courier is identity's client for courier, the platform's mail service.
-//
-// # WHAT THIS PACKET IS, AND THE CONTRACT IT IS AGAINST
-//
-// courier answers `POST /v1/messages` behind its `:authenticated` and
-// `:idempotent` pipelines, and that operation is the only door into its send
-// path. This package speaks it. Everything below is a property of that document
-// at courier master `f776b86`, and where this package and the document disagree
-// the document is right and this package is the bug.
-//
-// # THE SENDING IS A TYPED, ATTRIBUTED SEND AND NOT A RENDERED ONE
-//
-// This is the single most important thing to know before reading anything else,
-// because it decides the whole shape of the integration:
-//
-//	courier's request fields are a CLOSED list —
-//	type, user_id, to, name, url, account_name, invited_by, role —
-//	with `additionalProperties: false`.
-//
-// There is no `subject`, no `text`, no `html` and no `from`, and courier's own
-// `CourierWeb.Messages` explains why: a caller that could choose the sender or
-// the body would make courier a general-purpose relay wearing the platform's
-// sending domain, which is a cost every other tenant pays. So courier RENDERS
-// the mail from its own templates and the caller supplies FACTS.
-//
-// `RecoveryMailer` is where the translation from a `recovery.Message` into a
-// courier request lives, and it is the only place in the repository that knows
-// both vocabularies.
-//
-// # THE SERVICE CREDENTIAL, AND WHY IT IS A BEARER TOKEN
-//
-// courier's document declares `security: [bearerAuth: [messages:write]]` and
-// says the issuer is identity. This package therefore presents
-// `Authorization: Bearer <COURIER_TOKEN>` and nothing else — no cookie, no custom
-// header, no second scheme — and it holds that value in a closure rather than in
-// a struct field, for the reason `client/redact.go` gives and which is not
-// repeated here because it is a property of Go's `fmt` rather than of this
-// package: `%#v` prints an exported field by value and does not consult
-// `String()`.
-//
-// The alternatives were weighed rather than skipped:
-//
-//   - **A shared secret on a header of our own.** courier's
-//     `CourierWeb.Plugs.IngestToken` does exactly this, and its moduledoc gives
-//     the reason it is right THERE: the callers are three services holding a
-//     Sentry DSN and there is no identity service in that path to mint one. There
-//     IS an identity in this path, and `IngestToken` is wired to a different
-//     route — so a header courier's `:authenticated` pipeline does not read would
-//     produce a request that is still a 401.
-//   - **A user's session or scoped api key.** Both are a PERSON's credential, and
-//     the `account_id` courier takes from the principal is the tenancy of the
-//     mail. Attributing the platform's password resets to whichever user happened
-//     to trigger one would put a stranger's recovery in somebody else's tenant.
-//   - **A JWT identity mints for itself.** This is courier's declared contract and
-//     the right end state, and it is not available today — see `RecoveryMailer`'s
-//     section on the 401.
-//
-// # WHAT THIS SERVICE DELIVERS
-//
-// courier's `NotificationType` is
-// `[welcome, password_reset, team_invitation, account_security, email_change_current, email_change_new]`.
-// identity's `recovery` package renders four messages, and the mapping is drawn at
-// "would courier's own template say the true thing to the person reading it",
-// rather than at "which words are close enough":
-//
-//	password_reset            -> courier's password_reset        DELIVERED
-//	verify_email              -> courier's welcome               DELIVERED
-//	email_change (current)    -> courier's email_change_current  DELIVERED
-//	email_change (new)        -> courier's email_change_new      DELIVERED
-//
-// `verify_email` maps to `welcome` because courier's own `welcome` template IS a
-// registration's address confirmation — "Welcome aboard. Confirm your address and
-// you are in." followed by the link whenever one is supplied — and `recovery` only
-// ever sends that message to an account which has never proved an address.
-// `RecoveryMailer` carries the argument in full, including the cost and the one
-// sentence in courier's document that is wrong about its own template.
-//
-// The two email-change messages were REFUSED until packet m70b, and the refusal was
-// correct: courier gained both types in `20373bf`, and mapping the current-address
-// half onto `password_reset` would have put "Somebody asked to reset the password
-// on your account" into the one message a hijacked session cannot get past — the
-// ONLY warning the owner of an account has that somebody is moving its address. A
-// wrong-but-delivered security notice is worse than a loud failure, so the
-// vocabulary was built (m70) rather than remapped, and this client now delivers
-// both halves onto their own types. The argument for why a wrong notice would be
-// worse than a failure is still the reason the two types exist rather than a
-// reuse; `RecoveryMailer` restates it where the mapping lives.
-//
-// `account_security` — courier's notice that a credential ended, branched on a
-// required `reason` — has no row in the table because identity raises no security
-// notice to send as it: no identity flow (password change, session revoke,
-// second-factor change) mails one today. It is a NAMED GAP rather than an
-// oversight: the constant exists, the drift check holds it against courier's
-// document, and the flow that will use it does not exist yet.
-//
-// # WHAT THE RECORDED INTERACTIONS IN THIS PACKET ARE
-//
-// `recorded_test.go` replays byte-for-byte responses captured from a real courier
-// at master `f776b86`. That file's header says how they were taken and — more
-// importantly — what running that courier did and did not prove.
 package courier
 
 import (
@@ -114,98 +14,30 @@ import (
 	"time"
 )
 
-// courier's paths. They are constants because they are courier's contract, and a
-// path built from a template at a call site is a path that can be built wrong.
 const (
-	// messagesPath is the only door into courier's send path.
 	messagesPath = "/v1/messages"
 
-	// readyzPath is courier's infrastructure probe, and it is deliberately OUTSIDE
-	// every pipeline: no auth, no accepts negotiation, no database. That is what
-	// makes it the right answer to `recovery.Mailer.Ready`, whose contract is
-	// "cheap, and sends nothing".
 	readyzPath = "/readyz"
 )
 
-// The two bounds, and they are different numbers for a reason.
-//
-// `DefaultTimeout` bounds a SEND. A send is courier opening a database
-// transaction, reading a preference, consulting a suppression list, dialing an
-// SMTP relay and writing an outbox row, all inside one request, so this is
-// genuinely the user's wait and not an internal hop. Five seconds is long enough
-// for a TLS handshake and a relay queue and short enough that a browser is not
-// left watching a spinner; the failure mode is a 503 the user can retry, and the
-// retry is free because the request carries an `Idempotency-Key`.
-//
-// `DefaultProbeTimeout` bounds a READINESS PROBE, which is a few bytes from a
-// process that is either up or not, and which runs on the anonymous request path
-// before any credential is minted. It is short because a slow probe delays every
-// password-reset request in the deployment, including the ones for addresses
-// nobody registered.
 const (
 	DefaultTimeout      = 5 * time.Second
 	DefaultProbeTimeout = 2 * time.Second
 )
 
-// maxResponseBytes bounds what this client will read from courier.
-//
-// courier's own responses are small and bounded by its schema, and this is here
-// for the case where the thing answering is not courier: a proxy error page, a
-// captive portal, a truncated connection. Reading without a bound is how a client
-// becomes an unbounded memory consumer on somebody else's bad day.
 const maxResponseBytes = 64 << 10
 
-// The types courier will send, which are ALL of them, read from its document's
-// `NotificationType` enum.
-//
-// The list is closed in Go for the reason `recovery.Purpose` is closed: a closed
-// vocabulary is a code fact, and putting it only in the document would make the
-// day courier adds a type a day this client answers `ErrInvalidRequest` for a
-// request that is valid. The cost of the duplication is that it can go stale,
-// which is why `TestCouriersTypesAgreeWithCouriersDocument` reads courier's
-// `openapi.yaml`, parses the enum out of it, and fails unless the two sets are
-// EQUAL — in both directions, so the day courier grows a type this gate reds and
-// a human re-checks the mapping rather than shipping a client that refuses a
-// request that is valid.
 const (
-	// TypeWelcome is courier's post-registration message, and it is the type
-	// identity sends an address confirmation as. See `RecoveryMailer`'s section on
-	// the mapping: courier's own `welcome` template IS a registration's address
-	// confirmation, and it renders `url`.
 	TypeWelcome = "welcome"
 
-	// TypePasswordReset is the one template of courier's six that is about an
-	// account that already exists rather than about joining it.
 	TypePasswordReset = "password_reset"
 
-	// TypeTeamInvitation is courier's account-invitation message, and identity
-	// sends it: an invitation's accept link is built from the one-time token
-	// only identity holds, so the mail goes out directly through this client
-	// rather than through the bus. See InvitationMailer.
 	TypeTeamInvitation = "team_invitation"
 
-	// TypeAccountSecurity is courier's security notice: the mail a person is owed
-	// when their credentials end — a password change or an address change, branched
-	// on the required `reason` field. identity sends NOTHING of this type today: no
-	// identity flow raises a security notice (password change, session revoke,
-	// second-factor change all happen without one). The constant exists so the
-	// vocabulary is complete and the drift test has something to compare against —
-	// the same reason `TypeTeamInvitation` exists — and the gap is a named one: a
-	// capability courier has that this service does not use.
 	TypeAccountSecurity = "account_security"
 
-	// TypeEmailChangeCurrent is courier's notice to the address an account uses
-	// today that somebody asked to move it; it carries the confirmation link, so
-	// courier's document requires `url` for it. identity delivers the
-	// current-address half of an email change as this type, with the link rendered
-	// from the `email_change` purpose's template.
 	TypeEmailChangeCurrent = "email_change_current"
 
-	// TypeEmailChangeNew is courier's notice to the address an account is moving
-	// to, telling it where the account lived before; courier's document requires
-	// `previous_email` for it and carries no `url`. identity delivers the
-	// new-address half of an email change as this type, with the previous address
-	// read out of the rendered body.
 	TypeEmailChangeNew = "email_change_new"
 )
 
@@ -254,71 +86,24 @@ type FieldError struct {
 // `validate` refuses a `team_invitation` missing any of the four, so the
 // vocabulary stays closed in both directions.
 type MessageRequest struct {
-	// Type is one of the `Type*` constants. Required.
 	Type string `json:"type"`
 
-	// UserID is the user this send is about, and the key courier reads that
-	// recipient's notification preferences by. Required, and checked for shape:
-	// courier holds no foreign key to identity's users, so there is nothing else to
-	// check against.
 	UserID string `json:"user_id"`
 
-	// To is the recipient. Required. courier consults its suppression list on this
-	// value, which is why a suppressed mailbox is the one refusal this client has
-	// to think hardest about.
 	To string `json:"to"`
 
-	// Name is the recipient's display name, used in courier's greeting. Optional,
-	// and omitted rather than sent empty.
-	//
-	// identity has no display name on a user today, so nothing sets it. The field
-	// exists because courier's document declares it, and a client that could not
-	// express it would have to change the day identity grows one.
 	Name string `json:"name,omitempty"`
 
-	// URL is the link the message carries. REQUIRED by `password_reset`,
-	// `team_invitation` and `email_change_current` and unused by `welcome`, which
-	// is why its absence is refused here rather than discovered as a 422 over the
-	// network: by the time courier is called, a token has been minted and a row
-	// written.
 	URL string `json:"url,omitempty"`
 
-	// AccountName is the account the invitee is invited to. Required by
-	// `team_invitation` alone — courier's template renders "invited you to join
-	// <account_name>" — and omitted for every other type, for the reason the
-	// type's own comment gives.
 	AccountName string `json:"account_name,omitempty"`
 
-	// InvitedBy is the name of the person who sent the invitation, rendered by
-	// courier's template immediately before "invited you to join". Required by
-	// `team_invitation` alone, and omitted everywhere else.
 	InvitedBy string `json:"invited_by,omitempty"`
 
-	// Role is the role the invitation offers, which courier's template renders
-	// as "as <role>". Optional in courier's schema and always populated here,
-	// because the invitation carries one and a template that renders "as ." is
-	// worse than a field the schema does not require. Sent only for
-	// `team_invitation`; meaningless for every other type.
 	Role string `json:"role,omitempty"`
 
-	// PreviousEmail is the address an account is moving FROM, carried by
-	// `email_change_new` alone: the notice to the new address tells it where the
-	// account lived before, which is the fact that makes the message worth
-	// reading. Required by that type, and omitted rather than sent empty — a
-	// message naming no previous address is a 422 from courier, and an empty
-	// string would be a lie in the one field the new address's owner needs.
 	PreviousEmail string `json:"previous_email,omitempty"`
 
-	// IdempotencyKey is the `Idempotency-Key` header.
-	//
-	// IT IS A UUID AND THAT IS courier's rule, not a preference: the key is scoped
-	// to a unique index and "an unbounded string in a unique index is a cost every
-	// write pays". The field is `json:"-"` because it is a header and the body is
-	// the body; sending it twice would be a field courier does not have, and that
-	// is a 422.
-	//
-	// Left empty, `SendMessage` generates one. `RecoveryMailer` always sets it,
-	// derived from the recovery token, so a retry of one send is one send.
 	IdempotencyKey string `json:"-"`
 }
 
@@ -329,29 +114,17 @@ type MessageRequest struct {
 // response this client does not understand, and the two must not collapse into one.
 // `TestSendMessageReadsCouriersContract` has a row for each.
 type MessageResult struct {
-	// MessageID is courier's id, and the one on the wire as `Message-ID`. A bounce
-	// or a complaint quoting it ties back to this send, which is the entire reason
-	// courier returns it.
 	MessageID string `json:"message_id"`
 
-	// EventID is the `courier.email.delivered` outbox row written in the same
-	// transaction as the send, so a caller can correlate its send with the event
-	// every subscriber on the bus sees.
 	EventID string `json:"event_id"`
 
-	// Type echoes what courier sent.
 	Type string `json:"notification_type"`
 
-	// UserID echoes the body.
 	UserID string `json:"user_id"`
 
-	// Status is always `accepted`.
 	Status string `json:"status"`
 }
 
-// sentResponse is courier's 200 envelope. The data sits behind a `data` key
-// because core's conventions put every successful body there, and a client that
-// read the object at the top level would find a body with no fields in it.
 type sentResponse struct {
 	Data MessageResult `json:"data"`
 }
@@ -365,35 +138,17 @@ type sentResponse struct {
 // inside `scrub`'s closure, and there is no formatting verb in Go that prints a
 // closure's environment.
 type Client struct {
-	// baseURL is courier's root, without a trailing slash. Not a secret and not a
-	// credential: an operator has to be able to confirm which courier this process
-	// is pointed at, and `String()` reports it.
 	baseURL string
 
-	// http is the transport, held as a value so a test can point it at an
-	// `httptest.Server` and no test in this package reaches the network.
 	http *http.Client
 
-	// timeout and probeTimeout are read per call rather than baked into
-	// http.Client, so one client can answer a send and a probe on different
-	// bounds. They are applied as a context deadline, so a hung courier is bounded
-	// even if the transport ignores the Client's own Timeout.
 	timeout      time.Duration
 	probeTimeout time.Duration
 
-	// authorize attaches the credential. A func, for the reason above.
 	authorize func(*http.Request) error
 
-	// scrub says whether a string this package is about to print came out of
-	// something that could contain the credential. Also a func, for the same
-	// reason, and also all-or-nothing: it does not remove a substring, it refuses
-	// the whole string.
 	scrub func(string) bool
 
-	// newKey mints an `Idempotency-Key` when the caller supplied none. A func so a
-	// uuid is not a field a `%#v` would print — harmless in itself, but keeping
-	// every callable a closure means the credential rule is one rule rather than
-	// one rule plus an exception for the harmless case.
 	newKey func() (string, error)
 }
 
@@ -404,116 +159,36 @@ type Client struct {
 // difference between a credential held for a process's life and one held for a
 // constructor call, and it is the reason `Config` is not `Client`.
 type Config struct {
-	// BaseURL is courier's root, e.g. `http://courier:4003`. Required.
 	BaseURL string
 
-	// Token is the service credential. Required: a client with none would send
-	// every request as an anonymous caller, and courier's answer to that is a 401
-	// on a mail egress — an open relay with a config file attached.
 	Token string
 
-	// Timeout bounds one send. Zero means DefaultTimeout.
 	Timeout time.Duration
 
-	// ProbeTimeout bounds one readiness probe. Zero means DefaultProbeTimeout.
 	ProbeTimeout time.Duration
 
-	// HTTPClient replaces the transport. nil means a client built from Timeout.
-	//
-	// The seam that makes this package testable without a network, and the reason
-	// there is no test in it that dials anything.
 	HTTPClient *http.Client
 }
 
-// Errors this package reports, matched with `errors.Is`.
-//
-// THEY ARE SENTINELS RATHER THAN A TYPE PER CASE because the question every caller
-// of this package asks is a branch, not a match: retry, give up, tell the user, or
-// hide it from the user. A type per branch would put the branch in a type switch
-// and make the exhaustive answer a compiler-checked one only for the branches
-// somebody already thought of.
 var (
-	// ErrNoBaseURL means Config.BaseURL was empty or not an http URL.
 	ErrNoBaseURL = errors.New("courier: no usable base URL")
 
-	// ErrNoToken means Config.Token was empty.
-	//
-	// IT IS REFUSED RATHER THAN DEFAULTED because the default is a client that
-	// authenticates nobody, and courier's answer to that is a 401 on the one route
-	// where an unauthenticated POST is an open relay.
 	ErrNoToken = errors.New("courier: no service credential")
 
-	// ErrInvalidRequest is a request this client refuses to put on the wire. It is
-	// ALWAYS this client's bug rather than courier's answer.
-	//
-	// The cases are courier's own rules read from its document — an unknown type, a
-	// `user_id` that is not a uuid, and a `password_reset` with no link — and each
-	// is checked here so the failure arrives before a token has been mailed and
-	// after nobody has been told anything.
 	ErrInvalidRequest = errors.New("courier: the request is not one courier can accept")
 
-	// ErrSuppressed means courier refused because the recipient's mailbox cannot
-	// be written to: a hard bounce, or a spam complaint.
-	//
-	// IT IS NOT RETRYABLE, and it is the refusal on this path that is a fact about
-	// a RECIPIENT rather than about the deployment. `recovery` conceals it from an
-	// anonymous caller for that reason; see the package there.
 	ErrSuppressed = errors.New("courier: the recipient's mailbox cannot receive mail")
 
-	// ErrDeclined means courier refused because the recipient has turned this
-	// notification type off.
-	//
-	// The same shape as `ErrSuppressed` and deliberately NOT the same sentinel: it
-	// is visible through `GET /v1/notification_preferences/{user_id}` and
-	// changeable through the `PUT` beside it, so it is a fact about a person
-	// rather than about a mailbox, and an operator's response to a pile of them is
-	// different. Both are per-recipient, which is the property that decides
-	// whether a caller may be told.
 	ErrDeclined = errors.New("courier: the recipient has declined this notification")
 
-	// ErrRefused means courier answered 422 about the request itself, or answered
-	// something this document does not describe.
-	//
-	// A 422 here is ALWAYS this client's bug, because the request was built from a
-	// `recovery.Message` this package rendered and every field in it was checked
-	// before the wire. A 422 from a send that passed `validate` means courier's
-	// vocabulary grew a rule this client has not read, and that deserves a loud
-	// failure rather than a shrug.
 	ErrRefused = errors.New("courier: the request was refused")
 
-	// ErrUnauthenticated means courier answered 401 or 403.
-	//
-	// IN PRACTICE THIS MEANS THE CREDENTIAL IS WRONG, and it is the one failure on
-	// this path that is never the caller's fault and always the operator's. It is
-	// not retryable: a token courier will not take will not be taken on the second
-	// attempt, and a client that reported it as retryable would turn a
-	// misconfiguration into a retry storm against the platform's mail egress.
 	ErrUnauthenticated = errors.New("courier: the service credential was not accepted")
 
-	// ErrUnavailable means courier answered 503, 502, 504 or 500: its provider
-	// refused, its adapter cannot deliver, or courier itself failed.
-	//
-	// IT IS RETRYABLE, and that is courier's own promise rather than this package's
-	// optimism: "nothing was sent and no row was written, so the retry is safe; and
-	// a failed request RELEASES its Idempotency-Key rather than storing the
-	// failure, so a retry is not locked out for 24 hours."
 	ErrUnavailable = errors.New("courier: cannot deliver right now")
 
-	// ErrMalformedResponse means courier answered 2xx with a body this client could
-	// not read as an accepted send.
-	//
-	// IT IS ITS OWN SENTINEL AND NOT `ErrUnavailable` because the two demand
-	// OPPOSITE behavior. A 503 is a courier that told us it could not do the work,
-	// and a retry is the answer. A malformed 200 is courier, or something in front
-	// of it, answering 200 without having identified a send — and retrying it would
-	// mail a second copy of a message the first attempt may already have sent.
 	ErrMalformedResponse = errors.New("courier: the response was not one this client can read")
 
-	// ErrTimeout means the send or the probe outran its bound.
-	//
-	// It wraps `context.DeadlineExceeded`, so a caller can tell "the user gave up"
-	// from "courier is slow" — the difference between a 499 nobody reads and a
-	// courier whose relay has stopped answering.
 	ErrTimeout = errors.New("courier: the request outran its bound")
 )
 
@@ -545,9 +220,6 @@ func New(cfg Config) (*Client, error) {
 		httpClient = &http.Client{}
 	}
 
-	// The credential, twice, in closures: `authorize` puts it on the wire and
-	// `scrub` recognizes it in anything coming back. There is no third place it
-	// exists in this package.
 	token := cfg.Token
 	credential := "Bearer " + token
 
@@ -557,8 +229,6 @@ func New(cfg Config) (*Client, error) {
 		timeout:      timeout,
 		probeTimeout: probe,
 		authorize: func(r *http.Request) error {
-			// Header.Set and not Add: a repeated `Authorization` is ambiguous, and
-			// courier's plug reads the first one it sees.
 			r.Header.Set("Authorization", credential)
 			return nil
 		},
@@ -678,23 +348,6 @@ func (c *Client) Ready(ctx context.Context) error {
 	return nil
 }
 
-// do performs one request and reads courier's answer.
-//
-// IT RETURNS FOUR THINGS AND THAT IS THE POINT: the parsed result, the status,
-// the raw body, and an error. A single `(*Response, error)` pair cannot express
-// "courier answered 503 and this client read the body" versus "the connection
-// never happened", and a client that conflates them ends up retrying a refusal as
-// though it were a network fault.
-//
-// The answer arrives as a status and NOT as the `*http.Response`, because the
-// body is already read and closed by the time this returns: handing out the
-// response would invite reading a spent body, and no reader — human or linter —
-// can tell a closed body from a leaked one. The one header `classify` needs
-// travels as an argument instead.
-//
-// It does NOT decide the outcome. Classification is `classify`'s job and parsing a
-// 2xx is `SendMessage`'s, so that the table that decides what each status MEANS is
-// one table and this function is only about getting the bytes.
 func (c *Client) do(
 	ctx context.Context, method, path, op, idempotencyKey string, body []byte,
 ) (MessageResult, int, []byte, error) {
@@ -708,14 +361,8 @@ func (c *Client) do(
 		return MessageResult{}, 0, nil, fmt.Errorf("courier: building the request: %w", err)
 	}
 	if body != nil {
-		// Set rather than rely on the default: courier's `:accepts` plug and its
-		// body parser both branch on this, and a request with no content type is
-		// parsed by neither.
 		req.Header.Set("Content-Type", "application/json")
 	}
-	// On every request INCLUDING the probe, because a 406 is the answer a client
-	// gets for asking for a media type courier cannot produce, and this client
-	// knows how to ask for the right one.
 	req.Header.Set("Accept", "application/json")
 	if idempotencyKey != "" {
 		req.Header.Set("Idempotency-Key", idempotencyKey)
@@ -728,17 +375,10 @@ func (c *Client) do(
 	if err != nil {
 		return MessageResult{}, 0, nil, c.transportError(ctx, err)
 	}
-	// The body is read and closed here, before any return: what travels on is
-	// the status and the bytes, never the response, so there is no spent body
-	// for a caller to close — or to leak.
 	defer func() { _ = resp.Body.Close() }()
 
 	raw, readErr := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 
-	// A non-2xx is classified from whatever was read, INCLUDING nothing: a
-	// connection that died after the status line is still a 503 courier wrote, and
-	// reporting it as a transport failure would tell an operator to look at the
-	// network rather than at courier's provider.
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		if readErr != nil && len(raw) == 0 {
 			raw = nil
@@ -752,11 +392,6 @@ func (c *Client) do(
 	return MessageResult{}, resp.StatusCode, raw, nil
 }
 
-// transportError normalises the failures that happen before a status exists.
-//
-// The three are kept apart because each says something different to an operator: a
-// deadline that elapsed is courier being slow, a canceled context is the caller
-// giving up, and anything else is a connection that did not happen at all.
 func (c *Client) transportError(ctx context.Context, err error) error {
 	switch {
 	case errors.Is(err, context.DeadlineExceeded), errors.Is(ctx.Err(), context.DeadlineExceeded):
@@ -764,21 +399,10 @@ func (c *Client) transportError(ctx context.Context, err error) error {
 	case errors.Is(err, context.Canceled), errors.Is(ctx.Err(), context.Canceled):
 		return fmt.Errorf("courier: the caller gave up: %w", context.Canceled)
 	default:
-		// The underlying error is a `*url.Error` whose message contains the request
-		// URL. That URL is courier's address and carries no credential — the
-		// credential is in a header, not the path — but the whole string still goes
-		// through the scrubber, because "this one is safe" is the kind of judgement
-		// that is right until somebody moves a token into a query string.
 		return c.scrubbed(fmt.Errorf("courier: the request did not complete: %w", err))
 	}
 }
 
-// scrubbed runs a string this package built past the credential check.
-//
-// All or nothing, and never a partial replacement: a scrubber that returns the
-// rest is a scrubber whose safety depends on the completeness of a list nobody can
-// check, and the honest failure mode of an incomplete list here is a token in
-// somebody's log store.
 func (c *Client) scrubbed(err error) error {
 	if err == nil || !c.scrub(err.Error()) {
 		return err
@@ -786,12 +410,6 @@ func (c *Client) scrubbed(err error) error {
 	return errors.New("courier: [redacted: the string contained this client's credential]")
 }
 
-// validate refuses everything this client can know is wrong before the wire.
-//
-// The checks are courier's own rules, read from its document, and each one is
-// here rather than discovered as a 422 because by the time courier answers, a
-// token has been minted, its digest written, and the caller has been told a
-// message is on its way.
 func validate(req MessageRequest) error {
 	if !IsType(req.Type) {
 		return fmt.Errorf("%w: %q is not a type courier sends", ErrInvalidRequest, req.Type)
@@ -800,40 +418,21 @@ func validate(req MessageRequest) error {
 		return fmt.Errorf("%w: no recipient", ErrInvalidRequest)
 	}
 	if !isUUID(req.UserID) {
-		// Checked for shape and nothing else, exactly as courier checks it: courier
-		// holds no foreign key to identity's users, so there is nothing else to
-		// check against — and a value identity itself produced is a uuid by
-		// construction, so a failure here is a bug rather than a bad address.
 		return fmt.Errorf("%w: %q is not a user id courier can key a preference by",
 			ErrInvalidRequest, req.UserID)
 	}
 	switch req.Type {
 	case TypePasswordReset, TypeEmailChangeCurrent:
-		// courier's templates for these render the link, so a message with no
-		// link is a mail nobody can use, and it is refused here rather than
-		// delivered. `email_change_current` is in the list for the same reason
-		// `password_reset` is: its template's whole content is the confirmation
-		// link, and the current-address half of an email change is the only
-		// warning an account owner gets that somebody is moving its address.
 		if req.URL == "" {
 			return fmt.Errorf("%w: a %s needs the link it carries", ErrInvalidRequest, req.Type)
 		}
 	case TypeEmailChangeNew:
-		// courier's `email_change_new` template branches on the previous address
-		// and its document requires the field: a message naming no previous
-		// address is a 422, and an empty string would be a lie in the one field
-		// the new address's owner needs.
 		if req.PreviousEmail == "" {
 			return fmt.Errorf("%w: a %s needs the address the account is moving from",
 				ErrInvalidRequest, req.Type)
 		}
 	}
 	if req.Type == TypeTeamInvitation {
-		// courier's `team_invitation` requires email, url, account_name and
-		// invited_by — its own `required/1` — and each is checked here for the
-		// reason the password_reset check gives: by the time courier answers a
-		// 422, a token has been minted and a row written. The email is checked
-		// above for every type; the other three are this type's own.
 		if req.URL == "" {
 			return fmt.Errorf("%w: a %s needs the link it carries", ErrInvalidRequest, req.Type)
 		}
@@ -869,11 +468,6 @@ func IsType(t string) bool {
 	}
 }
 
-// validateResult refuses a 200 this client cannot read as an accepted send.
-//
-// A reader that checks nothing here reports "sent" for a body with no message id
-// in it, and a caller that believes a message was sent when courier did not
-// identify it cannot tie a bounce back to anything.
 func validateResult(got MessageResult) error {
 	switch {
 	case got.MessageID == "":
@@ -899,32 +493,18 @@ func validateResult(got MessageResult) error {
 // reason the sentinels above give: the caller branches, and `errors.Is` is the
 // branch.
 type Error struct {
-	// Op is `send` or `probe`, so a reader of a log line can tell a failed delivery
-	// from a failed readiness check without parsing prose.
 	Op string
 
-	// Status is the HTTP status courier answered, or 0 when no status was read.
 	Status int
 
-	// Code is courier's `code` — the contract its document tells clients to branch
-	// on. `codeUnreadable` when the body was not a problem document.
 	Code string
 
-	// TraceID is courier's, and is the only handle a reader gets on what happened
-	// inside courier.
 	TraceID string
 
-	// Fields is courier's `errors[]`, which core reserves for a 422.
 	Fields []FieldError
 
-	// retry records whether courier's own document says another attempt can help.
-	// It is a field rather than a method so that `%#v` — which is what a
-	// structured logger prints — carries the answer with it.
 	retry bool
 
-	// sentinel is what `errors.Is` matches, and cause is what `errors.Unwrap`
-	// returns when there is one. Both unexported: there is no other way to set
-	// them, so a courier error can only be built by a path that decided.
 	sentinel error
 	cause    error
 }
@@ -986,18 +566,9 @@ func Retryable(err error) bool {
 	if errors.As(err, &refused) {
 		return refused.retry
 	}
-	// A malformed 2xx is deliberately NOT retryable: this client cannot tell
-	// whether the first attempt sent anything, and a second attempt is how a user
-	// gets two reset mails for one request.
 	return errors.Is(err, ErrTimeout)
 }
 
-// normaliseBaseURL validates and canonicalises courier's address.
-//
-// It strips a trailing slash because `baseURL + path` is how every request is
-// built, and a base URL with a trailing slash produces a path with two slashes in
-// it — which some routers answer and some redirect, and a redirect on a POST loses
-// the body on some clients.
 func normaliseBaseURL(raw string) (string, error) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
@@ -1014,9 +585,6 @@ func normaliseBaseURL(raw string) (string, error) {
 		return "", fmt.Errorf("%w: %q has no host", ErrNoBaseURL, trimmed)
 	}
 	if parsed.RawQuery != "" || parsed.Fragment != "" {
-		// A base URL with a query string is a base URL somebody is about to
-		// concatenate a path onto, and the result is a request whose query this
-		// client did not write.
 		return "", fmt.Errorf("%w: %q has a query or a fragment", ErrNoBaseURL, trimmed)
 	}
 	return strings.TrimRight(trimmed, "/"), nil

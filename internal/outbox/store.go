@@ -34,9 +34,6 @@ func NewStore(pool db.Pool) *Store { return &Store{pool: pool} }
 // to have just written the row the event is about, and passing the pool itself
 // would let that pair come apart. See internal/auth.
 func (s *Store) Append(ctx context.Context, q db.Querier, e Envelope) error {
-	// Validated here rather than left to the table. The CHECK constraints catch a
-	// malformed type or source, but not a missing subject, a zero time or
-	// unparseable data, and the caller learns about those at this line.
 	if err := e.Validate(); err != nil {
 		return err
 	}
@@ -46,9 +43,6 @@ func (s *Store) Append(ctx context.Context, q db.Querier, e Envelope) error {
 		return fmt.Errorf("outbox: marshaling the envelope: %w", err)
 	}
 
-	// ON CONFLICT DO NOTHING, not an upsert. The envelope id is the consumers'
-	// dedupe key, so a retried transaction must leave the committed row exactly as
-	// it is; an upsert would let a retry rewrite the event a consumer already has.
 	const query = `
 		INSERT INTO outbox_events (id, type, source, subject, occurred_at, payload, envelope)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -64,16 +58,10 @@ func (s *Store) Append(ctx context.Context, q db.Querier, e Envelope) error {
 // Batch is a claimed set of events held under a row lock until it is committed or
 // released.
 type Batch interface {
-	// Events returns the claimed envelopes.
 	Events() []Envelope
-	// MarkPublished records that an event reached the bus.
 	MarkPublished(ctx context.Context, eventID id.UUID) error
-	// MarkFailed records a failed attempt, leaving the event claimable.
 	MarkFailed(ctx context.Context, eventID id.UUID, reason string) error
-	// Commit releases the row locks and makes the marks durable.
 	Commit(ctx context.Context) error
-	// Release rolls back, leaving every claimed event claimable again. It is safe
-	// to call after Commit and safe to call twice.
 	Release(ctx context.Context) error
 }
 
@@ -128,10 +116,6 @@ func (s *Store) Claim(ctx context.Context, limit int) (Batch, error) {
 	return &pgBatch{tx: tx, events: events}, nil
 }
 
-// scanEnvelopes reads the claimed rows. The stored `envelope` column is
-// authoritative: it is the exact document that was validated on the way in, so
-// re-deriving it from the individual columns would risk publishing something
-// subtly different from what a consumer's contract test saw.
 func scanEnvelopes(rows pgx.Rows) ([]Envelope, error) {
 	events := make([]Envelope, 0, 16)
 
@@ -162,7 +146,6 @@ func scanEnvelopes(rows pgx.Rows) ([]Envelope, error) {
 	return events, nil
 }
 
-// pgBatch is a Batch backed by an open pgx transaction.
 type pgBatch struct {
 	tx      pgx.Tx
 	events  []Envelope
@@ -204,9 +187,6 @@ func (b *pgBatch) mark(ctx context.Context, eventID id.UUID, query string, args 
 	return nil
 }
 
-// holds reports whether the batch claimed eventID. A caller that marks something
-// it never claimed is usually a loop that invented an event, and the UPDATE would
-// otherwise hit a row belonging to another instance's batch.
 func (b *pgBatch) holds(eventID id.UUID) bool {
 	if b.claimed == nil {
 		b.claimed = make(map[id.UUID]struct{}, len(b.events))

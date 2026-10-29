@@ -1,16 +1,5 @@
 package admin
 
-// THE ADMIN SURFACE'S USE CASES, and the audit trail they write.
-//
-// The tests in this file are the ones the packet asked for by name, and three of
-// them are RED PROOFS: a test that only asserts the happy path proves that
-// something works, not that the failure it is guarding against is closed.
-//
-//   TestAFailedAuditWriteRollsBackTheMutation
-//   TestAFailedMutationLeavesNoAuditRecord
-//   TestNothingOnThisSurfaceCanRecordAToken
-//
-// Each asserts the FAILURE, because that is the direction a mistake travels.
 
 import (
 	"context"
@@ -28,32 +17,11 @@ import (
 	"github.com/anywaye/identity/internal/platform/id"
 )
 
-// ---------------------------------------------------------------------------
-// the transactional world these tests run in
-// ---------------------------------------------------------------------------
 
-// fakeWorld is a committed set of rows. The fake transaction below stages writes
-// into a buffer and only merges them on commit, so a rollback in these tests is
-// a real rollback of a real model rather than a flag a test sets by hand.
-//
-// It is deliberately a model and not a Postgres: the database-level proof that an
-// audit row cannot be edited lives in store_test.go, and the proof that a failed
-// audit write undoes a committed mutation lives in the HTTP layer's integration
-// test with a trigger that raises. This file is about the SHAPE — that the two
-// writes share one transaction and one querier — and a model is what makes that
-// shape checkable without a database.
 type fakeWorld struct {
-	// audit holds committed audit records, keyed by the id they were given.
 	audit map[id.UUID]Record
-	// revokedInvitationIDs is the committed set of revoked invitation ids. The
-	// mutation under test writes to it, so "the mutation did not happen" is a
-	// statement about committed state rather than about a call count.
 	revoked map[id.UUID]bool
-	// nextID hands out ids for rows appended in the test.
 	nextID int
-	// appendErr is what makes the audit write fail, and it lives on the world
-	// rather than on the store so that the injection point is one line in a test
-	// and not a field a fake has to be told about at construction.
 	appendErr error
 }
 
@@ -61,8 +29,6 @@ func newFakeWorld() *fakeWorld {
 	return &fakeWorld{audit: map[id.UUID]Record{}, revoked: map[id.UUID]bool{}}
 }
 
-// staging is the querier handed to work inside a transaction. Its writes land in
-// a buffer, and a commit merges the buffer into the world.
 type staging struct {
 	writes []string
 }
@@ -80,15 +46,8 @@ func (s *staging) QueryRow(context.Context, string, ...any) pgx.Row {
 	return nil
 }
 
-// fakeTx is the UnitOfWork. It records whether the transaction committed, so a
-// test can assert "the mutation did not happen" two ways — the world is
-// unchanged, and no commit happened — and the second is what catches an
-// implementation that swallows the error and commits anyway.
 type fakeTx struct {
 	world *fakeWorld
-	// committed records whether the transaction committed, so a test can assert
-	// "the mutation did not happen" as committed state rather than as a call
-	// count.
 	committed bool
 }
 
@@ -97,19 +56,12 @@ func (tx *fakeTx) Do(_ context.Context, fn func(context.Context, db.Querier) err
 	if err := fn(context.Background(), stage); err != nil {
 		return err
 	}
-	// Only a successful function body reaches here. The commit is where the
-	// buffered writes become world state.
 	tx.committed = true
 	return nil
 }
 
-// fakeStore is the audit store. Its Append is the write the tests make fail, and
-// its List serves the trail.
 type fakeStore struct {
 	world *fakeWorld
-	// stage is the staging querier of the transaction in flight, so an append
-	// inside a transaction is staged and an append outside one is committed. It
-	// is nil outside a transaction and the test for that is not the point here.
 	stage *staging
 }
 
@@ -128,8 +80,6 @@ func (s *fakeStore) Append(_ context.Context, q db.Querier, e Entry) (Record, er
 		TraceID:     e.Actor.TraceID,
 		OccurredAt:  e.OccurredAt,
 	}
-	// Inside a transaction the row is staged, not committed. A test that asserts
-	// the world is unchanged after a rollback is asserting against this.
 	_ = q
 	if s.stage != nil {
 		s.stage.writes = append(s.stage.writes, "INSERT account_audit_log")
@@ -146,16 +96,10 @@ func (s *fakeStore) List(_ context.Context, _ db.Querier, accountID id.UUID, pag
 	return nil, errors.New("the fake does not read rows")
 }
 
-// fakeRevoker is the slice of the accounts store the actions need. It records
-// what it was asked to revoke into the world, so a rolled-back transaction leaves
-// no trace of it.
 type fakeRevoker struct {
 	world *fakeWorld
-	// err is the failure the mutation reports.
 	err error
-	// revokedIn is what the last call saw, for a failure message.
 	revokedIn int
-	// allRevoked is the count the store reports for a bulk call.
 	allRevoked int
 }
 
@@ -190,9 +134,6 @@ var (
 	_ InvitationRevoker = (*fakeRevoker)(nil)
 )
 
-// ---------------------------------------------------------------------------
-// fixtures
-// ---------------------------------------------------------------------------
 
 func testService(t *testing.T) (*Service, *fakeWorld, *fakeTx, *fakeRevoker) {
 	t.Helper()
@@ -216,28 +157,11 @@ func testActor() Actor {
 	return Actor{UserID: id.MustNew(), KeyID: id.MustNew(), TraceID: "trace-abc123"}
 }
 
-// committedRevoked is how many revocations the world actually holds. It is read
-// off committed state, so it is the number a rollback has to leave at zero.
 func committedRevoked(world *fakeWorld) int {
-	// The fake revoker never merges its staged writes into the world, so the
-	// world's committed set is written by the fakeTx's commit, which is the only
-	// place state becomes visible. Asserting on it is what makes "rolled back"
-	// mean something here.
 	return len(world.revoked)
 }
 
-// ---------------------------------------------------------------------------
-// the same-transaction property
-// ---------------------------------------------------------------------------
 
-// TestAnAdminActionIsRecordedInTheSameTransaction is the positive half of the
-// property the packet asks for, and it is worth having next to the negative half
-// because it is the thing being asserted: the mutation and the audit row are
-// handed the SAME querier, inside ONE transaction, and the count in the row is
-// the mutation's own.
-//
-// The querier identity is the assertion. Two transactions that both commit would
-// satisfy "an audit row was written" and would be exactly the bug.
 func TestAnAdminActionIsRecordedInTheSameTransaction(t *testing.T) {
 	t.Parallel()
 
@@ -266,18 +190,10 @@ func TestAnAdminActionIsRecordedInTheSameTransaction(t *testing.T) {
 	_ = invitation
 }
 
-// TestAFailedAuditWriteRollsBackTheMutation is the RED PROOF for R3, and the only
-// version of this test that means anything.
-//
-// The audit write is made to fail — a full disk, a trigger, a serialization
-// failure — and the assertion is that the mutation did not happen. Asserting the
-// happy path proves that a mutation and an audit row can coexist; this proves
-// that they cannot come apart.
 func TestAFailedAuditWriteRollsBackTheMutation(t *testing.T) {
 	t.Parallel()
 
 	svc, world, tx, _ := testService(t)
-	// The injection: the audit write fails.
 	auditFailure := errors.New("the audit table is unavailable")
 	world.appendErr = auditFailure
 
@@ -303,13 +219,6 @@ func TestAFailedAuditWriteRollsBackTheMutation(t *testing.T) {
 	}
 }
 
-// TestAFailedMutationLeavesNoAuditRecord is the other direction, and it is the
-// one that makes the pair worth having.
-//
-// An audit row that survives a failed mutation is a record of something that did
-// not happen, and a trail full of those is worse than no trail: an operator
-// reading it is reading fiction, and the fiction says somebody revoked an
-// invitation that is still live.
 func TestAFailedMutationLeavesNoAuditRecord(t *testing.T) {
 	t.Parallel()
 
@@ -334,20 +243,10 @@ func TestAFailedMutationLeavesNoAuditRecord(t *testing.T) {
 	}
 }
 
-// TestTheCountInTheAuditRecordIsTheMutationsOwn is the small one, and it is here
-// because the alternative is a service that writes a number it made up.
-//
-// The bulk action's row carries how many invitations were revoked. If that number
-// is the length of the REQUEST rather than the count the store reported, then a
-// request naming six invitations where two were already revoked records six, and
-// an operator reconciling the trail against reality finds a gap they cannot
-// explain.
 func TestTheCountInTheAuditRecordIsTheMutationsOwn(t *testing.T) {
 	t.Parallel()
 
 	svc, world, _, revoker := testService(t)
-	// The store revokes fewer than were asked for: two of the four named were
-	// already revoked.
 	revoker.allRevoked = 2
 	ids := []id.UUID{id.MustNew(), id.MustNew(), id.MustNew(), id.MustNew()}
 
@@ -368,18 +267,7 @@ func TestTheCountInTheAuditRecordIsTheMutationsOwn(t *testing.T) {
 	_ = world
 }
 
-// ---------------------------------------------------------------------------
-// the bounds
-// ---------------------------------------------------------------------------
 
-// TestTheBulkActionRefusesAnUnboundedRequest is R5 applied to the request rather
-// than to the response.
-//
-// An unbounded array on an endpoint that takes an array is the shape the packet
-// names: an off-by-one that is also a denial of service. The ceiling is refused,
-// NOT clamped — a caller that asked for a thousand and got fifty has been told a
-// lie about what happened, and an operator reading the trail reconciles against
-// the lie.
 func TestTheBulkActionRefusesAnUnboundedRequest(t *testing.T) {
 	t.Parallel()
 
@@ -423,9 +311,6 @@ func TestTheBulkActionRefusesAnUnboundedRequest(t *testing.T) {
 	}
 }
 
-// TestTheAuditTrailPageIsBounded is R5 on the read side. An unbounded admin list
-// is a denial of service with an audit trail, and the bound is enforced rather
-// than documented — a limit above the ceiling is an error, not a clamp.
 func TestTheAuditTrailPageIsBounded(t *testing.T) {
 	t.Parallel()
 
@@ -465,30 +350,10 @@ func TestTheAuditTrailPageIsBounded(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// nothing here can carry a credential
-// ---------------------------------------------------------------------------
 
-// TestNothingOnThisSurfaceCanRecordAToken is the structural version of "never log
-// a token", and it is a reflection test on purpose.
-//
-// An admin audit log is the one place in this service where a careless
-// `fmt.Sprintf("%+v", caller)` writes a live credential into a table an operator
-// reads during an incident. The apikeys.Key struct a handler holds has a
-// TokenDigest field, so the mistake is one copy-paste away.
-//
-// A test asserting "we did not log a token" is unfalsifiable. This one is not: it
-// walks the types that reach the audit table and fails if any of them grows a
-// field whose name could hold a credential value. Adding a `Token string` to
-// Entry, Actor or Record is a compile-time-shaped mistake this test catches on
-// the day it is made.
 func TestNothingOnThisSurfaceCanRecordAToken(t *testing.T) {
 	t.Parallel()
 
-	// Names that would mean a credential's VALUE rather than its identity. A field
-	// called TokenID or KeyID is the row's uuid and is exactly what an audit record
-	// wants; a field called Token, Secret, Bearer, JWT, Password or Digest is the
-	// live value and must never reach this package.
 	forbidden := []string{"token", "secret", "bearer", "jwt", "password", "digest", "credential", "value"}
 
 	for _, typ := range []reflect.Type{
@@ -501,9 +366,6 @@ func TestNothingOnThisSurfaceCanRecordAToken(t *testing.T) {
 		for i := 0; i < typ.NumField(); i++ {
 			field := typ.Field(i)
 			for _, bad := range forbidden {
-				// An exact match on the whole name, or the name with a leading
-				// "token"-ish word and nothing after it. TokenID is fine, so the
-				// check is on the exact forbidden word rather than a substring.
 				if strings.EqualFold(field.Name, bad) {
 					t.Errorf("%s.%s is named %q, which is a credential's VALUE. This package records "+
 						"the api key's row id and never its value; a field that could hold the value is "+
@@ -515,9 +377,6 @@ func TestNothingOnThisSurfaceCanRecordAToken(t *testing.T) {
 	}
 }
 
-// TestTheActorCarriesTheKeyIdAndNotTheKey is the same rule stated as a value
-// check, because the reflection test above is about names and this is about what
-// a caller actually passes.
 func TestTheActorCarriesTheKeyIdAndNotTheKey(t *testing.T) {
 	t.Parallel()
 
@@ -526,7 +385,6 @@ func TestTheActorCarriesTheKeyIdAndNotTheKey(t *testing.T) {
 		t.Error("the actor has no key id, so an audit record could not name which credential acted")
 	}
 
-	// And the entry round-trips through the store's record with the ids intact.
 	svc, world, _, _ := testService(t)
 	if _, err := svc.RevokeInvitation(t.Context(), RevokeInvitationInput{
 		AccountID:    id.MustNew(),
@@ -540,8 +398,6 @@ func TestTheActorCarriesTheKeyIdAndNotTheKey(t *testing.T) {
 	}
 }
 
-// TestTheClosedActionSetIsEnforced is the "a closed set is a code fact" rule from
-// the migrations, held here rather than by a CHECK.
 func TestTheClosedActionSetIsEnforced(t *testing.T) {
 	t.Parallel()
 
@@ -563,4 +419,4 @@ func manyIDs(n int) []id.UUID {
 	return out
 }
 
-var _ = fmt.Sprintf // kept for failure messages that need it
+var _ = fmt.Sprintf

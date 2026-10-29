@@ -1,9 +1,3 @@
-// Package clock is the service's only source of time.
-//
-// Nothing in identity calls time.Now directly. Lockout windows, session expiry
-// and outbox timestamps are all read through a Clock so a test can move time
-// exactly where it needs it, instead of sleeping and hoping (PLAN.md §3: no
-// sleeps, no raised retries).
 package clock
 
 import (

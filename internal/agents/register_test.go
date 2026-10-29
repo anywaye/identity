@@ -10,15 +10,6 @@ import (
 	"github.com/anywaye/identity/internal/platform/id"
 )
 
-// THE REGISTRATION AND THE REFRESH, over a real Postgres in a private schema.
-//
-// The properties that matter are properties of what is and is not written: that a
-// registration produces a principal, a token and a claim link and stores none of
-// the two plaintexts; that a generated-handle collision retries without ever
-// disclosing occupancy; and that a refresh gives an agent a new link WITHOUT
-// claiming it. All three are checked against the database rather than a double,
-// because "no plaintext at rest" and "the status guard holds" are SQL facts, not
-// logic a fake could assert.
 
 const claimUIRegisterTest = "https://anywaye.example"
 
@@ -31,9 +22,6 @@ type registerFixture struct {
 func newRegisterFixture(t *testing.T) *registerFixture {
 	t.Helper()
 	f := newServiceFixture(t)
-	// The claim UI base, which registration needs to render a claim URL. A string
-	// literal rather than a config.Load: the URL's construction is the use case's,
-	// and a test that read it from the environment would be testing the loader.
 	return &registerFixture{
 		base: f,
 		svc:  NewService(f.pool, WithClaimUI(claimUIRegisterTest)),
@@ -55,16 +43,6 @@ func (f *registerFixture) register(t *testing.T, name, username string) Register
 	return registered
 }
 
-// TestRegisterMintsEverythingAndWritesNoPlaintext is the happy path AND the
-// SHA-256 property in one: the response carries a token and a claim link, and the
-// database row carries neither.
-//
-// THE NO-PLAINTEXT HALF IS THE POINT. It reads the row back through the store and
-// asserts the token's plaintext appears in NO column — the digest is a SHA-256, and
-// there is no column a plaintext could be written into. The same for the claim
-// link. This is the check that would catch a future change that stashed the link on
-// the row "just until it's emailed", which is exactly how a plaintext secret ends
-// up in a backup.
 func TestRegisterMintsEverythingAndWritesNoPlaintext(t *testing.T) {
 	f := newRegisterFixture(t)
 
@@ -85,15 +63,11 @@ func TestRegisterMintsEverythingAndWritesNoPlaintext(t *testing.T) {
 
 	store := NewStore(f.base.pool)
 
-	// THE ROW, read back by id.
 	row, err := store.ByID(context.Background(), f.base.pool, registered.Agent.ID)
 	if err != nil {
 		t.Fatalf("reading the principal back: %v", err)
 	}
 
-	// The token's plaintext is nowhere. The digest is the only credential-shaped
-	// value on the storage side, and it equals SHA-256(token) and nothing equals the
-	// token itself.
 	if row.ClaimTokenDigest != nil && *row.ClaimTokenDigest == registered.TokenPlaintext {
 		t.Error("the claim TOKEN's plaintext is stored on the agent row as the claim digest")
 	}
@@ -101,7 +75,6 @@ func TestRegisterMintsEverythingAndWritesNoPlaintext(t *testing.T) {
 		t.Error("the token digests to itself, which cannot be true for SHA-256")
 	}
 
-	// Read the credential back and prove its stored digest is the hash, never the value.
 	stored, err := store.ByTokenID(context.Background(), f.base.pool, registered.Token.ID)
 	if err != nil {
 		t.Fatalf("reading the bootstrap credential back: %v", err)
@@ -113,14 +86,11 @@ func TestRegisterMintsEverythingAndWritesNoPlaintext(t *testing.T) {
 		t.Errorf("token_digest = %q, want the SHA-256 of the plaintext %q",
 			stored.TokenDigest, Digest(registered.TokenPlaintext))
 	}
-	// And the claim link's digest on the row is the hash of the link, not the link.
-	// The URL is <base>/agents/claim/<link>, so recover the link from the tail.
 	link := registered.ClaimURL[len(claimUIRegisterTest+claimLinkPath):]
 	if row.ClaimTokenDigest == nil || *row.ClaimTokenDigest != Digest(link) {
 		t.Error("the agent's claim digest is not the SHA-256 of the link in the claim URL")
 	}
 
-	// The registration event, with nobody as its actor.
 	events, err := store.ListEvents(context.Background(), f.base.pool, registered.Agent.ID)
 	if err != nil {
 		t.Fatalf("reading events: %v", err)
@@ -133,13 +103,6 @@ func TestRegisterMintsEverythingAndWritesNoPlaintext(t *testing.T) {
 	}
 }
 
-// TestRegisterRetriesOnAUsernameCollisionWithoutDisclosingIt is the conflict-retry
-// property, and the disclosure half is the reason it exists.
-//
-// Registering the same name twice succeeds twice with DIFFERENT handles, because a
-// generated collision retries under the hood — the public answer is never "taken",
-// so the endpoint cannot be used to probe which handles exist. The two principals
-// are genuinely two rows.
 func TestRegisterRetriesOnAUsernameCollisionWithoutDisclosingIt(t *testing.T) {
 	f := newRegisterFixture(t)
 
@@ -158,10 +121,6 @@ func TestRegisterRetriesOnAUsernameCollisionWithoutDisclosingIt(t *testing.T) {
 	}
 }
 
-// TestRegisterRefusesAUsernameThatIsAlreadyTakenAndNamesTheField is the one case a
-// caller learns a collision: they supplied the handle deliberately, so swapping in
-// a generated one would be a surprise, and the refusal names the field rather than
-// pretending the request was unparseable.
 func TestRegisterRefusesAUsernameThatIsAlreadyTakenAndNamesTheField(t *testing.T) {
 	f := newRegisterFixture(t)
 
@@ -175,12 +134,9 @@ func TestRegisterRefusesAUsernameThatIsAlreadyTakenAndNamesTheField(t *testing.T
 	}
 }
 
-// TestARegistrationWithNoClaimScreenRefusesRatherThanMinting unblocks the fail-
-// closed direction: a deployment with no claim URL configured must not register an
-// agent, because an unclaimed agent with no link is an agent nobody can finish.
 func TestARegistrationWithNoClaimScreenRefusesRatherThanMinting(t *testing.T) {
 	f := newServiceFixture(t)
-	svcWithoutClaimUI := NewService(f.pool) // no WithClaimUI
+	svcWithoutClaimUI := NewService(f.pool)
 
 	if _, err := svcWithoutClaimUI.Register(context.Background(), RegisterInput{
 		Name: "Noel", TraceID: "reg", Now: serviceInstant,
@@ -189,15 +145,11 @@ func TestARegistrationWithNoClaimScreenRefusesRatherThanMinting(t *testing.T) {
 	}
 }
 
-// TestRefreshGivesANewLinkAndDoesNotClaim is the property the method exists for:
-// the agent STAYS unclaimed, gets a new link, and the old one is spent.
 func TestRefreshGivesANewLinkAndDoesNotClaim(t *testing.T) {
 	f := newRegisterFixture(t)
 
 	registered := f.register(t, "Noel", "")
 
-	// The agent authenticates with its own bootstrap token, which is exactly what
-	// OwnerByTokenDigest resolves while the principal is unclaimed.
 	refreshed, err := f.svc.RefreshClaimLink(context.Background(), RefreshClaimInput{
 		Token:   registered.TokenPlaintext,
 		TraceID: "refresh",
@@ -218,24 +170,17 @@ func TestRefreshGivesANewLinkAndDoesNotClaim(t *testing.T) {
 		t.Error("the refresh returned the same claim URL; it did not regenerate the link")
 	}
 
-	// The OLD link no longer resolves, and the NEW one does — one live link at a
-	// time, which is what "regenerates in place" means.
 	oldLink := registered.ClaimURL[len(claimUIRegisterTest+claimLinkPath):]
 	if _, err := NewStore(f.base.pool).ByClaimDigest(context.Background(), f.base.pool, Digest(oldLink), f.now); !errors.Is(err, ErrNotFound) {
 		t.Error("the pre-refresh claim link still resolves; a refresh must spend the link it replaces")
 	}
 }
 
-// TestRefreshRefusesAClaimedAgent is the other half of the status guard: once a
-// human has claimed the agent, the agent's own token no longer refreshes a link —
-// the access belongs to the account now.
 func TestRefreshRefusesAClaimedAgent(t *testing.T) {
 	f := newRegisterFixture(t)
 
 	registered := f.register(t, "Noel", "")
 
-	// Claim the agent through the store, the way the W1-P1 claim route does, so the
-	// row is a real claimed row rather than a hand-written one.
 	link := registered.ClaimURL[len(claimUIRegisterTest+claimLinkPath):]
 	claimAcount := id.MustNew()
 	if _, err := f.base.pool.Exec(context.Background(),
@@ -251,7 +196,6 @@ func TestRefreshRefusesAClaimedAgent(t *testing.T) {
 		t.Fatalf("claiming for the test: %v", claimErr)
 	}
 
-	// Now the agent's own token tries to refresh, and is refused as a 404.
 	if _, err := f.svc.RefreshClaimLink(context.Background(), RefreshClaimInput{
 		Token: registered.TokenPlaintext, TraceID: "r", Now: f.now,
 	}); !errors.Is(err, ErrNotFound) {

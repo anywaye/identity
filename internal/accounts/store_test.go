@@ -12,15 +12,7 @@ import (
 	"github.com/anywaye/identity/internal/users"
 )
 
-// These are the store's tests, against a real Postgres in a private schema.
-// A store is where a silent translation bug lives — a role read back as its
-// ordinal, a NULL scanned into a zero time, a 23505 that is not mapped — and
-// none of those are visible through a fake querier.
 
-// errDeliberate is the sentinel the rollback test's transaction function
-// returns. A package-level value rather than errors.New at the call site,
-// because errors.Is compares identity and two separately constructed values with
-// the same message are different errors.
 var errDeliberate = errors.New("deliberate failure after both writes")
 
 func newStore(t *testing.T) (*Store, db.Querier) {
@@ -31,9 +23,6 @@ func newStore(t *testing.T) (*Store, db.Querier) {
 	return store, pool
 }
 
-// insertUser writes a user row directly, because most of these tests care about
-// memberships rather than about how a user comes to exist. The implementation is
-// in service_test.go, next to the other fixture helpers.
 func insertUser(t *testing.T, q db.Querier) id.UUID {
 	t.Helper()
 	return addUserWithEmail(t, q, dbtest.UniqueEmail(t))
@@ -70,7 +59,6 @@ func TestCreateStoresWhatItWasGiven(t *testing.T) {
 		t.Errorf("Create returned zero timestamps: %+v", created)
 	}
 
-	// Read it back through a different statement than the one that wrote it.
 	read, err := store.ByID(t.Context(), q, created.ID)
 	if err != nil {
 		t.Fatalf("ByID: %v", err)
@@ -80,18 +68,12 @@ func TestCreateStoresWhatItWasGiven(t *testing.T) {
 	}
 }
 
-// The role is stored as its name and read back as its name. If it round-tripped
-// through an integer the authorization matrix would still pass — the tests
-// insert the same constants they read — so this asserts the column itself.
 func TestMembershipRoleRoundTripsAsItsName(t *testing.T) {
 	store, q := newStore(t)
 	account := insertAccount(t, q, "Roles")
 
 	for _, role := range AllRoles() {
 		t.Run(role.String(), func(t *testing.T) {
-			// A fresh user per role: the composite primary key is (account_id,
-			// user_id), so reusing one user would be testing the duplicate
-			// rejection rather than the round trip.
 			user := insertUser(t, q)
 			m, err := store.AddMember(t.Context(), q, Membership{AccountID: account.ID, UserID: user, Role: role})
 			if err != nil {
@@ -148,9 +130,6 @@ func TestMemberLookupsMiss(t *testing.T) {
 	}
 }
 
-// The zero uuid is not a value any row can have. A lookup that treated it as a
-// wildcard would hand out an arbitrary account, so it is rejected before the
-// query runs.
 func TestZeroIDIsNotFound(t *testing.T) {
 	store, q := newStore(t)
 
@@ -175,7 +154,6 @@ func TestAddMemberRejectsADuplicate(t *testing.T) {
 		t.Errorf("the second AddMember = %v, want ErrAlreadyAMember so the handler can answer 409", err)
 	}
 
-	// The refused insert must not have changed the existing role.
 	m, err := store.Member(t.Context(), q, account.ID, user)
 	if err != nil {
 		t.Fatalf("Member: %v", err)
@@ -201,7 +179,6 @@ func TestSetRole(t *testing.T) {
 		t.Errorf("SetRole returned %q, want %q", updated.Role, RoleAdmin)
 	}
 
-	// updated_at has to move, or a poller cannot tell a change from a no-op.
 	if !updated.UpdatedAt.After(updated.CreatedAt) && !updated.UpdatedAt.Equal(updated.CreatedAt) {
 		t.Errorf("updated_at %s is before created_at %s", updated.UpdatedAt, updated.CreatedAt)
 	}
@@ -238,8 +215,6 @@ func TestRemoveMember(t *testing.T) {
 	}
 }
 
-// The last-owner check and the role change have to be one transaction, or two
-// concurrent demotions both see two owners and both succeed.
 func TestCountOwners(t *testing.T) {
 	store, q := newStore(t)
 	account := insertAccount(t, q, "Ownership")
@@ -262,16 +237,12 @@ func TestCountOwners(t *testing.T) {
 	}
 }
 
-// The whole point of the accounts list: an authenticated user's own accounts,
-// and nobody else's. Ordering is personal first then name, which is what a
-// sidebar wants and what jumpstart's `sorted` scope does.
 func TestListForUser(t *testing.T) {
 	store, q := newStore(t)
 	mine := insertUser(t, q)
 	theirs := insertUser(t, q)
 
 	personal := insertAccount(t, q, "mine personal")
-	// Make it personal, which Create does not decide for a caller.
 	if _, err := q.Exec(t.Context(), `UPDATE accounts SET personal = true WHERE id = $1`, personal.ID); err != nil {
 		t.Fatalf("marking the account personal: %v", err)
 	}
@@ -288,7 +259,6 @@ func TestListForUser(t *testing.T) {
 		t.Fatalf("AddMember: %v", err)
 	}
 
-	// The list carries the caller's role, so the response needs no second query.
 	got, err := store.ListForUser(t.Context(), q, mine)
 	if err != nil {
 		t.Fatalf("ListForUser: %v", err)
@@ -306,8 +276,6 @@ func TestListForUser(t *testing.T) {
 		}
 	}
 
-	// A user with no memberships gets an empty list, not a nil one, so a JSON
-	// encoder renders [] rather than null.
 	empty, err := store.ListForUser(t.Context(), q, id.MustNew())
 	if err != nil {
 		t.Fatalf("ListForUser: %v", err)
@@ -379,8 +347,6 @@ func TestDeleteCascades(t *testing.T) {
 	}
 }
 
-// A deleted user takes their memberships with them. Leaving them would mean
-// every account query has to join users to find out whether the member is real.
 func TestDeletingAUserCascadesMemberships(t *testing.T) {
 	store, q := newStore(t)
 	account := insertAccount(t, q, "Survivors")
@@ -429,16 +395,10 @@ func TestInvitationLifecycle(t *testing.T) {
 	if !invitation.ExpiresAt.Equal(expires) {
 		t.Errorf("expires_at = %s, want the %s the caller asked for", invitation.ExpiresAt, expires)
 	}
-	// created_at is the CALLER's clock, not the database's now(). This is the
-	// proof that the row and the event announcing it agree — and it is what
-	// account_invitations_expires_after_creation measures expires_at against, so
-	// a store that let the column default would compare the service's clock with
-	// the server's and refuse a legitimate invitation.
 	if !invitation.CreatedAt.Equal(created) {
 		t.Errorf("created_at = %s, want the %s the caller asked for", invitation.CreatedAt, created)
 	}
 
-	// Redemption is by digest, which is the only credential the table holds.
 	found, err := store.InvitationByToken(t.Context(), q, digest)
 	if err != nil {
 		t.Fatalf("InvitationByToken: %v", err)
@@ -447,7 +407,6 @@ func TestInvitationLifecycle(t *testing.T) {
 		t.Errorf("found invitation %s, want %s", found.ID, invitation.ID)
 	}
 
-	// Redeeming marks it, and the mark survives a re-read.
 	acceptedAt := time.Now().UTC().Truncate(time.Microsecond)
 	if err := store.MarkInvitationAccepted(t.Context(), q, invitation.ID, acceptedAt); err != nil {
 		t.Fatalf("MarkInvitationAccepted: %v", err)
@@ -464,9 +423,6 @@ func TestInvitationLifecycle(t *testing.T) {
 	}
 }
 
-// A second redemption of the same token must not silently succeed. This is the
-// method the store exposes for exactly that, and it reports "already marked"
-// rather than pretending it did the marking.
 func TestMarkInvitationAcceptedIsNotTwice(t *testing.T) {
 	store, q := newStore(t)
 	account := insertAccount(t, q, "Once Only")
@@ -498,9 +454,6 @@ func TestInvitationByTokenMisses(t *testing.T) {
 		t.Fatalf("NewToken: %v", err)
 	}
 
-	// A wrong token, a well-formed but unused token, and an empty one are the
-	// same error. Distinguishing them is how an invitation endpoint becomes an
-	// oracle for "was somebody invited to this account".
 	if _, err := store.InvitationByToken(t.Context(), q, wrongDigest); !errors.Is(err, ErrInvitationNotFound) {
 		t.Errorf("InvitationByToken with an unused token = %v, want ErrInvitationNotFound", err)
 	}
@@ -542,10 +495,6 @@ func TestCreateInvitationRejectsAPendingDuplicate(t *testing.T) {
 	}
 }
 
-// A personal account is the one a registration creates, and the packet says the
-// personal account is created in the same transaction as the user. This asserts
-// the store can do both writes on one Querier, which is what makes that
-// transaction possible.
 func TestPersonalAccountAndUserInOneTransaction(t *testing.T) {
 	store, q := newStore(t)
 	runner := db.TxRunner{Pool: q.(db.Pool)}
@@ -579,7 +528,6 @@ func TestPersonalAccountAndUserInOneTransaction(t *testing.T) {
 	if account.Personal != true {
 		t.Error("the account is not marked personal")
 	}
-	// A personal account has exactly one member at birth: its owner.
 	members, err := store.Members(t.Context(), q, account.ID)
 	if err != nil {
 		t.Fatalf("Members: %v", err)
@@ -588,12 +536,6 @@ func TestPersonalAccountAndUserInOneTransaction(t *testing.T) {
 		t.Errorf("Members returned %d, want 0 — the owner is added by the caller in the same transaction", len(members))
 	}
 
-	// A failing step rolls the whole thing back: no orphan user, no orphan
-	// account. This is the property the packet's "same transaction" rests on.
-	//
-	// Both writes have to *succeed* before the failure, or the test would only be
-	// proving that a rejected statement leaves nothing behind — which is the
-	// transaction manager's job and not the interesting one.
 	rollbackErr := runner.Do(t.Context(), func(ctx context.Context, tx db.Querier) error {
 		uid := id.MustNew()
 		if _, err := tx.Exec(ctx,

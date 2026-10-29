@@ -6,26 +6,6 @@ import (
 	"github.com/anywaye/identity/internal/platform/id"
 )
 
-// # THE USER-SCOPED LIFECYCLE EVENTS.
-//
-// `identity.user.created` is declared in anywaye.yml because core ships a payload
-// schema for it. This file's event does not have one — core 0.2's catalog has no
-// row for a deletion at all — so it is emitted undeclared and pinned in
-// `internal/platform/ci/event_grammar_test.go`'s `knownUndeclaredEvents`, which
-// is the honest place for a gap that is blocked on core rather than here.
-//
-// # WHY THE PAYLOAD IS AN ID AND NOTHING ELSE
-//
-// The obvious temptation is to put the email in here, so a consumer can address
-// the person without a call back. That is the same argument `NewUserEmailVerified`
-// rejects and it is worth restating because here it is stronger: by the time this
-// event is written the `users` row is GONE inside the same transaction, so the
-// email is no longer readable by anybody — including the publisher. A payload
-// carrying it would be the only surviving copy of the address, in the one table
-// that every subscriber on the platform can read. There is no consumer for whom
-// that is a trade worth making, and the id is enough: a consumer that needs the
-// person asks a service that still has them, or reads its own copy of the
-// relationship this event announces.
 
 // EventUserDeleted is emitted when a person ends their own account.
 //

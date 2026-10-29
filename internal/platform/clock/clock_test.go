@@ -6,8 +6,6 @@ import (
 	"time"
 )
 
-// epoch is an arbitrary fixed instant. Nothing in this package may depend on
-// the wall clock, so every test names its own starting point.
 var epoch = time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
 
 func TestSystemClockIsMonotonicEnoughToBeAClock(t *testing.T) {
@@ -73,8 +71,6 @@ func TestFakeClockSetMovesToAnArbitraryInstant(t *testing.T) {
 	}
 }
 
-// The fake is shared between the HTTP handlers and the test goroutine, so a data
-// race here is a real race in production code, not a test artifact.
 func TestFakeClockIsSafeForConcurrentUse(t *testing.T) {
 	t.Parallel()
 
@@ -96,8 +92,6 @@ func TestFakeClockIsSafeForConcurrentUse(t *testing.T) {
 	}
 }
 
-// A Clock is satisfied by both implementations, which is the whole point of the
-// interface: callers cannot tell which one they hold.
 func TestBothImplementationsSatisfyClock(t *testing.T) {
 	t.Parallel()
 

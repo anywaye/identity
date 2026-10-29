@@ -14,26 +14,9 @@ import (
 	"github.com/anywaye/identity/internal/platform/id"
 )
 
-// The store: three tables, and every method here takes a db.Querier rather than
-// the pool so the caller chooses the transaction boundary.
-//
-// THE SHAPE IS COPIED FROM internal/apikeys/store.go, and what is copied is the
-// argument rather than the lines: a read that could distinguish "revoked" from
-// "never existed" is an oracle, so the reads are CONDITIONAL and the failures are
-// INDISTINGUISHABLE. An agent claim is the one flow in this service where a
-// stranger presents a credential and gets an answer about whether it worked, so
-// every refusal here is one 404 and the 404 never says which of the four things
-// was true.
-//
-// WHAT IS NOT HERE. The minting use cases: no method in this file renders a
-// token. That is W1-P2's (registration) and W2-P2's (claim), and a mint is a
-// policy decision about lifetimes rather than a row write.
 
-// Postgres SQLSTATE 23505, unique_violation.
 const uniqueViolation = "23505"
 
-// errNoRows is pgx's "the query matched nothing", aliased so the intent reads at
-// the call site.
 var errNoRows = pgx.ErrNoRows
 
 // ClaimLinkTTL is how long a claim link lives from the registration that
@@ -63,8 +46,6 @@ const ClaimLinkTTL = 24 * time.Hour
 // a caller may ask for less through the create route's expires_in.
 const DefaultTokenTTL = 90 * 24 * time.Hour
 
-// maxTokenLifetime caps a requested lifetime so a caller cannot mint an
-// effectively-permanent token by asking for a huge duration.
 const maxTokenLifetime = 365 * 24 * time.Hour
 
 // TokenTouchWindow is how stale `agent_tokens.last_used_at` may get before a
@@ -76,98 +57,25 @@ const maxTokenLifetime = 365 * 24 * time.Hour
 // lock is a queue.
 const TokenTouchWindow = 5 * time.Minute
 
-// Errors this store returns. They are distinct values so the code says what
-// happened, and the HTTP layer renders two of them differently for a reason that
-// is written where it is rendered.
 var (
-	// ErrNotFound is ONE answer for every way a lookup for a live row can fail:
-	// the row never existed, the claim link is spent, the link is expired, the
-	// agent is already claimed, the token is revoked, the token is spent, or the
-	// principal is disabled.
-	//
-	// A store that returned ErrExpired and ErrNotFound separately would hand the
-	// claim route a 410 to render, and a 410 says "this link was real". That is
-	// the enumeration oracle this service refuses to build, and it is why the
-	// refusals are one value: the route has nothing to distinguish them WITH.
 	ErrNotFound = errors.New("no such agent")
 
-	// ErrAlreadyClaimed means the agent exists and is bound to an account.
-	//
-	// It is distinct from ErrNotFound for the benefit of a caller who already
-	// holds the row — the claim route's own re-read — and NOT for the benefit of a
-	// stranger holding a link. The route maps it to the same 404 ErrNotFound gets.
 	ErrAlreadyClaimed = errors.New("this agent has already been claimed")
 
-	// ErrUnclaimed means a caller presented a LIVE agent credential for a
-	// principal that has never been bound to a human account.
-	//
-	// IT IS NOT A 401 AND THAT IS THE WHOLE REASON IT EXISTS. The credential
-	// resolved: the request is authenticated, the principal is real, and the
-	// token is live. What is missing is the CLICK — a human approving the claim
-	// link. A 401 would send a client hunting a login problem that does not
-	// exist, and the caller's remedy is not a new credential but another party's
-	// action.
-	//
-	// D4 is what makes it a refusal rather than a no-op: an agent that registered
-	// itself has done everything an agent can do alone, and "an agent acting
-	// alone gets nothing" means the paths that ACT are closed until a human has
-	// claimed it. The one path that stays open to an unclaimed principal is the
-	// one that asks for its claim link, because closing that would leave an agent
-	// nobody can finish claiming.
 	ErrUnclaimed = errors.New("this agent is unclaimed")
 
-	// ErrIllegalTransition means the state machine refuses from → to.
-	//
-	// It is a 422 at the route rather than a 404, and the difference is who is
-	// asking: a caller asking to disable an agent has already been authorized
-	// against the account that owns it, so the refusal is about the AGENT's
-	// history rather than about anything a stranger could learn. There is exactly
-	// one transition that produces it — unclaimed → disabled — and it is refused
-	// twice, here and in the table's CHECK.
 	ErrIllegalTransition = errors.New("that agent cannot move to the requested status")
 
-	// ErrNameTaken means this agent already has a LIVE token with that name.
-	//
-	// A 409 rather than a 422, on apikeys' argument: the request is well formed
-	// and the state it asks for collides with one that exists. The index that
-	// raises it is partial on revoked_at IS NULL, so a revoked token of the same
-	// name does not collide — which is what makes "revoke the old one, mint the
-	// new one" two requests rather than a transaction that finds a free name first.
 	ErrNameTaken = errors.New("an active agent token with that name already exists")
 
-	// ErrAlreadyRevoked means the credential exists and has already been
-	// withdrawn.
-	//
-	// Distinct from ErrNotFound so a caller who clicks twice is told so, on
-	// apikeys' argument: a caller who believed a revocation succeeded twice has a
-	// belief that ends up written in an incident timeline. It is wrapped with the
-	// row id rather than returned bare, because a bare sentinel on a route that
-	// renders 404 for everything is a distinction nobody asked for.
 	ErrAlreadyRevoked = errors.New("agent token is already revoked")
 
-	// ErrUsernameTaken means the globally-unique handle a registration asked for
-	// is already held by another principal (migration 00034).
-	//
-	// Distinct from ErrNotFound and ErrNameTaken because the caller SUPPLIED this
-	// value and a 422 needs a field to name. The registration service generates
-	// its own handle and retries on this before it ever returns, so the only way
-	// a HANDLER sees it is a caller who chose a handle deliberately and lost the
-	// retry budget — and the answer there names `username` rather than pretending
-	// the request was unparseable.
 	ErrUsernameTaken = errors.New("that username is already registered")
 )
 
-// agentColumns is the select list, in the order scanAgent expects. One constant,
-// so a column added here cannot be present in one query and forgotten in another.
-//
-// `username` sits right after `name` (migration 00034), and scanAgent reads it in
-// the same position: the column and the scan are one thing, and a reorder that
-// moved one without the other is a runtime scan error rather than a compile one —
-// which is why the constant exists.
 const agentColumns = `id, name, username, status, claim_token_digest, claim_link_expires_at, ` +
 	`claimed_by_account_id, claimed_at, device, created_at, updated_at`
 
-// tokenColumns is the same for agent_tokens.
 const tokenColumns = `id, agent_id, name, token_digest, created_at, expires_at, ` +
 	`last_used_at, revoked_at, revoked_reason`
 
@@ -184,9 +92,6 @@ func NewStore(pool db.Pool) *Store { return &Store{pool: pool} }
 // for it.
 func (s *Store) Pool() db.Querier { return s.pool }
 
-// ---------------------------------------------------------------------------
-// agents
-// ---------------------------------------------------------------------------
 
 // NewAgent is the input to Store.Create: the row a registration produces.
 //
@@ -194,27 +99,11 @@ func (s *Store) Pool() db.Querier { return s.pool }
 // sessions.NewSession and apikeys.NewKey do: the store has no way to render the
 // link, so there is no field a raw credential could be written into.
 type NewAgent struct {
-	// Name is what the human sees on the claim screen. 1..120 characters, which
-	// is the table's CHECK and not this store's opinion.
 	Name string
-	// Username is the globally-unique handle (migration 00034). The service
-	// normalises and, on a collision, retries with a fresh one before this ever
-	// reaches the store; the store just writes what it is given and turns a
-	// surviving collision into ErrUsernameTaken.
 	Username string
-	// Device is the agent's own description of itself, written whole as a
-	// document. The set of keys is a code fact (migrations/00027's argument), so
-	// this is a map and not four columns.
 	Device map[string]any
-	// ClaimDigest is the SHA-256 of the claim link, the only part of it that
-	// reaches the database.
 	ClaimDigest string
-	// ClaimLinkExpiresAt is when the link stops working, and an unclaimed agent
-	// must always have one — the table's agents_unclaimed_has_a_live_link CHECK
-	// refuses a row without it.
 	ClaimLinkExpiresAt time.Time
-	// CreatedAt is the service's clock, passed in so the row and the event
-	// announcing it agree and only one of the two is under test control.
 	CreatedAt time.Time
 }
 
@@ -255,8 +144,6 @@ func (s *Store) Create(ctx context.Context, q db.Querier, n NewAgent) (Agent, er
 			return Agent{}, ErrNotFound
 		}
 		if isUniqueViolation(err) {
-			// The one caller-reachable unique violation on this table is the
-			// handle (00034); the claim digest's is a 256-bit bug, not a request.
 			return Agent{}, ErrUsernameTaken
 		}
 		return Agent{}, fmt.Errorf("agents: registering a principal: %w", err)
@@ -283,9 +170,6 @@ func (s *Store) Create(ctx context.Context, q db.Querier, n NewAgent) (Agent, er
 // and a link that expires mid-request has to be judged against the same instant
 // the response is timestamped with.
 func (s *Store) ByClaimDigest(ctx context.Context, q db.Querier, digest string, now time.Time) (Agent, error) {
-	// An empty digest never reaches the database. It is not a security boundary —
-	// an empty string hashes to a well-formed digest like any other value — it is
-	// that the query has one shape and no caller should be able to change it.
 	if digest == "" {
 		return Agent{}, ErrNotFound
 	}
@@ -344,9 +228,6 @@ func (s *Store) Claim(ctx context.Context, q db.Querier, agentID id.UUID, claimD
 		return Agent{}, ErrNotFound
 	}
 	if !MayTransition(StatusUnclaimed, StatusClaimed) {
-		// Unreachable while the state machine above says what it says, and stated
-		// because a reader should not have to check: the store refuses the move in
-		// Go as well as in the table.
 		return Agent{}, ErrIllegalTransition
 	}
 
@@ -366,9 +247,6 @@ func (s *Store) Claim(ctx context.Context, q db.Querier, agentID id.UUID, claimD
 
 	out, err := scanAgent(q.QueryRow(ctx, query, agentID, claimDigest, account, at, at))
 	if errors.Is(err, errNoRows) {
-		// One read to say WHICH of the failures this was, and it is not the
-		// route's answer — it is the use case's, so the event it writes names the
-		// real cause. A stranger holding the link gets ErrNotFound either way.
 		existing, lookupErr := s.ByID(ctx, q, agentID)
 		if errors.Is(lookupErr, ErrNotFound) {
 			return Agent{}, ErrNotFound
@@ -509,9 +387,6 @@ func (s *Store) SetStatus(ctx context.Context, q db.Querier, agentID id.UUID, to
 
 	out, err := scanAgent(q.QueryRow(ctx, query, agentID, to, at, current.Status))
 	if errors.Is(err, errNoRows) {
-		// The row moved between the read and the write. Load it again and refuse
-		// on what it is NOW, rather than reporting a transition that did not
-		// happen.
 		fresh, rereadErr := s.ByID(ctx, q, agentID)
 		if rereadErr != nil {
 			return Agent{}, rereadErr
@@ -524,9 +399,6 @@ func (s *Store) SetStatus(ctx context.Context, q db.Querier, agentID id.UUID, to
 	return out, nil
 }
 
-// ---------------------------------------------------------------------------
-// agent_tokens
-// ---------------------------------------------------------------------------
 
 // NewAgentToken is the input to Store.CreateToken.
 //
@@ -575,7 +447,6 @@ func (s *Store) CreateToken(ctx context.Context, q db.Querier, n NewAgentToken) 
 // apikeys' ByDigest returns — the row and the live role — for the same reason.
 type Resolved struct {
 	Token
-	// AgentStatus is the principal's status at the instant of the resolution.
 	AgentStatus string
 }
 
@@ -611,9 +482,6 @@ func (s *Store) ByTokenDigest(ctx context.Context, q db.Querier, digest string, 
 		return Resolved{}, ErrNotFound
 	}
 
-	// A var rather than a const, and the reason is prefixed(): a column added to
-	// tokenColumns cannot be forgotten in the aliased query, and a constant cannot
-	// call a function.
 	var query = `
 		SELECT ` + prefixed("t", tokenColumns) + `, a.status
 		FROM agent_tokens t
@@ -794,9 +662,6 @@ func (s *Store) RevokeToken(ctx context.Context, q db.Querier, rowID, agentID id
 			return Token{}, lookupErr
 		}
 		if existing.AgentID != agentID {
-			// Another agent's credential, told apart from this one's revoked one
-			// only because the caller already holds the row id. The route maps both
-			// to the same 404.
 			return Token{}, ErrNotFound
 		}
 		if existing.IsRevoked() {
@@ -831,17 +696,12 @@ func (s *Store) Touch(ctx context.Context, q db.Querier, rowID id.UUID, at time.
 		  AND revoked_at IS NULL
 		  AND (last_used_at IS NULL OR last_used_at < $3)`
 
-	// No RowsAffected check, and the comment is the reason: zero rows is the rate
-	// limit working, and reporting it would turn a busy credential into a failing
-	// one.
 	if _, err := q.Exec(ctx, query, rowID, at, at.Add(-TokenTouchWindow)); err != nil {
 		return fmt.Errorf("agents: recording a credential's last use: %w", err)
 	}
 	return nil
 }
 
-// rowScanner is the narrow interface both pgx.Row and pgx.Rows satisfy, so one
-// read serves the single-row and the list query.
 type rowScanner interface {
 	Scan(dest ...any) error
 }
@@ -859,12 +719,6 @@ func scanAgent(row rowScanner) (Agent, error) {
 		}
 		return Agent{}, fmt.Errorf("agents: scanning a principal: %w", err)
 	}
-	// A NULL username folds to the empty string rather than refusing the scan,
-	// the same shape scanEvent gives a registration's null actor. The column is
-	// nullable (a writer that constructs NewAgent directly — W1-P1's store tests, a
-	// repair script — may omit the handle), and "no handle" and "a handle" are
-	// distinguished by the empty string here because a registration through the
-	// service always generates one and never reaches the NULL case.
 	if username != nil {
 		a.Username = *username
 	}
@@ -884,13 +738,6 @@ func scanToken(row rowScanner) (Token, error) {
 	return t, nil
 }
 
-// marshalDevice renders the device document the row stores.
-//
-// An empty or nil map becomes {} rather than NULL, because "the agent told us
-// nothing about itself" is a fact an empty document already says — the column's
-// NOT NULL DEFAULT is the database saying the same thing, and two writers that
-// disagree about which one applies is how a row ends up with a NULL a CHECK
-// later refuses.
 func marshalDevice(device map[string]any) (string, error) {
 	if len(device) == 0 {
 		return "{}", nil
@@ -902,11 +749,6 @@ func marshalDevice(device map[string]any) (string, error) {
 	return string(raw), nil
 }
 
-// prefixed qualifies a bare column list with a table alias, so the joined
-// resolution query and the plain reads can share one column constant. It is the
-// same helper internal/apikeys/store.go has, restated because neither package
-// imports the other and a shared one would be an edge between two tables that
-// have nothing to say to each other.
 func prefixed(alias, columns string) string {
 	out := make([]byte, 0, len(columns)+len(alias)+8)
 	start := 0
@@ -924,12 +766,6 @@ func prefixed(alias, columns string) string {
 	return string(out)
 }
 
-// isUniqueViolation reports whether err is a unique_violation.
-//
-// It matches on the SQLSTATE alone, load-bearing rather than lazy: Postgres
-// renames an index when a table is cloned with LIKE ... INCLUDING INDEXES, which
-// is exactly what the integration tests do, and a silently mis-detected duplicate
-// turns a 409 into a 500.
 func isUniqueViolation(err error) bool {
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) {

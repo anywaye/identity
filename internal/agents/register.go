@@ -11,36 +11,6 @@ import (
 	"github.com/anywaye/identity/internal/platform/db"
 )
 
-// THE REGISTRATION AND THE CLAIM-LINK REFRESH — the two things a caller with no
-// account may do to a principal, and the use cases that own them.
-//
-// # WHERE THIS SITS IN THE FLOW
-//
-// AGENTS-FIRST.md's flow, step ①: an agent POSTs to a public endpoint and comes
-// away unclaimed, holding a token, with a claim URL for a human to open. This is
-// that endpoint's body: registration mints the principal, its first bearer token
-// and its first claim link in one transaction, and returns the credential and the
-// URL — the only two plaintext secrets that ever leave the process, each exactly
-// once, each with no column that could hold them again.
-//
-// # THE TWO PLAINTEXTS, AND WHY THEY ARE BOTH HERE AND NOWHERE ELSE
-//
-// The token is stored as a SHA-256 digest in agent_tokens; the claim link as a
-// digest on the principal. The mint returns both halves, the route writes the
-// plaintext into the 201 body, and NOTHING downstream — not a log line, not an
-// event row, not a re-read — can produce either again. TestTheRegistrationWritesNoPlaintextToken
-// is the property stated as a check: read the row back and the plaintext is not
-// in any column, because there is no column for it.
-//
-// # THE REFRESH AND THE CLAIM ARE DIFFERENT VERBS ON PURPOSE
-//
-// A refresh gives an agent whose link it lost a NEW link and changes nothing
-// else — the status guard in Store.RefreshClaimLink refuses a claimed principal,
-// so "give me a new link" can never act as "claim me". The claim itself W1-P1
-// landed and it is the boundary this file must not cross: nothing here binds an
-// account or mints a scoped token for a claimed principal. That is W2-P2's, and
-// the separation is what makes D4 hold — an agent can refresh a link all it likes
-// and still be nobody's.
 
 // ServiceOpt configures a Service at construction.
 type ServiceOpt func(*Service)
@@ -75,25 +45,13 @@ var ErrNoClaimUI = errors.New("no claim UI configured; set the claim UI base bef
 // a README can name the same string without one being a literal.
 const ClaimUIBaseEnvVar = "AGENT_CLAIM_UI_URL"
 
-// ClaimLinkTTL comment lives in store.go; re-exported here as the writer of the
-// expiry so a reader of the use case sees it without crossing files. The value is
-// Store-level because RefreshClaimLink reads the same one.
 
 // RegisterInput is what a registration needs, and every field says who chose it.
 type RegisterInput struct {
-	// Name is the display label a human reads. Chosen by the caller (the agent's
-	// operator via the CLI), 1..120 characters.
 	Name string
-	// Username is an optional handle. Empty means "generate one"; a non-empty
-	// value must be a valid handle or the registration refuses with a 422 naming
-	// the field rather than silently normalising it.
 	Username string
-	// Device is the agent's self-description, written whole. A code fact about
-	// which keys are read (00027); this packet passes it through untouched.
 	Device map[string]any
-	// TraceID joins the registration event to the request's log line.
 	TraceID string
-	// Now is the service's clock.
 	Now time.Time
 }
 
@@ -108,12 +66,8 @@ type RegisterInput struct {
 type Registered struct {
 	Agent Agent
 	Token Token
-	// TokenPlaintext is the bearer credential, shown to the caller exactly once.
 	TokenPlaintext string
-	// ClaimURL is the absolute URL a human opens to claim the agent.
 	ClaimURL string
-	// ClaimLinkExpiresAt is when the link stops working, rendered alongside the
-	// URL so the CLI can say so.
 	ClaimLinkExpiresAt time.Time
 }
 
@@ -135,8 +89,6 @@ type Registered struct {
 // deliberately can provoke.
 func (s *Service) Register(ctx context.Context, in RegisterInput) (Registered, error) {
 	if s.claimUI == "" {
-		// Fail before minting anything: an unclaimable agent is worse than a
-		// refused registration, because it exists and cannot be finished.
 		return Registered{}, fmt.Errorf("agents: %w", ErrNoClaimUI)
 	}
 
@@ -145,9 +97,6 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (Registered, e
 		return Registered{}, ErrInvalidName
 	}
 
-	// The handle's first attempt. A supplied handle is used verbatim once; a
-	// generated one is retried. The distinction is captured in wantsOwn so a
-	// supplied handle never silently becomes a generated one.
 	wantsOwn := strings.TrimSpace(in.Username) != ""
 	candidate := strings.TrimSpace(in.Username)
 	if !wantsOwn {
@@ -156,10 +105,6 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (Registered, e
 		return Registered{}, fmt.Errorf("%w: %q", ErrInvalidUsername, in.Username)
 	}
 
-	// The two mints, before the transaction: credentials are minted, not derived,
-	// and a failure of crypto/rand here must abort before a row exists. The token
-	// is the bearer credential; the claim link is minted by the same primitive
-	// for the same 256-bit budget, and its digest goes on the principal.
 	tokenValue, tokenDigest, err := NewToken()
 	if err != nil {
 		return Registered{}, err
@@ -189,14 +134,6 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (Registered, e
 				agent = created
 				break
 			}
-			// ONLY A GENERATED HANDLE RETRIES. A caller who supplied a specific
-			// username asked for THAT handle, and silently swapping in a generated
-			// one would register them as a principal they did not name — the
-			// surprise the CLI's own client-side retry avoided by never retrying a
-			// supplied username. So a supplied collision falls straight through to
-			// ErrUsernameTaken, and the route renders it as a 422 naming `username`.
-			// A generated collision retries up to the budget and then also gives up
-			// (a 31-bit suffix meeting another, which does not happen).
 			if errors.Is(createErr, ErrUsernameTaken) && !wantsOwn && attempt < maxRegisterAttempts-1 {
 				candidate = appendSuffix(GenerateUsernameBase(name))
 				continue
@@ -242,43 +179,25 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (Registered, e
 	}, nil
 }
 
-// claimLinkURL renders the absolute claim URL for a link plaintext.
 func (s *Service) claimLinkURL(link string) string {
 	return s.claimUI + claimLinkPath + url.PathEscape(link)
 }
 
-// claimLinkPath is the path within the claim UI where the screen lives
-// (website's /agents/claim/[token]). A constant so a change is one place and a
-// test asserts the shape rather than a coincidence.
 const claimLinkPath = "/agents/claim/"
 
-// maxRegisterAttempts bounds the username retry loop. It is small because a
-// collision is either a caller's deliberate collision (answered quickly) or two
-// 31-bit suffixes meeting, which does not happen.
 const maxRegisterAttempts = 5
 
-// defaultTokenName is the name given to the bootstrap token a registration mints.
-// The agent may mint more under other names and rotate or revoke this one.
 const defaultTokenName = "bootstrap"
 
 // ErrInvalidName is a registration whose display name is missing or too long.
 var ErrInvalidName = fmt.Errorf("a name is required and must be between 1 and 120 characters")
 
-// ---------------------------------------------------------------------------
-// the claim-link refresh
-// ---------------------------------------------------------------------------
 
 // RefreshClaimInput is what a refresh needs. The presented token is the only
 // credential; everything else is the request's own context.
 type RefreshClaimInput struct {
-	// Token is the agent's own bearer credential, presented to prove it is the
-	// principal asking. NOT a claim link: a refresh that took a link would let a
-	// stranger holding a stolen link re-mint links, which is the opposite of the
-	// bound the link is meant to place.
 	Token string
-	// TraceID joins the refresh event to the request's log line.
 	TraceID string
-	// Now is the service's clock.
 	Now time.Time
 }
 
@@ -336,15 +255,9 @@ func (s *Service) RefreshClaimLink(ctx context.Context, in RefreshClaimInput) (R
 	err = db.TxRunner{Pool: s.pool}.Do(ctx, func(ctx context.Context, tx db.Querier) error {
 		resolved, resolveErr := s.store.OwnerByTokenDigest(ctx, tx, digest, in.Now)
 		if resolveErr != nil {
-			// One answer for a revoked, expired or never-issued token — the read a
-			// stranger can perform says nothing beyond "this value does not resolve".
 			return ErrNotFound
 		}
 		if resolved.AgentStatus != StatusUnclaimed {
-			// Already claimed (or disabled). A stranger holding a link learns the
-			// same ErrNotFound a wrong token gets; the owner's agent is not
-			// re-linkable by anybody but them through routes this packet does not
-			// mount.
 			return ErrNotFound
 		}
 

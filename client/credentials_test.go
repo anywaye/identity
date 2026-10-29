@@ -1,13 +1,5 @@
 package client
 
-// BOTH AUTH MODELS, IN BOTH DIRECTIONS.
-//
-// The brief requires "both auth models — bearer `anywaye_` token and session cookie,
-// the decision explicit and tested in both directions". Both directions means: an
-// apiToken goes in the header and NOT the cookie, and a session goes in BOTH. Each is
-// asserted from the server's side — the request that actually went out — rather than
-// from the client's intentions, because a function that computes the right thing and
-// puts it on the wrong request would pass an assertion about its own return value.
 
 import (
 	"context"
@@ -18,17 +10,10 @@ import (
 	"testing"
 )
 
-// A session token: 43 base64url characters, no prefix, no dots. That is what
-// identity's `Session.token` documents and what `ClassifyCredential` falls through
-// to.
 const sessionCredential = "0dN3aQ2vF8kLmXpR7sT1uWzYb4cE6hJ9gK2mP5rS8tV"
 
-// A scoped api token: `anywaye_` plus 43 base64url characters, per `IssuedAPIKey`.
 const apiCredential = "anywaye_Zq3vK7mXpR2tY8wB4cN6dF0gH1jK5lM9oP3qS7uV2wX4yZ8"
 
-// A JWS: three base64url segments whose header decodes to a JSON object with an
-// `alg`. The header here is `{"alg":"HS256"}` in base64url — the real one, so the
-// classifier has to decode it rather than pattern-match.
 const jwtCredential = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9." +
 	"eyJzdWIiOiJhYjAwMDAwMC0wMDAwLTAwMDAtMDAwMC0wMDAwMDAwMDAwMDAifQ." +
 	"c2lnbmF0dXJlLWhlcmU"
@@ -76,9 +61,6 @@ func TestClassifyCredentialTellsTheThreeShapesApart(t *testing.T) {
 }
 
 func TestClassifyCredentialIsNotFooledByTheSegmentCount(t *testing.T) {
-	// `one.two.three` is three dot-separated segments and is NOT a JWT. A classifier
-	// that only counted segments would send it in the shape of the other five
-	// services' credentials, and a hostname in a config file would be mislabelled.
 	got, err := ClassifyCredential("one.two.three")
 	if err != nil {
 		t.Fatalf("classification refused: %v", err)
@@ -114,8 +96,6 @@ func TestClassifyCredentialRefusesValuesThatCouldBreakAHeader(t *testing.T) {
 				t.Errorf("the refusal does not match ErrInvalidCredential, so a caller "+
 					"cannot branch on it: %v", err)
 			}
-			// The offending value is never quoted back: a credential that reached an
-			// error message has leaked.
 			if err != nil && strings.Contains(err.Error(), strings.TrimSpace(tc.token)) &&
 				tc.token != "" {
 				t.Errorf("the error message quotes the offending value: %v", err)
@@ -124,13 +104,6 @@ func TestClassifyCredentialRefusesValuesThatCouldBreakAHeader(t *testing.T) {
 	}
 }
 
-// TestAttachCredentialPutsAnAPITokenInTheHeaderAndNotInACookie is the first of the
-// two directions.
-//
-// core's conventions reserve cookies for browser sessions — "No cookies for API
-// traffic" — and a credential in a cookie is one a browser silently attaches to a
-// request its holder did not intend. Putting a `anywaye_` value there would publish a
-// machine credential onto the browser surface.
 func TestAttachCredentialPutsAnAPITokenInTheHeaderAndNotInACookie(t *testing.T) {
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/me", nil)
 
@@ -152,15 +125,6 @@ func TestAttachCredentialPutsAnAPITokenInTheHeaderAndNotInACookie(t *testing.T) 
 	}
 }
 
-// TestAttachCredentialPutsASessionInBOTH is the second direction, and the reason the
-// rule is asymmetric.
-//
-// identity resolves a request carrying both by preferring the header — "an
-// `Authorization: Bearer` header is preferred over the cookie when both are present,
-// because a client holding both has said which one it means" — so sending both is
-// unambiguous by the server's own rule, and it is what lets one credential work
-// against identity (which takes the cookie) and against the other five services
-// (which take a bearer and nothing else) with no choice at the call site.
 func TestAttachCredentialPutsASessionInBoth(t *testing.T) {
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/me", nil)
 
@@ -205,14 +169,6 @@ func TestAttachCredentialNeverOverwritesWhatTheCallerSet(t *testing.T) {
 	}
 }
 
-// TestTheCredentialReachesTheWireAndTheServerSeesIt is the end-to-end half: not what
-// the helper computed, but what a server received.
-//
-// Every other test in this file asserts on a request this package built. This one
-// starts an `httptest.Server`, points a real `Client` at it, and reads the request the
-// server actually got. It is the difference between "AttachCredential is correct" and
-// "a request leaves this process carrying the credential the caller meant", and the
-// second is the property anybody depends on.
 func TestTheCredentialReachesTheWireAndTheServerSeesIt(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
@@ -276,9 +232,6 @@ func TestTheCredentialReachesTheWireAndTheServerSeesIt(t *testing.T) {
 	}
 }
 
-// TestAnAnonymousClientSendsNoCredential covers the legitimate case: four operations
-// in this document are served without one, so "no token" has to be a working client
-// rather than an error.
 func TestAnAnonymousClientSendsNoCredential(t *testing.T) {
 	var gotAuth, gotCookie string
 

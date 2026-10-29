@@ -13,33 +13,17 @@ import (
 	"github.com/anywaye/identity/internal/platform/id"
 )
 
-// The targeted tenancy cases, over HTTP, against the real service and a real
-// database. The authorization matrix proves the shape of every answer; this file
-// proves the ones that depend on state changing: an invitation being spent, an
-// owner's count reaching one, a slug being taken.
-//
-// Each test drives the real router, so a token in these tests is one the service
-// minted and a role in the database is one a previous request wrote.
 
 type tenancyWorld struct {
 	handler http.Handler
 	clock   *clock.Fake
 }
 
-// newTenancyWorld builds the whole service over a private schema.
 func newTenancyWorld(t *testing.T) *tenancyWorld {
 	t.Helper()
 	return newTenancyWorldWithSession(t, 24*time.Hour)
 }
 
-// newTenancyWorldWithSession is newTenancyWorld with the session lifetime
-// spelled out.
-//
-// A test that moves the clock by more than a day has to say so here, and the
-// reason is worth stating once: moving the clock also ages every session, so a
-// 24-hour session is a 401 by the time an invitation's seven-day window closes.
-// That is the system behaving correctly — the test was asking two questions at
-// once — and the fix is a session that outlives the thing under test.
 func newTenancyWorldWithSession(t *testing.T, sessionTTL time.Duration) *tenancyWorld {
 	t.Helper()
 
@@ -56,7 +40,6 @@ func newTenancyWorldWithSession(t *testing.T, sessionTTL time.Duration) *tenancy
 	}
 }
 
-// signedUp is a user with a live session: the fixture every test starts from.
 type signedUp struct {
 	token string
 	id    id.UUID
@@ -92,8 +75,6 @@ func (w *tenancyWorld) signUp(t *testing.T) signedUp {
 	return signedUp{token: session.Token, id: parsed, email: email}
 }
 
-// response wraps a recorder with the account and invitation shapes the tests
-// read back, so each assertion says what it means instead of decoding JSON.
 type tenancyResponse struct {
 	code      int
 	body      string
@@ -139,9 +120,6 @@ func (r *tenancyResponse) decode(t *testing.T, into any) {
 	}
 }
 
-// A registration creates a personal account, and GET /v1/accounts shows it. This
-// is the packet's "auto-create personal account, same transaction" as a client
-// experiences it, and the name is the email's local part.
 func TestRegistrationProvisionsAPersonalAccount(t *testing.T) {
 	w := newTenancyWorld(t)
 	user := w.signUp(t)
@@ -168,9 +146,6 @@ func TestRegistrationProvisionsAPersonalAccount(t *testing.T) {
 	}
 }
 
-// A slug is derived from the name and is unique, so the second account with the
-// same name is a 409. It is a refusal rather than a silent disambiguation: the
-// second person is told, and the first person's handle does not move.
 func TestSlugUniquenessIs409(t *testing.T) {
 	w := newTenancyWorld(t)
 	user := w.signUp(t)
@@ -191,7 +166,6 @@ func TestSlugUniquenessIs409(t *testing.T) {
 		t.Errorf("code = %q, want %q", second.problem.Code, CodeConflict)
 	}
 
-	// The first account is untouched, and nothing was disambiguated.
 	list := w.call(t, user.token, http.MethodGet, "/v1/accounts", "")
 	seen := 0
 	for _, item := range list.list {
@@ -204,8 +178,6 @@ func TestSlugUniquenessIs409(t *testing.T) {
 	}
 }
 
-// The whole invitation lifecycle over HTTP: an admin invites, the invitee
-// redeems, and the membership exists. Then the token is spent and says so.
 func TestInvitationLifecycleOverHTTP(t *testing.T) {
 	w := newTenancyWorld(t)
 	owner := w.signUp(t)
@@ -225,14 +197,10 @@ func TestInvitationLifecycleOverHTTP(t *testing.T) {
 	if invited.invite.Token == "" {
 		t.Fatal("the 201 carries no token, so the invitation cannot be redeemed")
 	}
-	// The response is the only place the raw token ever appears, and the digest is
-	// not in it at all: the digest is what the row holds, and a response that
-	// echoed it would tell a client something it has no use for.
 	if strings.Contains(invited.body, "token_digest") {
 		t.Errorf("the invitation response carries the stored digest: %s", invited.body)
 	}
 
-	// Before accepting, the invitee is a stranger to the account.
 	if got := w.call(t, invitee.token, http.MethodGet, path, "").code; got != http.StatusNotFound {
 		t.Errorf("the invitee reading the account before accepting = %d, want 404", got)
 	}
@@ -252,7 +220,6 @@ func TestInvitationLifecycleOverHTTP(t *testing.T) {
 		t.Errorf("the membership is for user %s, want %s", accepted.member.UserID, invitee.id)
 	}
 
-	// And now the invitee can read it, at the role the invitation carried.
 	read := w.call(t, invitee.token, http.MethodGet, path, "")
 	if read.code != http.StatusOK {
 		t.Fatalf("the invitee reading the account after accepting = %d; body: %s", read.code, read.body)
@@ -261,7 +228,6 @@ func TestInvitationLifecycleOverHTTP(t *testing.T) {
 		t.Errorf("the invitee's role is %q, want %q", read.account.Role, accounts.RoleMember)
 	}
 
-	// The token is spent: a second redemption is a 410, not a 200.
 	again := w.call(t, owner.token, http.MethodPost, "/v1/invitations/accept",
 		`{"token":"`+invited.invite.Token+`"}`)
 	if again.code != http.StatusGone {
@@ -272,11 +238,7 @@ func TestInvitationLifecycleOverHTTP(t *testing.T) {
 	}
 }
 
-// Expiry, with the clock moved rather than slept through, and the four shapes of
-// a token that does not work.
 func TestInvitationExpiryAndBadTokensOverHTTP(t *testing.T) {
-	// A 30-day session, so the seven days this test moves the clock are about the
-	// invitation's window and not about the session's.
 	w := newTenancyWorldWithSession(t, 30*24*time.Hour)
 	owner := w.signUp(t)
 	account := w.call(t, owner.token, http.MethodPost, "/v1/accounts", `{"name":"Expiring"}`)
@@ -286,14 +248,12 @@ func TestInvitationExpiryAndBadTokensOverHTTP(t *testing.T) {
 		"/v1/accounts/"+account.account.ID+"/invitations",
 		`{"email":"`+invitee.email+`","role":"member"}`)
 
-	// One second before the window closes, it still works.
 	w.clock.Advance(accounts.InvitationTTL - time.Second)
 	if got := w.call(t, invitee.token, http.MethodPost, "/v1/invitations/accept",
 		`{"token":"`+invited.invite.Token+`"}`).code; got != http.StatusOK {
 		t.Errorf("one second before expiry = %d, want 200", got)
 	}
 
-	// A second invitation, and the clock moved past its window.
 	latecomer := w.signUp(t)
 	late := w.call(t, owner.token, http.MethodPost,
 		"/v1/accounts/"+account.account.ID+"/invitations",
@@ -309,7 +269,6 @@ func TestInvitationExpiryAndBadTokensOverHTTP(t *testing.T) {
 		t.Errorf("an expired invitation = %d, want 410; body: %s", expired.code, expired.body)
 	}
 
-	// The four ways a token can be wrong, all one answer.
 	fresh := w.signUp(t)
 	real := late.invite.Token
 	if len(real) < 2 {
@@ -340,15 +299,12 @@ func TestInvitationExpiryAndBadTokensOverHTTP(t *testing.T) {
 	}
 }
 
-// The last-owner protection, over HTTP: the only owner cannot demote themselves
-// (422) and cannot be removed (422), and a second owner unlocks both.
 func TestLastOwnerProtectionOverHTTP(t *testing.T) {
 	w := newTenancyWorld(t)
 	owner := w.signUp(t)
 	account := w.call(t, owner.token, http.MethodPost, "/v1/accounts", `{"name":"Sole Owner"}`)
 	base := "/v1/accounts/" + account.account.ID
 
-	// The only owner, demoting themselves.
 	demote := w.call(t, owner.token, http.MethodPatch,
 		base+"/members/"+owner.id.String(), `{"role":"member"}`)
 	if demote.code != http.StatusUnprocessableEntity {
@@ -358,22 +314,16 @@ func TestLastOwnerProtectionOverHTTP(t *testing.T) {
 		t.Errorf("code = %q, want %q", demote.problem.Code, CodeValidationFailed)
 	}
 
-	// The only owner, removing themselves.
 	remove := w.call(t, owner.token, http.MethodDelete, base+"/members/"+owner.id.String(), "")
 	if remove.code != http.StatusUnprocessableEntity {
 		t.Errorf("the only owner removing themselves = %d, want 422; body: %s", remove.code, remove.body)
 	}
 
-	// Still the owner, in both cases.
 	read := w.call(t, owner.token, http.MethodGet, base, "")
 	if read.account.Role != accounts.RoleOwner {
 		t.Errorf("the owner's role is %q after two refusals, want %q", read.account.Role, accounts.RoleOwner)
 	}
 
-	// A second owner. NOT by invitation: the owner role is not invitable, so the
-	// only way an account gains one is an existing owner promoting a member. That
-	// is a deliberate rule — ownership is granted, never carried by a link — and
-	// this is where the suite pins the consequence of it.
 	successor := w.signUp(t)
 	inviteAndAcceptOver(t, w, owner, base, successor, accounts.RoleMember)
 
@@ -386,7 +336,6 @@ func TestLastOwnerProtectionOverHTTP(t *testing.T) {
 		t.Errorf("the promoted role is %q, want %q", promoted.member.Role, accounts.RoleOwner)
 	}
 
-	// Two owners now, so the first may step down.
 	stepDown := w.call(t, owner.token, http.MethodPatch,
 		base+"/members/"+owner.id.String(), `{"role":"member"}`)
 	if stepDown.code != http.StatusOK {
@@ -396,14 +345,12 @@ func TestLastOwnerProtectionOverHTTP(t *testing.T) {
 		t.Errorf("the new role is %q, want %q", stepDown.member.Role, accounts.RoleMember)
 	}
 
-	// And now the account has one owner again, who cannot step down.
 	again := w.call(t, successor.token, http.MethodPatch,
 		base+"/members/"+successor.id.String(), `{"role":"admin"}`)
 	if again.code != http.StatusUnprocessableEntity {
 		t.Errorf("the new sole owner demoting themselves = %d, want 422; body: %s", again.code, again.body)
 	}
 
-	// And the last owner cannot be removed either.
 	removeLast := w.call(t, successor.token, http.MethodDelete,
 		base+"/members/"+successor.id.String(), "")
 	if removeLast.code != http.StatusUnprocessableEntity {
@@ -411,9 +358,6 @@ func TestLastOwnerProtectionOverHTTP(t *testing.T) {
 	}
 }
 
-// An admin may not remove an owner, and may not hand out the admin role. Both
-// are 403 and 422 respectively, and neither depends on the admin being able to
-// do everything else.
 func TestAdminCannotTouchOwnersOverHTTP(t *testing.T) {
 	w := newTenancyWorld(t)
 	owner := w.signUp(t)
@@ -423,7 +367,6 @@ func TestAdminCannotTouchOwnersOverHTTP(t *testing.T) {
 	admin := w.signUp(t)
 	inviteAndAcceptOver(t, w, owner, base, admin, accounts.RoleAdmin)
 
-	// An admin removing the owner: 403.
 	removeOwner := w.call(t, admin.token, http.MethodDelete, base+"/members/"+owner.id.String(), "")
 	if removeOwner.code != http.StatusForbidden {
 		t.Errorf("an admin removing the owner = %d, want 403; body: %s", removeOwner.code, removeOwner.body)
@@ -432,33 +375,28 @@ func TestAdminCannotTouchOwnersOverHTTP(t *testing.T) {
 		t.Errorf("code = %q, want %q", removeOwner.problem.Code, CodeForbidden)
 	}
 
-	// The owner is still there.
 	if got := w.call(t, owner.token, http.MethodGet, base, ""); got.code != http.StatusOK {
 		t.Errorf("the owner lost access after a refused removal: %d", got.code)
 	}
 
-	// An admin inviting an admin: 422. The privilege has to come from above.
 	inviteAdmin := w.call(t, admin.token, http.MethodPost, base+"/invitations",
 		`{"email":"`+dbtest.UniqueEmail(t)+`","role":"admin"}`)
 	if inviteAdmin.code != http.StatusUnprocessableEntity {
 		t.Errorf("an admin inviting an admin = %d, want 422; body: %s", inviteAdmin.code, inviteAdmin.body)
 	}
 
-	// An admin inviting a member: 201.
 	inviteMember := w.call(t, admin.token, http.MethodPost, base+"/invitations",
 		`{"email":"`+dbtest.UniqueEmail(t)+`","role":"member"}`)
 	if inviteMember.code != http.StatusCreated {
 		t.Errorf("an admin inviting a member = %d, want 201; body: %s", inviteMember.code, inviteMember.body)
 	}
 
-	// And the owner may invite an admin, because they already hold the role.
 	ownerInvite := w.call(t, owner.token, http.MethodPost, base+"/invitations",
 		`{"email":"`+dbtest.UniqueEmail(t)+`","role":"admin"}`)
 	if ownerInvite.code != http.StatusCreated {
 		t.Errorf("an owner inviting an admin = %d, want 201; body: %s", ownerInvite.code, ownerInvite.body)
 	}
 
-	// The owner role is not invitable at all, even by the owner.
 	inviteOwner := w.call(t, owner.token, http.MethodPost, base+"/invitations",
 		`{"email":"`+dbtest.UniqueEmail(t)+`","role":"owner"}`)
 	if inviteOwner.code != http.StatusUnprocessableEntity {
@@ -466,8 +404,6 @@ func TestAdminCannotTouchOwnersOverHTTP(t *testing.T) {
 	}
 }
 
-// A pending invitation for the same address is a 409, and re-inviting the same
-// address after the first is accepted is allowed.
 func TestDuplicatePendingInvitationIs409(t *testing.T) {
 	w := newTenancyWorld(t)
 	owner := w.signUp(t)
@@ -479,7 +415,6 @@ func TestDuplicatePendingInvitationIs409(t *testing.T) {
 		`{"email":"`+address+`","role":"member"}`).code; got != http.StatusCreated {
 		t.Fatalf("the first invitation = %d, want 201", got)
 	}
-	// The same address in a different case is the same address.
 	second := w.call(t, owner.token, http.MethodPost, base+"/invitations",
 		`{"email":"`+strings.ToUpper(address)+`","role":"member"}`)
 	if second.code != http.StatusConflict {
@@ -487,8 +422,6 @@ func TestDuplicatePendingInvitationIs409(t *testing.T) {
 	}
 }
 
-// A rename moves the name and not the slug, and a rename to an invalid name is a
-// 422.
 func TestRenameOverHTTP(t *testing.T) {
 	w := newTenancyWorld(t)
 	owner := w.signUp(t)
@@ -513,8 +446,6 @@ func TestRenameOverHTTP(t *testing.T) {
 	}
 }
 
-// Deleting an account takes its members with it, and afterwards it is a 404 for
-// everybody including the owner.
 func TestDeleteOverHTTP(t *testing.T) {
 	w := newTenancyWorld(t)
 	owner := w.signUp(t)
@@ -535,7 +466,6 @@ func TestDeleteOverHTTP(t *testing.T) {
 	if got := w.call(t, owner.token, http.MethodGet, base, "").code; got != http.StatusNotFound {
 		t.Errorf("reading a deleted account = %d, want 404", got)
 	}
-	// And the former member's list no longer mentions it.
 	list := w.call(t, member.token, http.MethodGet, "/v1/accounts", "")
 	for _, item := range list.list {
 		if item.ID == account.account.ID {
@@ -544,8 +474,6 @@ func TestDeleteOverHTTP(t *testing.T) {
 	}
 }
 
-// The account list is the caller's own and nobody else's, and it carries the
-// caller's role in each.
 func TestAccountListIsScopedToTheCaller(t *testing.T) {
 	w := newTenancyWorld(t)
 	mine := w.signUp(t)
@@ -578,9 +506,6 @@ func TestAccountListIsScopedToTheCaller(t *testing.T) {
 	}
 }
 
-// inviteAndAcceptOver drives one invitation to completion over HTTP, so a test's
-// fixture is built the way a client's would be: the inviter mints the token and
-// the invitee redeems it with their own session.
 func inviteAndAcceptOver(t *testing.T, w *tenancyWorld, inviter signedUp, base string, invitee signedUp, role accounts.Role) {
 	t.Helper()
 

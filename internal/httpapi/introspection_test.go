@@ -16,15 +16,7 @@ import (
 	"github.com/anywaye/identity/internal/platform/id"
 )
 
-// POST /v1/introspections.
-//
-// The surface exists because the credential is opaque: a resource server has no
-// other way to learn what a anywaye api key may do. Two things are asserted here
-// that are easy to get wrong — the dual claim name over the wire, and the fact
-// that the caller's standing is decided separately from the token's own state.
 
-// fakeIntrospector is the Introspector double. It records what it was asked, so a
-// test can prove the route passed the BODY's token and not the caller's.
 type fakeIntrospector struct {
 	mu sync.Mutex
 
@@ -53,7 +45,6 @@ func (f *fakeIntrospector) Introspect(_ context.Context, token string, now time.
 	return apikeys.Claims{}, apikeys.ErrNotFound
 }
 
-// activeClaims is an active claim document for a token owned by owner in account.
 func activeClaims(account, owner, tokenID id.UUID, scopes ...string) apikeys.Claims {
 	joined := strings.Join(scopes, " ")
 	created := time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
@@ -71,12 +62,6 @@ func activeClaims(account, owner, tokenID id.UUID, scopes ...string) apikeys.Cla
 	}
 }
 
-// TestIntrospectionPublishesBothScopeClaimNames is the addendum's requirement at
-// the only place it can be observed by a consumer: on the wire.
-//
-// A test inside the package proved the two names are equal in a struct; this
-// proves it in the bytes a resource server parses, because that is the surface
-// where a drift would break a customer rather than a test.
 func TestIntrospectionPublishesBothScopeClaimNames(t *testing.T) {
 	t.Parallel()
 
@@ -111,7 +96,6 @@ func TestIntrospectionPublishesBothScopeClaimNames(t *testing.T) {
 		t.Errorf("%s = %q and %s = %q; a consumer's answer must not depend on which name it reads",
 			apikeys.ClaimScopes, primary, apikeys.ClaimScope, mirror)
 	}
-	// Space-separated, because gateway splits on whitespace and refuses anything else.
 	if strings.Contains(primary, ",") || strings.Contains(primary, "[") {
 		t.Errorf("the scope claim is not a space-separated string: %q", primary)
 	}
@@ -122,8 +106,6 @@ func TestIntrospectionPublishesBothScopeClaimNames(t *testing.T) {
 	}
 }
 
-// TestIntrospectionAlwaysCarriesAccountIDAndNeverSubstitutesIt is the tenancy half
-// of the addendum, on the wire.
 func TestIntrospectionAlwaysCarriesAccountIDAndNeverSubstitutesIt(t *testing.T) {
 	t.Parallel()
 
@@ -156,9 +138,6 @@ func TestIntrospectionAlwaysCarriesAccountIDAndNeverSubstitutesIt(t *testing.T) 
 	}
 }
 
-// TestAnUnusableTokenIsInactiveAndCarriesNothingElse: RFC 7662's shape, and the
-// one-error rule in its HTTP form. Three different reasons for the token not to
-// work and one identical body.
 func TestAnUnusableTokenIsInactiveAndCarriesNothingElse(t *testing.T) {
 	t.Parallel()
 
@@ -169,15 +148,10 @@ func TestAnUnusableTokenIsInactiveAndCarriesNothingElse(t *testing.T) {
 		give func(f *fakeIntrospector)
 	}{
 		{
-			// The double's own ErrNotFound, which is what the real store returns.
 			name: "a token that never existed",
 			give: func(*fakeIntrospector) {},
 		},
 		{
-			// What a revoked or expired one looks like at this layer: the service
-			// resolved it and then declined to say anything about it. ClaimsFor does
-			// not return an error for those — it returns an inactive document — and
-			// the route must not turn that into a 401.
 			name: "a resolved but inactive token",
 			give: func(f *fakeIntrospector) {
 				f.claims[apiKeySecret] = apikeys.InactiveClaims()
@@ -217,12 +191,6 @@ func TestAnUnusableTokenIsInactiveAndCarriesNothingElse(t *testing.T) {
 	}
 }
 
-// TestTheCallersStandingIsDecidedSeparatelyFromTheTokens: the two questions are
-// different and must not share a status. A caller with no credential gets 401; a
-// token asking about somebody else's gets 403; a session that is not an owner of
-// the token's account gets 404 or 403 depending on whether they are a member. All
-// of those are about the REQUEST, and none of them is `{"active": false}` — which
-// would tell an unauthorized caller that the token they named is real.
 func TestTheCallersStandingIsDecidedSeparatelyFromTheTokens(t *testing.T) {
 	t.Parallel()
 
@@ -315,18 +283,12 @@ func TestTheCallersStandingIsDecidedSeparatelyFromTheTokens(t *testing.T) {
 		handler := New(nil, WithAuth(auth), WithTenancy(tenancy), WithIntrospection(f))
 
 		rec := introspect(t, handler, apiKeySecret, auth.token)
-		// 404, not 403: a 403 would confirm the account the token belongs to exists,
-		// which is the same tenant-enumeration oracle every account route avoids.
 		if rec.Code != http.StatusNotFound {
 			t.Errorf("= %d, want 404; body: %s", rec.Code, rec.Body)
 		}
 	})
 }
 
-// TestIntrospectionPassesTheBodyToken: the route resolves what the body named,
-// which is the whole point of the endpoint, and a test that only checked the
-// status would pass against a route that ignored the body and answered about the
-// caller's own credential.
 func TestIntrospectionPassesTheBodyToken(t *testing.T) {
 	t.Parallel()
 
@@ -345,8 +307,6 @@ func TestIntrospectionPassesTheBodyToken(t *testing.T) {
 	}
 }
 
-// TestTheIntrospectionRouteIsAbsentWithoutTheService, for the reason every other
-// optional route in this service is absent rather than 500.
 func TestTheIntrospectionRouteIsAbsentWithoutTheService(t *testing.T) {
 	t.Parallel()
 
@@ -357,8 +317,6 @@ func TestTheIntrospectionRouteIsAbsentWithoutTheService(t *testing.T) {
 	}
 }
 
-// TestAnIntrospectionFailureIsLoggedNotReturned: same rule as everywhere else —
-// the caller gets a trace id, the operator gets the driver's error.
 func TestAnIntrospectionFailureIsLoggedNotReturned(t *testing.T) {
 	t.Parallel()
 
@@ -383,9 +341,6 @@ func TestAnIntrospectionFailureIsLoggedNotReturned(t *testing.T) {
 	}
 }
 
-// TestTheIntrospectionRequestCarriesNoCredentialInItsShape is a documentation
-// test: the body takes a VALUE, never an id, and the comment on the type says why.
-// If somebody changes it to an id this is the test that fails.
 func TestTheIntrospectionRequestCarriesNoCredentialInItsShape(t *testing.T) {
 	t.Parallel()
 
@@ -401,9 +356,6 @@ func TestTheIntrospectionRequestCarriesNoCredentialInItsShape(t *testing.T) {
 	}
 }
 
-// introspect issues one introspection request. subject is what the body asks
-// about; credential is what the caller presents, and they are different strings
-// in every test that is about the difference between them.
 func introspect(t *testing.T, h http.Handler, subject, credential string) *httptest.ResponseRecorder {
 	t.Helper()
 	return apiKeySend(t, h, http.MethodPost, "/v1/introspections", credential,

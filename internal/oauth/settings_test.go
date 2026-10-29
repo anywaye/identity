@@ -6,17 +6,10 @@ import (
 	"testing"
 )
 
-// Configuration is validated at startup or the process refuses to run. That is
-// AGENTS.md's rule and it is load-bearing here for a specific reason: a missing
-// client secret does not fail a sign-in, it makes "Continue with Google" redirect
-// to Google, get refused, and return an error a user sees as the platform being
-// broken. Failing the deploy turns that into a log line.
 
 func TestSettingsValidateAcceptsAbsentOAuth(t *testing.T) {
 	t.Parallel()
 
-	// Nothing set at all. This is the shipped default and it must not be an error:
-	// the OAuth routes are simply not mounted, and /v1 keeps working.
 	var s Settings
 	if err := s.Validate(); err != nil {
 		t.Errorf("Validate on the zero Settings = %v, want nil", err)
@@ -26,9 +19,6 @@ func TestSettingsValidateAcceptsAbsentOAuth(t *testing.T) {
 	}
 }
 
-// The dangerous case is a provider with half its credentials. Falling back to
-// "provider disabled" would hide a missing secret behind a 404 that looks exactly
-// like a typo in the URL.
 func TestSettingsValidateRejectsAHalfConfiguredProvider(t *testing.T) {
 	t.Parallel()
 
@@ -53,9 +43,6 @@ func TestSettingsValidateRejectsAHalfConfiguredProvider(t *testing.T) {
 			},
 		},
 		{
-			// The third provider, held to the same rule: one half of a
-			// provider's credentials is a mistake and never an intention,
-			// and the refusal is the same whichever provider made it.
 			name: "microsoft without a secret",
 			s: Settings{
 				RedirectBaseURL: "https://identity.anywaye.com",
@@ -64,10 +51,6 @@ func TestSettingsValidateRejectsAHalfConfiguredProvider(t *testing.T) {
 			},
 		},
 		{
-			// The fourth provider, held to the same rule. Apple's ClientSecret
-			// is minted at startup rather than read from the environment, so a
-			// hand-built Settings carries it literally — and one half of it is
-			// the same mistake whichever provider made it.
 			name: "apple without a secret",
 			s: Settings{
 				RedirectBaseURL: "https://identity.anywaye.com",
@@ -88,9 +71,6 @@ func TestSettingsValidateRejectsAHalfConfiguredProvider(t *testing.T) {
 	}
 }
 
-// A configured provider without a base URL cannot build a callback, and one
-// without a key cannot store a token. Both are startup errors rather than a
-// runtime surprise on the first successful login.
 func TestSettingsValidateRejectsAProviderMissingItsSharedSettings(t *testing.T) {
 	t.Parallel()
 
@@ -116,8 +96,6 @@ func TestSettingsValidateRejectsAProviderMissingItsSharedSettings(t *testing.T) 
 	}
 }
 
-// A key that is present but unusable is the same class of mistake: the operator
-// believes tokens are encrypted and they are not.
 func TestSettingsValidateRejectsABadEncryptionKey(t *testing.T) {
 	t.Parallel()
 
@@ -142,9 +120,6 @@ func TestSettingsValidateRejectsABadEncryptionKey(t *testing.T) {
 	}
 }
 
-// The key is validated even when no provider is configured, because "set but
-// wrong" is a mistake worth failing on regardless of whether anything reads it
-// today. It is the deployer who is told, while they still care.
 func TestSettingsValidateChecksTheKeyWithoutAnyProvider(t *testing.T) {
 	t.Parallel()
 
@@ -198,8 +173,6 @@ func TestSettingsValidateAcceptsAWorkingConfiguration(t *testing.T) {
 	if len(providers) != 4 {
 		t.Fatalf("Providers() returned %d, want 4", len(providers))
 	}
-	// Every configured provider carries its credentials and this service's
-	// endpoints, and nothing else is included.
 	for _, p := range providers {
 		if p.ClientID == "" || p.ClientSecret == "" {
 			t.Errorf("provider %q has no credentials", p.Name)
@@ -207,8 +180,6 @@ func TestSettingsValidateAcceptsAWorkingConfiguration(t *testing.T) {
 		if p.AuthorizeURL == "" || p.TokenURL == "" {
 			t.Errorf("provider %q has an incomplete endpoint set: %+v", p.Name, p)
 		}
-		// Apple has no userinfo endpoint — its identity comes from the
-		// id_token — so the userinfo check is not universal.
 		if p.Name != ProviderApple && p.UserInfoURL == "" {
 			t.Errorf("provider %q has no userinfo endpoint: %+v", p.Name, p)
 		}
@@ -218,8 +189,6 @@ func TestSettingsValidateAcceptsAWorkingConfiguration(t *testing.T) {
 	}
 }
 
-// A base URL with a trailing slash must produce one callback URL, not two with a
-// double slash in the middle — the registered redirect_uri has to byte-match.
 func TestProviderRedirectURIIsStable(t *testing.T) {
 	t.Parallel()
 
@@ -229,7 +198,6 @@ func TestProviderRedirectURIIsStable(t *testing.T) {
 	}{
 		{base: "https://identity.anywaye.com", want: "https://identity.anywaye.com/v1/auth/oauth/google/callback"},
 		{base: "https://identity.anywaye.com/", want: "https://identity.anywaye.com/v1/auth/oauth/google/callback"},
-		// A base behind a path prefix is a legitimate deployment shape.
 		{base: "https://example.test/identity", want: "https://example.test/identity/v1/auth/oauth/google/callback"},
 	}
 
@@ -244,8 +212,6 @@ func TestProviderRedirectURIIsStable(t *testing.T) {
 	}
 }
 
-// Every configured name has to be one the enum accepts, or the insert fails at
-// runtime rather than at startup.
 func TestConfiguredProvidersAreAllKnown(t *testing.T) {
 	t.Parallel()
 
@@ -270,9 +236,6 @@ func TestConfiguredProvidersAreAllKnown(t *testing.T) {
 	}
 }
 
-// An unconfigured provider must be indistinguishable from one that does not
-// exist: same error, so an unauthenticated caller cannot enumerate what this
-// deployment has credentials for.
 func TestRegistryLookupDoesNotDistinguishUnconfiguredFromUnknown(t *testing.T) {
 	t.Parallel()
 
@@ -306,8 +269,6 @@ func TestNewRegistryRejectsABadBase(t *testing.T) {
 	}
 }
 
-// A provider with no credentials is dropped rather than stored, which is what
-// makes Empty the right thing for the caller to branch on.
 func TestNewRegistryDropsUnconfiguredProviders(t *testing.T) {
 	t.Parallel()
 
@@ -343,8 +304,6 @@ func TestEmptyRegistryIsEmpty(t *testing.T) {
 	}
 }
 
-// testKeyBase64 encodes n as a distinct 32-byte key in the form the settings take,
-// which is standard base64 — what `head -c 32 /dev/urandom | base64` prints.
 func testKeyBase64(n byte) string {
 	return base64.StdEncoding.EncodeToString(testKey(n))
 }

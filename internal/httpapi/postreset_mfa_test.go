@@ -1,26 +1,5 @@
 package httpapi
 
-// THE PASSWORD-RESET-THEN-FRESH-MFA-LOGIN WALK (m127).
-//
-// The local A-to-Z acceptance run found a real failure: after a password
-// reset, sign-in with the new password correctly answers 202 with a fresh MFA
-// challenge, but submitting a freshly generated TOTP code against that
-// challenge answers 401 instead of 200.
-//
-// This file replays that walk at the narrowest realistic layer — the real
-// router, the real auth/recovery/MFA use cases, the real SQL over a private
-// schema — and holds BOTH halves of the answer:
-//
-//   - a code from a TOTP step this credential has already spent is refused
-//     (401), even across a password reset. That is the replay guard doing its
-//     job, not the reset breaking the login: "freshly generated" and "a fresh
-//     step" are different claims inside one 30-second window.
-//   - advancing past the spent step and presenting the next code finishes the
-//     login (200) with a session that resolves.
-//
-// The corrected journey assumption is therefore "wait for the next code", and
-// the fixture advances the fake clock exactly the way signInWithFactor does
-// rather than reusing a value the service has already seen.
 
 import (
 	"encoding/json"
@@ -45,9 +24,6 @@ import (
 	"github.com/anywaye/identity/internal/users"
 )
 
-// postresetMFAFixture is the whole walk over ONE private schema: the real auth
-// service with the real second factor, the real recovery service delivering
-// into a captured mailer, and the real MFA management surface for enrollment.
 type postresetMFAFixture struct {
 	handler http.Handler
 	pool    *pgxpool.Pool
@@ -109,7 +85,6 @@ func newPostresetMFAFixture(t *testing.T) *postresetMFAFixture {
 	}
 }
 
-// register creates an account and returns its address.
 func (f *postresetMFAFixture) register(t *testing.T) string {
 	t.Helper()
 
@@ -118,8 +93,6 @@ func (f *postresetMFAFixture) register(t *testing.T) string {
 	return email
 }
 
-// loginChallenge is POST /v1/session expecting the MFA branch: 202 plus a
-// challenge, and no session behind it.
 func (f *postresetMFAFixture) loginChallenge(t *testing.T, email, password string) challengeResponse {
 	t.Helper()
 
@@ -137,22 +110,18 @@ func (f *postresetMFAFixture) loginChallenge(t *testing.T, email, password strin
 	return body
 }
 
-// finishMFA is POST /v1/session/mfa with the challenge in the body, as an API
-// client sends it.
 func (f *postresetMFAFixture) finishMFA(t *testing.T, challenge, code string) *httptest.ResponseRecorder {
 	t.Helper()
 
 	return post(t, f.handler, "/v1/session/mfa", `{"challenge":"`+challenge+`","code":"`+code+`"}`)
 }
 
-// me resolves a session token through GET /v1/me.
 func (f *postresetMFAFixture) me(t *testing.T, token string) *httptest.ResponseRecorder {
 	t.Helper()
 
 	return sendWith(t, f.handler, http.MethodGet, "/v1/me", token, "", "")
 }
 
-// liveSessions counts every live session row behind an address.
 func (f *postresetMFAFixture) liveSessions(t *testing.T, email string) int {
 	t.Helper()
 
@@ -165,14 +134,12 @@ func (f *postresetMFAFixture) liveSessions(t *testing.T, email string) int {
 	return n
 }
 
-// TestPasswordResetFollowedByFreshPasswordPlusMFALogin is the m127 walk.
 func TestPasswordResetFollowedByFreshPasswordPlusMFALogin(t *testing.T) {
 	f := newPostresetMFAFixture(t)
 	email := f.register(t)
 
 	const newPassword = "a completely new password"
 
-	// Sign in once, so there is a pre-reset session to kill later.
 	first := post(t, f.handler, "/v1/session", `{"email":"`+email+`","password":"`+validPassword+`"}`)
 	if first.Code != http.StatusOK {
 		t.Fatalf("POST /v1/session = %d, want 200; body: %s", first.Code, first.Body)
@@ -182,7 +149,6 @@ func TestPasswordResetFollowedByFreshPasswordPlusMFALogin(t *testing.T) {
 		t.Fatalf("the login body is not JSON: %v\n%s", err, first.Body)
 	}
 
-	// Enroll and confirm a second factor over HTTP, as the walk does.
 	created := sendWith(t, f.handler, http.MethodPost, "/v1/mfa/enrollments", firstSession.Token, "", `{}`)
 	if created.Code != http.StatusCreated {
 		t.Fatalf("POST /v1/mfa/enrollments = %d, want 201; body: %s", created.Code, created.Body)
@@ -201,8 +167,6 @@ func TestPasswordResetFollowedByFreshPasswordPlusMFALogin(t *testing.T) {
 		t.Fatalf("confirm = %d, want 200; body: %s", confirmed.Code, confirmed.Body)
 	}
 
-	// The initial MFA challenge completion: this spends the current TOTP step
-	// against the credential, which is the fact the rest of the test turns on.
 	initial := f.loginChallenge(t, email, validPassword)
 	spentCode := mustTOTPCode(t, started.Secret, f.clk.Now())
 	finished := f.finishMFA(t, initial.Challenge, spentCode)
@@ -214,7 +178,6 @@ func TestPasswordResetFollowedByFreshPasswordPlusMFALogin(t *testing.T) {
 		t.Fatalf("the MFA completion body is not JSON: %v\n%s", err, finished.Body)
 	}
 
-	// Reset the password through the two anonymous routes, as the walk does.
 	if rec := post(t, f.handler, "/v1/password-resets", `{"email":"`+email+`"}`); rec.Code != http.StatusAccepted {
 		t.Fatalf("POST /v1/password-resets = %d, want 202; body: %s", rec.Code, rec.Body)
 	}
@@ -224,7 +187,6 @@ func TestPasswordResetFollowedByFreshPasswordPlusMFALogin(t *testing.T) {
 		t.Fatalf("POST /v1/password-resets/confirm = %d, want 204; body: %s", redeemed.Code, redeemed.Body)
 	}
 
-	// The pre-reset session is dead: the reset invalidates old sessions.
 	if got := f.liveSessions(t, email); got != 0 {
 		t.Fatalf("%d sessions survived a password reset, want 0", got)
 	}
@@ -232,13 +194,8 @@ func TestPasswordResetFollowedByFreshPasswordPlusMFALogin(t *testing.T) {
 		t.Fatalf("GET /v1/me with the pre-reset token = %d, want 401; body: %s", me.Code, me.Body)
 	}
 
-	// Sign in with the NEW password, immediately — the same TOTP step is
-	// still current, exactly as in the walk that reported the failure.
 	fresh := f.loginChallenge(t, email, newPassword)
 
-	// The code the authenticator shows NOW is the value the initial login
-	// already spent. It is refused, and it must be: a spent step is a spent
-	// step, and a password reset is not a second-factor reset.
 	replay := f.finishMFA(t, fresh.Challenge, mustTOTPCode(t, started.Secret, f.clk.Now()))
 	if replay.Code != http.StatusUnauthorized {
 		t.Fatalf("POST /v1/session/mfa with the spent step = %d, want 401; body: %s", replay.Code, replay.Body)
@@ -250,8 +207,6 @@ func TestPasswordResetFollowedByFreshPasswordPlusMFALogin(t *testing.T) {
 		t.Errorf("%d sessions after a refused second factor, want 0", got)
 	}
 
-	// The corrected journey: wait for the next code. A fresh step against the
-	// fresh challenge finishes the login, and the session resolves.
 	f.clk.Advance(mfa.Period + time.Second)
 	after := f.loginChallenge(t, email, newPassword)
 	ok := f.finishMFA(t, after.Challenge, mustTOTPCode(t, started.Secret, f.clk.Now()))

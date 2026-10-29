@@ -5,21 +5,6 @@ import (
 	"testing"
 )
 
-// The scope set is a closed list of FIVE names, and the test is the list. An
-// unknown scope is a 400 rather than a silently dropped parameter, which means
-// the set has to be exhaustive in one place: a scope the authorize endpoint
-// would accept but the claims builder does not know is a token that comes back
-// with nothing in it.
-//
-// The name carried a number and the number went stale the moment `publish` was
-// added for MD21. A test named for a count asserts a census that drifts quietly
-// out of date while the test itself keeps passing, so the name now carries the
-// PROPERTY — the set is closed and enumerated — and the count is asserted here,
-// in the list, which is the only place a count can be.
-//
-// This test is what makes adding a scope deliberate rather than an append: it
-// fails until the new name is written down, which is the moment somebody has to
-// decide whether identity will actually honor it.
 
 func TestSupportedScopesAreExactlyTheFive(t *testing.T) {
 	t.Parallel()
@@ -44,16 +29,10 @@ func TestIsSupportedScope(t *testing.T) {
 		{name: "profile", give: ScopeProfile, want: true},
 		{name: "accounts", give: ScopeAccounts, want: true},
 
-		// The standard scopes the library knows but this service does not hand
-		// out. A product asking for `phone` has asked for something identity
-		// cannot answer, and answering with a token that quietly omits it is how
-		// a product ships a sign-in screen with a missing phone field.
 		{name: "phone is not a anywaye scope", give: "phone"},
 		{name: "address is not a anywaye scope", give: "address"},
 		{name: "offline_access is not offered", give: "offline_access"},
 
-		// A near miss on one of ours. `profile` and `profiles` are different
-		// strings and a prefix comparison would accept the second.
 		{name: "a plural is not the singular", give: "profiles"},
 		{name: "an underscore is not a hyphen", give: "open-id"},
 		{name: "empty", give: ""},
@@ -71,11 +50,6 @@ func TestIsSupportedScope(t *testing.T) {
 	}
 }
 
-// NormalizeScopes deduplicates and orders a requested scope list.
-//
-// Order matters because the list ends up in the discovery document's
-// scopes_supported and in the event payload, and a map iteration order would
-// make both differ between two runs of the same registration.
 func TestNormalizeScopesIsStableAndDeduplicated(t *testing.T) {
 	t.Parallel()
 
@@ -97,14 +71,6 @@ func TestNormalizeScopesDropsTheUnsupported(t *testing.T) {
 	}
 }
 
-// FirstUnsupported returns the first requested scope this service does not
-// implement, or "" when every one of them is supported.
-//
-// The authorize endpoint reports the offending name rather than a generic
-// message, because the caller is a developer configuring a product and "unknown
-// scope: phone" is the difference between a five-minute fix and an afternoon.
-// Nothing else about the caller is disclosed: the answer is a function of what
-// they asked for and not of who they are.
 func TestFirstUnsupportedNamesTheScope(t *testing.T) {
 	t.Parallel()
 
@@ -117,8 +83,6 @@ func TestFirstUnsupportedNamesTheScope(t *testing.T) {
 		{name: "none requested", give: nil, want: ""},
 		{name: "one unsupported", give: []string{"openid", "phone"}, want: "phone"},
 		{name: "the first of several", give: []string{"nope", "also-nope"}, want: "nope"},
-		// The requested order is the caller's order, not the sorted one, so the
-		// name reported is the first one they actually wrote.
 		{name: "reported in the order requested", give: []string{"phone", "address"}, want: "phone"},
 	}
 
@@ -133,9 +97,6 @@ func TestFirstUnsupportedNamesTheScope(t *testing.T) {
 	}
 }
 
-// openid is not optional in OpenID Connect. A request without it is a plain
-// OAuth 2.0 request and gets a plain OAuth 2.0 answer, which means no id_token
-// and a userinfo endpoint that has nothing to authenticate with.
 func TestValidateRequestedScopesRequiresOpenID(t *testing.T) {
 	t.Parallel()
 

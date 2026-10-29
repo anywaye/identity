@@ -11,60 +11,7 @@ import (
 	"github.com/anywaye/identity/internal/recovery"
 )
 
-// # THE TEST THAT WOULD HAVE CAUGHT THE BUTTON THAT LIES
-//
-// identity-24 drove the flows end to end against a real courier and the password
-// reset path was perfect while the verification path was broken for the human: the
-// `welcome` mail's button said `https://app.example.com/reset?token=…`, so a user
-// who clicked "Confirm your email address" landed on the password-reset screen,
-// where a verification token answers **404**.
-//
-// The token was fine. The token redeemed. Nothing was malformed. **The mail was
-// well-formed, passed every test, and sent the user somewhere useless**, which is
-// why it survived: every assertion in the repository was about the BYTES, and the
-// bytes were correct. What no assertion was about was whether the link suited the
-// purpose it was carrying.
-//
-// So this file is about the purpose of a link rather than its shape.
-//
-// # THE TWO THINGS THAT WERE WRONG, AND THEY ARE SEPARATE
-//
-//  1. **STRUCTURAL.** `RecoveryMailer` held ONE `LinkTemplate` for all four of its
-//     messages. The single-template design is defended at length in `mailer.go`,
-//     and the argument is sound FOR A RECOVERY LINK: a template with `{token}`
-//     beats a base URL plus a platform-chosen convention. It was then applied to a
-//     verification link, which is not a recovery link. One template for two
-//     purposes is a template that must be wrong for one of them.
-//
-//  2. **THE CHECK.** Courier cannot know that a verify link and a reset link want
-//     different screens — courier renders what identity sends. So the relationship
-//     belongs in identity, and it belongs where a deployment DECLARES its URLs.
-//     That is `internal/config`'s environment, and the configuration in these tests
-//     is built from one rather than from a Go literal, so a test cannot assert a
-//     relationship the product has no way to express.
-//
-// # WHAT IS ASSERTED, AND WHY IT IS NOT ENOUGH TO COMPARE TWO STRINGS
-//
-// The obvious assertion — "the two links are different" — passes for a link with
-// the wrong token in it, or a link whose path is right and whose query is not.
-// So each link's token is also taken out of the URL and presented at the endpoint
-// that purpose is redeemed at, and at the other one. That is the half only identity
-// can assert, because these are identity's own endpoints: a purpose's link has to
-// carry a credential its own flow accepts, and NOT one the other flow accepts.
-//
-// The rows that follow the claim are the ones that keep it honest: a mailer given
-// ONE template for both purposes is shown to render one link for both messages,
-// which is what makes the inequality in the first test a comparison rather than a
-// tautology.
 
-// allPurposes is `recovery`'s closed set of what a token can be for, spelled out
-// here so the drift check can walk the purposes this adapter does NOT deliver.
-//
-// IT IS DECLARED RATHER THAN DERIVED because `recovery.Purpose` is a string type
-// with no enumeration to range over, and a list that only contained the deliverable
-// purposes could not answer "is there a purpose nobody gives a link to" — which is
-// half of what the drift check is for. `session_link` is that purpose: no message
-// of `internal/recovery`'s is rendered for it, so no link is ever configured.
 var allPurposes = []recovery.Purpose{
 	recovery.PurposePasswordReset,
 	recovery.PurposeVerifyEmail,
@@ -72,14 +19,6 @@ var allPurposes = []recovery.Purpose{
 	recovery.PurposeSessionLink,
 }
 
-// deploymentEnv is what a deployment writes when it has said where EACH purpose's
-// link goes.
-//
-// IT IS AN ENVIRONMENT AND NOT A `map[recovery.Purpose]string` LITERAL, and that is
-// the point of the file: a relationship between two links can only be tested by
-// something that can express it, so the configuration under test is the shape a
-// deployer actually has. A Go literal would let this file pass on a repository
-// where no deployment could ever say what it says.
 func deploymentEnv(overrides map[string]string) map[string]string {
 	env := map[string]string{
 		"COURIER_BASE_URL":                 "https://courier.example.com",
@@ -88,9 +27,6 @@ func deploymentEnv(overrides map[string]string) map[string]string {
 		"EMAIL_VERIFICATION_LINK_TEMPLATE": "https://app.example.com/verify-email?token={token}",
 		"INVITATION_LINK_TEMPLATE":         "https://app.example.com/invitations/accept?token={token}",
 		"EMAIL_CHANGE_LINK_TEMPLATE":       "https://app.example.com/confirm-change?token={token}",
-		// SIGNUP_SIGNING_KEY is the one secret a boot cannot go without, so
-		// every deployment in this file supplies it. The value is the same
-		// 32-byte shape the other secrets take, base64url.
 		"SIGNUP_SIGNING_KEY": base64.RawURLEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef")),
 	}
 	for key, value := range overrides {
@@ -103,8 +39,6 @@ func deploymentEnv(overrides map[string]string) map[string]string {
 	return env
 }
 
-// configLookup is `config.Lookup` over a map, so no test here mutates the process
-// environment — the same rule `internal/config` holds for the same reason.
 func configLookup(env map[string]string) config.Lookup {
 	return func(key string) (string, bool) {
 		value, present := env[key]
@@ -112,10 +46,6 @@ func configLookup(env map[string]string) config.Lookup {
 	}
 }
 
-// mailerFromEnv is the production wiring in two lines: `config.Load` resolves the
-// deployment's environment and `NewRecoveryMailer` takes the resolved templates.
-// `main`'s `buildMailer` is those two lines plus a client and a logger, so a
-// relationship this file proves is one the shipped binary has.
 func mailerFromEnv(t *testing.T, env map[string]string, baseURL string) *RecoveryMailer {
 	t.Helper()
 
@@ -137,51 +67,6 @@ func mailerFromEnv(t *testing.T, env map[string]string, baseURL string) *Recover
 	return mailer
 }
 
-// TestAVerificationLinkIsNotThePasswordResetLinkAndEachRedeemsAtItsOwnEndpoint is
-// the packet's claim, end to end and over the deployment's own configuration.
-//
-// THE CHAIN:
-//
-//	recovery renders two messages  (internal/recovery)
-//	  -> RecoveryMailer.Send      (internal/courier, the real adapter)
-//	    -> the configured TEMPLATE for that message's purpose
-//	      -> POST /v1/messages     (courier's door)
-//	  -> the token is taken back OUT OF THE RENDERED URL
-//	    -> recovery.Service.RedeemVerification / RedeemPasswordReset
-//	      (the real service, over a real Postgres, real tables, real SQL)
-//
-// # WHAT IS REAL AND WHAT IS NOT, because "end to end" is a claim worth bounding
-//
-//	REAL     the message bodies, the tokens, `recovery`'s own store and SQL, both
-//	         redemption paths, Postgres, and the adapter's own template selection —
-//	         which is the part under test.
-//	STAND-IN courier is `courierStub`, the same enforcing `httptest` server
-//	         `flow_test.go` uses, and it is the right way round: a stand-in can
-//	         FALSIFY THE REQUEST, which is a real risk here, and it cannot answer
-//	         for courier. `e2e_support_test.go` covers the other direction — a real
-//	         courier's answer to bytes this composes — so nothing between the two is
-//	         unexamined.
-//
-// THE ASSERTION, in three parts:
-//
-//  1. the two messages carry two DIFFERENT links, and the difference is in the
-//     path, which is the part a product chooses;
-//  2. the token in the VERIFICATION link is accepted by the verification endpoint
-//     and REFUSED by the reset endpoint;
-//  3. the token in the RESET link is accepted by the reset endpoint and REFUSED by
-//     the verification endpoint.
-//
-// # AND WHY THE REFUSALS ARE THE INTERESTING HALF
-//
-// A verification token that the reset endpoint accepts would be a token that can
-// change a password, which is exactly what the `purpose` column on
-// `recovery_tokens` exists to prevent. `internal/recovery` asserts that directly
-// (`TestAResetTokenIsNotAVerificationToken`). What it cannot assert is that the
-// credential a USER HOLDS came out of the verification link — because the token
-// in the mail and the row in the table are joined only by a link, and identity-24
-// proved the token redeems while the button sent the user to the wrong screen. So
-// the value here is not the two refusals; it is that the value is read back out of
-// the URL rather than out of the message.
 func TestAVerificationLinkIsNotThePasswordResetLinkAndEachRedeemsAtItsOwnEndpoint(t *testing.T) {
 	stub := newCourierStub(t)
 	mailer := mailerFromEnv(t, deploymentEnv(nil), stub.server.URL)
@@ -201,14 +86,6 @@ func TestAVerificationLinkIsNotThePasswordResetLinkAndEachRedeemsAtItsOwnEndpoin
 	resetLink := stringOf(stub.sent[0].Body["url"])
 	verifyLink := stringOf(stub.sent[1].Body["url"])
 
-	// (1) TWO LINKS, AND THE DIFFERENCE IS THE PATH.
-	//
-	// THE PATH AND NOT THE URL, because a link that differs only in its query is
-	// still the same SCREEN, and the screen is the thing that answers 404 — a
-	// template that put the token in a different parameter would satisfy a
-	// whole-URL comparison while opening the wrong page. And it is compared as a
-	// parsed path, so a `?token=` that differs cannot make two identical screens
-	// look different either. Both failure directions are closed by parsing.
 	resetPath := pathOf(t, resetLink)
 	verifyPath := pathOf(t, verifyLink)
 	if resetPath == verifyPath {
@@ -224,9 +101,6 @@ func TestAVerificationLinkIsNotThePasswordResetLinkAndEachRedeemsAtItsOwnEndpoin
 		t.Errorf("the reset link is %q, want the configured %q", resetPath, "/reset")
 	}
 
-	// Neither link may carry the other's credential. The two are minted in separate
-	// requests and neither message mentions the other, so a link carrying both
-	// would mean a credential in a message it does not belong to.
 	resetToken := tokenIn(t, resetLink)
 	verifyToken := tokenIn(t, verifyLink)
 	if resetToken == verifyToken {
@@ -236,10 +110,6 @@ func TestAVerificationLinkIsNotThePasswordResetLinkAndEachRedeemsAtItsOwnEndpoin
 		t.Error("one purpose's link carries the other purpose's token")
 	}
 
-	// (2) AND (3). THE CROSS REDEMPTIONS FIRST, because a refused one spends
-	// nothing: `Live` filters on `purpose` and returns ErrTokenNotFound before any
-	// write, so asserting the refusals first leaves each token live for the
-	// acceptance that follows.
 	if _, err := flow.svc.RedeemPasswordReset(ctx, recovery.RedeemPasswordResetInput{
 		Token: verifyToken, Password: "correct-horse-battery-staple",
 	}); !isError(err, recovery.ErrTokenNotFound) {
@@ -251,10 +121,6 @@ func TestAVerificationLinkIsNotThePasswordResetLinkAndEachRedeemsAtItsOwnEndpoin
 		t.Errorf("the verification endpoint on a RESET token = %v, want ErrTokenNotFound", err)
 	}
 
-	// And then each at its own endpoint, which is the other half of "a path its own
-	// endpoint accepts": a link can be well-formed, distinct, correctly-scoped and
-	// STILL carry a token nothing accepts, and that is the state this test exists
-	// to rule out.
 	if err := flow.svc.RedeemVerification(ctx,
 		recovery.RedeemVerificationInput{Token: verifyToken}); err != nil {
 		t.Errorf("the verification token from the verification link was refused: %v", err)
@@ -266,20 +132,6 @@ func TestAVerificationLinkIsNotThePasswordResetLinkAndEachRedeemsAtItsOwnEndpoin
 	}
 }
 
-// TestOneTemplateForBothPurposesRendersOneLinkForBothMessages is the NEGATIVE
-// CONTROL, and it is here rather than left implicit because a comparison that
-// cannot come back equal is not a comparison.
-//
-// It drives today's configuration — one `RECOVERY_LINK_TEMPLATE`, no per-purpose
-// variables — and asserts that both messages come out with the SAME link. That is
-// the backwards-compatible behavior, pinned rather than merely permitted: it is
-// what every deployment configured before this packet has, and it is the state
-// identity-24 found.
-//
-// So the two tests together say exactly what this packet changed: the DEPLOYMENT
-// can now say otherwise, and until it does, a verification mail still points at
-// whatever the one template says. That is the honest shape of a compatibility
-// promise, and it is why `buildMailer` warns at boot about it.
 func TestOneTemplateForBothPurposesRendersOneLinkForBothMessages(t *testing.T) {
 	const legacy = "https://app.example.com/reset?token={token}"
 
@@ -305,11 +157,6 @@ func TestOneTemplateForBothPurposesRendersOneLinkForBothMessages(t *testing.T) {
 
 	resetLink := stringOf(stub.sent[0].Body["url"])
 	verifyLink := stringOf(stub.sent[1].Body["url"])
-	// THE TEMPLATE, NOT THE RENDERED URL. The two flows mint two different
-	// credentials, so the two rendered links CANNOT be byte-equal, and asserting
-	// that they were would be asserting that the flows share a token. What the
-	// default means is that both links came out of the SAME template, so the
-	// credential is put back and what is left is compared.
 	if got, want := withoutToken(resetLink), withoutToken(verifyLink); got != want {
 		t.Errorf("with one RECOVERY_LINK_TEMPLATE the two purposes rendered from different "+
 			"templates (%q and %q), so the default is not the default", got, want)
@@ -319,10 +166,6 @@ func TestOneTemplateForBothPurposesRendersOneLinkForBothMessages(t *testing.T) {
 			"%q, so the default is not the default", pathOf(t, resetLink), pathOf(t, verifyLink))
 	}
 
-	// Each token still REDEEMS, which is the other half of what "still works" means
-	// for a deployment that has not migrated: the links are wrong, and they are not
-	// broken. A compatibility promise that quietly stopped delivering would be worse
-	// than the defect this packet fixes.
 	resetToken := tokenIn(t, resetLink)
 	verifyToken := tokenIn(t, verifyLink)
 	if resetToken == verifyToken {
@@ -339,28 +182,7 @@ func TestOneTemplateForBothPurposesRendersOneLinkForBothMessages(t *testing.T) {
 	}
 }
 
-// TestEveryPurposeThisAdapterCanDeliverHasAVariableToConfigureItsLink is the drift
-// check between the two closed sets, and it runs in BOTH directions on purpose.
-//
-// THE TWO SETS. `internal/courier` knows which of `recovery`'s messages courier can
-// render, and therefore which purposes need a link; `internal/config` knows which
-// environment variables name those links. Nothing in the type system joins them:
-// a purpose with a variable courier never asks for is a variable an operator sets
-// and nothing happens, and a purpose courier asks for with no variable is a link
-// with nowhere to point.
-//
-// THE SECOND DIRECTION IS NOT HYPOTHETICAL. It is what happens if somebody adds
-// `EMAIL_CHANGE_LINK_TEMPLATE` to `config`'s table before courier's vocabulary
-// includes an address change — which is the next thing that will happen here, and
-// the mailer refuses it at construction precisely so the operator finds out at
-// boot rather than at an account's first address change.
-//
-// So the second half of this test does not inspect a table; it builds a Config
-// from an environment with EVERY variable set and refuses to build a mailer from
-// it. A declared variable that this adapter cannot honor is a promise the service
-// does not keep, and the constructor says so.
 func TestEveryPurposeThisAdapterCanDeliverHasAVariableToConfigureItsLink(t *testing.T) {
-	// First: every deliverable message has a variable that configures its link.
 	for subject, purpose := range linkPurposeFor {
 		if _, ok := config.LinkTemplateVariable(purpose); !ok {
 			t.Errorf("%q is deliverable and needs a %s link, but no environment variable "+
@@ -369,17 +191,6 @@ func TestEveryPurposeThisAdapterCanDeliverHasAVariableToConfigureItsLink(t *test
 		}
 	}
 
-	// SECOND DIRECTION: no variable may configure a link for a purpose this adapter
-	// cannot deliver. `session_link` is that purpose today — no message of
-	// `internal/recovery`'s is rendered for it, so no link is ever rendered with it —
-	// and a variable for it would be a setting an operator changes and nothing
-	// happens.
-	//
-	// IT IS ASSERTED AGAINST THE CONSTRUCTOR rather than against `config`'s table,
-	// because the constructor is the thing that would have to honor it. `config` has
-	// no way to know which purposes courier can deliver, and it must not be made to:
-	// that knowledge is courier's adapter's, and a table in `config` listing a
-	// variable for a purpose with no message is exactly the drift this catches.
 	for _, purpose := range allPurposes {
 		deliverable := false
 		for _, deliverablePurpose := range linkPurposeFor {
@@ -397,12 +208,6 @@ func TestEveryPurposeThisAdapterCanDeliverHasAVariableToConfigureItsLink(t *test
 		}
 	}
 
-	// AND THE HALF THAT CANNOT BE A TABLE LOOKUP: a template handed in for a purpose
-	// with no courier message is refused, at construction, naming the purpose. This
-	// is the fault `config`'s table cannot currently express and the constructor has
-	// to catch anyway, because `main` passes `Config.LinkTemplates` straight through.
-	// EVERY deliverable purpose is configured, so the refusal under test is the
-	// extra one rather than a configuration that was already incomplete.
 	_, err := NewRecoveryMailer(RecoveryMailerConfig{
 		Client: newTestClient(t, "https://courier.example.com", "svc-4b1d7e0a3c95f28"),
 		LinkTemplates: map[recovery.Purpose]string{
@@ -421,30 +226,13 @@ func TestEveryPurposeThisAdapterCanDeliverHasAVariableToConfigureItsLink(t *test
 	}
 }
 
-// TestTheConstructorRefusesAPurposeWithNoLinkTemplate is the completeness
-// obligation, at the one place it can be enforced structurally.
-//
-// A purpose with no template is a mail whose button does nothing, and the packet's
-// whole subject is a mail that renders perfectly and sends the reader nowhere
-// useful. Refusing to CONSTRUCT is the answer, for the reason the package already
-// gives for validating a template at boot: a deployment that is wrong about its
-// links should find out when it starts, not when somebody's account needs one.
-//
-// SO THE FAILURE DIRECTION IS THE TEST. Falling back to another purpose's template
-// would make every row below pass — every mail would have a link — and it is the
-// exact defect being fixed. That is why the assertions are on the error and not on
-// a fallback value.
 func TestTheConstructorRefusesAPurposeWithNoLinkTemplate(t *testing.T) {
 	cases := []struct {
 		name string
-		// templates is what the deployment named, with the purposes it did NOT name
-		// absent rather than defaulted.
 		templates map[recovery.Purpose]string
 		wantNamed recovery.Purpose
 	}{
 		{
-			// EVERY OTHER deliverable purpose is configured, so the refusal names
-			// the one under test rather than the first missing in sorted order.
 			name: "no template for the password reset",
 			templates: map[recovery.Purpose]string{
 				recovery.PurposeVerifyEmail: "https://app.example.com/verify-email?token={token}",
@@ -469,9 +257,6 @@ func TestTheConstructorRefusesAPurposeWithNoLinkTemplate(t *testing.T) {
 			wantNamed: recovery.PurposeEmailChange,
 		},
 		{
-			// THE FIRST IN SORTED PURPOSE ORDER, which is `email_change` — the
-			// refusal names the same variable on every boot, and the order is
-			// the variables' rather than the subjects'. See `linkPurposesInOrder`.
 			name:      "no template for any of them",
 			templates: map[recovery.Purpose]string{},
 			wantNamed: recovery.PurposeEmailChange,
@@ -495,22 +280,6 @@ func TestTheConstructorRefusesAPurposeWithNoLinkTemplate(t *testing.T) {
 	}
 }
 
-// TestEachPurposesLinkTemplateIsHeldToTheSameThreeRefusals is
-// `TestTheLinkTemplateIsRefusedWhenItCannotMakeAWorkingLink` applied PER PURPOSE.
-//
-// # WHY THE TABLE IS THE SAME ONE
-//
-// `ValidateLinkTemplate`'s three refusals — no `{token}`, not absolute, a fragment
-// rather than a query — are each a link that does not work, and they are a property
-// of a TEMPLATE rather than of a message. One template used to be validated once,
-// which meant one validation covered four messages by accident of there being one
-// of it. Four templates means four validations, and a rule that was applied at
-// construction for one purpose and not for the next is the same class of defect
-// this packet is about: something that works and is not checked.
-//
-// SO EVERY ROW IS RUN FOR EVERY PURPOSE, and the row count is asserted. A table
-// that quietly lost a purpose would otherwise pass by checking the one that
-// remained.
 func TestEachPurposesLinkTemplateIsHeldToTheSameThreeRefusals(t *testing.T) {
 	refusals := []struct {
 		name     string
@@ -543,8 +312,6 @@ func TestEachPurposesLinkTemplateIsHeldToTheSameThreeRefusals(t *testing.T) {
 
 	for _, purpose := range purposes {
 		t.Run(string(purpose), func(t *testing.T) {
-			// A working template first, so every refusal below is about the template
-			// rather than about a fixture that never worked.
 			if _, err := NewRecoveryMailer(RecoveryMailerConfig{
 				Client: newTestClient(t, "https://courier.example.com", "svc-4b1d7e0a3c95f28"),
 				LinkTemplates: map[recovery.Purpose]string{
@@ -558,13 +325,6 @@ func TestEachPurposesLinkTemplateIsHeldToTheSameThreeRefusals(t *testing.T) {
 
 			for _, tc := range refusals {
 				t.Run(tc.name, func(t *testing.T) {
-					// The OTHER purposes are valid in every row, so the refusal under
-					// test is the one being injected rather than a configuration
-					// that was already broken. Otherwise every row would pass for
-					// the wrong reason and the table would prove nothing about
-					// the template. A purpose with no accepted template of its own
-					// (`session_link`, which no message carries) is left out: the
-					// constructor does not require one for it.
 					templates := map[recovery.Purpose]string{purpose: tc.template}
 					for _, other := range allPurposes {
 						if other == purpose {
@@ -581,8 +341,6 @@ func TestEachPurposesLinkTemplateIsHeldToTheSameThreeRefusals(t *testing.T) {
 					if err == nil {
 						t.Fatalf("the %s link template %q was accepted", purpose, tc.template)
 					}
-					// The refusal names the purpose, so an operator reading a startup
-					// log knows which variable to fix.
 					if !strings.Contains(err.Error(), string(purpose)) {
 						t.Errorf("the refusal does not name the %s purpose: %v", purpose, err)
 					}
@@ -592,38 +350,6 @@ func TestEachPurposesLinkTemplateIsHeldToTheSameThreeRefusals(t *testing.T) {
 	}
 }
 
-// TestEveryRecoverableMessageHasALinkPurposeAndOneDoesNot holds `courierTypeFor` and
-// `linkPurposeFor` in step, in BOTH directions, with the ONE divergence that is
-// courier's contract rather than an omission.
-//
-// # WHY TWO TABLES AND NOT ONE, RESTATED AS A CHECK
-//
-// `courierTypeFor` says which of courier's six messages can express a message of
-// `internal/recovery`'s, and `linkPurposeFor` says what the token in that message is
-// FOR. They are kept apart because they are different vocabularies with different
-// owners — courier's and `recovery`'s — and because they diverged the moment the
-// new-address half of an email change was mapped: courier's `email_change_new`
-// template renders the previous address and nothing else, so that message is
-// delivered with no url and has no link purpose to consult.
-//
-// # WHAT EACH DIRECTION COSTS IF IT DRIFTS
-//
-//	a deliverable message with no purpose   `Send` delivers it with NO url, which
-//	                                        is right for the new-address half and
-//	                                        wrong for any other — a reset or a
-//	                                        verification mailed with no link is a
-//	                                        mail nobody can use.
-//	a purpose no message carries            the constructor refuses it, so a
-//	                                        deployment that configured a link gets
-//	                                        a startup failure naming a message
-//	                                        that does not exist.
-//
-// # AND THE ONE DIVERGENCE, WHICH IS THE POINT
-//
-// `kindChangeNew` is deliverable and has no link purpose, and that is the whole of
-// why the two tables differ by one. The test pins the difference to THIS message:
-// a second divergence in either direction is a mapping somebody forgot to update,
-// and the count below is what makes it a visible edit rather than a silent widening.
 func TestEveryRecoverableMessageHasALinkPurposeAndOneDoesNot(t *testing.T) {
 	noLinkPurpose := ""
 	for subject := range courierTypeFor {
@@ -649,8 +375,6 @@ func TestEveryRecoverableMessageHasALinkPurposeAndOneDoesNot(t *testing.T) {
 				"that is never sent", subject)
 		}
 	}
-	// And the count, so a purpose added to both tables without the fixture being
-	// updated is a visible edit here rather than a silent widening.
 	if len(courierTypeFor)-len(linkPurposeFor) != 1 {
 		t.Errorf("courierTypeFor has %d entries and linkPurposeFor has %d; the "+
 			"difference must be exactly the new-address half",
@@ -658,12 +382,6 @@ func TestEveryRecoverableMessageHasALinkPurposeAndOneDoesNot(t *testing.T) {
 	}
 }
 
-// pathOf is the path of a rendered link, parsed.
-//
-// IT PARSES RATHER THAN STRINGS-CUTS because the comparison this file exists to
-// make is between SCREENS, and a `?token=` difference is not a different screen.
-// Cutting at `?` would have made a defect that changes only the query parameter
-// look like a fixed one.
 func pathOf(t *testing.T, link string) string {
 	t.Helper()
 	parsed, err := url.Parse(link)
@@ -676,16 +394,6 @@ func pathOf(t *testing.T, link string) string {
 	return parsed.Path
 }
 
-// withoutToken puts the credential back into a rendered link, so what is left is
-// the TEMPLATE that produced it.
-//
-// IT EXISTS because "the two links are the same" and "the two links were rendered
-// from the same template" are different claims, and only the second is true of a
-// single-template configuration: the two flows mint two tokens, so the rendered
-// links differ in exactly the one place that is supposed to differ. Comparing the
-// rendered forms would have made this negative control pass for the wrong reason —
-// and would have made the assertion in the test above, which compares paths, look
-// like it needed a helper it does not.
 func withoutToken(link string) string {
 	parsed, err := url.Parse(link)
 	if err != nil {
@@ -699,12 +407,6 @@ func withoutToken(link string) string {
 	return parsed.String()
 }
 
-// tokenIn reads the credential out of a rendered link.
-//
-// IT READS THE LINK AND NOT THE DATABASE OR THE MESSAGE, because the link is the
-// only place the plaintext exists and the claim is about what the RECIPIENT holds.
-// A token read from the message body would prove the flows mint correctly, which
-// identity-24 already proved, rather than that the mail carried it.
 func tokenIn(t *testing.T, link string) string {
 	t.Helper()
 	parsed, err := url.Parse(link)

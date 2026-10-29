@@ -38,9 +38,6 @@ func TestNormalizeEmail(t *testing.T) {
 func TestNormalizeEmailIsIdempotent(t *testing.T) {
 	t.Parallel()
 
-	// Registration and login both normalize. If normalizing twice were not the
-	// same as normalizing once, the second pass would look up a different string
-	// than the first one stored.
 	once := NormalizeEmail("  Kaka@Example.com ")
 	twice := NormalizeEmail(once)
 
@@ -107,14 +104,9 @@ func TestValidatePassword(t *testing.T) {
 	}{
 		{name: "exactly the minimum", give: "12345678"},
 		{name: "longer than the minimum", give: "correct horse battery staple"},
-		// The brief says min 8 characters, not min 8 of one class. Composition
-		// rules push people toward "Password1!", which is weaker than a long
-		// passphrase, so the only length rules enforced are the two below.
 		{name: "a passphrase with spaces is allowed", give: "correct horse battery staple"},
 		{name: "one under the minimum", give: "1234567", wantCode: "too_short"},
 		{name: "empty", give: "", wantCode: "required"},
-		// argon2id hashes its input; an unbounded password is a cheap way to make
-		// one request cost a gigabyte of hashing.
 		{name: "over the hashing input limit", give: strings.Repeat("a", MaxPasswordLength+1), wantCode: "too_long"},
 	}
 
@@ -144,9 +136,6 @@ func TestValidateTheme(t *testing.T) {
 		give     string
 		wantCode string
 	}{
-		// The closed set is the reference's: two values. The system theme is
-		// not a value but an absence — the key omitted from the document — so
-		// the empty string is refused like any other non-theme.
 		{name: "light", give: "light"},
 		{name: "dark", give: "dark"},
 		{name: "the empty string is not a theme — the system theme is an absence, not a value", give: "", wantCode: "invalid_format"},
@@ -244,8 +233,6 @@ func TestUserIsLockedOnlyWhileTheInstantIsInTheFuture(t *testing.T) {
 	}
 }
 
-// RetryAfter is what the 423 body reports, so it must be the real remaining
-// window and never negative or zero — "retry in 0 seconds" is a busy loop.
 func TestRetryAfterCountsDownAndNeverGoesNegative(t *testing.T) {
 	t.Parallel()
 
@@ -261,9 +248,6 @@ func TestRetryAfterCountsDownAndNeverGoesNegative(t *testing.T) {
 	if got := u.RetryAfter(now.Add(time.Hour)); got != 0 {
 		t.Errorf("RetryAfter after the window closed = %s, want 0", got)
 	}
-	// Asked before the window opens the account really is still locked, so the
-	// answer is the full remaining time — longer than the nominal duration, and
-	// still never negative.
 	if got, want := u.RetryAfter(now.Add(-time.Hour)), 75*time.Minute; got != want {
 		t.Errorf("RetryAfter an hour before the lock = %s, want %s", got, want)
 	}

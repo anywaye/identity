@@ -6,13 +6,6 @@ import (
 	"testing"
 )
 
-// The state parameter is the entire CSRF defense for the OAuth round trip.
-//
-// The callback arrives as a top-level cross-site GET from the provider, so it
-// cannot carry a header and cannot read one; the session cookie rides along
-// (SameSite=Lax) and that is the whole problem. A `state` this service minted and
-// put in a cookie it can read back is what distinguishes "the user is finishing
-// the flow we started" from "an attacker pasted a code into the callback URL".
 
 func TestNewStateBindsTheProvider(t *testing.T) {
 	t.Parallel()
@@ -56,11 +49,6 @@ func TestNewStateIsNotRepeated(t *testing.T) {
 	}
 }
 
-// A state is single-use in practice because the handler clears the cookie when it
-// verifies one, but the token still has to be unguessable: an attacker who
-// completes a flow against their own provider account and then replays the state
-// against a victim's browser would otherwise be indistinguishable from a real
-// round trip.
 func TestVerifyStateAcceptsOnlyTheExactPair(t *testing.T) {
 	t.Parallel()
 
@@ -105,9 +93,6 @@ func TestVerifyStateAcceptsOnlyTheExactPair(t *testing.T) {
 	}
 }
 
-// The state is bound to the provider that minted it, so a flow started for GitHub
-// cannot be finished at Google's callback. Without the binding, one captured state
-// is a valid CSRF bypass for every provider this service offers.
 func TestVerifyStateRejectsAStateMintedForAnotherProvider(t *testing.T) {
 	t.Parallel()
 
@@ -121,9 +106,6 @@ func TestVerifyStateRejectsAStateMintedForAnotherProvider(t *testing.T) {
 	}
 }
 
-// The provider comes from the URL, so it is caller-controlled. Case matters here:
-// these are the exact strings in the registry and the database enum, and
-// case-folding a provider name is how "Google" and "google" become two accounts.
 func TestVerifyStateMatchesTheProviderExactly(t *testing.T) {
 	t.Parallel()
 
@@ -139,9 +121,6 @@ func TestVerifyStateMatchesTheProviderExactly(t *testing.T) {
 	}
 }
 
-// The separator must be the FIRST one, and everything after it is the token. A
-// provider name containing a dot is not a thing here, but a lenient split would
-// turn "google.a.b" into provider "google" and token "a.b" without anyone noticing.
 func TestVerifyStateSplitsOnTheFirstSeparatorOnly(t *testing.T) {
 	t.Parallel()
 
@@ -150,23 +129,15 @@ func TestVerifyStateSplitsOnTheFirstSeparatorOnly(t *testing.T) {
 	}
 }
 
-// NewState must not depend on a clock: the TTL is the cookie's Max-Age, set by the
-// handler from a constant. This pins that the function is a pure entropy source.
 func TestNewStateTakesNoArgumentsBeyondTheProvider(t *testing.T) {
 	t.Parallel()
 
-	// The compile-time assertion is the test. If NewState ever grows a clock or a
-	// store argument, this call site stops compiling and the failure is at the
-	// build rather than in a test that has to be written to catch it.
 	newState := NewState
 	if _, err := newState("google"); err != nil {
 		t.Fatalf("NewState: %v", err)
 	}
 }
 
-// The authorize URL is what a browser is handed, and every one of its parameters
-// is load-bearing: without `state` the flow has no CSRF defense, and without a
-// `redirect_uri` that matches the callback exactly the provider refuses.
 func TestProviderAuthCodeURLCarriesTheRequiredParameters(t *testing.T) {
 	t.Parallel()
 
@@ -197,10 +168,6 @@ func TestProviderAuthCodeURLCarriesTheRequiredParameters(t *testing.T) {
 	}
 }
 
-// Google only issues a refresh token on the first consent unless the request asks
-// for offline access. Without this parameter the refresh_token column is written
-// as NULL forever and the stored credential cannot be renewed — which looks like
-// working software right up until the access token expires an hour later.
 func TestGoogleAsksForOfflineAccess(t *testing.T) {
 	t.Parallel()
 
@@ -213,9 +180,6 @@ func TestGoogleAsksForOfflineAccess(t *testing.T) {
 	}
 }
 
-// GitHub has no such switch, and sending one is harmless but inventing per-provider
-// behavior that no provider documents is how a config ends up wrong. What matters
-// is that the scopes are the ones the identity endpoints actually need.
 func TestProviderScopesAreTheOnesTheIdentityEndpointsNeed(t *testing.T) {
 	t.Parallel()
 
@@ -224,9 +188,6 @@ func TestProviderScopesAreTheOnesTheIdentityEndpointsNeed(t *testing.T) {
 		want     []string
 	}{
 		{provider: Google(), want: []string{"openid", "email", "profile"}},
-		// read:user for /user, user:email for /user/emails — without the second,
-		// a GitHub account with a private email address cannot be identified at all
-		// and this service would have no address to create a user with.
 		{provider: GitHub(), want: []string{"read:user", "user:email"}},
 	}
 

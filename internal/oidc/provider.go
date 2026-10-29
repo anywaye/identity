@@ -15,83 +15,22 @@ import (
 	"github.com/anywaye/identity/internal/platform/id"
 )
 
-// The provider: the library's state machine, pointed at this service's storage,
-// and the discovery document narrowed to what this service actually does.
-//
-// THE NARROWING IS THE POINT OF THIS FILE.
-//
-// op.Provider's discovery describes what the LIBRARY can do. This service does
-// less than the library: it mounts four of the nine endpoints, issues no refresh
-// token, supports no implicit flow, no public client and no private_key_jwt. A
-// document that advertised all of it would be a document a product configures
-// against and then discovers does not work — at their outage, not ours. So
-// every field this service does not serve is emptied, and the assertions in
-// provider_test.go are on the emptied document rather than on the library.
 
-// Endpoint paths.
-//
-// The protocol endpoints live under /oidc so that the two anywaye surfaces stay
-// distinguishable at a glance in an access log: /v1 is the JSON API this service
-// defines and /oidc is the OAuth 2.0 surface a standard client expects. The two
-// well-known paths are not under /oidc because the specifications fix them.
 const (
-	// PathAuthorize is where an authorization request arrives.
 	PathAuthorize = "/oidc/authorize"
-	// PathToken is where a code is exchanged for tokens.
 	PathToken = "/oidc/token"
-	// PathUserinfo is where an access token is presented for claims.
 	PathUserinfo = "/oidc/userinfo"
-	// PathLogin is where the browser goes to authenticate, and it stays THIS
-	// SERVICE's rather than becoming the configured login UI's address.
-	//
-	// THE EXTRA HOP IS THE POINT, and it is what keeps every authorization
-	// decision on this origin. `/oidc/authorize` redirects here; a GET decides
-	// whether this browser is already signed in, whether IT started this flow,
-	// and — if not — redirects again, to the login UI. Each of those is a question
-	// about a credential, and a question about a credential answered by a page on
-	// another origin is a question this service did not answer.
-	//
-	// So the hop costs one round trip and buys three things that are otherwise
-	// impossible: no CORS, no credential crossing an origin boundary, and a
-	// single place where "may this browser authenticate this request" is decided.
-	// loginui.go has the full flow.
 	PathLogin = "/oidc/login"
-	// PathJWKS is where the signing keys are published. It is the path core's
-	// conventions name and the one gateway's verifier hardcodes:
-	// JWKS_PATH = "/.well-known/jwks.json" in gateway/src/middleware/jwt.ts.
 	PathJWKS = "/.well-known/jwks.json"
-	// PathDiscovery is the OpenID Connect Discovery path.
 	PathDiscovery = "/.well-known/openid-configuration"
-	// PathOAuthAuthorizationServer is the RFC 8414 metadata path, served as an
-	// alias for the same document. The library does not register it — its router
-	// has exactly one well-known route — so identity mounts it itself.
 	PathOAuthAuthorizationServer = "/.well-known/oauth-authorization-server"
 )
 
 // Config is what it takes to be an OpenID Connect provider.
 type Config struct {
-	// Issuer is the value of the `iss` claim, the discovery document's `issuer`,
-	// and the base every endpoint URL is built from. It is compared for equality
-	// by every verifier on the platform, so a trailing slash or a path here is a
-	// startup error rather than a discovery document nobody's tokens match.
 	Issuer string
-	// SigningKey is the one RSA key. See keys.go.
 	SigningKey *SigningKey
-	// AllowInsecure permits an http issuer. It exists for `localhost` and for
-	// tests, and it is a field rather than a behavior because "this deployment
-	// is local" is a fact about the deployment.
 	AllowInsecure bool
-	// LoginUIURL is where a browser goes to authenticate. It is REQUIRED, and
-	// there is no default, and the reason is the whole of loginui.go: identity
-	// renders no HTML, so a provider with no login UI is an authorization server
-	// that cannot log a human in while still publishing a discovery document
-	// that says it can.
-	//
-	// IT IS A FIELD RATHER THAN A CONSTANT because the login UI belongs to
-	// another repository and a deployment may well serve it from a different
-	// origin than this one. Compiling an address in would couple two services
-	// that share no module and no release train, and a compiled-in default that
-	// is wrong is wrong in every deployment at once.
 	LoginUIURL string
 }
 
@@ -100,8 +39,6 @@ type Provider struct {
 	op      *op.Provider
 	storage *Storage
 	issuer  string
-	// loginUI is LoginUIURL, parsed once and validated. Held rather than re-parsed
-	// at every redirect; see LoginRedirect.
 	loginUI *url.URL
 }
 
@@ -118,36 +55,18 @@ func NewProvider(cfg Config, storage *Storage) (*Provider, error) {
 	if cfg.SigningKey == nil {
 		return nil, ErrNoSigningKey
 	}
-	// The login UI is checked HERE and not left to the first sign-in, for the
-	// reason loginui.go gives: a provider that builds and publishes a discovery
-	// document it cannot complete a flow with is a worse state than one that
-	// refuses to start, and the difference is invisible until a user is standing
-	// at a product's sign-in button.
 	if err := ValidateLoginUIURL(cfg.LoginUIURL); err != nil {
 		return nil, fmt.Errorf("%w: set %s to the page that asks a person for their password, "+
 			"for example https://parlor.anywaye.com/sign-in/oidc", err, LoginUIEnvVar)
 	}
 	loginUI, parseErr := url.Parse(cfg.LoginUIURL)
 	if parseErr != nil {
-		// Unreachable: ValidateLoginUIURL just parsed it. Kept rather than
-		// asserted because a constructor that panics on its own input is a
-		// constructor with a second, undocumented failure mode.
 		return nil, fmt.Errorf("%w: it is not a URL: %w", ErrInvalidLoginUI, parseErr)
 	}
 
 	encryptionKey, encryptionKeyID := deriveEncryptionKey(cfg.SigningKey)
 
 	options := []op.Option{
-		// The library's own defaults are /authorize, /oauth/token, /userinfo and
-		// /keys. The protocol paths here are this service's, under /oidc so the
-		// two surfaces are distinguishable in an access log; the well-known path
-		// is the one core's conventions name and gateway's verifier hardcodes.
-		//
-		// The four this service does NOT serve are configured too, and it looks
-		// like an oversight until you read Discovery: the library builds its
-		// endpoint URLs from these values, so they have to be set for the
-		// endpoints that ARE served to be configured at all, and the URLs for the
-		// rest are emptied in the document rather than published.
 		op.WithCustomEndpoints(
 			op.NewEndpoint(strings.TrimPrefix(PathAuthorize, "/")),
 			op.NewEndpoint(strings.TrimPrefix(PathToken, "/")),
@@ -163,39 +82,18 @@ func NewProvider(cfg Config, storage *Storage) (*Provider, error) {
 
 	handler, err := op.NewProvider(
 		&op.Config{
-			// The library needs a 32-byte key to encrypt the OPAQUE tokens it can
-			// issue. This provider issues JWTs and never mints one — but the
-			// userinfo handler DECRYPTS before it verifies, so a zero key here
-			// would be a key an attacker could encrypt a forged token under.
 			CryptoKey:   encryptionKey,
 			CryptoKeyId: encryptionKeyID,
 
-			// PKCE with S256, and only S256. The discovery document then advertises
-			// `["S256"]` rather than the specification's full set, which is the
-			// whole point of configuring it.
 			CodeMethodS256: true,
 
-			// A confidential client authenticates with HTTP Basic. Both of these
-			// are off because a form-posted secret ends up in a request body that
-			// gets logged, and a private_key_jwt key would be a second credential
-			// per product to store.
 			AuthMethodPost:          false,
 			AuthMethodPrivateKeyJWT: false,
 
-			// The refresh token grant, and it is mounted rather than merely
-			// advertised. The library refuses the grant at the token endpoint
-			// without this, so a registration listing it would get an
-			// `unauthorized_client` from a provider that claims to support it.
 			GrantTypeRefreshToken: true,
 
-			// No `request` object: a signed request object is a second way to
-			// carry claims into an authorization request and there is no product
-			// that needs one.
 			RequestObjectSupported: false,
 
-			// The four scopes this service implements, and the claims it actually
-			// asserts. Both lists are the package's own rather than the library's
-			// defaults, which name phone and address.
 			SupportedScopes: SupportedScopes,
 			SupportedClaims: supportedClaims(),
 		},
@@ -261,12 +159,6 @@ func (p *Provider) CompleteLogin(ctx context.Context, requestID string, subject 
 	return p.storage.CompleteLogin(ctx, requestID, subject)
 }
 
-// validateIssuer refuses an issuer a verifier could not reproduce.
-//
-// Two rules, both from RFC 8414 §3.3 and both of which produce a provider whose
-// tokens nobody can verify: no query or fragment, and no path unless the path is
-// "/" — a path issuer means every endpoint URL needs it prefixed, and the
-// library's endpoint helpers do not do that for the well-known paths.
 func validateIssuer(issuer string) error {
 	if issuer == "" {
 		return fmt.Errorf("oidc: the issuer is required; it is the `iss` on every token and the `issuer` in discovery")
@@ -287,43 +179,15 @@ func validateIssuer(issuer string) error {
 	return nil
 }
 
-// deriveEncryptionKey produces the library's 32-byte encryption key, and its id.
-//
-// It is DERIVED from the signing key rather than configured separately, and the
-// derivation is domain-separated so the two never coincide. Three reasons:
-//
-//   - One configured secret is one thing to rotate, and a deployment that has to
-//     set two will eventually set only one.
-//   - The value really is used. The userinfo handler decrypts an access token
-//     before it verifies one, so a zero or shared key would let anybody encrypt
-//     a forged `tokenID:subject` pair and be believed. It is not dead code that
-//     happens to be configured, and a comment saying otherwise would be wrong.
-//   - When the signing key rotates, the encryption key rotates with it, which is
-//     correct: a rotation exists because something was exposed.
-//
-// It is a SHA-256 over a fixed label and the key's DER bytes. There is no
-// derivation function to get wrong and no salt to lose, and the label is what
-// keeps the result from being the signing key itself.
 func deriveEncryptionKey(k *SigningKey) ([32]byte, string) {
 	der, err := marshalPKCS8(k)
 	if err != nil {
-		// Unreachable: the key was parsed from a PEM to be constructed, so it
-		// marshals again. Falling back to the kid keeps the provider buildable
-		// rather than panicking inside a constructor, and the key is still
-		// derived from something unique to this deployment.
 		der = []byte(k.ID())
 	}
 	sum := sha256.Sum256(append([]byte("anywaye/identity/oidc/token-encryption/v1\x00"), der...))
 	return sum, k.ID() + "-enc"
 }
 
-// supportedClaims is what this service actually asserts, in the order the
-// discovery document lists them.
-//
-// The library's DefaultSupportedClaims names address, phone_number, locale,
-// picture, website, birthdate, gender and zoneinfo, none of which identity has a
-// column for. Advertising a claim is a promise to a product's rendering code, and
-// this list is the set that promise is actually kept for.
 func supportedClaims() []string {
 	return []string{
 		"sub",
@@ -347,75 +211,39 @@ func supportedClaims() []string {
 	}
 }
 
-// Discovery is the document served at the two well-known paths.
-//
-// Built from the library's own configuration and then narrowed, so the endpoint
-// URLs, the issuer and the algorithms come from the same place the router does
-// and cannot describe a route this service does not mount.
 func (p *Provider) discovery(ctx context.Context) *oidc.DiscoveryConfiguration {
 	doc := op.CreateDiscoveryConfig(ctx, p.op, p.op.Storage())
 
-	// The four endpoints this service mounts.
 	doc.AuthorizationEndpoint = p.op.AuthorizationEndpoint().Absolute(p.issuer)
 	doc.TokenEndpoint = p.op.TokenEndpoint().Absolute(p.issuer)
 	doc.UserinfoEndpoint = p.op.UserinfoEndpoint().Absolute(p.issuer)
 	doc.JwksURI = p.op.KeysEndpoint().Absolute(p.issuer)
 
-	// The five it does not. Each is emptied rather than left at the library's
-	// default, because a discovery document is a menu and an entry for an
-	// endpoint that answers 404 is a product configured against a route that does
-	// not exist. Introspection, revocation, end-session, device authorization and
-	// the session-management iframe are all later packets; the discovery document
-	// says so by omission, which is the only way it can.
 	doc.IntrospectionEndpoint = ""
 	doc.RevocationEndpoint = ""
 	doc.EndSessionEndpoint = ""
 	doc.DeviceAuthorizationEndpoint = ""
 	doc.CheckSessionIframe = ""
 
-	// …and the two that go with them. These are the fields the FIRST live run of
-	// the provider caught and the object-level test did not: blanking an endpoint
-	// leaves its `*_auth_methods_supported` sibling behind, and a document
-	// advertising how to authenticate to an introspection endpoint this service
-	// does not have is a document describing a machine. TestDiscoveryOmitsWhatThis
-	// ServiceDoesNotServe now asserts the whole set rather than the endpoints
-	// alone.
 	doc.IntrospectionEndpointAuthMethodsSupported = nil
 	doc.IntrospectionEndpointAuthSigningAlgValuesSupported = nil
 	doc.RevocationEndpointAuthMethodsSupported = nil
 	doc.RevocationEndpointAuthSigningAlgValuesSupported = nil
 
-	// Authorization code and nothing else: no implicit flow, and no JWT profile
-	// grant despite the library advertising it unconditionally.
 	doc.ResponseTypesSupported = []string{string(oidc.ResponseTypeCode)}
-	// Authorization code, and the refresh token. Two entries, and the second
-	// is here because the grant is MOUNTED this packet: the five emptied
-	// endpoints above are what an omission buys, and the refresh grant is the
-	// thing it must not be applied to. A document that hides a grant the token
-	// endpoint would honor is a document a client library reads and then does
-	// not use, which costs the deployment a working integration.
 	doc.GrantTypesSupported = []oidc.GrantType{oidc.GrantTypeCode, oidc.GrantTypeRefreshToken}
 
-	// HTTP Basic only. The library's list always includes `none`, which tells a
-	// client it may skip authenticating — true of a public client with PKCE, and
-	// false of every client in this table, which all hold a secret.
 	doc.TokenEndpointAuthMethodsSupported = []oidc.AuthMethod{oidc.AuthMethodBasic}
 	doc.TokenEndpointAuthSigningAlgValuesSupported = nil
 	doc.RequestObjectSigningAlgValuesSupported = nil
 
-	// PKCE with S256 and nothing else, matching requireS256 on the token side.
 	doc.CodeChallengeMethodsSupported = []oidc.CodeChallengeMethod{oidc.CodeChallengeMethodS256}
 
-	// S256 for the id_token, from the one key this service publishes.
 	doc.IDTokenSigningAlgValuesSupported = []string{"RS256"}
 	doc.SubjectTypesSupported = []string{"public"}
 	doc.ScopesSupported = SupportedScopes
 	doc.ClaimsSupported = supportedClaims()
 
-	// The library leaves these nil because this service configured them off, and
-	// a nil list is omitted from the JSON. Sliced for the same reason as the
-	// endpoints above: an empty list and an absent one are the same answer here,
-	// and absent is the one that does not read as support.
 	doc.UILocalesSupported = nil
 	doc.ScopesSupported = slices.Clone(SupportedScopes)
 	return doc

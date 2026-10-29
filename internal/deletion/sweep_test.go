@@ -11,19 +11,6 @@ import (
 	"github.com/anywaye/identity/internal/platform/id"
 )
 
-// # THE SWEEP IS TWO STATEMENTS IN THIS ORDER.
-//
-// `internal/deletion/sweep.go` re-implements `recovery.Service.revokeEveryCredential`
-// against interfaces, because that function is unexported and exporting it would
-// make the password-reset package a dependency of the deletion package. That is
-// a real duplication of two calls, and this file is what holds it to the original
-// rather than trusting a reader to compare the two files.
-//
-// The assertions are the whole of it: both tables are swept, the order is
-// sessions-then-tokens, the caller's instant reaches the access-token sweep, and
-// neither call is skipped. A "simplification" that dropped the access-token sweep
-// would leave every other test in the repository green, because nothing else
-// sweeps tokens on this flow — so this file is the only thing that notices.
 
 type sweepLog struct{ calls []string }
 
@@ -63,9 +50,6 @@ func TestTheSweepIsTwoStatementsInThisOrder(t *testing.T) {
 	}
 }
 
-// TestTheSweepRefusesHalfAWiring is the construction-time counterpart, and it is
-// the direction that matters: a Sweeper built with one half silently revokes
-// sessions and leaves every JWT standing for up to its `exp`.
 func TestTheSweepRefusesHalfAWiring(t *testing.T) {
 	t.Parallel()
 
@@ -84,10 +68,6 @@ func TestTheSweepRefusesHalfAWiring(t *testing.T) {
 	}
 }
 
-// TestASweepFailureStopsTheDeletion is the rollback property seen from the
-// sweeper's side: a sweep that fails must not let the transaction carry on to
-// remove the user, because the row going is what makes the credentials
-// unreachable and a sweep that failed leaves them short of that.
 func TestASweepFailureStopsTheDeletion(t *testing.T) {
 	t.Parallel()
 
@@ -102,7 +82,6 @@ func TestASweepFailureStopsTheDeletion(t *testing.T) {
 		t.Fatalf("error is %v, want one wrapping the store's failure", err)
 	}
 
-	// And through the service, the same failure must mean nothing was deleted.
 	h := newHarness(t)
 	h.svc = NewService(
 		uowFunc(func(ctx context.Context, fn func(context.Context, db.Querier) error) error {
@@ -126,17 +105,12 @@ func TestASweepFailureStopsTheDeletion(t *testing.T) {
 	}
 }
 
-// failingAccess is the access-token half failing, so the sweeper's SECOND
-// statement is the one under test: the session sweep must have run, and the
-// error must still propagate.
 type failingAccess struct{ err error }
 
 func (f failingAccess) RevokeAccessTokensForUser(context.Context, db.Querier, id.UUID, time.Time) error {
 	return f.err
 }
 
-// failingSweeper is the whole CredentialSweeper failing at its first statement,
-// which is the shape a deployment reaches by wiring a nil `oidc.Store`.
 type failingSweeper struct{ err error }
 
 func (f failingSweeper) RevokeEveryCredential(context.Context, db.Querier, id.UUID, time.Time) error {

@@ -1,66 +1,5 @@
 package httpapi
 
-// THE ENUMERATION AUDIT: EVERY ROUTE A STRANGER CAN REACH.
-//
-// ## What this file is for
-//
-// identity-27 found one account-enumeration oracle — a 409 on
-// `POST /v1/email-verifications` that told an anonymous caller which addresses
-// belong to VERIFIED accounts — and removed it. A single finding is a symptom, not
-// a census: the same mistake is one branch away on any route that takes an address
-// or an identifier from a caller who has proved nothing, and it is invisible in
-// review because the branch always reads like a feature.
-//
-// So this file walks the whole unauthenticated family and answers ONE question per
-// route, in a test rather than in a comment:
-//
-//	can the response distinguish "this account exists" from "it does not"?
-//
-// ## WHY IT IS A TABLE PLUS A WALK, AND NOT A LIST
-//
-// `TestEveryRouteThatAnswersAnAnonymousCallerIsInThisAudit` reads the ROUTER and
-// requires the table to BE the family, in both directions: every mounted route under
-// these prefixes has a row, and every row is a mounted route. A restated list would
-// be one more thing to forget and its failure would be silent — a new route lands,
-// nobody audits it, the suite is green. That is the same shape as
-// `TestEveryRecoveryRouteIsInTheMatrix` on the authorization axis, and the reason
-// that one walks chi rather than trusting a slice of strings.
-//
-// **THE 401 ROUTES ARE ROWS TOO**, and the first version of this test exempted them
-// by probing each one and skipping whatever answered 401. The exemption was taken out
-// after its own red proof showed what it was doing: an unlisted route has no probe
-// body either, because the body lives IN the table, so the probe went out as `{}`,
-// `decodeBody` refused it with a 400, and a session-gated route was reported as
-// answering a stranger. A check whose probe cannot reach the code under test is
-// measuring the probe.
-//
-// ## THE TWO ROWS THAT ANSWER YES
-//
-// They say so rather than being quietly reclassified, because an audit that cannot
-// say "yes, here, and here is why it stands" is not an audit:
-//
-//   - `POST /v1/users` publishes "that address is taken". It has to: one account per
-//     address is the unique index on `users.email`, and a caller registering has to
-//     be told rather than left watching a request time out.
-//     `TestRegistrationPublishesOnlyThatAnAddressIsTaken` holds the disclosure to
-//     exactly one bit.
-//   - `POST /v1/session` publishes "that account is locked", through a 423 the
-//     stranger can reach with a wrong password.
-//     `TestALockedAccountIsToldApartOnlyFromThePassword` holds it, measures how far
-//     it reaches, and says why it is the smaller of the two.
-//
-// The question of whether the first one should be answered differently is a product
-// decision about registration, and it is recorded as DECISIONS.md D9 rather than
-// settled here.
-//
-// ## THE ROW THAT MUST NOT BE "FIXED"
-//
-// `POST /v1/introspections` is an oracle BY DESIGN — resolving a presented token to
-// its claims is the entire purpose of a token introspection endpoint, and RFC 7662
-// is its specification. Its protection is the CREDENTIAL the caller must present,
-// not the shape of the answer.
-// `TestIntrospectionIsAnOracleByDesignAndGatedOnACredential` says so where the next
-// reader will find it.
 
 import (
 	"context"
@@ -88,38 +27,20 @@ import (
 	"github.com/anywaye/identity/internal/users"
 )
 
-// auditRoute is one row: a route a stranger can reach, the identifier it accepts,
-// and what its answer discloses.
 type auditRoute struct {
 	name    string
 	method  string
 	pattern string
 
-	// identifier is what the body carries that could name an account or a
-	// credential. "nothing" is a legitimate value and a row worth having: a route
-	// with no identifier cannot enumerate, and recording that is the answer.
 	identifier string
 
-	// probe is the anonymous request the coverage walk sends. It has to be a body
-	// the route will accept, because a 400 from a malformed probe would make a route
-	// look session-gated and drop it out of the audit.
 	probe string
 
-	// anonymous is the status that probe gets. 401 means the route demands a
-	// credential, so no identifier ever reaches it from a stranger — which is what
-	// exempts a route from needing a row of its own.
 	anonymous int
 
-	// discloses is the audit's answer, in a sentence a reader can check.
 	discloses string
 }
 
-// auditFamilyPrefixes are the paths this file claims. A mounted route under one of
-// them that answers an anonymous caller has to be in the table below.
-//
-// `/v1/email-verification` IS A PREFIX here and not an exact match, because it
-// covers both the singular status route and the plural request routes — which is
-// what this file wants, since every one of them is in the audit.
 var auditFamilyPrefixes = []string{
 	"/v1/users",
 	"/v1/me",
@@ -128,43 +49,12 @@ var auditFamilyPrefixes = []string{
 	"/v1/email-verification",
 	"/v1/email-changes",
 	"/v1/introspections",
-	// The signup timestamp mint. It is a PUBLIC, unauthenticated endpoint that
-	// answers an anonymous caller, so it is in this family by the same rule every
-	// other row is: a stranger can reach it, and the question "can the response
-	// tell 'this account exists' from 'it does not'?" is live on it even though
-	// the answer is "nothing" — the pair it hands out is a bearer credential for
-	// one form submission, not a fact about any account.
 	"/v1/signup-timestamp",
-	// The staff surface. All four routes answer a stranger — 401 without a
-	// session, 403 with a machine key or a non-staff one — so each gets a row
-	// answering the question, even though every answer is "nothing".
 	"/v1/operator",
-	// The agent claim route, and the prefix is narrow on purpose.
-	//
-	// IT IS NOT `/v1/accounts`, because that would pull in fifteen routes whose
-	// answer to a stranger is uniformly 401 and which would each need a row
-	// saying so. The claim is the one route under that prefix with a real
-	// question to answer, and the question is not the one the file's header
-	// asks first: it is not "does this ACCOUNT exist" but "does this AGENT
-	// exist", because a claim link is the only credential a stranger ever
-	// presents and the link names a principal rather than an account. So the
-	// prefix names the sub-resource and the row answers the real question.
 	"/v1/accounts/{accountID}/agents",
-	// The agent PUBLIC and SELF-SERVICE surface. The prefix is deliberately NOT
-	// `/v1/accounts/…`, because none of these routes is account-scoped: an
-	// unclaimed agent has no account. Registration is anonymous; the refresh and
-	// the token lifecycle authenticate with the agent's OWN bearer credential, so
-	// a stranger gets the same 401 a wrong token gets and no identifier arrives.
-	// The account-scoped CLAIM stays under its own prefix above, because it is the
-	// one agent route with a real identifier question ("does this AGENT exist").
 	"/v1/agents",
 }
 
-// anonymousFamilyAudit is the table, one row per route.
-//
-// THE ORDER IS THE PACKET'S: auth first, then recovery, then the one route that is
-// an oracle on purpose. It reads as a walk through the surface rather than as
-// alphabet.
 func anonymousFamilyAudit() []auditRoute {
 	return []auditRoute{
 		{
@@ -178,15 +68,6 @@ func anonymousFamilyAudit() []auditRoute {
 				"told. Pinned by TestRegistrationPublishesOnlyThatAnAddressIsTaken",
 		},
 		{
-			// THE MINT, and the row that exists because the endpoint is PUBLIC. It
-			// takes no body and no credential, and the response carries nothing but
-			// the pair — a bearer credential for one form submission, not a fact
-			// about any account. The question this file asks ("can the response
-			// tell 'this account exists' from 'it does not'?") has the answer
-			// "nothing": there is no account, no user, no identifier of any kind in
-			// the request or the response. The pair expires on its own, and a
-			// captured pair is a one-hour credential for one form, which is the
-			// whole of the blast radius.
 			name: "mint a signup timestamp", method: http.MethodPost, pattern: "/v1/signup-timestamp",
 			probe:     `{}`,
 			anonymous: http.StatusOK,
@@ -220,23 +101,6 @@ func anonymousFamilyAudit() []auditRoute {
 			discloses: "nothing: 401 without a credential, so no identifier arrives from a stranger",
 		},
 		{
-			// THE SAME ANSWER AS THE READ ABOVE, and it is a row rather than nothing
-			// because `/v1/me` is one of the audit family's prefixes and a prefix
-			// match would catch this route whether or not anyone thought about it.
-			//
-			// The question is sharper here than on the read, and the answer is
-			// stronger for a reason worth writing down. Deleting an account is the
-			// one route where a plausible implementation leaks: `409 sole owner` says
-			// "there is a team account called Acme and you are its only owner", which
-			// is everything an attacker wants to know about a named victim — except
-			// that it requires a RESOLVED SESSION for that victim, so a stranger can
-			// never see it. There is no anonymous path to the 409, and the 401 that
-			// stands in front of it is the same 401 the read returns.
-			//
-			// A second DELETE with the same session is also a 401 rather than a
-			// "already deleted" — asserted in deletion_test.go, because an
-			// "already deleted" would be exactly the existence oracle this table
-			// exists to forbid.
 			name: "delete the session", method: http.MethodDelete, pattern: "/v1/me",
 			anonymous: http.StatusUnauthorized,
 			discloses: "nothing: 401 without a credential, and no identifier arrives from a stranger. " +
@@ -251,12 +115,6 @@ func anonymousFamilyAudit() []auditRoute {
 				"it is a credential rather than a name",
 		},
 		{
-			// A ROW BECAUSE `/v1/session` IS A PREFIX OF `/v1/sessions`, not because
-			// anybody chose to audit these two. `isAuditFamilyRoute` matches with
-			// HasPrefix, so `GET /v1/sessions` and `DELETE /v1/sessions/{id}` fall
-			// inside this family automatically — which is the right outcome and worth
-			// stating, because it means a route added under this prefix cannot escape
-			// the census by being spelled differently.
 			name: "list my sessions", method: http.MethodGet, pattern: "/v1/sessions",
 			anonymous: http.StatusUnauthorized,
 			discloses: "nothing: 401 without a credential, so no session id and no user id ever " +
@@ -314,9 +172,6 @@ func anonymousFamilyAudit() []auditRoute {
 			name: "ask for a confirmation link", method: http.MethodPost, pattern: "/v1/email-verifications",
 			identifier: "email", probe: `{"email":"nobody@example.com"}`,
 			anonymous: http.StatusAccepted,
-			// THIS IS THE ROW IDENTITY-27 CHANGED. Two commits ago it read "whether the
-			// address belongs to a VERIFIED account", and the 409 that answered it is
-			// what an anonymous caller posted a list of addresses to collect.
 			discloses: "nothing: 202 with a constant body for every address, INCLUDING one whose " +
 				"account has already proved it",
 		},
@@ -355,20 +210,6 @@ func anonymousFamilyAudit() []auditRoute {
 				"holding a token that cannot exist before two inbox proofs",
 		},
 		{
-			// THE REDEMPTION, and the one row on this surface whose identifier is a
-			// CREDENTIAL rather than a name — which is the question this file asks in its
-			// sharpest form.
-			//
-			// Nothing is disclosed, and the reason is four refusals with ONE status, ONE
-			// fixed sentence and ONE round trip. Two of them are about ROWS (never
-			// existed, expired, spent, minted for another flow) and two are about an
-			// ACCOUNT: a disabled subject and a subject who enrolled MFA. The account two
-			// are the ones this row exists to protect, because the caller here is the
-			// subject OR whoever took the link — so a `403 disabled` or a `409 second
-			// factor` would publish the account's state to exactly the person an operator
-			// acted about. They are `404` instead, and the link is left LIVE so that
-			// un-disabling or un-enrolling restores the flow rather than leaving the user
-			// with a dead link and no explanation.
 			name: "redeem a session link", method: http.MethodPost, pattern: "/v1/session-links/redeem",
 			identifier: "token",
 			probe:      `{"token":"a-token-that-is-not-one"}`,
@@ -383,17 +224,6 @@ func anonymousFamilyAudit() []auditRoute {
 				"TestTheRedemptionCannotBeToldApartFromALinkThatNeverExisted",
 		},
 		{
-			// A row because the `/v1/session` PREFIX catches it, not because it is
-			// anonymous in the sense the question is about: the mint demands a scoped
-			// api key, and a stranger presenting none gets the surface's 403. So the
-			// identifier in the body — `user_id` — never reaches a use case from
-			// outside the trust boundary, which is the answer this column records.
-			//
-			// IT IS NOT 401 AND THAT IS NOT AN ACCIDENT: `requireSessionLinkMint`
-			// refuses on the credential's SHAPE, so "you are not a scoped token" is
-			// true of a stranger exactly as it is of a signed-in person. A 401 here
-			// would send a client hunting a login problem on a route where having a
-			// login is the wrong thing to have.
 			name: "mint a session link", method: http.MethodPost, pattern: "/v1/session-links",
 			identifier: "user_id",
 			probe:      `{"user_id":"` + id.MustNew().String() + `"}`,
@@ -403,18 +233,6 @@ func anonymousFamilyAudit() []auditRoute {
 				"an unknown subject IS a deliberate disclosure — see DECISIONS.md D12",
 		},
 		{
-			// A row because the `/v1/users` PREFIX catches these two, not because
-			// they are anonymous in the sense the question is about. They are
-			// OPERATOR routes: the credential is a scoped api key holding
-			// `users:disable`, and a caller presenting anything else is refused before
-			// the path is parsed — so a user id reaches no use case from outside the
-			// trust boundary, which is the answer this column records.
-			//
-			// IT IS 403 AND NOT 401 FOR THE SAME REASON THE MINT ABOVE IS: the gate
-			// refuses on the credential's SHAPE, so "you are not a scoped token" is
-			// true of a stranger exactly as it is of a signed-in person. A 401 would
-			// send a client hunting a login problem on a route where having a login is
-			// the wrong thing to have.
 			name: "disable a user", method: http.MethodPost,
 			pattern:   "/v1/users/{userID}/disable",
 			probe:     `{}`,
@@ -425,10 +243,6 @@ func anonymousFamilyAudit() []auditRoute {
 				"credential the 404 for an id this service never issued is deliberate — see D12",
 		},
 		{
-			// The same row for the other direction, restated rather than pointed at
-			// the one above: the census compares (method, path) keys, so a row covering
-			// "the operator surface" would leave one of the two routes unlisted, and a
-			// future third route would be unlisted too.
 			name: "re-enable a user", method: http.MethodPost,
 			pattern:   "/v1/users/{userID}/enable",
 			probe:     `{}`,
@@ -448,11 +262,6 @@ func anonymousFamilyAudit() []auditRoute {
 				"TestIntrospectionIsAnOracleByDesignAndGatedOnACredential before changing this row",
 		},
 		{
-			// A row because the `/v1/operator` PREFIX catches this route, not
-			// because a stranger learns anything from it. The staff gate resolves
-			// the session before anything else, so 401 is what the service
-			// answers — and the response names the caller's own status only,
-			// which a stranger has none of.
 			name: "read my operator status", method: http.MethodGet, pattern: "/v1/operator/me",
 			anonymous: http.StatusUnauthorized,
 			discloses: "nothing: 401 without a session, so no status arrives from a stranger. " +
@@ -460,11 +269,6 @@ func anonymousFamilyAudit() []auditRoute {
 				"anybody else's — which is the property TestOperatorMeReportsTheSignedInStaffUser holds",
 		},
 		{
-			// THE SAME NOTHING FOR THE DIRECTORY, and the query is absent from the
-			// probe on purpose: the gate refuses before the query is read, so a
-			// term never reaches the directory from a stranger and there is no
-			// row to tell apart. A 422 for a missing query would be honest and
-			// would also make the refusal vary by what the stranger sent.
 			name: "search the staff directory", method: http.MethodGet, pattern: "/v1/operator/users",
 			identifier: "query",
 			anonymous:  http.StatusUnauthorized,
@@ -473,10 +277,6 @@ func anonymousFamilyAudit() []auditRoute {
 				"address reaches the directory from outside the trust boundary",
 		},
 		{
-			// A row because the `/v1/operator` PREFIX catches this route. The staff
-			// gate resolves the session before anything else, so 401 is what the
-			// service answers — and the counts are platform-wide, which a stranger
-			// has no standing to read.
 			name: "staff directory summary", method: http.MethodGet, pattern: "/v1/operator/summary",
 			anonymous: http.StatusUnauthorized,
 			discloses: "nothing: 401 without a staff session, so no counts arrive " +
@@ -491,30 +291,6 @@ func anonymousFamilyAudit() []auditRoute {
 				"list and nothing an individual caller could not already see",
 		},
 		{
-			// THE AGENT CLAIM, and it is the one row on this surface whose question
-			// is not about an account. A claim link is the only credential a
-			// stranger ever presents, and it names a PRINCIPAL — so the question the
-			// row answers is "can the response tell 'this agent exists' from 'it
-			// does not'".
-			//
-			// The answer has two halves because the route has two gates.
-			//
-			//   A STRANGER WITH NO CREDENTIAL gets 401 before the token in the
-			//   body is read, so no identifier reaches the use case at all and
-			//   there is nothing to tell apart.
-			//
-			//   A CALLER WHO IS PAST THE GATE — a real session, holding a link
-			//   they did not receive — gets one 404 for four cases: a wrong token,
-			//   an expired link, an already-claimed agent and an agent that never
-			//   existed. The store collapses all four in ONE statement
-			//   (ByClaimDigest filters on the digest, the status AND the expiry
-			//   together) and the mapper renders them with one sentence. There is
-			//   no 410, which would say "this link was real", and no 409, which
-			//   would say "this agent is taken".
-			//
-			// The probe carries a token because the route reads the body after the
-			// credential gate, and a body it accepts is what keeps the walk from
-			// reporting a session-gated route as one that answered a stranger.
 			name: "claim an agent", method: http.MethodPost,
 			pattern:   "/v1/accounts/{accountID}/agents/claim",
 			probe:     `{"token":"anywaye_` + strings.Repeat("z", 43) + `"}`,
@@ -528,13 +304,6 @@ func anonymousFamilyAudit() []auditRoute {
 				"TestAClaimLinkResolvesOnlyWhileItIsLiveIsUnclaimedAndIsNotYetSpent",
 		},
 		{
-			// The staff disable, restated as a census row rather than pointed at
-			// the machine surface's: the census compares (method, path) keys, so
-			// a row covering "the operator surface" would leave this route
-			// unlisted. It answers 401 rather than the machine route's 403,
-			// because a session IS the right credential kind here — the stranger
-			// holds none of it, and a 403 would send them hunting an authority
-			// problem instead of a login.
 			name: "staff-disable a user", method: http.MethodPost,
 			pattern:   "/v1/operator/users/{userID}/disable",
 			probe:     `{}`,
@@ -545,8 +314,6 @@ func anonymousFamilyAudit() []auditRoute {
 				"gate the 404 for an id this service never issued is deliberate — see D12",
 		},
 		{
-			// The same row for the other direction, restated rather than pointed
-			// at the one above, for the reason the machine surface's pair gives.
 			name: "staff re-enable a user", method: http.MethodPost,
 			pattern:   "/v1/operator/users/{userID}/enable",
 			probe:     `{}`,
@@ -558,51 +325,6 @@ func anonymousFamilyAudit() []auditRoute {
 				"(DECISIONS.md D13)",
 		},
 		{
-			// REGISTRATION is the one PUBLIC route on the agent surface, and the
-			// question this file asks — "can the response tell 'this account exists'
-			// from 'it does not'?" — has the answer "there is no account". An agent
-			// registers itself UNCLAIMED (D4): the response carries a new principal,
-			// a token and a claim URL, and nothing in it is a fact about any
-			// pre-existing row. Even the USERNAME, the one field a caller can choose,
-			// never discloses occupancy: a collision on a generated handle is retried
-			// under the hood, and a supplied handle that survives the retry budget
-			// comes back a 422 naming `username` — which tells the caller their own
-			// input collided, never which handles are worth trying. There is no route
-			// anywhere that answers "is this handle taken".
-			//
-			// The probe is a minimal valid body so the walk reaches the handler
-			// rather than a 400 about a malformed probe.
-			//
-			// --- the two routes the clients already call ---------------------
-			//
-			// THE CLAIM PREVIEW, and the question this file asks is the SHARPEST
-			// one on the agent surface: not "does this ACCOUNT exist" but "does this
-			// AGENT exist", because a claim link is the only credential a stranger
-			// ever presents and the link names a principal rather than an account.
-			//
-			// The answer is ONE BIT for a link that is live, and it is the bit the
-			// flow cannot do without: a human who opens their own claim URL has to
-			// be told whose agent it is before they can approve it. So a 200 says
-			// "this 256-bit secret is one we issued, that is unclaimed and that has
-			// not expired", and that is all it says — there is no account in the
-			// path, none in the body and none in the response. Guessing the secret
-			// is not a search anybody can run, which is what makes the bit
-			// affordable.
-			//
-			// A dead link is a 404 that is INDISTINGUISHABLE from a stranger's
-			// wrong one: the use case reads through the store's own ByClaimDigest,
-			// which filters the digest, the status AND the expiry in one statement,
-			// so a wrong token, an expired link, an already-claimed agent and an
-			// agent that was never issued are one value here exactly as they are on
-			// the claim that follows. There is no 410 (which would say the link was
-			// real) and no 409 (which would say the agent is taken). Held over the
-			// real SQL by
-			// TestThePreviewCannotTellTheFourWaysALinkIsDeadApart.
-			//
-			// THE PREVIEW IS ALSO THE ONLY AGENT ROUTE A SCANNER CAN DRIVE WITHOUT
-			// ANY CREDENTIAL, which is why it is rate-limited on the registration's
-			// own terms: the key is the client and the route, never a token, so the
-			// 429 is identical for everybody and discloses nothing about the link.
 			name: "preview an agent claim", method: http.MethodGet,
 			pattern:    "/v1/agents/claim/{token}",
 			identifier: "the claim link, which is a 256-bit secret",
@@ -616,20 +338,6 @@ func anonymousFamilyAudit() []auditRoute {
 				"no 409",
 		},
 		{
-			// THE HOME, and it is the mirror of the preview's answer from the other
-			// side of the credential. A stranger with no credential gets 401 before
-			// the handler runs, so no identifier — no agent id, no claim link, no
-			// token — reaches the use case and there is no principal a stranger can
-			// point the route at. There is no path parameter to point either.
-			//
-			// A CALLER PAST THE GATE gets an answer about THEMSELVES only: the
-			// credential resolved to one principal and the body is that principal's
-			// own identity, status and claiming account. It is `agentCredentialOnly`
-			// and NOT `agentClaimedOnly`, on purpose — `caf agent whoami` is the verb
-			// an UNCLAIMED agent runs to find out whether anybody has claimed it,
-			// and a 403 there would answer "you are not claimed" by refusing to say
-			// who is asking. So the status is the answer and the route is open to
-			// every live credential.
 			name: "read the agent home", method: http.MethodGet, pattern: "/v1/agents/home",
 			anonymous: http.StatusUnauthorized,
 			discloses: "nothing: 401 without the agent's own bearer credential, so no principal " +
@@ -649,13 +357,6 @@ func anonymousFamilyAudit() []auditRoute {
 				"never answers 'is that handle taken' — see TestAgentRegistrationNeverSaysAUsernameIsTaken",
 		},
 		{
-			// REFRESH, and the self-service TOKEN routes, are all 401 for a
-			// stranger: they demand the agent's own bearer credential, and the
-			// agentCredentialOnly gate resolves it before any handler runs. So no
-			// identifier — no agent id, no token id, no claim link — arrives from
-			// anywhere but the credential itself, and a wrong one is the same 401 an
-			// empty one gets. The token id in the path of the revoke/rotate routes
-			// is never parsed before that gate, so it cannot be probed either.
 			name: "refresh an agent's claim link", method: http.MethodPost,
 			pattern:   "/v1/agents/claim-link/refresh",
 			probe:     `{}`,
@@ -698,25 +399,6 @@ func anonymousFamilyAudit() []auditRoute {
 	}
 }
 
-// TestEveryRouteThatAnswersAnAnonymousCallerIsInThisAudit is the census.
-//
-// IT WALKS THE ROUTER and requires the table to BE the family, in both directions.
-// **Every mounted route under these prefixes has a row, and every row is a mounted
-// route** — no exemptions, and the earlier version of this test tried to exempt the
-// 401 routes and had to be taken out again.
-//
-// WHY THE EXEMPTION WAS A BAD IDEA, and it is worth recording because the red proof
-// found it. The first version asked "does this unlisted route answer 401 to an
-// anonymous probe?" and skipped it if so, on the reasoning that a 401 proves no
-// identifier arrives. But an unlisted route has no probe body either, because the
-// body lives IN the table — so the probe went out as `{}`, `decodeBody` refused it
-// with a 400, and the test reported a route as "answering a stranger" when it was in
-// fact session-gated. A check whose probe cannot reach the code under test is
-// measuring the probe. Dropping the exemption makes the rule structural instead: the
-// table is the census, and a route cannot be in the walk without being in it.
-//
-// THE STATUS each row claims is still MEASURED, over the row's own body — so a row
-// that has quietly stopped describing the route is red rather than inherited.
 func TestEveryRouteThatAnswersAnAnonymousCallerIsInThisAudit(t *testing.T) {
 	audited := map[string]bool{}
 	for _, row := range anonymousFamilyAudit() {
@@ -735,9 +417,6 @@ func TestEveryRouteThatAnswersAnAnonymousCallerIsInThisAudit(t *testing.T) {
 	}
 	t.Logf("the family holds %d mounted routes and the audit has %d rows", len(mounted), len(audited))
 
-	// Direction one: a mounted route with no row. No probe, no exemption — the row is
-	// what carries the body a probe would need, so asking here would be asking a
-	// question the data to answer it is not present for.
 	for _, key := range mounted {
 		if !audited[key] {
 			t.Errorf("%s is mounted under this family's prefixes and has no row in the "+
@@ -746,8 +425,6 @@ func TestEveryRouteThatAnswersAnAnonymousCallerIsInThisAudit(t *testing.T) {
 		}
 	}
 
-	// Direction two: a row about a route that is not mounted. A stale row is a claim
-	// about a route that nothing checks any more.
 	for key := range audited {
 		if !contains(mounted, key) {
 			t.Errorf("the enumeration audit has a row for %s, which is not mounted under this "+
@@ -757,13 +434,6 @@ func TestEveryRouteThatAnswersAnAnonymousCallerIsInThisAudit(t *testing.T) {
 	}
 }
 
-// TestEveryAuditedRouteStillAnswersWhatItsRowSays is the half of the census that
-// needs a server: each row's claimed status, measured over the row's own body.
-//
-// IT IS A SEPARATE TEST from the walk above so that the walk stays a pure comparison
-// of two sets and does not need a database — which is what lets the red proof for the
-// walk run without one, and what would let somebody delete the walk's database
-// requirement and not notice.
 func TestEveryAuditedRouteStillAnswersWhatItsRowSays(t *testing.T) {
 	f := newAuditFixture(t)
 
@@ -782,23 +452,7 @@ func TestEveryAuditedRouteStillAnswersWhatItsRowSays(t *testing.T) {
 	}
 }
 
-// --- per-route tests --------------------------------------------------------
 
-// TestRegistrationPublishesOnlyThatAnAddressIsTaken is the YES on this surface,
-// held to one bit.
-//
-// IT IS NOT AN OVERSIGHT. `users.email` carries a unique index — one account per
-// address is a database fact — so a registration cannot complete for a taken address,
-// and a caller has to be told rather than left watching a request time out. Whether
-// registration should be asynchronous instead is a product decision this service does
-// not get to make on its own; it is recorded as DECISIONS.md D9.
-//
-// WHAT IS HELD HERE IS THE REST OF THE DISCLOSURE. The 409 must be one fixed
-// sentence, identical for two different accounts, naming nothing about either of
-// them: no id, no account, no created-at, and nothing at all about whether the
-// account holding the address has proved it. A 409 that varies with the account
-// behind it turns one bit into an inventory, and the two accounts in this test
-// differ in exactly that — one has proved its address and one has not.
 func TestRegistrationPublishesOnlyThatAnAddressIsTaken(t *testing.T) {
 	f := newAuditFixture(t)
 
@@ -827,8 +481,6 @@ func TestRegistrationPublishesOnlyThatAnAddressIsTaken(t *testing.T) {
 		}
 	}
 
-	// ONE SENTENCE FOR EVERY ACCOUNT. The two rows differ in their verification
-	// state, and the refusal must not know that.
 	a := decodeProblem(t, takenProved)
 	b := decodeProblem(t, takenUnproved)
 	a.TraceID, b.TraceID = "", ""
@@ -837,16 +489,6 @@ func TestRegistrationPublishesOnlyThatAnAddressIsTaken(t *testing.T) {
 			"  proved:   %s\n  unproved: %s", renderedA, renderedB)
 	}
 
-	// AND NOTHING ELSE REACHES THE BODY, checked as a WHOLE DOCUMENT rather than by
-	// searching the bytes for a suspicious word. A grep would be the wrong tool twice
-	// over: it cannot see a field this service adds later, and on the envelope's own
-	// fixed text it fires on `trace_id`, on `instance: /v1/users` and on the word
-	// "account" in the sentence that has to be there. A literal is the only version of
-	// this assertion that means "these seven fields and no others", which is core's
-	// own rule for the error body.
-	//
-	// A problem document is seven fields. If a future change adds an eighth — an id, a
-	// name, a `verified` boolean — this fails and names it.
 	want := Problem{
 		Type:     "https://docs.anywaye.com/errors/conflict",
 		Title:    "Conflict",
@@ -855,20 +497,12 @@ func TestRegistrationPublishesOnlyThatAnAddressIsTaken(t *testing.T) {
 		Instance: "/v1/users",
 		Code:     CodeConflict,
 	}
-	// A struct comparison rather than `==`, because `Problem` carries a slice and is
-	// therefore not comparable with `==` at all. Comparing the RENDERED documents is
-	// the better check anyway: it is the bytes on the wire, and it catches a field the
-	// struct does not have a slot for — which is precisely the failure being guarded
-	// against.
 	if got, expected := renderProblem(t, a), renderProblem(t, want); got != expected {
 		t.Errorf("the 409 is not the envelope and one fixed sentence.\n  got:  %s\n  want: %s\n"+
 			"Anything beyond these seven fields is a fact about the account that already holds "+
 			"the address, and this route is allowed to publish exactly one bit", got, expected)
 	}
 
-	// The 422 for a MALFORMED address is the other half of this route's answer, and it
-	// must not echo the address back: two requests differing only in which addresses
-	// exist would then differ.
 	malformed := post(t, f.handler, "/v1/users",
 		`{"email":"not-an-address","password":"`+validPassword+`"}`)
 	if malformed.Code != http.StatusUnprocessableEntity {
@@ -879,28 +513,6 @@ func TestRegistrationPublishesOnlyThatAnAddressIsTaken(t *testing.T) {
 	}
 }
 
-// TestALockedAccountIsToldApartOnlyFromThePassword is the second YES, and it is
-// recorded rather than fixed.
-//
-// THE LEAK. `POST /v1/session` answers **423** when an account is locked, and the
-// lock is checked BEFORE the password — `internal/auth`'s step 3, and
-// `TestLoginChecksTheLockBeforeThePassword` holds the order. So a stranger who posts
-// a wrong password five times at a guessed address and once more reads 423, where an
-// address with no row would have answered 401. Six unauthenticated requests per
-// candidate, and the only side effect is a lockout the attacker caused themselves.
-//
-// WHY IT STANDS. **The same fact is already published by one request on a different
-// route**: `POST /v1/users` answers 409 for any taken address, with no side effect at
-// all, so "is there an account for this address" is not a secret this service keeps.
-// The 423 adds "…and it is locked right now", and the attacker had to lock it.
-// Removing it would cost a user who mistyped five times a "wrong password" instead of
-// "try again in fifteen minutes", and a rewrite of an order this repository argues
-// for on brute-force grounds. **What would change it is a decision about
-// registration, not about login**, and it is recorded as DECISIONS.md D9.
-//
-// THE TWO THINGS ASSERTED: that the leak is the ONLY status a stranger can reach on
-// this route, and that the right password still gets the honest 423 — which is the
-// reason it is worth keeping at all.
 func TestALockedAccountIsToldApartOnlyFromThePassword(t *testing.T) {
 	f := newAuditFixture(t)
 
@@ -908,8 +520,6 @@ func TestALockedAccountIsToldApartOnlyFromThePassword(t *testing.T) {
 	unknown := dbtest.UniqueEmail(t)
 	sessionsBefore := f.sessionsFor(t, known)
 
-	// The first five failures are the 401 the unknown address gets, which is what
-	// makes the sixth the interesting one.
 	for attempt := 1; attempt <= sessions.MaxFailedAttempts; attempt++ {
 		rec := post(t, f.handler, "/v1/session", `{"email":"`+known+`","password":"wrong"}`)
 		if rec.Code != http.StatusUnauthorized {
@@ -927,8 +537,6 @@ func TestALockedAccountIsToldApartOnlyFromThePassword(t *testing.T) {
 		t.Error("the 423 carries no Retry-After, so its \"retry after\" sentence names nothing")
 	}
 
-	// THE LEAK, STATED AS AN ASSERTION rather than left to whoever reads the comment:
-	// this is the one status a stranger can reach on this route.
 	againstUnknown := post(t, f.handler, "/v1/session", `{"email":"`+unknown+`","password":"wrong"}`)
 	if againstUnknown.Code != http.StatusUnauthorized {
 		t.Errorf("a wrong password against an address with no account = %d, want 401. The same "+
@@ -936,10 +544,6 @@ func TestALockedAccountIsToldApartOnlyFromThePassword(t *testing.T) {
 			"test exists to name", againstUnknown.Code, locked.Code)
 	}
 
-	// The only other status a stranger can reach, and it needs the password: a 202 for
-	// an account with a second factor. Reaching it requires a correct password, so it
-	// discloses nothing to somebody who has not got one — which is why the 202 is not
-	// in the leak above and the 423 is.
 	for _, rec := range []*httptest.ResponseRecorder{
 		post(t, f.handler, "/v1/session", `{"email":"`+known+`","password":"`+validPassword+`"}`),
 		post(t, f.handler, "/v1/session", `{"email":"`+unknown+`","password":"`+validPassword+`"}`),
@@ -950,8 +554,6 @@ func TestALockedAccountIsToldApartOnlyFromThePassword(t *testing.T) {
 		}
 	}
 
-	// And the honest answer survives: the account's owner, with the right password, is
-	// told to wait rather than left guessing.
 	withPassword := post(t, f.handler, "/v1/session",
 		`{"email":"`+known+`","password":"`+validPassword+`"}`)
 	if withPassword.Code != http.StatusLocked {
@@ -964,14 +566,6 @@ func TestALockedAccountIsToldApartOnlyFromThePassword(t *testing.T) {
 	}
 }
 
-// TestTheRequestRoutesCarryNoIdentifierToEnumerate is the negative half of the two
-// recovery rows, stated once and against the body rather than the status.
-//
-// Both routes take an `email`, so the question "what does that email's row say?" is
-// live on both. This asserts the property that makes them safe — the body is a
-// constant with exactly one field — by decoding it, because a body that grows a
-// field is how the oracle comes back and a test that compared only statuses would not
-// see it.
 func TestTheRequestRoutesCarryNoIdentifierToEnumerate(t *testing.T) {
 	f := newAuditFixture(t)
 
@@ -993,31 +587,12 @@ func TestTheRequestRoutesCarryNoIdentifierToEnumerate(t *testing.T) {
 	}
 }
 
-// TestATokenRouteCannotBeToldApartFromASpentOne is the token routes' form of the
-// question, and it is the form the question takes when the identifier is itself the
-// credential.
-//
-// `POST /v1/email-verifications/confirm` is anonymous, so "is there a row for this
-// token?" is answerable in principle. It is not answerable by GUESSING — the token
-// is 256 bits of entropy and there is no space to enumerate — and it is not
-// answerable by ACCIDENT either: a token that EXISTS and is dead answers exactly
-// what a token that never existed answers, and so does a LIVE token presented to the
-// wrong route. "Expired", "spent" and "minted for another flow" are all facts about
-// rows that exist, which is why the comparison is over real rows rather than over
-// garbage strings.
 func TestATokenRouteCannotBeToldApartFromASpentOne(t *testing.T) {
 	f := newAuditFixture(t)
 	email, session := f.signUp(t)
 
-	// FOUR REAL TOKENS: one spent, and three live across two purposes. A live token
-	// presented to the route that MINTED it redeems — that is the endpoint working —
-	// so "a token that exists" has to be tested with a token for the WRONG flow, and a
-	// garbage string proves nothing about rows that are really there.
 	spent := f.mintVerificationAndSpend(t, email)
 	changeFirstHalf := f.mintEmailChange(t, session)
-	// A SECOND verification token, which is live for the rest of this test. Minting
-	// one on an account whose address is already proved is also a small demonstration
-	// of identity-27's change: the request is accepted and the link is sent.
 	liveVerification := f.mintVerification(t, email)
 
 	if spent == liveVerification {
@@ -1026,9 +601,6 @@ func TestATokenRouteCannotBeToldApartFromASpentOne(t *testing.T) {
 
 	for _, route := range []struct {
 		path string
-		// wrong are live tokens minted for a different flow, and on the SAME account:
-		// rows that exist, are unexpired, and are refused only because of what they
-		// were minted for.
 		wrong []struct{ label, token string }
 	}{
 		{
@@ -1042,9 +614,6 @@ func TestATokenRouteCannotBeToldApartFromASpentOne(t *testing.T) {
 			},
 		},
 		{
-			// The second half refuses the FIRST half too: they are for different
-			// inboxes, and a token that worked on the wrong side would mean the wrong
-			// inbox proved something.
 			path: "/v1/email-changes/new-address",
 			wrong: []struct{ label, token string }{
 				{"a live verification token", liveVerification},
@@ -1083,34 +652,12 @@ func TestATokenRouteCannotBeToldApartFromASpentOne(t *testing.T) {
 	}
 }
 
-// TestIntrospectionIsAnOracleByDesignAndGatedOnACredential is the row the next
-// reader is most likely to try to fix, so it is written down.
-//
-// **DO NOT MAKE THIS ROUTE LOOK LIKE THE OTHERS.** An introspection endpoint that
-// could not tell a caller whether a token is live would be useless: the answer is
-// the product, RFC 7662 defines it, and every resource server in the platform calls
-// it for exactly that reason. A live token answers with its claims and a dead one
-// with `{"active": false}`, and those two bodies are SUPPOSED to differ — the test
-// below asserts that they do.
-//
-// WHAT ACTUALLY PROTECTS IT is the credential the CALLER must present, which is a
-// different question from the answer's shape:
-//
-//   - no credential at all is 401, and that check runs before the body is read;
-//   - a token may ask about itself and nothing else;
-//   - a session may ask about a token in an account it OWNS, and is refused otherwise.
-//
-// All of it over the real apikeys service and a real database, so "active" and
-// "inactive" are two real rows rather than two things a double decided.
 func TestIntrospectionIsAnOracleByDesignAndGatedOnACredential(t *testing.T) {
 	f := newAuditFixture(t)
 
 	email, session := f.signUp(t)
 	issued := f.issueAPIKey(t, email, session)
 
-	// THE ORACLE, asserted first, so nobody reads the rest as a proposal to remove it.
-	// The session is the credential, and it is the OWNER's — this is the account's own
-	// inventory being read by the account's owner, which is the case that has to work.
 	active := sendWith(t, f.handler, http.MethodPost, "/v1/introspections", session, "",
 		`{"token":"`+issued+`"}`)
 	if active.Code != http.StatusOK {
@@ -1136,16 +683,12 @@ func TestIntrospectionIsAnOracleByDesignAndGatedOnACredential(t *testing.T) {
 			"at its job rather than leaking")
 	}
 
-	// THE GATE. No credential: refused before the body is read, so a stranger learns
-	// nothing at all — not even whether a value they hold is live.
 	if rec := anonymousProbe(t, f, http.MethodPost, "/v1/introspections"); rec.Code != http.StatusUnauthorized {
 		t.Errorf("an anonymous introspection = %d, want 401. This route's protection is the "+
 			"caller's credential and nothing else, so a 200 here would make every token in the "+
 			"deployment publicly checkable", rec.Code)
 	}
 
-	// A signed-in stranger: refused, and which way it is refused is itself asserted so
-	// that a change from 404 to 403 (or back) is noticed rather than inherited.
 	_, strangerSession := f.signUp(t)
 	refused := sendWith(t, f.handler, http.MethodPost, "/v1/introspections", strangerSession, "",
 		`{"token":"`+issued+`"}`)
@@ -1154,8 +697,6 @@ func TestIntrospectionIsAnOracleByDesignAndGatedOnACredential(t *testing.T) {
 			"want 403 or 404", refused.Code)
 	}
 
-	// A scoped token may read itself and nothing else. The peer case is inside the
-	// account, so it is the one the session rules cannot reach.
 	peer := f.issueAPIKey(t, email, session)
 	if rec := sendWith(t, f.handler, http.MethodPost, "/v1/introspections", issued, "",
 		`{"token":"`+peer+`"}`); rec.Code != http.StatusForbidden && rec.Code != http.StatusNotFound {
@@ -1167,8 +708,6 @@ func TestIntrospectionIsAnOracleByDesignAndGatedOnACredential(t *testing.T) {
 		t.Errorf("a token introspecting itself = %d, want 200; body: %s", rec.Code, rec.Body)
 	}
 
-	// The owner with a SESSION may ask too — asserted because the usual "fix" for a 403
-	// that looks too strict is to drop the check, and this is where that would land.
 	if rec := sendWith(t, f.handler, http.MethodPost, "/v1/introspections", session, "",
 		`{"token":"`+issued+`"}`); rec.Code != http.StatusOK {
 		t.Errorf("the owner introspecting its own account's token with a session = %d, want 200; "+
@@ -1176,30 +715,9 @@ func TestIntrospectionIsAnOracleByDesignAndGatedOnACredential(t *testing.T) {
 	}
 }
 
-// --- fixture ----------------------------------------------------------------
 
-// auditFixture is the whole anonymous surface over ONE private schema: auth,
-// tenancy, recovery, api keys and introspection, all real.
-//
-// IT EMBEDS the recovery fixture rather than repeating its helpers, because the
-// helpers are the interesting part — `signUp` drives the real registration and login,
-// and `verifyAddress` walks the real two anonymous routes rather than writing the
-// column. A second copy of either would be a second thing to keep working.
 type auditFixture struct {
 	*recoveryServerFixture
-	// accountID is a real account row, and it exists so a probe for an
-	// account-scoped route can carry a VALID uuid rather than the literal
-	// `{accountID}` chi pattern.
-	//
-	// Before this field existed the census could not audit any account-scoped
-	// route at all: `sendWith` takes a path verbatim, so a probe for
-	// `/v1/accounts/{accountID}/…` sent a path whose parameter was the literal
-	// text `{accountID}`, which `id.Parse` refuses, which produced a 404 from
-	// `accountIDFrom` BEFORE `currentCaller` had answered. Every account-scoped row
-	// would have measured 404 and claimed 404 — a census reporting a refusal that
-	// had nothing to do with the credential gate it was auditing. The substitution
-	// is what makes the first such row measurable, and it is why this fixture
-	// holds an account rather than a made-up string.
 	accountID id.UUID
 }
 
@@ -1213,19 +731,9 @@ func newAuditFixture(t *testing.T, opts ...Option) *auditFixture {
 	tenancy := realTenancy(pool, clk)
 	keys := matrixAPIKeys(pool, clk, tenancy)
 
-	// The fixture's own options, with any the caller appended. The append
-	// rather than a trailing `opts...` is because Go refuses to mix individual
-	// variadic arguments with a spread in one call, and the caller's options
-	// (a rate limiter, a clock) are the seam this fixture exists to offer.
 	allOpts := []Option{
 		WithAuth(authServiceFor(pool, clk)),
 		WithTenancy(tenancy),
-		// The OIDC provider, for the session-to-token exchange: the route is
-		// mounted only where there is a provider AND a tenancy service, and a
-		// fixture without it would answer the audit's own probe with the router's
-		// 404 while the row says 401 — the drift this census exists to catch,
-		// reproduced inside the fixture. The double is the one the rest of the
-		// package's OIDC tests use; nothing the probe reaches is real.
 		WithOIDC(newFakeOIDC()),
 		WithRecovery(recovery.NewService(
 			db.TxRunner{Pool: pool},
@@ -1244,13 +752,6 @@ func newAuditFixture(t *testing.T, opts ...Option) *auditFixture {
 		)),
 		WithAPIKeys(keys),
 		WithAPIKeyCaller(keys),
-		// THE REAL DELETION SERVICE, not a fake, and the reason is that this probe
-		// sends an ANONYMOUS request: the assertion is that the route answers 401
-		// rather than reaching the use case at all. A fake would answer 401 too, and
-		// would keep answering 401 if the handler's authentication were deleted —
-		// which is the one regression this row could be protecting against and the
-		// one a double cannot see. The real service on a `dbtest.Schema` pool also
-		// proves the wiring compiles end to end.
 		WithDeletion(deletion.NewService(
 			db.TxRunner{Pool: pool},
 			users.NewStore(pool),
@@ -1258,42 +759,14 @@ func newAuditFixture(t *testing.T, opts ...Option) *auditFixture {
 			&auditSweeper{},
 			outbox.NewStore(pool),
 		)),
-		// The agent claim, for the same reason: it is one of the audited family's
-		// routes, and a fixture without it would answer the audit's own probe with
-		// the router's 404 — "no route matches this request" — while the row says
-		// 401. That is the drift the census exists to catch, reproduced inside the
-		// fixture. The double records the call and answers a successful claim,
-		// which is the shape the probe never reaches: an anonymous request is
-		// refused at the credential gate before the use case runs.
 		WithAgents(newFakeAgents()),
-		// The introspection route is NOT account-scoped and hangs off this alone.
-		// Without it the route is not mounted at all, and the census above would read
-		// a smaller service than the one that runs.
 		WithIntrospection(keys),
-		// The signup timestamp mint, for the same reason: it is a PUBLIC route in
-		// the audited family, and a fixture without it would answer 404 to the
-		// audit's own probe while the row says 200 — the drift the census exists
-		// to catch, reproduced inside the fixture.
-		//
-		// IT ACCEPTS EVERY PAIR, and that is deliberate: this audit asks what a
-		// route discloses once a submission is past the bot check, and a fixture
-		// that refused every probe would answer a fixed 422 and measure nothing —
-		// the 409/423 shapes below are what the rows are about. The bot check's
-		// own refusals are proved where they are this packet's subject, in
-		// signup_test.go; a fixture that did not skip them would be auditing one
-		// question with the answers to another. The mint route itself still runs
-		// the real Mint, so its shape is still measured.
 		WithSignup(acceptsEveryPair()),
 		WithLogger(slogLogger(&recordingHandler{})),
 	}
 	allOpts = append(allOpts, opts...)
 	handler := New(nil, allOpts...)
 
-	// A real account, written through the tenancy service rather than by INSERT, so
-	// the row a probe names is one this service would actually have produced. The
-	// caller is a fixture user and nobody else: an anonymous request is refused
-	// before any membership is read, so the owner is irrelevant and inventing one
-	// is noise.
 	fixtureUser := id.MustNew()
 	if _, err := pool.Exec(context.Background(),
 		`INSERT INTO users (id, email, password_digest) VALUES ($1, $2, $3)`,
@@ -1313,19 +786,9 @@ func newAuditFixture(t *testing.T, opts ...Option) *auditFixture {
 	}
 }
 
-// auditPasswordDigest is a syntactically valid argon2id digest for the fixture's
-// user, and it is here because an `INSERT INTO users` is the cheapest way to give
-// a probe something to be refused by.
-//
-// It is a FIXTURE and not a secret: the same literal in every test in this package
-// is what lets one test seal a value and another open it. internal/apikeys carries
-// the same constant for the same reason, and it is restated rather than imported
-// because a test-only digest shared across two packages is a coupling for no gain.
 const auditPasswordDigest = "$argon2id$v=19$m=65536,t=3,p=4$c29tZXNhbHQ$" +
 	"c2FsdHNhbHRzYWx0c2FsdHNhbHQ"
 
-// auditAccount provisions the account an account-scoped probe names, and returns
-// its id.
 func auditAccount(t *testing.T, tenancy Tenancy, owner id.UUID) id.UUID {
 	t.Helper()
 
@@ -1339,14 +802,6 @@ func auditAccount(t *testing.T, tenancy Tenancy, owner id.UUID) id.UUID {
 	return created.Account.ID
 }
 
-// substituteAccountParams replaces a chi path parameter with the fixture's real
-// account id, so a probe for an account-scoped route carries a valid uuid.
-//
-// IT IS RESPONSIBLE FOR `{accountID}` AND NOTHING ELSE, and the guard is scoped
-// the same way: an unsubstituted `{accountID}` is fatal, because it would send a
-// probe against a literal and measure the route's parser rather than the route.
-// Any OTHER parameter is left alone — this file's family includes routes with a
-// session id in the path, and this helper does not own those.
 func substituteAccountParams(pattern, accountID string) string {
 	out := strings.ReplaceAll(pattern, "{accountID}", accountID)
 	if strings.Contains(out, "{accountID}") {
@@ -1355,8 +810,6 @@ func substituteAccountParams(pattern, accountID string) string {
 	return out
 }
 
-// mintVerification asks for a confirmation link and returns the token that was
-// mailed, without redeeming it.
 func (f *auditFixture) mintVerification(t *testing.T, email string) string {
 	t.Helper()
 
@@ -1367,9 +820,6 @@ func (f *auditFixture) mintVerification(t *testing.T, email string) string {
 	return tokenIn(t, f.mailer.last(t))
 }
 
-// mintVerificationAndSpend does the whole verification flow and returns the token it
-// spent, which is the "a row that exists and is dead" case the token routes have to
-// be unable to tell apart from a row that never existed.
 func (f *auditFixture) mintVerificationAndSpend(t *testing.T, email string) string {
 	t.Helper()
 
@@ -1381,7 +831,6 @@ func (f *auditFixture) mintVerificationAndSpend(t *testing.T, email string) stri
 	return token
 }
 
-// mintEmailChange starts a change and returns the first-half token, unredeemed.
 func (f *auditFixture) mintEmailChange(t *testing.T, session string) string {
 	t.Helper()
 
@@ -1393,12 +842,6 @@ func (f *auditFixture) mintEmailChange(t *testing.T, session string) string {
 	return tokenIn(t, f.mailer.last(t))
 }
 
-// issueAPIKey mints a live scoped token in the account the session owns, through the
-// real route, and returns the secret exactly once.
-//
-// Through HTTP rather than through the service's own method because the 201 is the
-// only place the plaintext exists, and a test that wanted one from anywhere else
-// would be asking for a value the service cannot produce twice.
 func (f *auditFixture) issueAPIKey(t *testing.T, email, session string) string {
 	t.Helper()
 
@@ -1411,10 +854,6 @@ func (f *auditFixture) issueAPIKey(t *testing.T, email, session string) string {
 		t.Fatalf("finding an account for %s: %v", email, err)
 	}
 
-	// The name is short and random rather than derived from the test name: `users`
-	// caps an api key's name at 64 characters, and a name built from a long test name
-	// is a 422 that reads like a fixture bug. Randomness is what makes it unique,
-	// because "one live name per account" is a partial unique index.
 	rec := sendWith(t, f.handler, http.MethodPost,
 		"/v1/accounts/"+accountID+"/api-keys", session, "",
 		`{"name":"audit-`+id.MustNew().String()[:8]+`","scopes":["accounts:read"]}`)
@@ -1432,18 +871,7 @@ func (f *auditFixture) issueAPIKey(t *testing.T, email, session string) string {
 	return issued.Token
 }
 
-// --- helpers ----------------------------------------------------------------
 
-// mountedFamilyRoutes is every route under one of this family's prefixes, read out
-// of chi with every conditional surface configured.
-//
-// THE OPTIONS LITERAL IS THE WHOLE OF THE WALK'S HONESTY: a registrar that returns
-// early for a missing service leaves its routes out of the walk, and the census above
-// would then be a census of a smaller service. That is not hypothetical in this
-// package — `router_walk_test.go` records a check in this very directory passing
-// green over three un-audited routes because a field was left out of a literal like
-// this one. `TestEveryConditionalSurfaceIsVisibleToTheWalk` is what keeps the list
-// honest.
 func mountedFamilyRoutes() []string {
 	var found []string
 
@@ -1461,16 +889,8 @@ func mountedFamilyRoutes() []string {
 		admin:        newFakeAdmin(),
 		recovery:     newFakeRecovery(),
 		signup:       newFakeSignup(),
-		// agents, because the claim route is mounted from registerTenancyRoutes and
-		// that call returns early without the service. With the field absent this
-		// census cannot see the route, and an un-audited public route is exactly what
-		// this file exists to refuse.
 		agents: newFakeAgents(),
 	}
-	// registerSignupRoutes is called beside registerRoutes, not inside it, because
-	// the mint route needs no database — the same reason newMux calls it there. A
-	// walk that called registerRoutes alone would not see the mint route, and the
-	// public endpoint would be a route this census cannot report.
 	o.registerRoutes(r)
 	o.registerSignupRoutes(r)
 
@@ -1486,7 +906,6 @@ func mountedFamilyRoutes() []string {
 	return found
 }
 
-// isAuditFamilyRoute says whether a "METHOD /path" key belongs to this file.
 func isAuditFamilyRoute(route string) bool {
 	_, path := splitRoute(route)
 	for _, prefix := range auditFamilyPrefixes {
@@ -1497,12 +916,6 @@ func isAuditFamilyRoute(route string) bool {
 	return false
 }
 
-// anonymousProbe sends a route the body this file's table gives it, with no
-// credential at all.
-//
-// THE DEFAULT BODY IS `{}` AND IT IS ONLY EVER REACHED FOR A ROUTE WITH NO ROW —
-// which is the case the walk is complaining about, and where a 400 from a missing
-// body would be read as a refusal rather than as a route that answered a stranger.
 func anonymousProbe(t *testing.T, f *auditFixture, method, pattern string) *httptest.ResponseRecorder {
 	t.Helper()
 
@@ -1521,8 +934,6 @@ func anonymousProbe(t *testing.T, f *auditFixture, method, pattern string) *http
 	return sendWith(t, f.handler, method, path, "", "", body)
 }
 
-// renderProblem marshals a problem document with its trace id already cleared, so
-// two refusals can be compared byte for byte.
 func renderProblem(t *testing.T, p Problem) string {
 	t.Helper()
 	p.TraceID = ""
@@ -1533,8 +944,6 @@ func renderProblem(t *testing.T, p Problem) string {
 	return string(out)
 }
 
-// splitRoute is the inverse of normalizeRoute's key: "POST /v1/session" becomes
-// ("POST", "/v1/session").
 func splitRoute(route string) (string, string) {
 	method, pattern, _ := strings.Cut(route, " ")
 	return method, pattern
@@ -1549,15 +958,6 @@ func contains(haystack []string, needle string) bool {
 	return false
 }
 
-// auditSweeper is a deletion credential sweep that does nothing, and it is here
-// because the anonymous probe must never reach a credential statement at all.
-//
-// It is a no-op rather than the real sweep on purpose: the point of the audit row
-// is the 401, and a real sweep against a `dbtest.Schema` pool would issue writes
-// for a request that should have been refused before reaching any use case. If the
-// handler ever stopped authenticating, this no-op would let the transaction run to
-// completion on a user that does not exist and the probe would catch it by
-// answering something other than 401.
 type auditSweeper struct{}
 
 func (auditSweeper) RevokeEveryCredential(ctx context.Context, q db.Querier, u id.UUID, at time.Time) error {

@@ -8,15 +8,6 @@ import (
 	"github.com/anywaye/identity/internal/platform/id"
 )
 
-// The five tenancy events. Every one of them is about an account, so the
-// envelope's subject is the account id in all five cases — which is what lets a
-// consumer that needs "everything that happened to this account, in order"
-// correlate on one value and nothing else (core: docs/event-naming.md, "Why
-// subject is required").
-//
-// Every one is validated here against core's envelope rules, because the
-// alternative is a malformed event reaching the table and being rejected by
-// every consumer on the platform instead of at the one place that wrote it.
 
 func tenancyTestIDs() (account, user, invitation id.UUID) {
 	return id.MustNew(), id.MustNew(), id.MustNew()
@@ -50,8 +41,6 @@ func TestAccountCreatedEnvelope(t *testing.T) {
 		t.Errorf("time = %s, want the injected %s — the event is stamped when the state changed, not when it was queued", e.Time, now)
 	}
 
-	// The payload is the promise to consumers, so it is asserted field by field
-	// rather than as a marshaled blob.
 	var data struct {
 		AccountID string `json:"account_id"`
 		Name      string `json:"name"`
@@ -86,9 +75,6 @@ func TestMemberInvitedEnvelope(t *testing.T) {
 	if e.Type != EventMemberInvited {
 		t.Errorf("type = %q, want %q", e.Type, EventMemberInvited)
 	}
-	// The subject is the account even though data.invitation_id is the thing to
-	// act on: subject carries per-entity ordering, and the entity here is the
-	// account whose membership list changed.
 	if e.Subject != accountID.String() {
 		t.Errorf("subject = %q, want the account id %q", e.Subject, accountID)
 	}
@@ -109,18 +95,11 @@ func TestMemberInvitedEnvelope(t *testing.T) {
 	if data.Email != "invitee@example.com" || data.Role != "member" || data.InvitedByID != inviterID.String() {
 		t.Errorf("payload = %+v", data)
 	}
-	// The acceptance token travels because the consumer that mails the invitation
-	// cannot read it: identity returns it once, in the 201, and stores only its
-	// digest. See NewMemberInvited for the whole argument.
 	if data.AcceptanceToken != token {
 		t.Errorf("acceptance_token = %q, want %q — the invitation mail is undeliverable without it", data.AcceptanceToken, token)
 	}
 }
 
-// TestMemberInvitedRefusesAnEmptyToken is the fail-closed half of the payload
-// above: an event announcing an invitation nobody can redeem is the defect the
-// token field exists to prevent, and a builder that emitted one would publish a
-// permanent dead end to every subscriber.
 func TestMemberInvitedRefusesAnEmptyToken(t *testing.T) {
 	now := time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
 	accountID, inviterID, _ := tenancyTestIDs()
@@ -161,16 +140,11 @@ func TestMemberAcceptedEnvelope(t *testing.T) {
 	if data.AccountID != accountID.String() || data.UserID != userID.String() || data.Role != "admin" {
 		t.Errorf("payload = %+v, want the membership that was created", data)
 	}
-	// The member's address travels because the "welcome to the account" mail goes
-	// to them and the consumer is cross-service. See NewMemberAccepted.
 	if data.Email != "member@example.com" {
 		t.Errorf("email = %q, want the member's address", data.Email)
 	}
 }
 
-// TestMemberAcceptedRefusesAnEmptyEmail is the fail-closed half of the payload
-// above: a welcome mail with no recipient is not a mail, and an event that
-// omitted the address would leave the consumer with nothing to act on.
 func TestMemberAcceptedRefusesAnEmptyEmail(t *testing.T) {
 	now := time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
 	accountID, userID, _ := tenancyTestIDs()
@@ -197,9 +171,6 @@ func TestMemberRoleChangedCarriesBothRoles(t *testing.T) {
 		t.Errorf("subject = %q, want the account id", e.Subject)
 	}
 
-	// core's catalog row: "data carries old and new role". A consumer that only
-	// learns the new role cannot build an audit trail, and one that only learns
-	// the old one cannot rebuild the current state.
 	var data struct {
 		AccountID    string `json:"account_id"`
 		UserID       string `json:"user_id"`
@@ -229,8 +200,6 @@ func TestMemberRemovedEnvelope(t *testing.T) {
 		t.Errorf("subject = %q, want the account id", e.Subject)
 	}
 
-	// The removed role travels because "who was removed" is not the interesting
-	// question downstream; "what could they do until now" is.
 	var data struct {
 		AccountID string `json:"account_id"`
 		UserID    string `json:"user_id"`
@@ -243,10 +212,6 @@ func TestMemberRemovedEnvelope(t *testing.T) {
 	}
 }
 
-// Every tenancy event is three segments with the service prefix, which is the
-// form core froze in v0.2. A constant that lost its prefix would still pass
-// Validate's pattern — it allows two or three segments — so the shape is pinned
-// here rather than inferred.
 func TestTenancyEventTypesAreThreeSegment(t *testing.T) {
 	types := []string{
 		EventAccountCreated,
@@ -281,9 +246,6 @@ func TestTenancyEventTypesAreThreeSegment(t *testing.T) {
 	}
 }
 
-// Every type is distinct. Two constants sharing a value would mean two facts
-// published under one name, which is the drift core's catalog check exists to
-// catch and which no single test of any one event would notice.
 func TestTenancyEventTypesAreDistinct(t *testing.T) {
 	seen := map[string]string{}
 	for name, typ := range map[string]string{
@@ -300,14 +262,7 @@ func TestTenancyEventTypesAreDistinct(t *testing.T) {
 	}
 }
 
-// The five types are declared here and in anywaye.yml. Those are the same fact
-// stated twice and core asserts they agree, so a type that exists in one and
-// not the other is drift this repository is not allowed to ship.
 func TestTenancyEventTypesMatchTheManifest(t *testing.T) {
-	// The manifest is not read at run time — it lives in the repository root and
-	// this is an internal package. What is pinned here is the set, and
-	// TestManifestDeclaresEveryEmittedEvent in the httpapi package's tests is
-	// where the two are actually compared.
 	want := map[string]bool{
 		EventAccountCreated:    true,
 		EventMemberInvited:     true,

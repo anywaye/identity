@@ -1,10 +1,5 @@
 package ci
 
-// Helpers that read the repository's own tree. They used to live in the
-// ci.yml-reading test files; GitHub Actions is retired (publishing is
-// bin/publish from the box, deploys are Argo), those files went with it, and
-// these stay because the migration tree is worth checking whatever runs the
-// gate.
 
 import (
 	"os"
@@ -16,9 +11,6 @@ import (
 	"testing"
 )
 
-// repoRoot is the repository root, resolved: an unresolved root makes a walk
-// visit exactly one entry and stop, so every helper that walks the tree reads
-// an empty one.
 func repoRoot(t *testing.T) string {
 	t.Helper()
 
@@ -34,9 +26,6 @@ func repoRoot(t *testing.T) string {
 	return resolved
 }
 
-// migrationsInTree is every migration file, parsed from the directory rather
-// than from a list, so a new migration is covered the day it is written and a
-// deleted one is visible.
 func migrationsInTree(t *testing.T) []string {
 	t.Helper()
 
@@ -63,8 +52,6 @@ func migrationsInTree(t *testing.T) []string {
 
 var migrationOrderRE = regexp.MustCompile(`^[0-9]{5}_[a-z0-9_]+\.sql$`)
 
-// sortedKeys is a map[string]string's keys, ordered, so a test that walks a
-// map is deterministic in both directions.
 func sortedKeys(m map[string]string) []string {
 	keys := make([]string, 0, len(m))
 	for key := range m {

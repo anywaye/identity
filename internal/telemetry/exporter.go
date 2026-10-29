@@ -46,16 +46,6 @@ func OTLPExporter(ctx context.Context, endpoint string) (Exporter, error) {
 	if err != nil {
 		return nil, err
 	}
-	// No retry and no queue, for the reason kit's collector config states and
-	// this repository holds to: a retry loop against a dead collector is a
-	// goroutine waking on a timer for the life of the process, invisible in
-	// every dashboard because nothing is being recorded, and a queue that
-	// accepts spans and holds them is a memory leak with a telemetry-shaped
-	// trigger. Losing a span is strictly better than becoming a slow service.
-	//
-	// The SDK's defaults are `retry_on_failure: enabled` and
-	// `sending_queue: enabled`, so BOTH are stated as disabled rather than left
-	// to a default that is the opposite of the fleet's rule.
 	return otlptracehttp.New(ctx,
 		otlptracehttp.WithEndpointURL(target),
 		otlptracehttp.WithRetry(otlptracehttp.RetryConfig{Enabled: false}),
@@ -66,15 +56,6 @@ func OTLPExporter(ctx context.Context, endpoint string) (Exporter, error) {
 	)
 }
 
-// normaliseEndpoint turns the shapes an operator writes into the one shape the
-// exporter takes.
-//
-// A bare `host:port` is the most likely thing to be typed and the most likely to
-// be rejected by a URL parser, because `otel-collector:4318` parses as a scheme
-// of `otel-collector` and a path of `4318`. Prefixing a schemeless endpoint with
-// `http://` is what makes the documented default work, and it is the difference
-// between a service that exports by default and one that fails to boot by
-// default.
 func normaliseEndpoint(endpoint string) (string, error) {
 	trimmed := strings.TrimSpace(endpoint)
 	if trimmed == "" {
@@ -93,8 +74,6 @@ func normaliseEndpoint(endpoint string) (string, error) {
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
 		return "", fmt.Errorf("telemetry: %q has scheme %q; an OTLP endpoint is http or https", endpoint, parsed.Scheme)
 	}
-	// A trailing slash on the path is the difference between a request for `/` and
-	// a request for `//v1/traces` once the exporter appends its own path.
 	parsed.Path = strings.TrimSuffix(parsed.Path, "/")
 
 	// APPEND THE SIGNAL PATH, and this is a defect that was MEASURED rather than
@@ -143,23 +122,11 @@ func normaliseEndpoint(endpoint string) (string, error) {
 	return parsed.String(), nil
 }
 
-// defaultTracesPath and tracesPathSuffix are the OTLP/HTTP traces path, spelled
-// once.
-//
-// The suffix check exists so the append is IDEMPOTENT: an endpoint that already
-// names `/v1/traces` must not become `/v1/traces/v1/traces` on a restart with a
-// doubled value, and normaliseEndpoint is called once per boot but is also the
-// function a reader will call twice while working out what an operator's variable
-// means. The SDK's `path.Join` cleans the path but does not know that
-// `/v1/traces/v1/traces` was not intended.
 const (
 	defaultTracesPath = "/v1/traces"
 	tracesPathSuffix  = "/v1/traces"
 )
 
-// compile-time proof that the OTLP exporter satisfies the seam Install takes, so
-// a signature change in the SDK is caught here rather than at the first boot of
-// a deployment.
 var _ Exporter = (*otlptrace.Exporter)(nil)
 
 

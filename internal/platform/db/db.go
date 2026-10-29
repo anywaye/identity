@@ -1,8 +1,3 @@
-// Package db owns the Postgres connection pool.
-//
-// It is deliberately thin: parse the DSN, build a pool, hand back a pool whose
-// Ping is safe to call from a readiness probe. No queries, no schema, no ORM —
-// migrations are goose SQL files under migrations/.
 package db
 
 import (
@@ -23,12 +18,8 @@ const (
 	defaultConnectTimeout       = 5 * time.Second
 )
 
-// Errors returned by Open.
 var (
-	// ErrNoDatabaseURL means DATABASE_URL was not configured. In v0 that is a
-	// supported state: the service runs without a database.
 	ErrNoDatabaseURL = errors.New("no DATABASE_URL configured")
-	// ErrInvalidOptions means the pool options cannot describe a working pool.
 	ErrInvalidOptions = errors.New("invalid pool options")
 )
 

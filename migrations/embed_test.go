@@ -23,14 +23,8 @@ import (
 	"testing"
 )
 
-// migrationName is the convention migrations/README.md states: one migration per
-// file, named NNNNN_snake_case_description.sql, applied in filename order.
 var migrationName = regexp.MustCompile(`^([0-9]+)_([a-z0-9_]+)\.sql$`)
 
-// TestTheEmbeddedSetIsTheSetOnDisk is the check that the pattern has not
-// narrowed. Both directions: a file on disk that is not in the binary is a
-// migration that never runs on a box, and a name in the binary that is not on
-// disk is a version nothing can review.
 func TestTheEmbeddedSetIsTheSetOnDisk(t *testing.T) {
 	embedded := fileNames(t, FS, ".")
 	if len(embedded) == 0 {
@@ -46,13 +40,6 @@ func TestTheEmbeddedSetIsTheSetOnDisk(t *testing.T) {
 	}
 }
 
-// TestEveryEmbeddedMigrationWillActuallyRun holds the non-strict collection
-// described in this file's header: a file goose cannot read a version out of is
-// skipped in silence, so the naming convention is a property of the artifact and
-// not a style preference.
-//
-// Versions are also asserted to be unique, because goose treats a duplicate as a
-// hard error and a duplicate that reached a box first would be a failed deploy.
 func TestEveryEmbeddedMigrationWillActuallyRun(t *testing.T) {
 	names := fileNames(t, FS, ".")
 	if len(names) == 0 {
@@ -99,7 +86,6 @@ func TestEveryEmbeddedMigrationWillActuallyRun(t *testing.T) {
 	}
 }
 
-// fileNames returns the sorted base names of every regular file in dir.
 func fileNames(t *testing.T, fsys fs.FS, dir string) []string {
 	t.Helper()
 
@@ -119,9 +105,6 @@ func fileNames(t *testing.T, fsys fs.FS, dir string) []string {
 	return names
 }
 
-// sqlFilesOnDisk is the same list, read from the working directory rather than
-// from the binary. Go runs a test with the package directory as its working
-// directory, so this is `migrations/`.
 func sqlFilesOnDisk(t *testing.T) []string {
 	t.Helper()
 

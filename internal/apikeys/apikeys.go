@@ -1,49 +1,3 @@
-// Package apikeys is the scoped API token: the credential that is not a browser
-// session.
-//
-// A SESSION IS BROWSER-SHAPED AND AN API KEY IS NOT, and every decision in this
-// package follows from that difference rather than from the two being two
-// flavors of the same thing:
-//
-//   - a session expires in weeks, is created by a password and a second factor,
-//     and lives in a `__Host-` cookie this service sets and the browser enforces;
-//   - an api key expires in months, is created by a signed-in user, and lives in
-//     a CI variable, a script's environment, and — eventually — somebody's shell
-//     history and a paste buffer.
-//
-// THE TWO RULES THAT FALL OUT OF IT.
-//
-// ONE. A token's authority is NOT ITS SCOPES ALONE. A token names a user and an
-// account, and every request it makes is re-evaluated against that user's
-// CURRENT membership in that account: a role removed after the token was issued
-// stops it working on the next request, with no cache to expire and nothing to
-// sweep. That is the difference between a token and a permission, and it is the
-// answer to "a token outlives the permission that made it". It is enforced by
-// this package having no authorization logic of its own — the routes already ask
-// the tenancy service what the caller's role is, and a token is just another way
-// of naming a caller. See internal/httpapi's accountAccess.
-//
-// TWO. A token is a FIRST-PARTY credential for a MACHINE, so it is never minted,
-// rotated or revoked by the OIDC surface and never exchanged for a JWT. The
-// OIDC provider exists for third parties holding a browser; routing an api key
-// through it would give a machine credential a refresh token, an id_token and a
-// consent screen it has no use for.
-//
-// WHAT IS STORED IS THE DIGEST AND NEVER THE VALUE, for the reason
-// internal/sessions/token.go gives, and the reading of that reason HERE is
-// deliberately different from the session's:
-//
-//	a session is presented once a minute and lives a fortnight, so the argument
-//	was "a slow hash costs every request tens of milliseconds and buys nothing".
-//
-//	an api key is presented on every request of a deploy and lives a quarter, so
-//	the same conclusion holds for a second reason that does not hold for a
-//	session: a credential this long-lived is one somebody will stop thinking
-//	about, and the property that makes a leaked one survivable is not how hard
-//	the digest is to invert — it is that the credential can be REVOKED, and that
-//	the plaintext was never anywhere for a backup to pick up. SHA-256 of a
-//	256-bit random value is not a secret even to somebody holding both the row
-//	and the source code.
 package apikeys
 
 import (
@@ -132,194 +86,19 @@ const MinTTL = 24 * time.Hour
 // in the migration rather than discovered by somebody who needed the second.
 const LastUsedResolution = 5 * time.Minute
 
-// The scope vocabulary.
-//
-// EIGHT NAMES, and every one of them is a capability an EXISTING route already
-// enforces a different way. That is the test of a real scope: it names something
-// this service actually does, and removing it removes access to something that
-// exists. A scope for a capability this service does not have is a promise about
-// the future, and a promise is not a control.
-//
-// THE SHAPE IS core's: "Authorization: `scopes` for capability (`invoices:
-// write`)" — docs/openapi-conventions.md. The names are this service's own
-// surface, read off openapi/v1.yaml rather than invented:
-//
-//	accounts:read          the tenancy reads: list the caller's accounts, read
-//	                       one, read its member list. The default a CI job needs
-//	                       and the one that leaks the least.
-//	accounts:write         create an account, rename it, invite somebody, change
-//	                       a role, remove a member, redeem an invitation.
-//	accounts:delete        delete the account itself. Separate from write
-//	                       because it is the only one of these that cannot be
-//	                       undone and because the route's minimum role is owner
-//	                       where everything else is admin — a token carrying
-//	                       accounts:write and held by a member is refused on the
-//	                       role check, and one held by an owner should still have
-//	                       to say so.
-//	oidc_clients:write     register, read and revoke the account's OpenID
-//	                       Connect registrations.
-//	audit_log:read         read one account's admin trail.
-//	account_invitations:write  revoke pending invitations, one or in bulk.
-//	sessions:write         mint a delegated session link.
-//	users:disable          turn a user's account off, and back on.
-//
-// WHAT IS NOT IN THE LIST IS THE MOST IMPORTANT PART OF IT, and every one of
-// these is a refusal rather than an oversight:
-//
-//	there is NO scope for the second factor. A token cannot read whether an
-//	account has MFA, enroll one, rotate one, or turn one off — and that is not a
-//	gap in the vocabulary, it is the reason the vocabulary is safe. A machine
-//	credential that could disable a second factor is a credential whose theft is
-//	a downgrade rather than a break-in, and the routes refuse a token outright
-//	rather than consulting a scope list.
-//
-//	there is NO scope for SESSIONS, and `sessions:write` below is the one that
-//	used to make that sentence true in its entirety, so the change is worth
-//	saying rather than making silently. A token still cannot create, read or
-//	revoke a browser session, and it still cannot complete a second-factor
-//	login — both routes refuse a token outright and no scope changes that. What
-//	`sessions:write` buys is MINTING A LINK: a single-use token, worth ten
-//	minutes, that a CALLER delivers to a browser and that redeems into a
-//	session for the user it names. The distinction is not a technicality, it is
-//	the whole boundary: the browser session is a credential this service issues
-//	to a person who proved two things, and a token that could mint one would be
-//	a token that could assert a person proved them. The link is not that — it is
-//	carried by somebody the token's owner chose, over a channel the owner
-//	already owns, and the redemption is what still requires the account to be in
-//	a state that may sign in at all. It is the closest this vocabulary comes to
-//	an authentication credential, which is why it is LAST in AllScopes, why it
-//	is granted deliberately rather than inherited, and why a mint for an
-//	MFA-enrolled subject is refused rather than served with a challenge.
-//
-//	there is NO scope that means "everything". Not `*`, not `accounts:*`, not a
-//	scope named `admin`. A token is granted the scopes it names, so "read this
-//	account" and "delete this account" are two decisions a person makes twice.
-//
-// AND NOT ONE OF THEM GRANTS TENANCY. Scopes are capability; the account a
-// token may act on is the account it was minted for, and a token presented
-// against a different one is refused even if it holds every scope in this list.
-// core: "Every query is scoped by `account_id` from the token, never from the
-// request body."
-//
-// EXCEPT `users:disable`, WHICH IS NOT A WEAKENING OF THAT RULE BUT ITS LIMIT.
-// It is the one name here whose route names no account, so there is no tenancy to
-// scope by — and pretending otherwise by hanging it off an account path would mean
-// inventing an account for a person who belongs to several. What the rule above
-// buys is that a token cannot reach ACROSS tenants with the scopes it was minted
-// for; a token holding `users:disable` reaches across tenants BY BEING GRANTED IT
-// DELIBERATELY, which is a deployment decision and not a tenancy bypass. See the
-// constant's own comment, and DECISIONS.md D14.
 const (
-	// ScopeAccountsRead is the tenancy read surface.
 	ScopeAccountsRead = "accounts:read"
-	// ScopeAccountsWrite is every mutation of an account's membership and shape
-	// except deleting the account.
 	ScopeAccountsWrite = "accounts:write"
-	// ScopeAccountsDelete is DELETE /v1/accounts/{accountID} and nothing else.
 	ScopeAccountsDelete = "accounts:delete"
-	// ScopeOIDCClientsWrite is the account's OpenID Connect registrations.
-	//
-	// READ AND WRITE IN ONE SCOPE, and the reason is that the two GET routes are
-	// an owner's routes and their response is the integration's whole
-	// configuration — client_id, redirect URIs, grant types. A separate
-	// oidc_clients:read would be a scope nobody in this service has a use for,
-	// and a scope nobody uses is one nobody tests.
 	ScopeOIDCClientsWrite = "oidc_clients:write"
 
-	// ScopeAuditLogRead is GET /v1/accounts/{accountID}/admin/audit-log and
-	// nothing else.
-	//
-	// A SEPARATE SCOPE AND NOT accounts:read, and the reason is that the two
-	// answer different questions. accounts:read is "what does this account look
-	// like"; the audit log is "who has acted on this account, when, and with
-	// which credential" — a record of authority being used, which is a different
-	// sensitivity from the account's own shape and the thing an operator reads
-	// during an incident. A token that can read the account should not thereby
-	// hold a standing record of every administrative action taken against it.
 	ScopeAuditLogRead = "audit_log:read"
 
-	// ScopeAccountInvitationsWrite is the admin surface's writes: revoking
-	// invitations, one at a time or in bulk.
-	//
-	// IT IS NOT accounts:write, and the difference is the whole boundary this
-	// surface draws. accounts:write is what an admin holds to MANAGE the account
-	// — rename it, invite, remove a member — and every one of those operations
-	// creates something the account wants. Revoking a pending invitation takes
-	// something away, and it is the operation an account's admin should be able
-	// to perform from a deployment pipeline without also holding the authority to
-	// remove the account's members. Narrowing it is what makes the scope a
-	// decision a person makes twice rather than one they make once.
-	//
-	// Note what is NOT here: the name is not `admin`, and there is no scope that
-	// means "the admin surface". The three admin routes declare two scopes, the
-	// same resource:action shape as every other name in this list, because the
-	// rule at the top of this block is that a token is granted exactly what it
-	// names and a category name is where a wildcard grows back.
 	ScopeAccountInvitationsWrite = "account_invitations:write"
 
-	// ScopeSessionsWrite is POST /v1/session-links and nothing else.
-	//
-	// IT MINTS A LINK AND NOT A SESSION, and the sentence above is why that
-	// distinction is load-bearing: the redemption route is public and the mint route
-	// is not, so a token holding this scope can put a credential in front of a
-	// browser but cannot hold one. A "session" name would have promised the second
-	// and delivered the first, and a client written against the name would put this
-	// scope in a place a session scope belonged.
-	//
-	// READ IS NOT IN THE NAME AND MUST NOT BE ADDED FOR THIS. A link is minted and
-	// then handed to the caller; there is nothing to list. A `sessions:read` beside
-	// this one would be a scope no route enforces and therefore a promise about the
-	// future rather than a control over the present.
-	//
-	// WHAT THIS IS WORTH. It is the only scope in the vocabulary whose route turns
-	// an opaque value into an authenticated browser session, and the redemption
-	// answers a stranger holding that value. The blast radius is the user the link
-	// names, which is why the mint route refuses a subject with a second factor and
-	// refuses a subject the account cannot sign in — a scope that reads as "write a
-	// link" and behaves as "log somebody in" is the shape of thing a grant has to be
-	// deliberate about.
 	ScopeSessionsWrite = "sessions:write"
 
-	// ScopeUsersDisable is POST /v1/users/{userID}/disable and the /enable beside
-	// it, and nothing else.
-	//
-	// IT IS NOT AN ACCOUNT SCOPE, and that is the whole of what it buys and the
-	// reason it is in a vocabulary where everything else is. A USER IS NOT AN
-	// ACCOUNT: the same person belongs to as many accounts as they like, and one
-	// account's admin has no authority over the person who happens to also be a
-	// member of somebody else's tenant. So there is deliberately no route under
-	// `/v1/accounts/…` that consults this scope, no role minimum that can reach
-	// these routes, and no account admin — owner included — who can call them. An
-	// account-scoped credential is refused on this surface, and that refusal is the
-	// boundary rather than a gap in it: a scope an account admin could hold would be
-	// a scope one tenant could use to reach a user who also works for another.
-	//
-	// WHAT THE GRANT BUYS, STATED AS WHAT IT DOES NOT: it does not restrict by
-	// tenancy at all, because there is no account in the path. A token holding this
-	// scope may name ANY user on the deployment. That is a fact about the scope
-	// rather than a shortcut around the tenancy rules — the rows above can restrict
-	// by account because an account is what they act ON, and this one acts on a
-	// person — and it is why the grant has to be deliberate, minted per deployment,
-	// and revocable on its next request like any other.
-	//
-	// WHY IT IS ITS OWN SCOPE AND NOT accounts:write. `accounts:write` is what a
-	// tenant's admin holds to MANAGE that tenant, and every operation it names
-	// creates something the account wants. Disabling a person is the opposite: it
-	// ends every session they hold, closes every door they can sign in through, and
-	// reaches past the account whose admin granted it. Narrowing it is what makes it
-	// a decision a person makes twice rather than one they make once, and it is the
-	// same narrowing `account_invitations:write` records, on the other side of the
-	// same argument: authority over somebody's access is not authority over their
-	// content.
-	//
-	// WHY IT IS A MACHINE CREDENTIAL AND NOT A SESSION. An operator is a deployment
-	// fact, not a login: the thing being acted on here is a person, so a browser
-	// session would be an account turning itself off or on, and there is no version
-	// of that which is not either a self-harm button or a privilege escalation. It
-	// is the same rule `requireAdminToken` enforces and for the same reason — a
-	// session is a cookie, and a cookie is one CSRF away from being somebody else's.
 	ScopeUsersDisable = "users:disable"
-	// ScopeTokensIntrospect lets a service introspect any API key, not just its own.
 	ScopeTokensIntrospect = "tokens:introspect"
 )
 
@@ -344,9 +123,6 @@ func IsSupportedScope(scope string) bool {
 	return slices.Contains(AllScopes(), scope)
 }
 
-// Field validation codes. They land verbatim in the `errors[]` array of the
-// anywaye error envelope, so they are part of the contract and clients may switch
-// on them.
 const (
 	CodeRequired      = "required"
 	CodeInvalidFormat = "invalid_format"
@@ -394,9 +170,6 @@ func fieldErr(field, code string) error { return &FieldError{Field: field, Code:
 func NewToken() (token, digest string, err error) {
 	raw := make([]byte, SecretBytes)
 	if _, err := io.ReadFull(rand.Reader, raw); err != nil {
-		// Same reasoning as sessions.NewToken: a failure of crypto/rand means there
-		// is no trustworthy entropy, and minting a credential from a degraded
-		// source is not something to discover when it turns out to be guessable.
 		return "", "", fmt.Errorf("reading random bytes for an api key: %w", err)
 	}
 
@@ -461,9 +234,6 @@ func ValidateName(give string) (string, error) {
 	return normalized, nil
 }
 
-// hasControl reports whether s holds a C0 or DEL control character. Tab and
-// newline included: a newline in a name is a log-injection vector and a newline
-// in a settings page is somebody else's row.
 func hasControl(s string) bool {
 	for _, r := range s {
 		if r < 0x20 || r == 0x7f {
@@ -493,9 +263,6 @@ func ValidateScopes(give []string) ([]string, error) {
 
 	out := make([]string, 0, len(give))
 	for _, raw := range give {
-		// Trim only. No case folding: `Accounts:Read` is a different string from
-		// `accounts:read` and a parser that repaired it would make two answers to
-		// the same question depending on who asked.
 		scope := strings.TrimSpace(raw)
 		if scope == "" {
 			continue
@@ -512,8 +279,6 @@ func ValidateScopes(give []string) ([]string, error) {
 		return nil, fieldErr("scopes", CodeRequired)
 	}
 
-	// Sorted so the column, the event payload and the OpenAPI example are the
-	// same on every creation of the same set. The same rule as scopes.go.
 	slices.Sort(out)
 	return out, nil
 }
@@ -583,10 +348,6 @@ func ResolveExpiry(created time.Time, requested *time.Duration) (time.Time, erro
 
 	expiry := created.Add(lifetime)
 
-	// Re-checked here rather than trusted from the branch above, because these
-	// two constants and this package's caller all have a copy of the policy and
-	// the copy in this function is the one the migration's CHECK was written
-	// against.
 	if expiry.After(created.Add(MaxTTL)) {
 		return time.Time{}, fieldErr("expires_in", CodeTooLong)
 	}
@@ -602,7 +363,3 @@ func ResolveExpiry(created time.Time, requested *time.Duration) (time.Time, erro
 // time — the same rule sessions.ErrNotFound follows and the same reason.
 var ErrNotFound = errors.New("api key not found")
 
-// ErrNotFound is a DECISION rather than a simplification, so it is worth saying
-// what it hides. A caller who can tell "this token was revoked" from "this token
-// never existed" learns whether a leaked value was live at the moment they tried
-// it, which is the second question an attacker asks after "does this work".

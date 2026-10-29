@@ -17,24 +17,6 @@ import (
 	"github.com/anywaye/identity/internal/platform/id"
 )
 
-// The library's Storage, over this service's tables.
-//
-// THIS IS WHERE THE PACKET'S DECISIONS LIVE. Everything else in internal/oidc is
-// data; this file is the adapter that answers the OAuth 2.0 state machine's
-// questions from rows identity owns, and the places it says "no" are the security
-// properties the brief asks for:
-//
-//   - a client is looked up by exact handle and a revoked one is refused
-//   - the client secret is matched as a digest and never as a value
-//   - an authorization code is redeemed by one conditional UPDATE
-//   - a request whose code challenge is absent or not S256 cannot be redeemed
-//   - the redirect URI is checked against the registration by the library, using
-//     an exact match, because nothing here implements op.HasRedirectGlobs
-//
-// Three methods return errors rather than doing something half-way, and each
-// says why at its own definition: refresh tokens, client credentials and the JWT
-// profile grant are all unimplemented, and a provider that pretended otherwise
-// would be a provider whose discovery document lies.
 
 // Storage is this service's op.Storage.
 //
@@ -47,9 +29,6 @@ type Storage struct {
 	key       *SigningKey
 	clk       clock.Clock
 	read      db.QuerierSource
-	// loginBase is the path the login UI is mounted at, and it is here rather
-	// than in a constant because the router and the client implementation have
-	// to agree on it and one of the two is going to move first.
 	loginBase string
 }
 
@@ -66,10 +45,6 @@ type Storage struct {
 // `*oauth.Store` satisfies it with no adapter and no wrapper. That is checked
 // rather than assumed: see the compile-time assertion below.
 type GitHubIDReader interface {
-	// GitHubIDForUser returns the id as the STRING the column holds — see MD21,
-	// a JSON number does not survive `gateway` — or `oauth.ErrNoGitHubAccount`
-	// when the user has linked none, which is an ordinary state rather than a
-	// failure.
 	GitHubIDForUser(ctx context.Context, q db.Querier, userID id.UUID) (string, error)
 }
 
@@ -82,9 +57,6 @@ type GitHubIDReader interface {
 // gets an error instead of the "no publisher record" refusal it is owed.
 var ErrNoGitHubAccount = oauth.ErrNoGitHubAccount
 
-// Compile-time proof that the adapter is the library's Storage, and that the
-// auth request is its AuthRequest. A method-set change upstream fails here with
-// a message naming the interface rather than in a call site three layers down.
 var (
 	_ op.Storage                   = (*Storage)(nil)
 	_ GitHubIDReader               = (*oauth.Store)(nil)
@@ -103,9 +75,6 @@ func NewStorage(store *Store, profiles ProfileReader, githubIDs GitHubIDReader, 
 	return &Storage{store: store, profiles: profiles, githubIDs: githubIDs, key: key, clk: clk, read: read, loginBase: loginBase}
 }
 
-// ---------------------------------------------------------------------------
-// clients
-// ---------------------------------------------------------------------------
 
 // GetClientByClientID returns a registration, or an error the library turns into
 // a 400 on the authorization endpoint.
@@ -133,9 +102,6 @@ func (s *Storage) GetClientByClientID(ctx context.Context, clientID string) (op.
 func (s *Storage) AuthorizeClientIDSecret(ctx context.Context, clientID, clientSecret string) error {
 	client, err := s.store.ClientByClientID(ctx, s.read.Queryer(), clientID)
 	if err != nil {
-		// Not distinguished from a wrong secret at the boundary. A caller that
-		// could tell "no such client" from "wrong secret" would have an oracle
-		// for which products are registered on this platform.
 		return ErrInvalidSecret
 	}
 	if !client.IsActive() {
@@ -147,12 +113,6 @@ func (s *Storage) AuthorizeClientIDSecret(ctx context.Context, clientID, clientS
 	return nil
 }
 
-// protocolClient wraps a domain Client in the library's op.Client.
-//
-// The wrapper exists so the domain type carries no protocol methods: a change to
-// what identity stores and a change to what the library asks for are then two
-// edits in two files, and reading client.go does not require knowing the
-// library's interface.
 type protocolClient struct {
 	client    Client
 	loginBase string
@@ -298,9 +258,6 @@ func (s *Storage) KeySet(context.Context) ([]op.Key, error) {
 	return []op.Key{PublicKeyOf(s.key)}, nil
 }
 
-// ---------------------------------------------------------------------------
-// authorization requests and codes
-// ---------------------------------------------------------------------------
 
 // CreateAuthRequest records a validated request.
 //
@@ -370,12 +327,6 @@ func (s *Storage) AuthRequestByCode(ctx context.Context, code string) (op.AuthRe
 	return &request, nil
 }
 
-// requireS256 refuses anything but S256.
-//
-// The library verifies a `plain` challenge happily — plain means "the verifier
-// IS the challenge", which is only safe for a public client that has no secret to
-// steal. Every client in this service is confidential, so a plain challenge would
-// mean an intercepted code is redeemable by whoever intercepted it.
 func requireS256(method string) error {
 	if method != string(oidc.CodeChallengeMethodS256) {
 		return fmt.Errorf("%w: this provider requires PKCE with S256, the request carried %q", ErrNoAuthCode, method)
@@ -401,9 +352,6 @@ func (s *Storage) DeleteAuthRequest(ctx context.Context, requestID string) error
 	return s.store.DeleteAuthRequest(ctx, s.read.Queryer(), rowID)
 }
 
-// ---------------------------------------------------------------------------
-// op.AuthRequest
-// ---------------------------------------------------------------------------
 
 // The op.AuthRequest implementation, on the domain type. Read one section at a
 // time: what the request SAYS, and what it produced.
@@ -466,9 +414,6 @@ func (r *AuthRequest) GetSubject() string {
 // build a token response with no user having typed a password.
 func (r *AuthRequest) Done() bool { return r.AuthTime != nil }
 
-// ---------------------------------------------------------------------------
-// tokens
-// ---------------------------------------------------------------------------
 
 // CreateAccessToken records an access token and returns its id and expiry.
 //
@@ -558,17 +503,8 @@ func (s *Storage) CreateAccessAndRefreshTokens(ctx context.Context, request op.T
 		return "", "", time.Time{}, err
 	}
 
-	// The rotation link, and it is written in the SAME statement path as the
-	// creation rather than after the response, because a chain with a missing
-	// link is a chain reuse detection cannot walk. The spent row is already
-	// claimed by TokenRequestByRefreshToken by the time this runs, so the only
-	// thing left is to say which token succeeded it.
 	if spent, ok := request.(refreshRequest); ok {
 		if err := s.store.ReplaceRefreshToken(ctx, s.read.Queryer(), spent.row.ID, refreshID); err != nil {
-			// Refused rather than swallowed. The client is told the refresh
-			// failed and signs in again, which is the safe direction: an
-			// unlinked chain would leave a stolen token's successor outside
-			// the family a reuse revokes.
 			return "", "", time.Time{}, err
 		}
 	}
@@ -576,31 +512,17 @@ func (s *Storage) CreateAccessAndRefreshTokens(ctx context.Context, request op.T
 	return tokenID.String(), value, accessExpiresAt, nil
 }
 
-// refreshRequest is the library's RefreshTokenRequest, over a claimed row.
-//
-// It is this package's own type and not the domain type because the domain type
-// carries no protocol methods — the same split protocolClient makes. The client
-// is resolved at claim time and carried as a string, because the audience the
-// token is minted for has to be the client that presented the refresh token,
-// and re-resolving it here would be a second lookup that could disagree.
 type refreshRequest struct {
 	row      RefreshToken
 	clientID string
 }
 
 func (r refreshRequest) GetAMR() []string {
-	// `pwd` once more. A refresh proves possession of a token that was minted
-	// after a password was typed, and nothing stronger; claiming a step-up
-	// mechanism here would be a claim about an authentication that did not
-	// happen this time.
 	return []string{"pwd"}
 }
 
 func (r refreshRequest) GetAudience() []string { return []string{r.clientID} }
 func (r refreshRequest) GetAuthTime() time.Time {
-	// The original authentication, not the refresh. auth_time is the claim a
-	// relying party uses to decide whether to re-prompt, and a refresh is not a
-	// re-authentication.
 	return r.row.IssuedAt
 }
 func (r refreshRequest) GetClientID() string { return r.clientID }
@@ -631,10 +553,6 @@ func (s *Storage) TokenRequestByRefreshToken(ctx context.Context, refreshToken s
 		return nil, err
 	}
 	if !client.IsActive() {
-		// Refused here as well as swept by RevokeClient, because the sweep is a
-		// bulk UPDATE on a registration somebody revoked and this is the request
-		// in flight at that moment. Two gates for one rule is one more than a
-		// careful reader needs, and the cost of the extra is a line.
 		return nil, ErrRevoked
 	}
 
@@ -660,9 +578,6 @@ func (s *Storage) GetRefreshTokenInfo(ctx context.Context, clientID, token strin
 	}
 	client, err := s.store.ClientByRowID(ctx, s.read.Queryer(), row.ClientRowID)
 	if err != nil || client.ClientID != clientID {
-		// Not told apart from an unknown token. A caller that could learn "this
-		// is a refresh token for a DIFFERENT client" would have an oracle for
-		// which products hold which credentials.
 		return "", "", op.ErrInvalidRefreshToken
 	}
 	return row.Subject.String(), row.ID.String(), nil
@@ -743,9 +658,6 @@ func (s *Storage) RevokeToken(ctx context.Context, tokenOrTokenID, _, _ string) 
 	return nil
 }
 
-// ---------------------------------------------------------------------------
-// claims
-// ---------------------------------------------------------------------------
 
 // SetUserinfoFromScopes is empty on purpose.
 //
@@ -783,13 +695,6 @@ func (s *Storage) SetUserinfoFromToken(ctx context.Context, userinfo *oidc.UserI
 	return s.setUserinfo(ctx, userinfo, token.Subject.String(), client.ClientID, token.Scopes)
 }
 
-// setUserinfo is the one place a claim is decided.
-//
-// The scopes are intersected with the client's registration before anything is
-// read, so a token cannot be widened by naming a scope the client never
-// registered — the intersection is the answer, and it is taken from both sides
-// because a token could otherwise have been issued with a scope the registration
-// has since been narrowed to exclude.
 func (s *Storage) setUserinfo(ctx context.Context, userinfo *oidc.UserInfo, subject, clientID string, scopes []string) error {
 	client, err := s.store.ClientByClientID(ctx, s.read.Queryer(), clientID)
 	if err != nil {
@@ -803,9 +708,6 @@ func (s *Storage) setUserinfo(ctx context.Context, userinfo *oidc.UserInfo, subj
 		}
 	}
 	if !slices.Contains(granted, ScopeOpenID) {
-		// No openid, no sub, and therefore no identity at all. The library's own
-		// removeUserinfoScopes keeps `openid` precisely so this case is
-		// reachable rather than silent.
 		return fmt.Errorf("%w: this token was granted no openid scope, so it identifies nobody", ErrNoProfile)
 	}
 
@@ -822,14 +724,6 @@ func (s *Storage) setUserinfo(ctx context.Context, userinfo *oidc.UserInfo, subj
 
 	if slices.Contains(granted, ScopeEmail) {
 		userinfo.Email = profile.Email
-		// Explicitly, because oidc.UserInfo.EmailVerified is an omitempty bool and
-		// a false one would otherwise be missing from the token. A relying party
-		// that cannot see the claim has to decide whether the provider supports it,
-		// and "the field is absent" is the one answer that means "assume verified".
-		//
-		// The value is the read of users.email_verified_at rather than a constant
-		// false, which is what internal/recovery made true. See Profile.EmailVerified
-		// for what a `true` here now claims, and what it does not.
 		userinfo.AppendClaims(ClaimEmailVerified, profile.EmailVerified)
 	}
 	if slices.Contains(granted, ScopeProfile) {
@@ -841,34 +735,9 @@ func (s *Storage) setUserinfo(ctx context.Context, userinfo *oidc.UserInfo, subj
 	return nil
 }
 
-// ClaimEmailVerified and ClaimAccounts are the two claim names this package
-// writes by hand rather than through a struct field. They are exported because
-// the OpenAPI document and the tests name them, and a claim name that only
-// exists as a string literal in one file is a name nobody can grep for.
 const (
-	// ClaimEmailVerified is a registered OIDC claim. See setUserinfo for why it
-	// is written explicitly rather than through oidc.UserInfo.EmailVerified.
 	ClaimEmailVerified = "email_verified"
-	// ClaimAccounts is this service's one custom claim, released on the `accounts`
-	// scope.
 	ClaimAccounts = "accounts"
-	// ClaimGitHubID is the caller's verified GitHub account id, released on the
-	// `publish` scope.
-	//
-	// IT IS A STRING AND NOT A NUMBER, and MD21 is the reason. `gateway` copies
-	// claims through a JavaScript `JSON.parse` and re-signs what comes out, so a
-	// JSON number here is a float64 before `pantry` ever sees it: measured in node,
-	// 107346492749283471920 re-serializes as ...3480000 and round-trips through
-	// BigInt as ...3485475456. Nothing fails — the assertion is correctly signed
-	// over the wrong publisher. `pantry` reads the string exactly
-	// (`json.Number` parses one), so the string is the encoding that works, and
-	// `pantry`'s `TestANumericStringGitHubIDIsAccepted` is the other half of that
-	// contract.
-	//
-	// Nothing on the reading side can enforce this: `json.Number` erases the
-	// difference between a JSON string and a JSON number before `pantry`'s code
-	// runs. So the guarantee rests here, and the test that holds it is the one
-	// asserting the claim is a Go `string`.
 	ClaimGitHubID = "github_id"
 )
 
@@ -915,25 +784,12 @@ func (s *Storage) GetPrivateClaimsFromScopes(ctx context.Context, userID, client
 		claims[ClaimAccounts] = accountsClaim(profile.Accounts)
 	}
 
-	// A MISSING GITHUB ACCOUNT IS NOT AN ERROR, and this is the branch that makes
-	// the claim honest rather than absent-by-accident. The claim is OMITTED, not
-	// invented and not set to "": MD19 wants a caller with no publisher row to get
-	// a "no publisher record" refusal from `pantry`, and for that refusal to be
-	// reachable the claim has to arrive missing rather than empty. An empty
-	// string here would be a claim `pantry` parses and rejects with a different
-	// error, pointing an operator at their gateway instead of at the user who
-	// never linked GitHub.
-	//
-	// Any OTHER error — a database that is down — propagates. "No linked account"
-	// and "could not ask" are different facts and collapsing them would mint a
-	// token that silently drops the publisher claim during an outage.
 	if wantsPublish && s.githubIDs != nil {
 		githubID, err := s.githubIDs.GitHubIDForUser(ctx, s.read.Queryer(), parsed)
 		switch {
 		case err == nil:
 			claims[ClaimGitHubID] = githubID
 		case errors.Is(err, ErrNoGitHubAccount):
-			// Deliberately nothing. See above.
 		default:
 			return nil, err
 		}
@@ -970,15 +826,7 @@ func (s *Storage) ValidateJWTProfileScopes(context.Context, string, []string) ([
 // because op.Storage declares it.
 func (s *Storage) Health(context.Context) error { return nil }
 
-// ---------------------------------------------------------------------------
-// helpers
-// ---------------------------------------------------------------------------
 
-// subjectOf reads the subject out of whichever request shape arrived.
-//
-// A code exchange and a future client-credentials request are different types
-// with the same accessor, and a type switch that named both would be a promise
-// about a grant this service does not support.
 func subjectOf(request op.TokenRequest) (id.UUID, error) {
 	parsed, err := id.Parse(request.GetSubject())
 	if err != nil {
@@ -987,12 +835,6 @@ func subjectOf(request op.TokenRequest) (id.UUID, error) {
 	return parsed, nil
 }
 
-// clientRowFor resolves the audience back to a registration row.
-//
-// The audience of an OIDC token is the client that asked for it, so this is a
-// lookup by handle with a shape check: a request whose audience is not one
-// registered handle has no client to attribute the token to, and writing a row
-// keyed on nothing is how a token ends up owned by no client.
 func (s *Storage) clientRowFor(ctx context.Context, audience []string) (Client, error) {
 	if len(audience) == 0 {
 		return Client{}, fmt.Errorf("%w: this token would have no audience", ErrNoProfile)
@@ -1007,10 +849,6 @@ func (s *Storage) clientRowFor(ctx context.Context, audience []string) (Client, 
 	return client, nil
 }
 
-// spaceDelimited renders a scope list the way a scope claim is written.
-//
-// Sorted, because a claim whose bytes differ between two identical tokens is a
-// claim two verifiers will cache differently.
 func spaceDelimited(scopes []string) string {
 	sorted := slices.Clone(scopes)
 	slices.Sort(sorted)

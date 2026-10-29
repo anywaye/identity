@@ -5,11 +5,6 @@ import (
 	"testing"
 )
 
-// The dependency budget for this service is argon2id, pgx and the router
-// (AGENTS.md: "no dependency without a cause stated in review"). A UUID type is
-// a hundred lines of formatting, and a fourth direct dependency to get it is
-// not a trade this repository makes. Underlying [16]byte is also what pgx scans
-// a Postgres uuid column into, so there is no conversion layer.
 
 func TestNewProducesAWellFormedVersion4UUID(t *testing.T) {
 	t.Parallel()
@@ -33,8 +28,6 @@ func TestNewProducesAWellFormedVersion4UUID(t *testing.T) {
 func TestNewIsUnique(t *testing.T) {
 	t.Parallel()
 
-	// 100k collisions in 122 bits of entropy is not a thing that happens; if it
-	// does, the source is not random and every other guarantee here is void.
 	const n = 100_000
 
 	seen := make(map[UUID]struct{}, n)
@@ -59,7 +52,6 @@ func TestStringIsLowercaseCanonicalForm(t *testing.T) {
 		want string
 	}{
 		{
-			// The RFC 4122 example, which pins the layout: 8-4-4-4-12 lower hex.
 			name: "all zero bits",
 			give: UUID{0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff},
 			want: "00112233-4455-6677-8899-aabbccddeeff",
@@ -156,8 +148,6 @@ func TestParseRejectsAnythingElse(t *testing.T) {
 	}
 }
 
-// IsZero is how a caller tells "no id" from "the id that happens to be all
-// zeros". Used to keep a zero id out of a WHERE clause.
 func TestIsZero(t *testing.T) {
 	t.Parallel()
 
@@ -171,8 +161,6 @@ func TestIsZero(t *testing.T) {
 	}
 }
 
-// The id appears in every response body, so it has to marshal as the canonical
-// string and unmarshal back. A [16]byte would otherwise render as a byte array.
 func TestJSONRoundTrip(t *testing.T) {
 	t.Parallel()
 
@@ -208,8 +196,6 @@ func TestScanAndValueForPostgres(t *testing.T) {
 		t.Fatalf("Parse: %v", err)
 	}
 
-	// Postgres sends uuid as text; a driver that does not use pgx's native
-	// [16]byte path still goes through database/sql's Scanner/Valuer pair.
 	text, err := parsed.Value()
 	if err != nil {
 		t.Fatalf("Value: %v", err)

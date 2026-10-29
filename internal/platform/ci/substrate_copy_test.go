@@ -1,56 +1,5 @@
 package ci
 
-// The credential audit must read the catalog's DEPENDENCIES, never the text it
-// pretty-prints.
-//
-// WHY THIS FILE EXISTS. `migrations/00016_account_isolation.sql` embeds a copy of
-// kit's `templates/database/tenancy/substrate.sql`, taken before
-// kit-rls-advisor-02 rewrote `credential_tables()`. Nothing compared the copy
-// against the template again, so it drifted, and it drifted into an audit query
-// that returns NOTHING for the role an operator audits credentials as — kit's
-// cluster admin role, `anywaye` — while returning the right answer for every
-// other role. Measured on a scratch postgres:17, both rows same database, same
-// policy, same instant:
-//
-//	role      rows                           digest_column
-//	identity  BEFORE 00017 (deparsing)       api_keys/token_digest
-//	identity  AFTER  00017 (dependencies)    api_keys/token_digest
-//	anywaye    BEFORE 00017 (deparsing)       (none)
-//	anywaye    AFTER  00017 (dependencies)    api_keys/token_digest
-//
-// `bin/credential-audit-drift` reproduces that table; this file is the half that
-// runs in `bin/prime`, on a machine with no Postgres.
-//
-// WHY NOT `caf lock --verify`, WHICH IS THE OBVIOUS TOOL. Measured, and the
-// answer is no, in three independent ways:
-//
-//  1. It does not run here at all. `caf lock .` on this tree exits 1 with
-//     "telemetry/otel-endpoint.json is pinned as generated but is not in the
-//     tree" — this repository's `internal/telemetry/` is hand-written, not
-//     `caf gen telemetry`'s output, so the discover walk refuses before writing
-//     a byte.
-//  2. Its kinds are a CLOSED SET: `internal/lock`'s `kinds` is exactly
-//     `spec`, `vendored-schema`, `generated-client`, `rule-bundle`. A migration
-//     embedding another repository's SQL template is none of those four, and
-//     `discover` derives every entry from those four conventions with no
-//     manifest field, flag or allowlist that adds a fifth.
-//  3. Even with a fifth kind, a lock records what a tree HAS. The defect here
-//     is that two trees DISAGREE, and `caf lock`'s doc.go is explicit that it is
-//     "not a drift gate: it records what is there". Pinning this repository's
-//     copy against a hash recorded in this repository would pin the drift in
-//     place and call it green — the failure this whole file exists to prevent.
-//
-// So this is deliberately NOT a pin. It is a claim this repository makes about
-// its own bytes, and it needs nothing from kit to make it: the property that
-// matters is structural (resolve by OID, do not read a spelling) and it is
-// checkable here with no network, no checkout and no recorded digest.
-// What WOULD close the remaining gap — comparing this copy to kit's bytes at a
-// ref — needs a kind of its own in `caf`, plus a declaration in `anywaye.yml`,
-// plus kit's substrate being fetchable at a ref, which it deliberately is not:
-// kit splits its templates into FETCHED (`templates/compose`, pinned by
-// `kit.ref`) and COPIED (`templates/database`), and that split is the reason a
-// copy can drift at all. That is a change in `caf` and `kit`, not one identity
-// should fake with a sha256sum somebody keeps by hand.
 
 import (
 	"os"
@@ -59,27 +8,12 @@ import (
 	"testing"
 )
 
-// The two migrations this file reads. Named rather than globbed, because a glob
-// would pick up a future migration that does not install the audit at all and
-// quietly stop comparing the one that does.
 const (
 	substrateMigration = "migrations/00016_account_isolation.sql"
 	fixMigration       = "migrations/00017_credential_audit_dependencies.sql"
 	userScopeMigration = "migrations/00018_membership_user_scope.sql"
 )
 
-// readMigration fails the test with the path when the file is unreadable, rather
-// than returning "" for a reader that would then report a clean tree.
-//
-// A bare filename is read from migrations/ and anything with a separator is read
-// from the repository root, so one reader serves both the named migrations above
-// and the directory walk in the test below without either spelling out a prefix
-// that could disagree with the other.
-//
-// `repoRoot` comes from ci_test.go and is deliberately not spelled again here: it
-// resolves the root from this file's PATH rather than from the working directory,
-// which `go test` sets to the package. A second copy of a helper that already
-// exists is how two answers to one question end up in a tree.
 func readMigration(t *testing.T, name string) string {
 	t.Helper()
 	if !strings.ContainsRune(name, filepath.Separator) {
@@ -92,13 +26,6 @@ func readMigration(t *testing.T, name string) string {
 	return string(b)
 }
 
-// sqlSection returns the text of one goose section of a migration: the Up body
-// when `up` is true, the Down body when it is not.
-//
-// Cut at the DOWN MARKER and not at the Up marker, for the reason
-// bin/migration-up-section's header gives: a forward-only migration with no Down
-// section must still have its Up section read rather than produce an empty
-// string, which every assertion below would then pass against.
 func sqlSection(t *testing.T, migration string, up bool) string {
 	t.Helper()
 	full := readMigration(t, migration)
@@ -117,19 +44,6 @@ func sqlSection(t *testing.T, migration string, up bool) string {
 	return head[upAt:]
 }
 
-// functionBodies returns every `create or replace function anywaye.<fn>`
-// definition inside `src`, from each declaration to the `$caf$;` that closes it.
-//
-// PLURAL, and that is the load-bearing part. A single-body reader checks the LAST
-// definition and calls the file verified: reintroduce the deparsing audit into
-// 00016 and the reader — which is about 00017's body — stays green, because 00017
-// still installs the right one afterwards. Measured, and it is why this walks all
-// of them: in a migration sequence the last definition wins, so a check has to
-// read every definition, not the effective one.
-//
-// The terminator is matched as a line of its own rather than as a substring,
-// because a `$caf$;` inside a comment or a string would otherwise truncate the
-// body early and every assertion below would pass against a prefix.
 func functionBodies(t *testing.T, migration, src, fn string) []string {
 	t.Helper()
 	needle := "create or replace function anywaye." + fn + "("
@@ -149,9 +63,6 @@ func functionBodies(t *testing.T, migration, src, fn string) []string {
 	}
 }
 
-// functionBody returns the single `create or replace function` definition for
-// `fn`, and fails when there is not exactly one — because a reader that takes the
-// first of several has not been told which one the migration means.
 func functionBody(t *testing.T, migration, src, fn string) string {
 	t.Helper()
 	bodies := functionBodies(t, migration, src, fn)
@@ -164,28 +75,6 @@ func functionBody(t *testing.T, migration, src, fn string) string {
 	return bodies[0]
 }
 
-// THE CHECK, AND IT IS ABOUT EVERY DEFINITION IN EVERY MIGRATION, NOT ABOUT THE
-// EFFECTIVE ONE.
-//
-// The audit resolves the digest function by OID out of pg_proc and finds the
-// column by a pg_depend row onto the policy's OWN table, and it reads no
-// deparsed expression. The deparsed spelling is reader-dependent — `pg_get_expr`
-// omits the schema of any name the session could resolve, and `"$user"` is a
-// search_path entry — so a function that reads it has an answer that depends on
-// who is asking, which is the defect 00017 fixed.
-//
-// WHY THE RULE IS SCOPED FORWARD AND 00016 IS A NAMED EXCEPTION, because the
-// append-only rule forbids the other answer. 00016 has been applied in deployed
-// environments; rewriting it changes the file the next environment applies and
-// not the one the deployed ones ran, which is how two environments holding the
-// same migration count diverge silently. So the defect has to be allowed to sit
-// in 00016 and forbidden everywhere after it, and that exception is one entry in
-// one table rather than a carve-out spread through the assertions.
-//
-// AND A DEAD ENTRY IS A FAILURE, the same rule kit's skip-allowlist and
-// ESLint's reportUnusedDisableDirectives state. An exception no longer matching
-// anything has stopped constraining anything, and an allowlist entry that rots in
-// one direction is a ratchet.
 var migrationsThatPredateTheFix = map[string]string{
 	"00016_account_isolation.sql": "the substrate copy, applied in deployed environments before " +
 		"this was found; 00017 replaces its credential_tables() and rewriting 00016 is the " +
@@ -203,32 +92,11 @@ func TestNoMigrationAfterTheFixInstallsAnAuditThatReadsASpelling(t *testing.T) {
 			len(migrations))
 	}
 
-	// The audits this rule covers, rather than one hard-coded name.
-	//
-	// A LIST because 00018 added a second audit with the identical property and
-	// the failure it guards is a shape, not a spelling: both resolve their subject
-	// function by OID out of pg_proc and their column by a pg_depend row onto the
-	// policy's OWN table, and a rewrite that read either of those as text would
-	// give the right answer to every role except the one whose `"$user"` schema
-	// IS `anywaye` — which is kit's cluster admin role, and so the operator most
-	// likely to be auditing. 00018's `membership_tables()` has to be covered by
-	// this or the rule has a hole exactly the shape of the defect it was written
-	// for: a second audit, added later, quietly deparsing.
-	//
-	// Both names are listed rather than matched by a regexp over every
-	// `anywaye.*_tables()` definition, because the alternative sweeps in a function
-	// that returns tables and is not an audit of this kind, and a rule that
-	// catches the wrong function is a rule nobody can reason about at the point it
-	// fires.
 	audits := []string{"credential_tables", "membership_tables"}
 
 	matched := map[string]bool{}
 	for _, path := range migrations {
 		name := filepath.Base(path)
-		// The Up section only. A Down section is ALLOWED to carry the old body —
-		// 00017's does, by contract, so that `goose down` returns the tree to the
-		// state the previous migration left it in. Asserting on Down would make
-		// the rollback the thing the check forbids.
 		for _, audit := range audits {
 			for i, body := range functionBodies(t, name, sqlSection(t, name, true), audit) {
 				reads := ""
@@ -269,18 +137,15 @@ func TestNoMigrationAfterTheFixInstallsAnAuditThatReadsASpelling(t *testing.T) {
 	}
 }
 
-// The one migration that installs the audit after 00017 carries kit's structural
-// markers, so "no spelling" cannot be satisfied by a function that reads nothing
-// at all and answers nothing.
 func TestTheCredentialAuditReadsDependenciesAndNotASpelling(t *testing.T) {
 	body := functionBody(t, fixMigration, sqlSection(t, fixMigration, true), "credential_tables")
 
 	for _, want := range []string{
-		"pg_depend",                  // the column, and the function, by reference rather than by text
-		"pg_proc",                    // the digest function resolved by OID
-		"pronargs = 0",               // an overload of the same name is not that function
-		"cd.refobjid = pol.polrelid", // the policy's OWN table, so another table's column stays out
-		"'(unresolved)'",             // a row we cannot narrow is reported, not dropped
+		"pg_depend",
+		"pg_proc",
+		"pronargs = 0",
+		"cd.refobjid = pol.polrelid",
+		"'(unresolved)'",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("anywaye.credential_tables() does not contain %q.\n"+
@@ -303,18 +168,6 @@ func TestTheCredentialAuditReadsDependenciesAndNotASpelling(t *testing.T) {
 	}
 }
 
-// The SECOND audit, checked for the same four structural markers, and the
-// assertion that matters most here is the negative one: `membership_tables()` was
-// written AFTER the fix, so unlike `credential_tables()` it has no deparsing
-// version anywhere in this tree to be compared against — a future edit could make
-// it read text and every existing check would stay green.
-//
-// `proname = 'current_user_id'` rather than the digest's name is the marker that
-// distinguishes it, and it is listed rather than left implied: an audit that
-// resolved the wrong function would still contain `pg_proc`, `pg_depend` and
-// `pronargs = 0`, so the required-substring list has to name the thing that is
-// actually being resolved or the check passes on a body that answers about a
-// different scope.
 func TestTheMembershipAuditResolvesTheCallerAndNotASpelling(t *testing.T) {
 	body := functionBody(t, userScopeMigration, sqlSection(t, userScopeMigration, true), "membership_tables")
 
@@ -324,8 +177,8 @@ func TestTheMembershipAuditResolvesTheCallerAndNotASpelling(t *testing.T) {
 		"pronargs = 0",
 		"proname = 'current_user_id'",
 		"_anywaye!_members",
-		"ud.refobjid = pol.polrelid", // the policy's OWN table, so another table's column stays out
-		"'(unresolved)'",             // a row we cannot narrow is reported, not dropped
+		"ud.refobjid = pol.polrelid",
+		"'(unresolved)'",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("anywaye.membership_tables() does not contain %q.\n"+
@@ -350,11 +203,6 @@ func TestTheMembershipAuditResolvesTheCallerAndNotASpelling(t *testing.T) {
 	}
 }
 
-// The pre-00017 body is not hypothetical: it is IN THIS TREE, in 00017's own Down
-// section, so this file can prove the check above is able to fail rather than
-// asserting that it would. A check that has never been watched red is a check
-// that might not work, and the claim being made here is about a SHAPE — so the
-// negative control has to be the real old body, not a paraphrase of it.
 func TestTheDriftCheckIsProvenAbleToFailOnTheBodyItRejects(t *testing.T) {
 	old := functionBody(t, fixMigration, sqlSection(t, fixMigration, false), "credential_tables")
 
@@ -366,8 +214,6 @@ func TestTheDriftCheckIsProvenAbleToFailOnTheBodyItRejects(t *testing.T) {
 			"its table, so a silently rewritten Down makes a measurement lie.")
 	}
 
-	// The same two predicates, applied to the old body, must fail. If they pass,
-	// the check above is not checking anything and the whole file is decoration.
 	if !strings.Contains(old, "pg_get_expr") {
 		t.Errorf("control: the pre-00017 body no longer reads pg_get_expr, so " +
 			"TestTheCredentialAuditReadsDependenciesAndNotASpelling's forbidden-list is not " +
@@ -379,22 +225,6 @@ func TestTheDriftCheckIsProvenAbleToFailOnTheBodyItRejects(t *testing.T) {
 	}
 }
 
-// Every substrate function this repository installs is byte-identical to kit's,
-// measured by hashing each one out of both files. That is why 00017 replaces ONE
-// body rather than re-applying a whole template, and it is why a future drift in
-// any of them shows up here rather than as an unexplained difference.
-//
-// TEN OF THEM NOW, ACROSS TWO MIGRATIONS, and the count is the point of the
-// comment rather than a detail of it: the file was written when kit's substrate
-// had six functions and two of them had already diverged. Each later addition is
-// exactly the shape of the drift that went unnoticed — a fourth function written
-// today against kit, and a copy somewhere that stops matching it the next time
-// kit edits the template.
-//
-// The comparison is against a LOCAL kit checkout when one is beside this
-// repository's sibling, and is SKIPPED — loudly, naming itself — when there is
-// not. A check that quietly passes because it could not find the other file is
-// the failure this file exists to prevent, so the skip says what was not checked.
 func TestEverySubstrateFunctionThisRepositoryInstallsIsKitsBytes(t *testing.T) {
 	kitPath := findKitSubstrate(t)
 	kitBytes, err := os.ReadFile(kitPath)
@@ -425,15 +255,6 @@ func TestEverySubstrateFunctionThisRepositoryInstallsIsKitsBytes(t *testing.T) {
 		}
 	}
 
-	// The four 00018 added, and they are read from THAT migration rather than from
-	// 00016 — which is the whole reason 00018 exists, since 00016 was applied in
-	// deployed environments and rewriting it would diverge them.
-	//
-	// A SEPARATE LOOP rather than one list of ten, because the two migrations have
-	// different provenance and merging them would hide which file has to be edited
-	// when kit's substrate changes next. A reader told "anywaye.protect_table differs
-	// from kit's" and given ten function names has to go and work out which of the
-	// two migrations owns each one before they can do anything about it.
 	membershipSrc := sqlSection(t, userScopeMigration, true)
 	for _, fn := range []string{
 		"current_user_id",
@@ -451,8 +272,6 @@ func TestEverySubstrateFunctionThisRepositoryInstallsIsKitsBytes(t *testing.T) {
 		}
 	}
 
-	// And the one that WAS replaced has to actually differ, or the migration that
-	// claims to fix it fixed nothing.
 	if kitFunctionBody(t, kitSrc, "credential_tables") != functionBody(t, fixMigration, sqlSection(t, fixMigration, true), "credential_tables") {
 		t.Errorf("anywaye.credential_tables() in %s is NOT kit's current body.\n"+
 			"The fix and the template have drifted apart, which is this file's own defect\n"+
@@ -465,19 +284,6 @@ func kitFunctionBody(t *testing.T, src, fn string) string {
 	return functionBody(t, "kit/templates/database/tenancy/substrate.sql", src, fn)
 }
 
-// findKitSubstrate returns the path to kit's substrate template, or "" when there
-// is not one within three levels above this repository.
-//
-// BOUNDED AT THREE, and named here because an unbounded upward walk is how a check
-// reads a fleet it does not own: kit's own AGENTS.md records a sweep that found a
-// whole fleet in a leftover checkout in a shared temp directory and went red on a
-// tree with nothing wrong with it. Three levels covers a sibling (`../kit`) and a
-// worktree nested one directory deeper (`identity/anywaye/wt-*/`), which is how
-// this measurement is actually taken, and stops there.
-//
-// "" is the honest answer rather than a guess: the caller turns it into a named
-// SKIP, and a check that quietly passed because it could not find the other file
-// is the exact failure this file exists to prevent.
 func findKitSubstrate(t *testing.T) string {
 	t.Helper()
 	dir := repoRoot(t)

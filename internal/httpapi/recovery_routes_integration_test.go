@@ -25,17 +25,7 @@ import (
 	"github.com/anywaye/identity/internal/users"
 )
 
-// THE RECOVERY SURFACE OVER A REAL DATABASE.
-//
-// Everything here drives the real router, the real use cases and the real SQL over a
-// private schema, with a mailer that keeps what it was handed. The properties being
-// asserted are the ones a client depends on and the ones a reviewer cannot check by
-// reading a handler: the token that was mailed is the token that redeems, the
-// session that existed before a reset does not exist after it, and the two request
-// routes cannot be told apart.
 
-// recoveryServerFixture is a router with the recovery surface mounted over a private
-// schema, plus the seam that recorded what was sent.
 type recoveryServerFixture struct {
 	handler http.Handler
 	pool    *pgxpool.Pool
@@ -45,9 +35,6 @@ type recoveryServerFixture struct {
 	svc     *recovery.Service
 }
 
-// captureMailer is the seam's double. It keeps every message, because the plaintext
-// token exists nowhere else and a test that wanted one from anywhere but the mail
-// would be testing a token the service never sent.
 type captureMailer struct {
 	mu   sync.Mutex
 	sent []recovery.Message
@@ -68,7 +55,6 @@ func (m *captureMailer) count() int {
 	return len(m.sent)
 }
 
-// last is the most recent message.
 func (m *captureMailer) last(t *testing.T) recovery.Message {
 	t.Helper()
 	m.mu.Lock()
@@ -79,10 +65,6 @@ func (m *captureMailer) last(t *testing.T) recovery.Message {
 	return m.sent[len(m.sent)-1]
 }
 
-// captureAccessRevoker records which users had their access tokens swept. The real
-// oidc.Store is wired as well — see TestAResetEndsTheAccessTokensIssuedBeforeIt —
-// because the sweep's SQL belongs to internal/oidc's own tests and this only needs to
-// know that the recovery flow asks for it.
 type captureAccessRevoker struct {
 	mu      sync.Mutex
 	revoked map[string]time.Time
@@ -139,7 +121,6 @@ func newRecoveryServerFixture(t *testing.T) *recoveryServerFixture {
 	}
 }
 
-// signUp registers and signs in, returning the session token.
 func (f *recoveryServerFixture) signUp(t *testing.T) (string, string) {
 	t.Helper()
 
@@ -157,7 +138,6 @@ func (f *recoveryServerFixture) signUp(t *testing.T) (string, string) {
 	return email, session.Token
 }
 
-// tokenIn reads the token out of the message that was delivered.
 func tokenIn(t *testing.T, m recovery.Message) string {
 	t.Helper()
 	for _, line := range strings.Split(m.Body, "\n") {
@@ -170,7 +150,6 @@ func tokenIn(t *testing.T, m recovery.Message) string {
 	return ""
 }
 
-// sessionsFor counts a user's live sessions.
 func (f *recoveryServerFixture) sessionsFor(t *testing.T, email string) int {
 	t.Helper()
 	var n int
@@ -182,7 +161,6 @@ func (f *recoveryServerFixture) sessionsFor(t *testing.T, email string) int {
 	return n
 }
 
-// userIDFor resolves an address to a row id.
 func (f *recoveryServerFixture) userIDFor(t *testing.T, email string) id.UUID {
 	t.Helper()
 	var out id.UUID
@@ -192,9 +170,6 @@ func (f *recoveryServerFixture) userIDFor(t *testing.T, email string) id.UUID {
 	return out
 }
 
-// verifyAddress walks the whole verification flow over HTTP, so a test that needs a
-// VERIFIED account has one that was proved the way a user's would be — through the
-// two anonymous routes — rather than by writing the column.
 func (f *recoveryServerFixture) verifyAddress(t *testing.T, email string) {
 	t.Helper()
 
@@ -212,8 +187,6 @@ func (f *recoveryServerFixture) verifyAddress(t *testing.T, email string) {
 	}
 }
 
-// verificationState reads the column, for a failure message that says which of the
-// three cases a response belonged to.
 func verificationState(t *testing.T, f *recoveryServerFixture, email string) string {
 	t.Helper()
 	var at *time.Time
@@ -227,12 +200,6 @@ func verificationState(t *testing.T, f *recoveryServerFixture, email string) str
 	return "verified"
 }
 
-// TestTheWholeResetFlowOverHTTP: request, redeem, sign in again, and the old session
-// is gone.
-//
-// IT IS THE PACKET'S CUSTOMER-FACING PROMISE IN ONE TEST. Everything else in this
-// file is a negative; this is the path a person walks when they have forgotten a
-// password, and it has to work end to end over HTTP rather than only in a use case.
 func TestTheWholeResetFlowOverHTTP(t *testing.T) {
 	f := newRecoveryServerFixture(t)
 	email, token := f.signUp(t)
@@ -248,7 +215,6 @@ func TestTheWholeResetFlowOverHTTP(t *testing.T) {
 		t.Fatalf("the confirmation = %d, want 204; body: %s", redeemed.Code, redeemed.Body)
 	}
 
-	// The old session is dead, over HTTP, which is the claim the packet makes.
 	if got := f.sessionsFor(t, email); got != 0 {
 		t.Errorf("%d sessions survived a password reset, want 0", got)
 	}
@@ -257,7 +223,6 @@ func TestTheWholeResetFlowOverHTTP(t *testing.T) {
 		t.Errorf("GET /v1/me with the pre-reset token = %d, want 401", me.Code)
 	}
 
-	// The new password works, and the old one does not.
 	if rec := post(t, f.handler, "/v1/session",
 		`{"email":"`+email+`","password":"a completely new password"}`); rec.Code != http.StatusOK {
 		t.Errorf("signing in with the new password = %d, want 200; body: %s", rec.Code, rec.Body)
@@ -268,13 +233,6 @@ func TestTheWholeResetFlowOverHTTP(t *testing.T) {
 	}
 }
 
-// TestTheTwoRequestRoutesAnswerIdenticallyOverHTTP is the enumeration property with
-// the real service behind it, which is the version of it that cannot be defeated by
-// a use case that returns different errors for the two cases.
-//
-// THE ASSERTION IS THE WHOLE RESPONSE: same status, same headers that matter, same
-// bytes. A byte comparison is safe here because both bodies are the one constant and
-// neither carries a trace id — this is a success body, not a problem document.
 func TestTheTwoRequestRoutesAnswerIdenticallyOverHTTP(t *testing.T) {
 	f := newRecoveryServerFixture(t)
 	known, _ := f.signUp(t)
@@ -290,8 +248,6 @@ func TestTheTwoRequestRoutesAnswerIdenticallyOverHTTP(t *testing.T) {
 		}
 	}
 
-	// The comparison, over the recorded responses rather than two fresh ones so the
-	// two cases are provably adjacent.
 	first := post(t, f.handler, "/v1/password-resets", `{"email":"`+known+`"}`)
 	if first.Code != http.StatusAccepted {
 		t.Fatalf("the known-address request = %d, want 202", first.Code)
@@ -301,8 +257,6 @@ func TestTheTwoRequestRoutesAnswerIdenticallyOverHTTP(t *testing.T) {
 		t.Errorf("the two answers differ:\nknown:   %s\nunknown: %s", first.Body, second.Body)
 	}
 
-	// And the negative half: exactly one message was sent, to the address that has
-	// an account.
 	if got := f.mailer.count(); got != 1 {
 		t.Errorf("%d messages for one known address and one unknown, want 1", got)
 	}
@@ -311,38 +265,10 @@ func TestTheTwoRequestRoutesAnswerIdenticallyOverHTTP(t *testing.T) {
 	}
 }
 
-// TestTheWholeEmailChangeFlowOverHTTP: request, confirm the current address, confirm
-// the new one, and the address has moved.
-// TestATruncatedTokenAnswers404Not422 settles a
-// disagreement between the document and the service, which was found by another
-// service's worker and re-measured here rather than taken on trust.
-//
-// THE DISAGREEMENT. `RecoveryTokenRequest.token` declares `minLength: 43` and
-// `maxLength: 43`, and each of the three redemption routes lists a 422. A reader
-// derives from that a 422 with a field error naming `token` — and gets a 404,
-// because nothing between the handler and `tokens.Live` looks at the length at all.
-// A caller whose link builder truncated the query string is told "no such link",
-// which is the same sentence as an expired one.
-//
-// THE RESOLUTION IS THE DOCUMENT'S, and the schema already said so: the token's
-// description calls the length "load-bearing ON THE CLIENT SIDE … it is what tells
-// a caller the value is complete before it is pasted into a URL". What was missing
-// was the sentence that says the service does not enforce it, so the 422 read as
-// though it did. Adding a length check in the handler was the other answer and was
-// rejected: `ErrTokenNotFound`'s contract is ONE answer for every token that is not
-// live, and a fifth case told apart by a property of the input buys a developer a
-// prettier error while adding a branch to the anonymous surface whose whole argument
-// is that it has none.
-//
-// THE 422 IS STILL TRUE, and this proves it rather than asserting it: the one 422
-// these routes really answer is for a field the endpoint does not accept, which is
-// `decodeBody`'s rule and applies to every route in the service.
 func TestATruncatedTokenAnswers404Not422(t *testing.T) {
 	f := newRecoveryServerFixture(t)
 	email, _ := f.signUp(t)
 
-	// A real token, so the "43" in the schema is checked against something this
-	// service actually minted rather than against the constant.
 	post(t, f.handler, "/v1/email-verifications", `{"email":"`+email+`"}`)
 	live := tokenIn(t, f.mailer.last(t))
 	if want := 43; len(live) != want {
@@ -356,11 +282,6 @@ func TestATruncatedTokenAnswers404Not422(t *testing.T) {
 		{"/v1/email-changes/current-address", `{"token":%q}`},
 		{"/v1/email-changes/new-address", `{"token":%q}`},
 	}
-	// Three shapes, and the point of the test is that they are one answer: a token
-	// truncated by one character, a token that is obviously not one, and a token one
-	// character too long. A SLICE, not a map, because the first answer becomes the
-	// reference and a map would make which one that be a property of Go's iteration
-	// order — so a failure would name a different pair of shapes on each run.
 	shapes := []struct{ name, token string }{
 		{"truncated by one", live[:len(live)-1]},
 		{"far too short", "t"},
@@ -384,8 +305,6 @@ func TestATruncatedTokenAnswers404Not422(t *testing.T) {
 				t.Errorf("POST %s with a token %s: code = %q, want %q",
 					route.path, shape.name, p.Code, CodeNotFound)
 			}
-			// Byte equality apart from the trace id, which is the only part of a
-			// problem document that may legitimately differ between two requests.
 			p.TraceID = ""
 			rendered, err := json.Marshal(p)
 			if err != nil {
@@ -405,8 +324,6 @@ func TestATruncatedTokenAnswers404Not422(t *testing.T) {
 		}
 	}
 
-	// And the 422 the document lists is real, for the reason the document should
-	// name: a field this endpoint does not accept.
 	typo := sendWith(t, f.handler, http.MethodPost, "/v1/email-verifications/confirm", "", "",
 		`{"token":"`+live+`","emial":"x"}`)
 	if typo.Code != http.StatusUnprocessableEntity {
@@ -440,7 +357,6 @@ func TestTheWholeEmailChangeFlowOverHTTP(t *testing.T) {
 		t.Fatalf("the new-address confirmation = %d, want 200; body: %s", second.Code, second.Body)
 	}
 
-	// The address moved, the session did not survive it, and the old address is free.
 	var moved string
 	if err := f.pool.QueryRow(t.Context(),
 		`SELECT email FROM users WHERE email = $1`, target).Scan(&moved); err != nil {
@@ -457,8 +373,6 @@ func TestTheWholeEmailChangeFlowOverHTTP(t *testing.T) {
 	}
 }
 
-// TestTheWholeVerificationFlowOverHTTP, and the answer GET /v1/email-verification
-// gives before and after.
 func TestTheWholeVerificationFlowOverHTTP(t *testing.T) {
 	f := newRecoveryServerFixture(t)
 	email, token := f.signUp(t)
@@ -495,32 +409,12 @@ func TestTheWholeVerificationFlowOverHTTP(t *testing.T) {
 		t.Errorf("after confirming: %+v, want a verified address with an instant", on)
 	}
 
-	// And the session survived, because a verification is not a security change.
 	if got := f.sessionsFor(t, email); got != 1 {
 		t.Errorf("%d sessions after a verification, want 1: confirming an address must not sign "+
 			"the user out", got)
 	}
 }
 
-// TestTheVerificationRequestCannotBeToldApartOverHTTP is the packet's finding, over
-// the real service and the real router.
-//
-// IT IS THREE CASES AND NOT TWO, and the third is the whole of it: an address with
-// no account, an account that has NOT proved its address, and an account that has.
-// This route used to answer 202, 202 and 409, and `security: []` means the caller
-// posting the list is anonymous — so a 409 was a line in a list of verified
-// accounts, handed to whoever typed the addresses.
-//
-// THE ASSERTION IS THE WHOLE RESPONSE, not the status: status, Content-Type and
-// body bytes. "One status, one body" is the property, and a check that compared
-// only the status would let a differing header or a differing byte through — which
-// is the shape the oracle takes when somebody adds a field to the response.
-//
-// THE MESSAGE COUNT IS THE OTHER HALF, and it is the half a status comparison
-// cannot see. The verified account gets a link exactly as the unverified one does,
-// because the route does not read the row's verification state at all; the unknown
-// address gets nothing, which is the one difference this service already documents
-// and accepts for the reset route it mirrors.
 func TestTheVerificationRequestCannotBeToldApartOverHTTP(t *testing.T) {
 	f := newRecoveryServerFixture(t)
 
@@ -529,10 +423,6 @@ func TestTheVerificationRequestCannotBeToldApartOverHTTP(t *testing.T) {
 	f.verifyAddress(t, verified)
 	unknown := dbtest.UniqueEmail(t)
 
-	// Past the cooldown, so nothing here is answered by the window rather than by
-	// the lookup. The window is per address and these are three different ones, so
-	// this is belt and braces — but a test whose third case is silently inside a
-	// cooldown proves less than it looks like it proves.
 	f.clk.Advance(recovery.RequestWindow + time.Second)
 
 	answers := make(map[string]*httptest.ResponseRecorder, 3)
@@ -556,17 +446,11 @@ func TestTheVerificationRequestCannotBeToldApartOverHTTP(t *testing.T) {
 		if ct1, ct2 := got.Header().Get("Content-Type"), want.Header().Get("Content-Type"); ct1 != ct2 {
 			t.Errorf("Content-Type for %s = %q, unknown = %q", address, ct1, ct2)
 		}
-		// A header is a channel too, and `Retry-After` is the one an error-mapping
-		// change tends to grow.
 		if h1, h2 := got.Header().Get("Retry-After"), want.Header().Get("Retry-After"); h1 != h2 {
 			t.Errorf("Retry-After for %s = %q, unknown = %q", address, h1, h2)
 		}
 	}
 
-	// Two messages, to the two addresses that have an account — the verified one
-	// included. A route that read the row and stayed quiet would answer 202 for both
-	// and pass the comparison above, and it would still be the route the comment
-	// eleven lines above `RequestVerification` says it must not be.
 	if got, want := f.mailer.count()-sentBefore, 2; got != want {
 		t.Errorf("the three requests sent %d messages, want %d: one per address that has an "+
 			"account, and none for the address that has not", got, want)
@@ -577,14 +461,6 @@ func TestTheVerificationRequestCannotBeToldApartOverHTTP(t *testing.T) {
 	}
 }
 
-// TestTheOIDCEmailVerifiedClaimFollowsTheColumn: the claim README.md and
-// internal/oidc/profiles.go both promised would become a read of this column, and
-// this is the assertion that it is.
-//
-// The flow is the whole one: register, verify over HTTP, and read the profile the
-// storage adapter assembles for a token. The adapter is not stood up as a provider
-// because the claim is written by one method in it, and driving the profile reader is
-// what a token endpoint calls.
 func TestTheOIDCEmailVerifiedClaimFollowsTheColumn(t *testing.T) {
 	f := newRecoveryServerFixture(t)
 	email, _ := f.signUp(t)
@@ -614,22 +490,11 @@ func TestTheOIDCEmailVerifiedClaimFollowsTheColumn(t *testing.T) {
 	}
 }
 
-// TestAResetEndsTheAccessTokensIssuedBeforeIt is the JWT half of the requirement,
-// over the REAL oidc.Store rather than the recording double.
-//
-// The two halves are asserted separately on purpose. The recording double proves the
-// recovery flow ASKS; the real store proves the ask REACHES the rows. A service that
-// called the wrong method name, or against the wrong column, would pass the first.
 func TestAResetEndsTheAccessTokensIssuedBeforeIt(t *testing.T) {
 	f := newRecoveryServerFixture(t)
 	email, _ := f.signUp(t)
 	userID := f.userIDFor(t, email)
 
-	// A client, and an access token issued against it: both rows are real ones on
-	// the real tables, with real ids, because the sweep filters on both. The client
-	// belongs to an account the user really holds — the personal one registration
-	// created — rather than to a fresh one, because a registration outside this
-	// package would be a second thing to keep working.
 	accountID := id.MustNew()
 	if err := f.pool.QueryRow(t.Context(), `
 		SELECT au.account_id FROM account_users au
@@ -639,11 +504,6 @@ func TestAResetEndsTheAccessTokensIssuedBeforeIt(t *testing.T) {
 		t.Fatalf("finding the user's account: %v", err)
 	}
 
-	// The registration goes in through the real Store.CreateClient rather than as raw
-	// SQL. A hand-written INSERT would have had to restate the digest of a secret this
-	// test does not have, and the shortest way to do that is the one that writes a
-	// literal into a query — a value the service never holds and a reviewer cannot
-	// check. CreateClient takes a digest the same way the real caller supplies one.
 	client, err := oidc.NewStore(f.pool).CreateClient(t.Context(), f.pool, oidc.CreateClientParams{
 		AccountID:    accountID,
 		ClientID:     "reset-fixture-" + id.MustNew().String(),
@@ -667,7 +527,6 @@ func TestAResetEndsTheAccessTokensIssuedBeforeIt(t *testing.T) {
 		t.Fatalf("creating the fixture access token: %v", err)
 	}
 
-	// The REAL sweep, called the way recovery calls it.
 	if err := oidc.NewStore(f.pool).RevokeAccessTokensForUser(t.Context(), f.pool, userID, f.clk.Now()); err != nil {
 		t.Fatalf("RevokeAccessTokensForUser: %v", err)
 	}
@@ -681,7 +540,6 @@ func TestAResetEndsTheAccessTokensIssuedBeforeIt(t *testing.T) {
 		t.Fatal("the access token issued before the reset is still live")
 	}
 
-	// And another user's token is untouched, because the sweep is scoped by subject.
 	other, _ := f.signUp(t)
 	otherID := f.userIDFor(t, other)
 	otherToken := id.MustNew()
@@ -726,16 +584,6 @@ func TestAResetEndsTheAccessTokensIssuedBeforeIt(t *testing.T) {
 	}
 }
 
-// TestNoRecoveryTokenReachesTheLogs walks the three flows with a logger that keeps
-// everything, and asserts that nothing a human could read carries a live token.
-//
-// IT IS THE MFA PACKET'S CANARY APPLIED TO THIS ONE, and it is here rather than in
-// internal/recovery because the tokens in these flows reach a message that a
-// delivery adapter is one line away from logging.
-//
-// IT ASSERTS NON-VACUOUSLY FIRST: the flows really completed, so the token really
-// existed, and the logger really was called. A test that passed because nothing was
-// logged would be asserting nothing at all.
 func TestNoRecoveryTokenReachesTheLogs(t *testing.T) {
 	pool, owner := dbtest.SchemaWithOwner(t)
 	clk := clock.NewFake(time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC))
@@ -765,7 +613,6 @@ func TestNoRecoveryTokenReachesTheLogs(t *testing.T) {
 		t.Fatalf("the login body is not JSON: %v", err)
 	}
 
-	// Every flow, so every body.
 	post(t, handler, "/v1/password-resets", `{"email":"`+email+`"}`)
 	resetToken := tokenIn(t, mailer.last(t))
 	post(t, handler, "/v1/email-verifications", `{"email":"`+email+`"}`)
@@ -775,36 +622,16 @@ func TestNoRecoveryTokenReachesTheLogs(t *testing.T) {
 	sendWith(t, handler, http.MethodPost, "/v1/email-changes/current-address", "", "",
 		`{"token":"`+changeToken+`"}`)
 
-	// A refusal, which is where a "your token %s was wrong" line would be written if
-	// anybody ever wrote one. Nothing on this surface logs refusals, so the log is
-	// expected to be empty — and the assertion below is written to FAIL on an empty
-	// log rather than to pass on it.
 	for _, bad := range []string{"a-token-that-is-not-one", resetToken} {
 		sendWith(t, handler, http.MethodPost, "/v1/email-verifications/confirm", "", "",
 			`{"token":"`+bad+`"}`)
 	}
 
-	// NON-VACUITY, AND IT IS THE OTHER WAY ROUND FROM THE MFA CANARY.
-	//
-	// MFA's canary needs the logger to have been called, because that test asserts a
-	// secret is ABSENT from records that exist. This one asserts something stronger:
-	// the recovery flows log NOTHING AT ALL on the happy path or the refusal path,
-	// because every token in them is a credential and this service does not log
-	// credentials. So "nothing was logged" is the expected answer here, and it is
-	// only an answer because the logger is proven to work — which is what the
-	// forced failure below is for. Without it, a logger wired to io.Discard would
-	// make this test pass forever.
 	silent := logs.rendered()
 	if strings.TrimSpace(silent) != "" {
 		t.Errorf("the recovery flows logged something, and nothing on this surface should:\n%s", silent)
 	}
 
-	// The forced failure, which is the request that DOES log: a store error is the
-	// one place a token is most likely to leak, because the error string carries a
-	// driver message with a host and a query fragment in it.
-	// ON THE OWNER'S POOL: a DROP is an ownership privilege, and `identity_app` — the
-	// role the request under test runs as — must not have it, so the harness gives
-	// this one statement a second credential rather than a wider grant.
 	if _, err := owner.Exec(t.Context(), `DROP TABLE recovery_tokens`); err != nil {
 		t.Fatalf("dropping recovery_tokens: %v", err)
 	}
@@ -819,18 +646,6 @@ func TestNoRecoveryTokenReachesTheLogs(t *testing.T) {
 			"the logger is not proving it works")
 	}
 
-	//
-	// IT SEARCHES FOR THE VALUE AND FOR ITS DIGEST, and the second half is not
-	// redundant: a digest in an operator's log is an index key, and this repository
-	// treats "the raw credential is nowhere in a log" as a property worth asserting
-	// separately from "the lookup key is nowhere in a log".
-	//
-	// IT DELIBERATELY DOES NOT SEARCH FOR THE WORDS "token" and "password", which the
-	// MFA canary does. A store-failure message on this surface legitimately names
-	// the table it failed on — `recovery: resolving a password_reset token: … ERROR:
-	// relation "recovery_tokens" does not exist` — and a vocabulary check would have
-	// forced that honest error message to be reworded so that a test could pass.
-	// What has to be absent is a VALUE.
 	for _, token := range []string{resetToken, changeToken} {
 		for _, form := range []string{token, sessions.Digest(token), sessions.Digest(token)[:16]} {
 			if strings.Contains(rendered, form) {

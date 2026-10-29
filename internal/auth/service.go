@@ -1,15 +1,3 @@
-// Package auth is the identity use cases: register, log in, log out, and resolve
-// a token to the user it belongs to.
-//
-// It sits between the HTTP layer and the three aggregates that own the data
-// (users, sessions, outbox) because the interesting part of authentication is
-// not any one of them — it is the ordering, and the transactions. Checking the
-// lock before the password, counting a failure even though the login is refused,
-// and writing a session and its clearing of the failure counter together are all
-// properties of the use case, not of a handler and not of a table.
-//
-// Nothing here knows about HTTP. The handlers translate the errors below into the
-// anywaye error envelope (core: docs/openapi-conventions.md).
 package auth
 
 import (
@@ -31,20 +19,9 @@ import (
 	"github.com/anywaye/identity/internal/users"
 )
 
-// Errors the HTTP layer maps onto status codes.
-//
-// The two credential errors are the important ones. They are distinct values so
-// that the code says what happened, but ErrInvalidCredentials is deliberately the
-// *same* value for "no such account" and "wrong password", and its message is
-// deliberately identical in both cases. Anything that distinguishes them — a
-// different status, a different detail string, a different response time — is an
-// account-enumeration oracle.
 var (
-	// ErrInvalidCredentials is a refused login. The caller cannot tell why.
 	ErrInvalidCredentials = errors.New("invalid email or password")
 
-	// ErrUnauthenticated is a request with no usable credential: no token, an
-	// unknown one, an expired one, or a revoked one. One value for all four.
 	ErrUnauthenticated = errors.New("authentication required")
 )
 
@@ -83,31 +60,11 @@ type UserStore interface {
 	ByID(ctx context.Context, q db.Querier, id id.UUID) (users.User, error)
 	RecordFailedLogin(ctx context.Context, q db.Querier, userID id.UUID, attempts int, lockedUntil *time.Time) error
 	ClearFailures(ctx context.Context, q db.Querier, userID id.UUID) error
-	// Disable and Enable are the concept's two directions and they are here because
-	// Disable has to do more than write a column — see Service.Disable, which is the
-	// only thing in this repository that should call them.
 	Disable(ctx context.Context, q db.Querier, userID id.UUID, at time.Time) error
 	Enable(ctx context.Context, q db.Querier, userID id.UUID) error
-	// UpdateName is here because PATCH /v1/me is a session surface and this is the
-	// package that owns the session's user — the handler resolves the caller
-	// through Authenticate and then writes the one column the profile screen
-	// owns, and a second path to the table would be a second thing to keep in
-	// step with the first.
 	UpdateName(ctx context.Context, q db.Querier, userID id.UUID, name *string) error
-	// UpdateTheme is here for the reason UpdateName is: it is the second column
-	// the profile screen owns, and the same boundary applies.
 	UpdateTheme(ctx context.Context, q db.Querier, userID id.UUID, theme *string) error
-	// Search is the staff directory's read over the users table: a bounded
-	// substring match on email and display name returning the minimal
-	// projection, and nothing a reader could mistake for a credential. It is on
-	// this interface because this package owns the session's user and the staff
-	// surface resolves its callers through it — a second path to the table
-	// would be a second thing to keep in step with the first.
 	Search(ctx context.Context, q db.Querier, query string, limit int) ([]users.DirectoryEntry, error)
-	// Counts is the staff directory's aggregate counts over the users table.
-	// It is on this interface for the reason Search is: this package owns the
-	// session's user and the staff surface resolves its callers through it, so
-	// a second path to the table would be a second thing to keep in step.
 	Counts(ctx context.Context, q db.Querier) (users.UserCounts, error)
 }
 
@@ -117,21 +74,7 @@ type SessionStore interface {
 	Create(ctx context.Context, q db.Querier, n sessions.NewSession) (sessions.Session, error)
 	ByToken(ctx context.Context, q db.Querier, token string, now time.Time) (sessions.Session, error)
 	Revoke(ctx context.Context, q db.Querier, sessionID id.UUID) error
-	// RevokeAllForUser ends every session a user holds. It is on this interface
-	// because a disable is not a column write: see Service.Disable.
 	RevokeAllForUser(ctx context.Context, q db.Querier, userID id.UUID) error
-	// ListLiveForUser and RevokeOneForUser are the two halves of "sign out of one
-	// of these", and they are BOTH on this interface rather than being reached for
-	// through a store the handlers hold separately. The reason is that the user id
-	// they are given comes from the presented credential, and a use case is the
-	// only place in this service where "who is asking" is a fact rather than a
-	// parameter — see Service.ListSessions and Service.RevokeSession.
-	//
-	// A hypothetical `*sessions.Store` on the HTTP layer would work and be wrong:
-	// it would hand every handler a query that takes a user id, and the day one of
-	// them read that id from a path parameter instead of from the session the
-	// tenant boundary would be a comment. Here it is a parameter of a method on a
-	// service that resolved the caller first.
 	ListLiveForUser(ctx context.Context, q db.Querier, userID id.UUID, now time.Time) ([]sessions.Session, error)
 	RevokeOneForUser(ctx context.Context, q db.Querier, userID, sessionID id.UUID) (bool, error)
 }
@@ -264,9 +207,7 @@ type EventAppender interface {
 // show up as a user with an empty account list rather than as a startup error —
 // which is the worse of the two by a long way.
 type PersonalAccountProvisioner interface {
-	// Provision creates the personal account for a user.
 	Provision(ctx context.Context, q db.Querier, userID id.UUID, email string) (accounts.Account, error)
-	// AddOwner makes that user the account's owner, and announces the account.
 	AddOwner(ctx context.Context, q db.Querier, accountID, userID id.UUID) (accounts.Membership, error)
 }
 
@@ -284,12 +225,6 @@ type Service struct {
 	hasher     *users.Hasher
 	clock      clock.Clock
 	sessionTTL time.Duration
-	// requireEmailVerification gates sign-in on a proved address, and it is
-	// OFF BY DEFAULT. See Config.RequireEmailVerification in internal/config
-	// for the whole of it: the default preserves parity with the reference
-	// this fleet matches (Jumpstart Pro does not use Devise's
-	// :confirmable), and the flag exists so a deployment that wants
-	// confirmation-gated sign-in can turn it on.
 	requireEmailVerification bool
 }
 
@@ -344,12 +279,6 @@ func NewService(
 	hasher *users.Hasher,
 	clk clock.Clock,
 	sessionTTL time.Duration,
-	// requireEmailVerification gates sign-in on a proved address. It is a
-	// parameter rather than a setter because it is a deployment decision made
-	// once at boot, and a setter would make it a fact that could be changed
-	// after the service is built — which is the one thing a security flag
-	// must never be. The default is false (parity); see
-	// Config.RequireEmailVerification in internal/config.
 	requireEmailVerification bool,
 ) *Service {
 	if sessionTTL <= 0 {
@@ -404,10 +333,6 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (RegisteredUse
 		return RegisteredUser{}, err
 	}
 
-	// Hashed before the transaction opens. Validation has already passed, so this
-	// cannot fail for a request-shaped reason, and doing it outside keeps a ~100ms
-	// memory-hard operation from holding a database connection and a transaction
-	// open.
 	digest, err := s.hasher.Hash(in.Password)
 	if err != nil {
 		return RegisteredUser{}, fmt.Errorf("hashing the password: %w", err)
@@ -422,16 +347,10 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (RegisteredUse
 			return err
 		}
 
-		// The tenancy comes before the events, because an event about an account
-		// that does not exist is exactly the drift the outbox is supposed to
-		// prevent. The user id is needed for both the slug and the ownership, so
-		// this is the first point at which it can happen at all.
 		if err := s.provisionTenancy(ctx, q, u); err != nil {
 			return err
 		}
 
-		// The event is about this user, so it is built after the insert: the
-		// subject is an id that now exists.
 		event, err := outbox.NewUserCreated(now, u.ID, u.Email)
 		if err != nil {
 			return err
@@ -450,40 +369,8 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (RegisteredUse
 	return RegisteredUser{ID: created.ID, Email: created.Email}, nil
 }
 
-// provisionTenancy creates the personal account and makes the user its owner,
-// inside the registration's transaction.
-//
-// The two steps are separate rather than one call because the packet's ordering
-// is the point: the account's slug is derived from the user id, and the ownership
-// is what makes the account administrable. A service that created the membership
-// first would have no account to attach it to.
-//
-// # THE ONE REQUEST WITH NO ACCOUNT THAT STILL WRITES ACCOUNT-SCOPED ROWS
-//
-// BETWEEN Provision AND AddOwner IS WHERE begin_account HAPPENS, and it is here
-// rather than in the transaction runner because a registration has no account to
-// resolve at all: the caller is anonymous, there is no session, and the account
-// does not exist until Provision returns it. So the identity cannot come from the
-// request — it comes from the row that was just created.
-//
-// WITHOUT IT the owner membership INSERT meets
-// `with check (account_id = (select anywaye.current_account_id()))` with a NULL
-// identity, NULL is not true, and Postgres refuses the write with SQLSTATE 42501.
-// That is the substrate working: it is refusing an account-scoped write that
-// claims no account. The symptom it produced was `POST /v1/users` answering 500,
-// which is how this branch shipped red.
-//
-// The alternative — leaving it NULL and letting the INSERT fail — is not a
-// choice, it is the bug. The alternative of writing the membership BEFORE the
-// account exists would have no account_id to write, which is the ordering
-// constraint the paragraph above already explains.
 func (s *Service) provisionTenancy(ctx context.Context, q db.Querier, u users.User) error {
 	if s.tenancy == nil {
-		// NewService requires a provisioner, so this is a wiring bug rather than a
-		// supported configuration. It is said out loud rather than defaulted,
-		// because the alternative — registering a user into an account-less void —
-		// is a failure that would not surface until somebody complained that the
-		// product was empty.
 		return errors.New("registering: no personal account provisioner is configured")
 	}
 
@@ -492,9 +379,6 @@ func (s *Service) provisionTenancy(ctx context.Context, q db.Querier, u users.Us
 		return fmt.Errorf("creating the personal account: %w", err)
 	}
 
-	// Before AddOwner and on the SAME transaction, because begin_account is
-	// transaction-local and the membership write is the account-scoped statement
-	// that needs it. On a different transaction it would have expired.
 	if err := tenancy.BeginAccount(ctx, q, account.ID); err != nil {
 		return fmt.Errorf("beginning as the new personal account: %w", err)
 	}
@@ -509,8 +393,6 @@ func (s *Service) provisionTenancy(ctx context.Context, q db.Querier, u users.Us
 type LoginInput struct {
 	Email    string
 	Password string
-	// UserAgent and IP are recorded against the session for the incident trail.
-	// Neither is trusted for any decision.
 	UserAgent string
 	IP        *netip.Addr
 }
@@ -531,28 +413,15 @@ type LoginInput struct {
 // TestAResultThatRequiresASecondFactorCarriesNoSessionToken is the assertion.
 type LoginResult struct {
 	User RegisteredUser
-	// Token and ExpiresAt are the SESSION's, and both are zero unless
-	// MFARequired is false.
 	Token     string
 	ExpiresAt time.Time
 
-	// MFARequired says the password was correct and this account has a second
-	// factor. No session exists yet, and ExpiresAt is the CHALLENGE's expiry
-	// rather than a session's, which is why it is repeated here rather than left
-	// confusing: a client that reads ExpiresAt without reading MFARequired is
-	// holding a challenge's deadline, and the only honest thing it can do with it
-	// is nothing until it has the second factor.
 	MFARequired bool
-	// Challenge is the login that is halfway through. nil whenever a session was
-	// minted.
 	Challenge *Challenge
 }
 
 // Challenge is a login waiting on its second factor.
 type Challenge struct {
-	// Token is presented once, at the end of the challenge, and is stored only as
-	// a digest. The same reasoning as an OIDC client secret: a secret this service
-	// can produce again is a secret this service is storing.
 	Token     string
 	ExpiresAt time.Time
 }
@@ -629,11 +498,6 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (LoginResult, error)
 		if !errors.Is(err, users.ErrNotFound) {
 			return LoginResult{}, fmt.Errorf("looking up a user: %w", err)
 		}
-		// No such account. Do the same memory-hard work a real account would cost
-		// and return the same error, so neither the response nor its timing says
-		// whether this address is registered. Nothing is written: there is no row
-		// to count against, and creating one would let anyone lock any address out
-		// simply by guessing at it.
 		s.hasher.VerifyDummy(in.Password)
 		return LoginResult{}, ErrInvalidCredentials
 	}
@@ -644,21 +508,13 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (LoginResult, error)
 	}
 
 	if !s.hasher.Verify(user.PasswordDigest, in.Password) {
-		// The failure is counted even though the login is refused, and the count
-		// is persisted. A lockout that is not written down is not a lockout.
 		next := lock.Failed(now)
 		if err := s.recordFailure(ctx, user.ID, next); err != nil {
-			// Surfaced, not reported as invalid credentials: a store failure that
-			// looks like a wrong password stops the counter climbing, and the
-			// brute-force protection silently stops existing.
 			return LoginResult{}, fmt.Errorf("recording a failed login: %w", err)
 		}
 		return LoginResult{}, ErrInvalidCredentials
 	}
 
-	// Step 6. The password was right, so this is a refusal about the ACCOUNT and
-	// not about the credential — which is why it is its own error and why saying
-	// so is safe here rather than only in the comment above.
 	if user.IsDisabled() {
 		return LoginResult{}, &DisabledError{}
 	}
@@ -666,51 +522,11 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (LoginResult, error)
 	return s.startLogin(ctx, user, in, now)
 }
 
-// startLogin is the tail of Login: the second-factor decision, and then whichever
-// of a challenge or a session the account's own state calls for.
-//
-// It is a function rather than the last six lines of Login because a social callback
-// has to ask the SAME question at the same point — internal/auth/social.go calls it
-// after it has resolved which local user a provider identity belongs to — and a
-// caller that had to reimplement it would be reimplementing "does this account have
-// a second factor", which is the one line that must never be optional. Naming it
-// also means there is exactly one place in this package where a session is minted
-// without a password having been verified, and it is this one.
-//
-// # THE DISABLED CHECK IS HERE AND NOT IN Login, and that placement IS THE POINT
-//
-// Login refuses a disabled account too, one line earlier, and it would be redundant
-// if this were the only caller. It is not the only caller: `internal/auth/social.go`
-// resolves a provider identity to a local user and comes straight here, with no
-// password anywhere in the request.
-//
-// So a check written in Login would leave the social door open, and the way that
-// defect stays invisible is that a social sign-in for a disabled account WORKS —
-// it mints a session, tests are green, and nothing in the logs says the account
-// was turned off. Putting the gate here means there is one line that both doors
-// pass through, which is what makes the second door's coverage a fact about the
-// code rather than about whether somebody remembered.
-//
-// The social path's answer is safe on the same terms as the password one and for a
-// stronger reason: the caller proved control of a provider account whose address
-// this service already believes (internal/oauth refuses an unverified one), so
-// they already knew the local account existed.
 func (s *Service) startLogin(ctx context.Context, user users.User, in LoginInput, now time.Time) (LoginResult, error) {
 	if user.IsDisabled() {
 		return LoginResult{}, &DisabledError{}
 	}
 
-	// THE VERIFICATION GATE, anchored here and not in Login for the same reason
-	// the disabled check is: a social callback arrives here with no password, and
-	// a check in Login would leave that door open. The caller has already proved
-	// they hold the credential (or control of a provider account whose address
-	// this service already believes), so the refusal is about the ACCOUNT and
-	// not about the credential — which is why it is its own error and why saying
-	// so is safe here rather than only in the comment above.
-	//
-	// It is OFF BY DEFAULT, and the default is parity: the reference this fleet
-	// matches does not gate sign-in on verification. See
-	// Config.RequireEmailVerification in internal/config.
 	if s.requireEmailVerification && !user.IsVerified() {
 		return LoginResult{}, &EmailNotVerifiedError{}
 	}
@@ -726,8 +542,6 @@ func (s *Service) startLogin(ctx context.Context, user users.User, in LoginInput
 	return s.startSession(ctx, user, in, now)
 }
 
-// requiresSecondFactor asks internal/mfa whether this account has a live second
-// factor, and refuses to guess.
 func (s *Service) requiresSecondFactor(ctx context.Context, userID id.UUID) (bool, error) {
 	if s.mfa == nil {
 		return false, ErrNoSecondFactor
@@ -739,11 +553,6 @@ func (s *Service) requiresSecondFactor(ctx context.Context, userID id.UUID) (boo
 	return required, nil
 }
 
-// startChallenge records a correct password with no session behind it.
-//
-// It is a separate function from startSession rather than a branch inside one,
-// because the two write different things and a merge would make "which of these
-// ran" a question about a boolean.
 func (s *Service) startChallenge(ctx context.Context, user users.User, in LoginInput, now time.Time) (LoginResult, error) {
 	challenge, err := s.mfa.CreateChallenge(ctx, mfa.CreateChallengeInput{
 		UserID:    user.ID,
@@ -754,14 +563,6 @@ func (s *Service) startChallenge(ctx context.Context, user users.User, in LoginI
 		return LoginResult{}, fmt.Errorf("creating a second-factor challenge: %w", err)
 	}
 
-	// No session. No token. Nothing that authenticates anything.
-	//
-	// ExpiresAt IS SET, to the CHALLENGE's expiry. It is the same field a session
-	// uses, so leaving it zero would be a second, subtler version of the same bug —
-	// a client reading `expires_at` would see the epoch and have to special-case it.
-	// Repeating the challenge's deadline here means a client that reads only
-	// ExpiresAt is holding a value it can use, and the value it can use is the
-	// honest one: when this login has to be finished.
 	return LoginResult{
 		User:        RegisteredUser{ID: user.ID, Email: user.Email},
 		ExpiresAt:   challenge.ExpiresAt,
@@ -772,12 +573,7 @@ func (s *Service) startChallenge(ctx context.Context, user users.User, in LoginI
 
 // CompleteSecondFactorInput is a challenge token and the code that answers it.
 type CompleteSecondFactorInput struct {
-	// ChallengeToken is the token from the Login that returned MFARequired.
 	ChallengeToken string
-	// Code is a TOTP code or a recovery code. One field for both, because the
-	// consequence of being wrong is identical and two fields would invite a client
-	// to put a recovery code in the TOTP field and be told it was malformed rather
-	// than not accepted.
 	Code string
 }
 
@@ -824,9 +620,6 @@ func (s *Service) CompleteSecondFactor(ctx context.Context, in CompleteSecondFac
 
 	now := s.clock.Now()
 
-	// Outside the transaction, and deliberately: this writes the second factor's
-	// failure counter when the code is wrong, and a counter rolled back along with
-	// the refusal it provoked is not a counter.
 	claim, err := s.mfa.VerifyChallenge(ctx, in.ChallengeToken, in.Code, now)
 	if err != nil {
 		return LoginResult{}, err
@@ -839,10 +632,6 @@ func (s *Service) CompleteSecondFactor(ctx context.Context, in CompleteSecondFac
 	expiresAt := now.Add(s.sessionTTL)
 
 	err = s.uow.Do(ctx, func(ctx context.Context, q db.Querier) error {
-		// BEFORE the session, and the reason is the same as Login's: a refusal
-		// that minted a session first would have to be rolled back to be honest,
-		// and the two orders differ in exactly one respect — this one cannot leave
-		// a row behind even if a later statement in this transaction misbehaves.
 		user, err := s.users.ByID(ctx, q, claim.UserID())
 		if err != nil {
 			return err
@@ -851,11 +640,6 @@ func (s *Service) CompleteSecondFactor(ctx context.Context, in CompleteSecondFac
 			return &DisabledError{}
 		}
 
-		// The session is created first, for the reason startSession gives: if it
-		// fails the transaction rolls back and the challenge is still live, so the
-		// user can press "try again" rather than being told their login has
-		// expired. The order of the other two is not load-bearing — they are both
-		// accounting and the transaction covers all three.
 		if _, err := s.sessions.Create(ctx, q, sessions.NewSession{
 			UserID:      claim.UserID(),
 			TokenDigest: digest,
@@ -863,7 +647,6 @@ func (s *Service) CompleteSecondFactor(ctx context.Context, in CompleteSecondFac
 		}); err != nil {
 			return err
 		}
-		// Consumes the challenge and clears the second factor's failure run.
 		if err := s.mfa.Commit(ctx, q, claim, now); err != nil {
 			return err
 		}
@@ -885,7 +668,6 @@ func (s *Service) CompleteSecondFactor(ctx context.Context, in CompleteSecondFac
 	}, nil
 }
 
-// startSession mints the session and clears the failure run together.
 func (s *Service) startSession(ctx context.Context, user users.User, in LoginInput, now time.Time) (LoginResult, error) {
 	token, digest, err := sessions.NewToken()
 	if err != nil {
@@ -894,10 +676,6 @@ func (s *Service) startSession(ctx context.Context, user users.User, in LoginInp
 	expiresAt := now.Add(s.sessionTTL)
 
 	err = s.uow.Do(ctx, func(ctx context.Context, q db.Querier) error {
-		// The session is created first. If it fails, the transaction rolls back
-		// and the counter is untouched — which is the safe direction, because a
-		// reset with no session would hand an attacker five free attempts per
-		// attempt.
 		if _, err := s.sessions.Create(ctx, q, sessions.NewSession{
 			UserID:      user.ID,
 			TokenDigest: digest,
@@ -920,7 +698,6 @@ func (s *Service) startSession(ctx context.Context, user users.User, in LoginInp
 	}, nil
 }
 
-// recordFailure persists the new lockout state for an account.
 func (s *Service) recordFailure(ctx context.Context, userID id.UUID, next sessions.Lockout) error {
 	return s.users.RecordFailedLogin(ctx, s.read.Queryer(), userID, next.FailedAttempts, next.LockedUntil)
 }
@@ -1035,51 +812,23 @@ func (s *Service) recordFailure(ctx context.Context, userID id.UUID, next sessio
 // except for a token whose revocation failed, and that transaction rolled back
 // nothing at all rather than writing the column.
 func (s *Service) Disable(ctx context.Context, in DisableInput) error {
-	// BEFORE the transaction, not inside it. A wiring bug should not open a
-	// transaction and abort it, and — the reason this ordering is load-bearing
-	// rather than tidiness — a nil check that ran after the session DELETE would
-	// have ended every session the user holds and then reported failure, which is
-	// a signed-out user who is not disabled and cannot sign back in.
 	if s.access == nil {
 		return ErrNoAccessTokenRevoker
 	}
-	// The same ordering, for the same reason, about a different dependency. A nil
-	// auditor checked after the sweeps would have revoked every credential the user
-	// holds and then reported failure — which is the more damaging of the two,
-	// because the person is signed out everywhere and cannot sign back in, and the
-	// operator is told the disable did not happen so they do not know to look for
-	// it.
 	if s.auditor == nil {
 		return ErrNoUserAuditRecorder
 	}
 
 	return s.uow.Do(ctx, func(ctx context.Context, q db.Querier) error {
-		// First, as above.
 		if err := s.sessions.RevokeAllForUser(ctx, q, in.UserID); err != nil {
 			return fmt.Errorf("ending a disabled user's sessions: %w", err)
 		}
-		// Second: the credential that deleting a row cannot recall.
 		if err := s.access.RevokeAccessTokensForUser(ctx, q, in.UserID, in.At); err != nil {
 			return fmt.Errorf("ending a disabled user's access tokens: %w", err)
 		}
-		// Third, and only if both of the above held.
 		if err := s.users.Disable(ctx, q, in.UserID, in.At); err != nil {
 			return fmt.Errorf("marking the user disabled: %w", err)
 		}
-		// Last: the record of it, in the SAME transaction as the three writes above.
-		//
-		// This is the fourth statement rather than a fourth transaction, and that is
-		// the whole of the property. A disable that revokes without recording is the
-		// gap this closes; a disable that RECORDS without revoking is the same gap
-		// wearing a different hat — an audit trail claiming an event that did not
-		// happen is worse than no trail, because an investigator who finds the row
-		// stops looking. So the record is written by the transaction that does the
-		// work: there is no interleaving in which the revocations are visible and the
-		// record is not, and none in which the record is visible and the revocations
-		// are not.
-		//
-		// The action is named HERE rather than passed in, so there is no caller that
-		// can write a disable's record under another action's name.
 		if _, err := s.auditor.Append(ctx, q, useraudit.Entry{
 			UserID: in.UserID,
 			Action: useraudit.ActionUserDisabled,
@@ -1105,18 +854,10 @@ func (s *Service) Disable(ctx context.Context, in DisableInput) error {
 // cannot tell it from the subject, and the two are exactly the kind of uuid that gets
 // them the wrong way round.
 type DisableInput struct {
-	// UserID is the SUBJECT: the person being turned off.
 	UserID id.UUID
-	// ActorUserID and ActorKeyID are the caller — the operator's own user and the
-	// api key row. Both required, on useraudit.Actor's argument: this surface is
-	// machine-credential-only (D14), so every recorded event names a token.
 	ActorUserID id.UUID
 	ActorKeyID  id.UUID
-	// TraceID joins the audit row to the request's log line.
 	TraceID string
-	// At is the service's clock, used for the revocation stamps, the column and the
-	// audit row alike — one instant for the whole event, so the three cannot disagree
-	// about when it happened.
 	At time.Time
 }
 
@@ -1149,10 +890,6 @@ type DisableInput struct {
 // what the sessions already honor — so the only thing that can fail here is the two
 // writes, and ErrNoUserAuditRecorder is the same refusal Disable makes.
 func (s *Service) Enable(ctx context.Context, in EnableInput) error {
-	// Same ordering as Disable and the same reason: after the column write, a nil
-	// here would have lifted the disable and then reported failure, so the operator
-	// believes the person is still disabled while the service has let them straight
-	// back in.
 	if s.auditor == nil {
 		return ErrNoUserAuditRecorder
 	}
@@ -1346,22 +1083,8 @@ type Session struct {
 	ID        id.UUID
 	ExpiresAt time.Time
 	CreatedAt time.Time
-	// UserAgent is the caller's own header as recorded at sign-in. It is shown
-	// because it is the only thing in the row a person recognizes — "Chrome on my
-	// laptop" — and it is shown raw rather than parsed because a device label this
-	// service invents is a label that can be wrong, and a UI that trusts a
-	// server-side label shows somebody the wrong laptop. The caller parses it.
-	//
-	// It is also caller-supplied text: anything can be in a User-Agent header, so
-	// a front end rendering it has the same obligation as every other untrusted
-	// string in this service (see the login-redirect argument in AGENTS.md).
 	UserAgent string
-	// IP is recorded, never trusted, and shown for the same reason. It is behind a
-	// proxy in most deployments, so it is frequently the proxy's address — which
-	// is a reason to present it as evidence rather than as a location.
 	IP *netip.Addr
-	// Current marks the session the request itself authenticated with, so a
-	// client can render "this device" without comparing a token it does not have.
 	Current bool
 }
 
@@ -1471,7 +1194,6 @@ func (s *Service) RevokeSession(ctx context.Context, token string, sessionID id.
 	return nil
 }
 
-// validateRegistration checks the request before anything is hashed or written.
 func validateRegistration(email, password string) error {
 	if err := users.ValidateEmail(email); err != nil {
 		return err
@@ -1479,11 +1201,6 @@ func validateRegistration(email, password string) error {
 	return users.ValidatePassword(password)
 }
 
-// validateLogin checks the shape of a login without requiring a strong password:
-// an existing account may predate any rule, and a login that failed validation
-// because the password is short would be a way to probe which passwords are in
-// use. The length bounds still apply, because they bound the work argon2id is
-// asked to do.
 func validateLogin(email, password string) error {
 	if err := users.ValidateEmail(email); err != nil {
 		return err

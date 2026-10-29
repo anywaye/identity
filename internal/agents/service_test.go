@@ -17,13 +17,6 @@ import (
 	"github.com/anywaye/identity/internal/tenancy"
 )
 
-// The claim use case, over a real Postgres in a private schema.
-//
-// These run the SQL rather than a double because the properties that matter are
-// properties of the transaction: that the claim and the event recording who did it
-// are one fact, that the account boundary is set on the transaction the use case
-// opens rather than somewhere a caller could forget, and that a failing append
-// takes the claim with it.
 
 var serviceInstant = time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
 
@@ -63,7 +56,6 @@ func (f *serviceFixture) seed(t *testing.T) {
 	}
 }
 
-// register writes an unclaimed agent and returns its claim link's plaintext.
 func (f *serviceFixture) register(t *testing.T, name string) string {
 	t.Helper()
 
@@ -83,8 +75,6 @@ func (f *serviceFixture) register(t *testing.T, name string) string {
 	return link
 }
 
-// claimCtx is the request context the route hands over: the account on it, the way
-// requireAccountRole leaves it.
 func (f *serviceFixture) claimCtx() context.Context {
 	return tenancy.WithAccount(context.Background(), f.account)
 }
@@ -111,9 +101,6 @@ func TestAClaimBindsTheAgentAndRecordsWhoDidIt(t *testing.T) {
 		t.Errorf("status = %q, want %q", claimed.Agent.Status, StatusClaimed)
 	}
 
-	// The event rows, written by the same transaction. TWO since W2-P2: the
-	// claim, and the mint it caused — see TestAClaimMintsTheCredentialItPresents
-	// for why both are the human's actor.
 	events, err := NewStore(f.pool).ListEvents(context.Background(), f.pool, claimed.Agent.ID)
 	if err != nil {
 		t.Fatalf("reading the agent's events: %v", err)
@@ -122,12 +109,6 @@ func TestAClaimBindsTheAgentAndRecordsWhoDidIt(t *testing.T) {
 		t.Fatalf("the agent has %d events, want 2 (the claim and the mint it caused)", len(events))
 	}
 
-	// FOUND BY ACTION AND NOT BY POSITION, and that is a bug fix rather than a
-	// style choice. `ListEvents` orders by `(occurred_at DESC, id DESC)`, the
-	// claim's two events share one instant, and the id is `gen_random_uuid()` —
-	// so `events[0]` was the claim about half the time and the mint the rest.
-	// `go test -race` caught it, which is not a coincidence: the slower run
-	// changes the scheduling and therefore which uuid the connection pulls.
 	var claim *EventRecord
 	for i := range events {
 		if events[i].Action == ActionClaimed {
@@ -148,19 +129,6 @@ func TestAClaimBindsTheAgentAndRecordsWhoDidIt(t *testing.T) {
 	}
 }
 
-// TestAClaimMintsTheCredentialItPresents is the W2-P2 property: the claim hands
-// back a credential, and it is a credential that resolves.
-//
-// THREE ASSERTIONS, and the third is the one that keeps the first two honest:
-// the minted value resolves through Authenticate (so it is a real row and not a
-// string that went nowhere), the row holds only a digest (so nothing downstream
-// can print it again), and the mint's event names the HUMAN rather than the
-// credential it created.
-//
-// THAT LAST ONE IS A SECURITY STATEMENT AND NOT BOOKKEEPING. Recording the new
-// token as its own actor would say the agent issued itself a credential by being
-// claimed, which is the story D4 exists to refuse: an agent acting alone gets
-// nothing, and the only reason this token exists is that a human clicked Approve.
 func TestAClaimMintsTheCredentialItPresents(t *testing.T) {
 	f := newServiceFixture(t)
 
@@ -186,8 +154,6 @@ func TestAClaimMintsTheCredentialItPresents(t *testing.T) {
 		t.Errorf("the credential belongs to %v, want the agent just claimed %v", claimed.Token.AgentID, claimed.Agent.ID)
 	}
 
-	// It resolves: the plaintext is a live bearer credential for the claimed
-	// principal, and it is the value the claim response renders.
 	owner, err := f.svc.Authenticate(context.Background(), claimed.TokenPlaintext, serviceInstant)
 	if err != nil {
 		t.Fatalf("the claim-minted credential does not resolve: %v", err)
@@ -199,8 +165,6 @@ func TestAClaimMintsTheCredentialItPresents(t *testing.T) {
 		t.Errorf("a credential minted by a claim is refused as unclaimed: %v", err)
 	}
 
-	// Only the digest is stored. Reading the row back finds no column that could
-	// hold the plaintext, so there is nothing for a careless %+v to print.
 	stored, err := NewStore(f.pool).ByTokenID(context.Background(), f.pool, claimed.Token.ID)
 	if err != nil {
 		t.Fatalf("reading the minted credential back: %v", err)
@@ -212,7 +176,6 @@ func TestAClaimMintsTheCredentialItPresents(t *testing.T) {
 		t.Error("the digest column carries the plaintext, which is impossible by construction and would be a catastrophe")
 	}
 
-	// And the mint's actor is the human.
 	events, err := NewStore(f.pool).ListEvents(context.Background(), f.pool, claimed.Agent.ID)
 	if err != nil {
 		t.Fatalf("reading the agent's events: %v", err)
@@ -234,17 +197,6 @@ func TestAClaimMintsTheCredentialItPresents(t *testing.T) {
 	}
 }
 
-// TestTheClaimIsOneTransactionWithItsRecord proves the three statements are one
-// fact by breaking the last one.
-//
-// IT USES THE STORE DIRECTLY INSIDE A TxRunner, and that is not a shortcut around
-// the use case: the property under test is a property of the TRANSACTION, and the
-// use case is the thing that opens it. Adding a `badAction` field to `Service` so a
-// test could ask the use case to write an unusable event would put a test seam in
-// production code, which is the thing AGENTS.md's "no globals, no init-time state"
-// rule exists to refuse. The transaction's shape is what has to hold, and it is
-// exercised here with the same three calls in the same order the use case makes
-// them.
 func TestTheClaimIsOneTransactionWithItsRecord(t *testing.T) {
 	f := newServiceFixture(t)
 
@@ -263,10 +215,6 @@ func TestTheClaimIsOneTransactionWithItsRecord(t *testing.T) {
 		if _, err := store.Claim(ctx, tx, agent.ID, digest, f.account, serviceInstant); err != nil {
 			return err
 		}
-		// An action this build does not implement. It is refused by
-		// AppendEvent's own validation rather than by the database, which is
-		// enough to roll the claim back — and the direction is the one that
-		// matters: a claim that survived would be a binding nobody recorded.
 		if _, appendErr := store.AppendEvent(ctx, tx, Event{
 			AgentID: agent.ID, Action: Action("agent.not_a_thing"),
 			UserID: f.user, TraceID: "trace-2", OccurredAt: serviceInstant,
@@ -279,7 +227,6 @@ func TestTheClaimIsOneTransactionWithItsRecord(t *testing.T) {
 		t.Fatal("the transaction committed with an event that could not be written")
 	}
 
-	// And the agent is still unclaimed.
 	listed, err := store.ListForAccount(context.Background(), f.pool, f.account)
 	if err != nil {
 		t.Fatalf("listing: %v", err)
@@ -288,34 +235,28 @@ func TestTheClaimIsOneTransactionWithItsRecord(t *testing.T) {
 		t.Errorf("the claim survived a rolled-back transaction, and %d agent(s) are now bound", len(listed))
 	}
 
-	// The link still resolves, so a refused claim costs the caller a retry rather
-	// than a registration.
 	if _, err := store.ByClaimDigest(context.Background(), f.pool, digest, serviceInstant); err != nil {
 		t.Errorf("the claim link no longer resolves after a rolled-back claim: %v", err)
 	}
 }
 
-// TestTheClaimRefusesALinkItCannotResolve is the 404 the surface is built on.
 func TestTheClaimRefusesALinkItCannotResolve(t *testing.T) {
 	f := newServiceFixture(t)
 
 	link := f.register(t, "Noel")
 
-	// A wrong token.
 	if _, err := f.svc.Claim(f.claimCtx(), ClaimInput{
 		Token: "anywaye_" + link[7:] + "x", Account: f.account, User: f.user, TraceID: "t", Now: serviceInstant,
 	}); !errors.Is(err, ErrNotFound) {
 		t.Errorf("a wrong token returned %v, want ErrNotFound", err)
 	}
 
-	// An empty one.
 	if _, err := f.svc.Claim(f.claimCtx(), ClaimInput{
 		Token: "", Account: f.account, User: f.user, TraceID: "t", Now: serviceInstant,
 	}); !errors.Is(err, ErrNotFound) {
 		t.Errorf("an empty token returned %v, want ErrNotFound", err)
 	}
 
-	// A claim that succeeds, then the same link again — the 404 is the same value.
 	if _, err := f.svc.Claim(f.claimCtx(), ClaimInput{
 		Token: link, Account: f.account, User: f.user, TraceID: "t", Now: serviceInstant,
 	}); err != nil {
@@ -328,8 +269,6 @@ func TestTheClaimRefusesALinkItCannotResolve(t *testing.T) {
 	}
 }
 
-// TestAClaimNeedsACaller is the fail-closed direction: a use case that writes a
-// row naming nobody is a use case that has been reached by a route that forgot.
 func TestAClaimNeedsACaller(t *testing.T) {
 	f := newServiceFixture(t)
 	link := f.register(t, "Noel")
@@ -346,8 +285,6 @@ func TestAClaimNeedsACaller(t *testing.T) {
 	}
 }
 
-// TestTheDatabaseTierActuallyRan fails rather than skips when TEST_DATABASE_URL is
-// unset.
 func TestTheDatabaseTierActuallyRanForTheService(t *testing.T) {
 	if os.Getenv(dbtest.EnvVar) == "" {
 		t.Fatalf("%s is not set, so every test in this file skipped. A green run without it verifies nothing.",

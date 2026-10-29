@@ -9,9 +9,6 @@ import (
 	"github.com/anywaye/identity/internal/platform/id"
 )
 
-// Every assertion here is traceable to a rule in
-// anywaye/core/schemas/event-envelope.schema.json. That file is the contract; this
-// test is the service's half of keeping to it.
 
 func TestEnvelopeValidatesAgainstCoreSchema(t *testing.T) {
 	t.Parallel()
@@ -34,7 +31,6 @@ func TestEnvelopeValidatesAgainstCoreSchema(t *testing.T) {
 			},
 		},
 		{
-			// core: required is ["specversion","id","type","source","time","data"]
 			name: "a wrong specversion",
 			give: Envelope{SpecVersion: "0.9", ID: id.MustNew(), Type: EventUserCreated, Source: SourceIdentity,
 				Subject: "usr_1", Time: time.Now().UTC(), Data: json.RawMessage(`{}`)},
@@ -53,7 +49,6 @@ func TestEnvelopeValidatesAgainstCoreSchema(t *testing.T) {
 			wantErr: "id",
 		},
 		{
-			// core $defs.eventType: ^[a-z][a-z0-9]*(_[a-z0-9]+)*(\.…){1,2}$
 			name: "an upper-case segment",
 			give: Envelope{SpecVersion: SpecVersion, ID: id.MustNew(), Type: "identity.User.created", Source: SourceIdentity,
 				Subject: "usr_1", Time: time.Now().UTC(), Data: json.RawMessage(`{}`)},
@@ -66,21 +61,18 @@ func TestEnvelopeValidatesAgainstCoreSchema(t *testing.T) {
 			wantErr: "type",
 		},
 		{
-			// core's grammar allows two or three segments. One is not a type.
 			name: "a single segment",
 			give: Envelope{SpecVersion: SpecVersion, ID: id.MustNew(), Type: "created", Source: SourceIdentity,
 				Subject: "usr_1", Time: time.Now().UTC(), Data: json.RawMessage(`{}`)},
 			wantErr: "type",
 		},
 		{
-			// Four segments: core's invalid example asserts exactly this.
 			name: "four segments",
 			give: Envelope{SpecVersion: SpecVersion, ID: id.MustNew(), Type: "a.b.c.d", Source: SourceIdentity,
 				Subject: "usr_1", Time: time.Now().UTC(), Data: json.RawMessage(`{}`)},
 			wantErr: "type",
 		},
 		{
-			// core $defs.serviceName: ^[a-z][a-z0-9]*(-[a-z0-9]+)*$
 			name: "an upper-case source",
 			give: Envelope{SpecVersion: SpecVersion, ID: id.MustNew(), Type: EventUserCreated, Source: "Identity",
 				Subject: "usr_1", Time: time.Now().UTC(), Data: json.RawMessage(`{}`)},
@@ -93,18 +85,11 @@ func TestEnvelopeValidatesAgainstCoreSchema(t *testing.T) {
 			wantErr: "source",
 		},
 		{
-			// core's `required` is ["specversion","id","type","source","time","data"]
-			// — subject is not on it, and the schema describes a literal
-			// `platform` subject for events with no single entity. An empty
-			// subject serializes as absent (omitempty), which core accepts.
-			// TestEnvelopeOmitsAnEmptySubject pins that it is really absent and
-			// not sent as "".
 			name: "an empty subject means no single entity",
 			give: Envelope{SpecVersion: SpecVersion, ID: id.MustNew(), Type: EventUserCreated, Source: SourceIdentity,
 				Subject: "", Time: time.Now().UTC(), Data: json.RawMessage(`{}`)},
 		},
 		{
-			// The literal escape hatch core's docs describe (D2).
 			name: "the platform subject",
 			give: Envelope{SpecVersion: SpecVersion, ID: id.MustNew(), Type: EventUserCreated, Source: SourceIdentity,
 				Subject: "platform", Time: time.Now().UTC(), Data: json.RawMessage(`{}`)},
@@ -116,7 +101,6 @@ func TestEnvelopeValidatesAgainstCoreSchema(t *testing.T) {
 			wantErr: "subject",
 		},
 		{
-			// core subject pattern: ^[A-Za-z0-9][A-Za-z0-9._:@/-]*$
 			name: "a subject containing a space",
 			give: Envelope{SpecVersion: SpecVersion, ID: id.MustNew(), Type: EventUserCreated, Source: SourceIdentity,
 				Subject: "usr 1", Time: time.Now().UTC(), Data: json.RawMessage(`{}`)},
@@ -135,8 +119,6 @@ func TestEnvelopeValidatesAgainstCoreSchema(t *testing.T) {
 			wantErr: "data",
 		},
 		{
-			// core's data is opaque and may be any JSON value including null —
-			// but the key must be present, so a missing one is not a null one.
 			name: "data that is not JSON at all",
 			give: Envelope{SpecVersion: SpecVersion, ID: id.MustNew(), Type: EventUserCreated, Source: SourceIdentity,
 				Subject: "usr_1", Time: time.Now().UTC(), Data: json.RawMessage(`{broken`)},
@@ -189,8 +171,6 @@ func TestEnvelopeMarshalsToExactlyTheCoreAttributeSet(t *testing.T) {
 		t.Fatalf("Unmarshal: %v", err)
 	}
 
-	// core sets additionalProperties:false. An extra attribute is rejected by
-	// every consumer, so the Go struct must not emit one.
 	want := map[string]bool{
 		"specversion": true, "id": true, "type": true,
 		"source": true, "subject": true, "time": true, "data": true,
@@ -208,12 +188,9 @@ func TestEnvelopeMarshalsToExactlyTheCoreAttributeSet(t *testing.T) {
 	if got := decoded["specversion"]; got != "1.0" {
 		t.Errorf("specversion = %v, want \"1.0\"", got)
 	}
-	// RFC3339, UTC, second-or-finer precision — core declares format: date-time.
 	if got := decoded["time"]; got != "2026-09-30T04:19:00Z" {
 		t.Errorf("time = %v, want 2026-09-30T04:19:00Z", got)
 	}
-	// data is opaque to core, so it must round-trip as the object it was, not as
-	// a re-encoded string.
 	data, ok := decoded["data"].(map[string]any)
 	if !ok {
 		t.Fatalf("data = %#v, want a JSON object", decoded["data"])
@@ -223,10 +200,6 @@ func TestEnvelopeMarshalsToExactlyTheCoreAttributeSet(t *testing.T) {
 	}
 }
 
-// The subject is optional in core's `required` list but the catalog and
-// docs/event-naming.md (D2) treat it as required for entity events. The
-// registration event has a user, so it always has one; the field is omitted from
-// the wire only when empty, because core rejects an empty string.
 func TestEnvelopeOmitsAnEmptySubject(t *testing.T) {
 	t.Parallel()
 
@@ -264,7 +237,6 @@ func TestUserCreatedEnvelope(t *testing.T) {
 	if e.Source != SourceIdentity {
 		t.Errorf("Source = %q, want %q — it must equal `name` in anywaye.yml", e.Source, SourceIdentity)
 	}
-	// Subject is the entity the event is *about*, not the actor.
 	if e.Subject != userID.String() {
 		t.Errorf("Subject = %q, want the user id %q", e.Subject, userID)
 	}
@@ -296,9 +268,6 @@ func TestUserCreatedEnvelope(t *testing.T) {
 	}
 }
 
-// Two registrations of different users must produce different envelope ids, and
-// the ids are the consumers' dedupe key. A shared id would make courier silently
-// drop the second user.
 func TestNewUserCreatedIsUniquePerCall(t *testing.T) {
 	t.Parallel()
 
@@ -318,9 +287,6 @@ func TestNewUserCreatedIsUniquePerCall(t *testing.T) {
 	}
 }
 
-// The serialized payload is stored verbatim in outbox_events.payload, so its
-// shape is worth pinning: a consumer parsing `data` should not have to cope with
-// a field appearing, disappearing or moving.
 func TestUserCreatedDataIsStable(t *testing.T) {
 	t.Parallel()
 

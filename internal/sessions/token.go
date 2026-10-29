@@ -9,10 +9,6 @@ import (
 	"io"
 )
 
-// tokenBytes is the entropy of a session token. 32 bytes is 256 bits, which is
-// the same order as a UUIDv4 and about 10^77 times the number of guesses an
-// attacker gets in the lifetime of the universe, so the token is never the weak
-// link — the argon2id hash on the password is.
 const tokenBytes = 32
 
 // NewToken mints a session token and its stored digest.
@@ -25,9 +21,6 @@ const tokenBytes = 32
 func NewToken() (token, digest string, err error) {
 	raw := make([]byte, tokenBytes)
 	if _, err := io.ReadFull(rand.Reader, raw); err != nil {
-		// Same reasoning as id.New: a failure of crypto/rand means there is no
-		// trustworthy entropy, and minting a credential from a degraded source
-		// is not something to discover later.
 		return "", "", fmt.Errorf("reading random bytes for a session token: %w", err)
 	}
 

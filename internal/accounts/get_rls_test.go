@@ -15,67 +15,7 @@ import (
 	"github.com/anywaye/identity/internal/users"
 )
 
-// `Get` UNDER THE REAL POLICIES, and the reason this file exists separately from
-// service_test.go.
-//
-// # THE GAP THIS FILE CLOSES
-//
-// Every other test in this package runs through `newHarness`, and that harness
-// opens `dbtest.Schema` — a private schema whose tables are cloned with
-// `LIKE public.<table> INCLUDING ALL`. LIKE copies columns, defaults, CHECKs and
-// indexes. IT DOES NOT COPY ROW-LEVEL SECURITY, and dbtest.go says so itself:
-// the clones "carry no row-level security … so there is no policy to grant and
-// nothing here is a second copy of the boundary."
-//
-// Which means every assertion in service_test.go about membership visibility ran
-// with NO POLICY AT ALL. `TestGetIsInvisibleToANonMember` passed against a table
-// where every row is visible to every caller — which is a test of the query, not
-// of the boundary. A member being refused was invisible to it, because there
-// was nothing there to refuse them.
-//
-// # WHAT THAT HID
-//
-// migrations/00018 adds a fifth policy to `account_users`, and 00028 a sixth.
-// The first four are on `account_id`; the fifth is on the caller:
-//
-//	account_users_anywaye_members  for select  using (user_id = anywaye.current_user_id())
-//
-// (The sixth, `account_users_anywaye_resolve`, admits the membership pair of a
-// presented live credential and is invisible here: no digest is set on these
-// transactions, so its EXISTS is never true.)
-//
-// A caller who has not chosen an account has no `current_account_id()`, so the
-// four account policies hide the row. The fifth is what lets a caller see their
-// OWN memberships, and it is only in force once `anywaye.begin_user` has been
-// called ON THE SAME TRANSACTION.
-//
-// `ListMine` opens a transaction and calls `tenancy.BeginUser` first, so its
-// predicate is satisfied. `Get` read on `s.read.Queryer()` — a bare pooled
-// connection, no transaction, no GUC — so every predicate was false, the
-// membership row was filtered out by the DATABASE rather than refused by any
-// assertion anywhere, and the handler rendered that as `404 Account not found`
-// for the owner of their own account.
-//
-// # LISTMINE IS THE THIRD USE CASE WITH THE SAME SHAPE, AND IT IS HERE FOR THE SAME REASON
-//
-// `ListMine` answers "which accounts is THIS PERSON in", so it is scoped by the
-// CALLER — `account_users_anywaye_members` (00018) — and it opens a transaction
-// and calls `tenancy.BeginUser` first, exactly as `Get` does. The copy in
-// service_test.go ran on `dbtest.Schema`, so it passed against a table with no
-// policy at all: the query's own `where au.user_id = $1` did the scoping, and
-// the test could not tell a correct query from a missing `BeginUser`. On
-// `dbtest.Pool` the two are distinguishable — drop the `BeginUser` and the
-// policy filters every row, so a user who owns an account is told they belong
-// to none, which is the defect 90c6bea fixed and the reason this test exists.
-//
-// # WHY THE HARNESS IS DUPLICATED RATHER THAN PARAMETERISED
-//
-// It differs from `newHarness` in exactly one thing — `dbtest.Pool` for
-// `dbtest.Schema` — and that one thing is the entire subject of this file.
-// Parameterising the helper would make the difference a boolean at every call
-// site, and a reader would have to know which value means "the policies are on".
 
-// newRealPolicyHarness is newHarness against the tables whose policies are live.
 func newRealPolicyHarness(t *testing.T) *harness {
 	t.Helper()
 
@@ -100,43 +40,21 @@ func newRealPolicyHarness(t *testing.T) *harness {
 			revokes,
 			clk,
 			db.Direct{Pool: pool},
-			nil, // no mailer: these tests are about the RLS policies, not the email
+			nil,
 		),
 	}
 }
 
-// uniqueAccountName is `dbtest.UniqueEmail` reduced to something `Slugify` can
-// actually keep.
-//
-// The account slug is unique, and Slugify truncates it at 63 characters. A long
-// test name plus a full unique address is longer than that, so the random tail —
-// the only part that differs between runs — falls off the end and every run of
-// this file collides on the same slug. This is the trap AGENTS.md records for the
-// authorization matrix's fixtures ("names its accounts with a counter and not with
-// the test path"), met here for the same reason.
 func uniqueAccountName(t *testing.T, prefix string) string {
 	t.Helper()
 
 	local, _, _ := strings.Cut(dbtest.UniqueEmail(t), "@")
-	// The local part is `<testname>-<12 hex bytes>`, and the 12 hex bytes are the
-	// only part that differs between runs. Keeping just those, rather than the
-	// whole address, is what makes the name short enough for the slug to hold.
 	if len(local) < 13 {
 		t.Fatalf("UniqueEmail returned %q, which has no %d-byte tail to keep", local, 12)
 	}
 	return prefix + "-" + local[len(local)-12:]
 }
 
-// TestGetFindsTheCallersOwnAccountUnderTheRealPolicies is the regression test for
-// the 404. It goes red on the unfixed code with ErrNotAMember for the owner of
-// their own account — exactly the 404 a browser saw.
-//
-// It asserts three things, and the third is what stops a future "fix" that
-// over-corrects into reading the membership outside any scope at all:
-//
-//  1. a member CAN read their own account — the defect,
-//  2. the role it returns is the role really in the table,
-//  3. a stranger still cannot, so the fix did not become "turn the policy off".
 func TestGetFindsTheCallersOwnAccountUnderTheRealPolicies(t *testing.T) {
 	h := newRealPolicyHarness(t)
 	member := addUser(t, h.q)
@@ -163,38 +81,12 @@ func TestGetFindsTheCallersOwnAccountUnderTheRealPolicies(t *testing.T) {
 		t.Errorf("a non-member reading a real account = %v, want ErrNotAMember", err)
 	}
 
-	// A missing account is indistinguishable from one the caller is not in, and
-	// that is a security property rather than a convenience: a 403 for "not a
-	// member" and a 404 for "no such account" is an existence oracle for anybody
-	// who can guess an id. This is the third assertion
-	// TestGetIsInvisibleToANonMember carried, and it moves here because it is the
-	// same property — the database filters the row and the service maps the miss
-	// to the one error — and it is only MEANINGFUL under the real policies,
-	// where "the row was filtered" and "the row is not there" are the same event.
 	if _, _, err := h.svc.Get(t.Context(), id.MustNew(), member); !errors.Is(err, ErrNotAMember) {
 		t.Errorf("reading a missing account = %v, want ErrNotAMember — it must be "+
 			"indistinguishable from not being a member", err)
 	}
 }
 
-// TestListMineIsScopedToTheCallerUnderTheRealPolicies is the regression test
-// for the empty account list, and the reason this file is not only about `Get`
-// and `Member`.
-//
-// `ListMine` is scoped by the CALLER — `account_users_anywaye_members` (00018,
-// `user_id = anywaye.current_user_id()`) — so a read that has not called
-// `tenancy.BeginUser` ON ITS OWN TRANSACTION returns nothing: the database
-// filters every row out and the product renders "you are not a member of any
-// account". It is the same defect `Get` had, on the one use case that answers
-// "which accounts am I in" rather than "what is this account", and it was fixed
-// in the same commit (90c6bea) — but the copy in service_test.go ran on
-// `dbtest.Schema`, where there is no policy to be refused by, so it passed
-// against a table where the query's own `where au.user_id = $1` did all the
-// scoping and nothing was tested but the query.
-//
-// It asserts the list is the CALLER's and nobody else's, which is the property
-// the scoping exists for: a query scoped by an account id from a request body
-// is how one tenant's data reaches another's.
 func TestListMineIsScopedToTheCallerUnderTheRealPolicies(t *testing.T) {
 	h := newRealPolicyHarness(t)
 	mine := addUser(t, h.q)
@@ -221,15 +113,6 @@ func TestListMineIsScopedToTheCallerUnderTheRealPolicies(t *testing.T) {
 	}
 }
 
-// TestMemberSeesTheCallersOwnRowUnderTheRealPolicies is the same predicate read
-// directly rather than through `Get`, because the two take different paths and
-// only one of them being wrong is still wrong.
-//
-// `Member` is what `TransferOwnership` reads to authorize its actor on an account
-// nobody has stood in yet, and to prove the heir is already a member. With the
-// same missing `BeginUser`, a transfer would refuse the owner who asked for it —
-// the identical bug wearing a different hat, and one the use-case tests cannot see
-// because they run without policies either.
 func TestMemberSeesTheCallersOwnRowUnderTheRealPolicies(t *testing.T) {
 	h := newRealPolicyHarness(t)
 	mine := addUser(t, h.q)
@@ -245,13 +128,6 @@ func TestMemberSeesTheCallersOwnRowUnderTheRealPolicies(t *testing.T) {
 	}
 }
 
-// addRealMember is `harness.member`, and the difference is the whole point.
-//
-// An INSERT into account_users meets the ordinary `with check`, which demands an
-// account identity — 00018's fifth policy is `for select` and nothing else, so
-// naming the caller does not admit this row. The account therefore has to be
-// named, which is why this opens its own transaction instead of leaning on a
-// helper written for a schema with no policies on it.
 func addRealMember(t *testing.T, h *harness, accountID id.UUID, role Role) id.UUID {
 	t.Helper()
 
@@ -270,16 +146,6 @@ func addRealMember(t *testing.T, h *harness, accountID id.UUID, role Role) id.UU
 	return uid
 }
 
-// TestTheMembershipUserPolicyIsInstalledUnderRealPolicies is the control.
-//
-// Without it, every test in this file would ALSO pass against a database where
-// the fifth policy had been dropped — so a regression in migrations/00018 would
-// leave this file green and the 404 would come back with the next caller. "This
-// test passed" must not be able to mean "the boundary was not there".
-//
-// It is deliberately not in internal/tenancy, which proves the policies for the
-// SUBSTRATE's own temporary tables: this one proves the test above is measuring
-// the policies on identity's real account_users.
 func TestTheMembershipUserPolicyIsInstalledUnderRealPolicies(t *testing.T) {
 	pool := dbtest.Pool(t)
 

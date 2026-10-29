@@ -24,67 +24,26 @@ import (
 // turns into a saturated identity service.
 const DefaultProviderTimeout = 10 * time.Second
 
-// maxIdentityBytes caps an identity response.
-//
-// Google's userinfo is about 200 bytes and GitHub's /user about 150, so this is a
-// thousand times more than any real answer. It is a statement about what the
-// response is rather than a race against a slow link, and a body past it truncates
-// mid-document and fails to parse rather than being read into memory.
 const maxIdentityBytes = 256 << 10
 
-// Client errors, in the three groups a caller has to tell apart: the provider said
-// no, the provider could not be reached, and the provider said yes to something this
-// service cannot use.
-//
-// MAPPED TO A STATUS by internal/httpapi/oauth.go, and the mapping is not arbitrary:
-// ErrCodeRefused and ErrNoEmail are 400s the person at the browser caused, and
-// ErrProviderUnavailable is a 502 whose cause goes to the log and whose detail
-// sentence is a constant. A third party being down is not the caller's fault and must
-// not read as one, and it must not be indistinguishable from "that code was no
-// good", because those two produce completely different next steps for the user.
 var (
-	// ErrCodeRefused means the provider rejected the authorization code: it was
-	// never issued, it has already been used, or the person declined consent. It is
-	// the caller's problem, not an outage, and it is deliberately a different value
-	// from ErrProviderUnavailable so the two get different status codes.
 	ErrCodeRefused = errors.New("the oauth provider refused the authorization code")
 
-	// ErrProviderUnavailable means the provider could not be reached, answered 5xx,
-	// or answered something this service cannot read. It is never rendered to a
-	// caller beyond "the provider is unavailable" — the cause goes to the log.
 	ErrProviderUnavailable = errors.New("the oauth provider is unavailable")
 
-	// ErrNoEmail means the provider returned no address this service could create
-	// an account from — or one it will not accept. Creating a user without one is
-	// not an option on this schema, and substituting a placeholder would put an
-	// address the person does not own into `users.email`. It is also the answer for
-	// an address the provider reports as UNVERIFIED, on both providers, because an
-	// unverified address is not evidence of anything.
 	ErrNoEmail = errors.New("the oauth provider returned no usable email address")
 )
 
 // Tokens is what a provider issued for one authorization code.
 type Tokens struct {
 	AccessToken string
-	// RefreshToken is empty when the provider issued none. That is GitHub's normal
-	// case, so an empty value here is not an error.
 	RefreshToken string
-	// ExpiresAt is nil when the token does not expire. It is the provider token's
-	// expiry and has nothing to do with a session's.
 	ExpiresAt *time.Time
-	// IDToken is the provider's signed identity token, when the response carried
-	// one. Only Apple reads it — the other three providers get their identity
-	// from a userinfo call — but it is extracted for every provider because the
-	// token response is provider-agnostic and an id_token this service does not
-	// use is inert. See apple.go for what verifying it means.
 	IDToken string
 }
 
 // Identity is what a provider says about the person behind a token.
 type Identity struct {
-	// ProviderUID is the provider's own stable identifier for the account — not an
-	// email, which can be changed at the provider and is not unique across accounts
-	// there. This is the value a connected account is keyed on.
 	ProviderUID string
 	Email       string
 	Name        string
@@ -96,21 +55,12 @@ type Identity struct {
 // httptest server and production drives it with the provider's real endpoints.
 type Client struct {
 	http *http.Client
-	// redirectBase is the configured public base URL. The Client needs it because
-	// the redirect_uri sent with the exchange has to be the one the authorize step
-	// offered, and the Provider a caller hands it carries no base.
 	redirectBase string
 }
 
 // ClientOptions configures a Client.
 type ClientOptions struct {
-	// HTTPClient overrides the client and its timeout. Nil gets a fresh
-	// *http.Client with DefaultProviderTimeout — not a package-level default,
-	// because a shared one would be global state that tests race on.
 	HTTPClient *http.Client
-	// RedirectBaseURL is this service's public base URL, used to rebuild the
-	// redirect_uri for the token exchange. It must match the one the authorize
-	// step used or the provider refuses the exchange.
 	RedirectBaseURL string
 }
 
@@ -130,16 +80,12 @@ func NewClient(opts ClientOptions) *Client {
 // without saying which of the two URLs was wrong.
 func (c *Client) Exchange(ctx context.Context, p Provider, code string) (Tokens, error) {
 	if strings.TrimSpace(code) == "" {
-		// Refused before the request rather than after. A callback with no code is
-		// cheap for anyone to produce and should cost nothing.
 		return Tokens{}, fmt.Errorf("%w: no code was presented", ErrCodeRefused)
 	}
 
 	conf := p.oauth2Config()
 	conf.RedirectURL = p.RedirectURI(c.redirectBase)
 
-	// The client travels on the context, which is how it reaches the request x/oauth2
-	// builds for us.
 	ctx = context.WithValue(ctx, oauth2.HTTPClient, c.http)
 
 	token, err := conf.Exchange(ctx, code)
@@ -147,8 +93,6 @@ func (c *Client) Exchange(ctx context.Context, p Provider, code string) (Tokens,
 		return Tokens{}, providerError("exchanging the authorization code", err)
 	}
 	if token.AccessToken == "" {
-		// A 200 with no token is not a token. Storing the empty string would produce
-		// a connected account whose every later provider call is anonymous.
 		return Tokens{}, fmt.Errorf("%w: the exchange succeeded with no access token", ErrProviderUnavailable)
 	}
 
@@ -157,9 +101,6 @@ func (c *Client) Exchange(ctx context.Context, p Provider, code string) (Tokens,
 		expiry := token.Expiry.UTC()
 		out.ExpiresAt = &expiry
 	}
-	// Extracted for every provider and read by one. Apple's token response
-	// carries the identity as an id_token; the other providers' id_tokens are
-	// ignored because their identity comes from a userinfo call.
 	if idToken, ok := token.Extra("id_token").(string); ok {
 		out.IDToken = idToken
 	}
@@ -174,9 +115,6 @@ func (c *Client) Exchange(ctx context.Context, p Provider, code string) (Tokens,
 // reject it later — moves the failure to a place with no provider context.
 func (c *Client) Identity(ctx context.Context, p Provider, tokens Tokens) (Identity, error) {
 	if tokens.AccessToken == "" {
-		// Not a refusal: there is nothing to present. It is reported as unavailable
-		// because from here it is indistinguishable from a credential the provider
-		// will not honor, and the caller treats both the same way.
 		return Identity{}, fmt.Errorf("%w: there is no access token to present", ErrProviderUnavailable)
 	}
 
@@ -190,44 +128,10 @@ func (c *Client) Identity(ctx context.Context, p Provider, tokens Tokens) (Ident
 	case ProviderApple:
 		return c.appleIdentity(ctx, p, tokens)
 	default:
-		// Unreachable through a Registry, which only holds the providers this
-		// service defines. Returned rather than panicked on: a provider added to
-		// the constructors and not to this switch should be a failure with a
-		// status, not a crash.
 		return Identity{}, fmt.Errorf("%w: %q has no identity endpoint", ErrUnknownProvider, p.Name)
 	}
 }
 
-// googleResponse is Google's OpenID Connect userinfo document. Only `sub`, `email`
-// and `email_verified` matter here; the remaining claims are for an OIDC client,
-// which is a later packet.
-//
-// ## `email_verified` IS READ, AND THE REFUSAL IS THE POINT
-//
-// For an OIDC *client*, reading `email` without checking `email_verified` is
-// defensible: the client is verifying a token it was issued, and the `email` claim
-// inside it was already the subject of an authorization the user performed. This is
-// a *relying party deciding whether to sign somebody in*, and it is a different
-// question. `email` alone is a string the account holder can set, this service's
-// `users.email` is unique, and an unverified provider address that was allowed to
-// reach that lookup would let anybody holding any Google account claim any address
-// on this platform and then be signed in as its owner.
-//
-// So the field is decoded AND the refusal is here, in this package, before
-// `identity()` normalizes the value and long before any caller can look it up. That
-// ordering is the whole property: the check is not "the use case remembers to
-// check", it is "there is no path out of the client that yields an unverified
-// address".
-//
-// ## AND THIS IS WHY THE TWO PROVIDERS ARE NOW HELD TO THE SAME BAR
-//
-// GitHub's path was already stricter — `githubEmail` refuses an address that is not
-// `verified`, and `/user`'s own address is only trusted because GitHub will not
-// serve an unverified one there either. Google's was the weaker of the two and the
-// gap was recorded in this file for as long as the surface was unmounted, on the
-// grounds that "unreachable" is a weaker state than "closed". The surface is
-// mounted, so the argument has run out: this comment used to say the mounting
-// packet had to do this, and this packet is it.
 type googleResponse struct {
 	Subject       string `json:"sub"`
 	Email         string `json:"email"`
@@ -242,45 +146,12 @@ func (c *Client) googleIdentity(ctx context.Context, p Provider, tokens Tokens) 
 	}
 
 	if !body.EmailVerified {
-		// One value for "the provider said the address is not verified" and for "the
-		// provider did not say at all", because this service cannot tell them apart
-		// and the answer is the same either way: it is not going to put an address
-		// nobody proved into a `users.email` lookup. The address itself is not echoed
-		// — it came from a third party and this error is rendered to whoever is
-		// holding the browser.
 		return Identity{}, fmt.Errorf("%w: google reports this address as unverified", ErrNoEmail)
 	}
 
-	// Google's `sub` is the account's stable, non-reassignable identifier. The
-	// email can be changed; the sub cannot.
 	return identity(body.Subject, body.Email, body.Name)
 }
 
-// microsoftResponse is Microsoft Graph's OIDC userinfo document.
-//
-// ## WHY THERE IS NO `email_verified` CHECK, AND WHY THAT IS NOT THE GAP IT LOOKS LIKE
-//
-// Google's decoder refuses an address unless the provider says it is verified,
-// because a Google account can carry an address the account holder set and
-// Google never checked. Microsoft's userinfo endpoint does not return an
-// `email_verified` claim at all — and the reason is not that Microsoft forgot.
-// The `email` claim is present only for an address Microsoft itself verified
-// as part of the account: a Microsoft account is created against an email or
-// phone number Microsoft controls, and the claim is a first-party statement
-// about that account, not a user-entered string.
-//
-// That is the same trust GitHub's /user already gets, and the client's own
-// comment says why: "GitHub will not serve an unverified one there either". So
-// Microsoft is held to the /user standard — the provider's identity call is
-// trusted to only ever carry a verified address — and not to Google's stricter
-// one, because the thing Google's check defends against (an account holder
-// typing an arbitrary address) is not a thing a Microsoft account can do.
-//
-// The consequence is stated rather than hidden: if Microsoft ever serves an
-// address that was not verified, this decoder would accept it. The mitigation
-// is the one the whole flow already has — the address is only trusted once the
-// provider has authenticated the caller and issued a token for them — plus
-// the same refusal path every other unusable address takes.
 type microsoftResponse struct {
 	Subject string `json:"sub"`
 	Email   string `json:"email"`
@@ -293,13 +164,9 @@ func (c *Client) microsoftIdentity(ctx context.Context, p Provider, tokens Token
 		return Identity{}, err
 	}
 
-	// Microsoft's `sub` is the account's stable, non-reassignable identifier,
-	// and it is a GUID rather than a number. The email can be changed; the sub
-	// cannot. The column is text, so the GUID is stored as text.
 	return identity(body.Subject, body.Email, body.Name)
 }
 
-// githubResponse is GitHub's /user. `id` is a number and `email` may be null.
 type githubResponse struct {
 	ID    int64  `json:"id"`
 	Email string `json:"email"`
@@ -307,7 +174,6 @@ type githubResponse struct {
 	Name  string `json:"name"`
 }
 
-// githubEmail is one entry of /user/emails.
 type githubEmail struct {
 	Email    string `json:"email"`
 	Primary  bool   `json:"primary"`
@@ -322,14 +188,9 @@ func (c *Client) githubIdentity(ctx context.Context, p Provider, tokens Tokens) 
 
 	name := body.Name
 	if name == "" {
-		// The profile name is optional and frequently absent; the login is always
-		// there. It is a display name, not an identifier, so this is a convenience
-		// and not a decision.
 		name = body.Login
 	}
 
-	// The identifier is the number rendered as text. The column is text, and "0"
-	// and 0 must not become two different keys for the same person.
 	uid := ""
 	if body.ID > 0 {
 		uid = strconv.FormatInt(body.ID, 10)
@@ -347,12 +208,6 @@ func (c *Client) githubIdentity(ctx context.Context, p Provider, tokens Tokens) 
 	return identity(uid, email, name)
 }
 
-// githubEmail resolves the address GitHub left off /user.
-//
-// It takes the primary verified address when there is one, then any verified
-// address, and otherwise refuses. An unverified address is not evidence of
-// anything: on GitHub it is set by the account holder, so accepting one would let
-// any account claim any address and then sign in as that address's owner.
 func (c *Client) githubEmail(ctx context.Context, p Provider, tokens Tokens) (string, error) {
 	var emails []githubEmail
 	if err := c.getJSON(ctx, p.EmailsURL, tokens.AccessToken, &emails); err != nil {
@@ -378,45 +233,25 @@ func (c *Client) githubEmail(ctx context.Context, p Provider, tokens Tokens) (st
 	return "", fmt.Errorf("%w: github has no verified address for this account", ErrNoEmail)
 }
 
-// identity is the single place a provider's answer becomes an Identity, so the
-// validation cannot differ between the two providers.
-//
-// Both checks live here rather than with the callers because both are what makes
-// the resulting row safe: an empty provider_uid collides with every other empty
-// one, and an unvalidated address fails later at a `users.email` CHECK with no
-// provider context to explain it.
 func identity(uid, email, name string) (Identity, error) {
 	uid = strings.TrimSpace(uid)
 	if uid == "" {
 		return Identity{}, fmt.Errorf("%w: the provider returned no account identifier", ErrNoEmail)
 	}
 
-	// Normalized through the one function internal/users defines, so "Kaka@Example.com"
-	// and "kaka@example.com" are one account here as they are everywhere else.
 	normalized := users.NormalizeEmail(email)
 	if err := users.ValidateEmail(normalized); err != nil {
-		// The address is not echoed: it came from a third party and this error is
-		// rendered to whoever is holding the browser.
 		return Identity{}, fmt.Errorf("%w: the provider returned an address this service will not store", ErrNoEmail)
 	}
 
 	return Identity{ProviderUID: uid, Email: normalized, Name: strings.TrimSpace(name)}, nil
 }
 
-// getJSON performs one authorized GET and decodes the body into dst.
-//
-// Every failure is ErrProviderUnavailable, including a 401. A 401 here means the
-// token the token endpoint just issued is not honored by the identity endpoint,
-// which is a provider inconsistency and not anything the person at the browser did
-// — so it is an outage, not a refusal.
 func (c *Client) getJSON(ctx context.Context, endpoint, accessToken string, dst any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return fmt.Errorf("%w: building the request: %w", ErrProviderUnavailable, err)
 	}
-	// `token` is GitHub's older documented scheme and `Bearer` is what Google
-	// documents. Both providers accept Bearer, and only GitHub accepts token, so
-	// Bearer is the one that works for both.
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("Accept", "application/json")
 
@@ -436,13 +271,6 @@ func (c *Client) getJSON(ctx context.Context, endpoint, accessToken string, dst 
 	return nil
 }
 
-// providerError classifies an x/oauth2 failure into one of the two sentinels the
-// HTTP layer knows how to answer.
-//
-// The split is on the status the provider returned: a 4xx from the token endpoint
-// is about the code the caller presented and becomes ErrCodeRefused; everything
-// else — 5xx, a transport failure, an unparseable body — is the provider's problem
-// and becomes ErrProviderUnavailable.
 func providerError(what string, err error) error {
 	var retrieve *oauth2.RetrieveError
 	if errors.As(err, &retrieve) && retrieve.Response != nil {

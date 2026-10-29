@@ -14,61 +14,7 @@ import (
 	"github.com/anywaye/identity/internal/users"
 )
 
-// The account-scoped WRITES under the real policies, and the fourth kind of test
-// in this package that has to run against `dbtest.Pool`.
-//
-// # THE GAP THIS FILE CLOSES
-//
-// get_rls_test.go closed it for the caller-scoped READS (`Get`, `Member`,
-// `ListMine`); invite_members_rls_test.go closed it for the account-scoped READ
-// (`Members`) and the invite path. This file is the WRITES: `ChangeRole`,
-// `RemoveMember`, and the registration pair `Provision`/`AddOwner`.
-//
-// Every one of them reads or writes `account_users` inside a transaction, and
-// under the real policies that transaction has to carry the ACCOUNT identity —
-// `tenancy.TxRunner` sets it from the request context, which is where
-// `requireAccountRole` puts it after a membership read established the account
-// is the caller's. The copies in service_test.go ran on `dbtest.Schema` through
-// `newHarness`, whose `db.TxRunner` sets no identity and whose context carries
-// no account. On a schema with no policies that is invisible: the reads match
-// their rows and the writes meet their `with check` because there is no policy
-// to refuse them. So those tests could not detect the identity being dropped —
-// the one regression that would break every one of these use cases in
-// production while leaving the suite green.
-//
-// # WHY THESE ARE NOT REDUNDANT WITH THE READ FILES
-//
-// A read that loses its identity answers the wrong thing (`[]`, a 404); a write
-// that loses its identity is REFUSED — `account_users_anywaye_insert` and
-// `_anywaye_update` are `with check (account_id = (select
-// anywaye.current_account_id()))`, so the membership write meets SQLSTATE 42501
-// and the use case fails. That is a loud failure, and it is the correct one, but
-// it is a failure the Schema copies never produced: they ran with no `with
-// check` to refuse them. So the writes were tested for their LOGIC (the
-// last-owner count, the owner protection, the credential sweep) and never for
-// their PREMISE — that the transaction they run in is standing in the account
-// they name.
-//
-// # THE HARNESS IS THE PRODUCTION WIRING, SHARED
-//
-// These tests use `newRealAccountHarness` from invite_members_rls_test.go —
-// `dbtest.Pool` plus `tenancy.TxRunner`, which is what `cmd/identity/main.go`
-// builds the service with. It lives there rather than here because that file
-// introduced it and this file is a second consumer of the same wiring, not a
-// third copy of it. The context carries the account on every use-case call,
-// because that is what a real request has by the time it reaches these use
-// cases: `requireAccountRole` put it there.
 
-// TestLastOwnerProtectionUnderTheRealPolicies is the last-owner invariant
-// under the real policies, in every shape the Schema copy asserted.
-//
-// The invariant is service logic, but its ENFORCEMENT reads the membership
-// table: `ChangeRole` reads the target and counts the owners, `RemoveMember`
-// reads the target and the actor. Under the real policies those reads are
-// admitted by `account_users_anywaye_select`, so the test now fails — with
-// `ErrNotAMember`, not the invariant's own error — if the transaction stops
-// carrying the account. That is the regression this file exists to catch, and
-// it is invisible on `dbtest.Schema`, where the reads always succeed.
 func TestLastOwnerProtectionUnderTheRealPolicies(t *testing.T) {
 	t.Run("the only owner cannot demote themselves", func(t *testing.T) {
 		h := newRealAccountHarness(t)
@@ -128,7 +74,6 @@ func TestLastOwnerProtectionUnderTheRealPolicies(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("promoting to owner: %v", err)
 		}
-		// Now the original owner may step down: the account has two.
 		if _, err := h.svc.ChangeRole(tenancy.WithAccount(t.Context(), account.ID), ChangeRoleInput{
 			AccountID: account.ID, UserID: owner, Role: RoleMember, Actor: successor,
 		}); err != nil {
@@ -138,14 +83,6 @@ func TestLastOwnerProtectionUnderTheRealPolicies(t *testing.T) {
 	})
 }
 
-// TestRemoveMemberThroughTheServiceUnderTheRealPolicies is the removal rules
-// under the real policies: an admin may remove a member, the owner's membership
-// is a different object, and an owner may remove a non-owner.
-//
-// The rules are decided from membership reads — the target's role and the
-// actor's — so the test is in this file for the reason the last-owner invariant
-// is: those reads need the account identity on the transaction, and a schema
-// with no policies gives them to anybody.
 func TestRemoveMemberThroughTheServiceUnderTheRealPolicies(t *testing.T) {
 	h := newRealAccountHarness(t)
 	owner := addUser(t, h.q)
@@ -154,7 +91,6 @@ func TestRemoveMemberThroughTheServiceUnderTheRealPolicies(t *testing.T) {
 	target := addRealMember(t, h, account.ID, RoleMember)
 	ctx := tenancy.WithAccount(t.Context(), account.ID)
 
-	// An admin removing a member: allowed.
 	if err := h.svc.RemoveMember(ctx, RemoveMemberInput{
 		AccountID: account.ID, UserID: target, Actor: admin,
 	}); err != nil {
@@ -164,7 +100,6 @@ func TestRemoveMemberThroughTheServiceUnderTheRealPolicies(t *testing.T) {
 		t.Errorf("the member survived removal: %v", err)
 	}
 
-	// An admin removing the owner: refused, and the owner stays.
 	err := h.svc.RemoveMember(ctx, RemoveMemberInput{
 		AccountID: account.ID, UserID: owner, Actor: admin,
 	})
@@ -173,7 +108,6 @@ func TestRemoveMemberThroughTheServiceUnderTheRealPolicies(t *testing.T) {
 	}
 	assertRole(t, h, account.ID, owner, RoleOwner)
 
-	// An owner removing a non-owner: allowed, even when that owner is the last.
 	if err := h.svc.RemoveMember(ctx, RemoveMemberInput{
 		AccountID: account.ID, UserID: admin, Actor: owner,
 	}); err != nil {
@@ -181,16 +115,6 @@ func TestRemoveMemberThroughTheServiceUnderTheRealPolicies(t *testing.T) {
 	}
 }
 
-// TestRemoveMemberRevokesTheCredentialsTheyHeldUnderTheRealPolicies is the
-// offboarding sweep under the real policies.
-//
-// The sweep is a `CredentialRevoker` double here, so the RLS dependency is not
-// the sweep itself but the removal that triggers it: `RemoveMember` reads the
-// target and the actor before it deletes, and those reads need the account
-// identity. The test's subject — a removal revokes the credentials the member
-// held, in the same transaction — is the rule this package exists to enforce on
-// internal/apikeys' behalf, and it is only meaningful when the removal it tests
-// is the one the production wiring performs.
 func TestRemoveMemberRevokesTheCredentialsTheyHeldUnderTheRealPolicies(t *testing.T) {
 	h := newRealAccountHarness(t)
 	owner := addUser(t, h.q)
@@ -214,15 +138,10 @@ func TestRemoveMemberRevokesTheCredentialsTheyHeldUnderTheRealPolicies(t *testin
 	if got.userID != target {
 		t.Errorf("the sweep was scoped to user %s, want the member who was removed %s", got.userID, target)
 	}
-	// The same instant the removal and the event carry, so "when was this
-	// credential withdrawn" and "when was this person removed" have one answer.
 	if !got.at.Equal(h.clock.Now()) {
 		t.Errorf("the sweep ran at %s, want the service clock's %s", got.at, h.clock.Now())
 	}
 
-	// A REFUSED removal sweeps nothing. An admin who cannot remove the owner must
-	// not leave that owner's credentials revoked on the way to being told no — a
-	// sweep outside the transaction's success path is a partial write.
 	before := h.revokes.count()
 	if err := h.svc.RemoveMember(ctx, RemoveMemberInput{
 		AccountID: account.ID, UserID: owner, Actor: addRealMember(t, h, account.ID, RoleAdmin),
@@ -234,9 +153,6 @@ func TestRemoveMemberRevokesTheCredentialsTheyHeldUnderTheRealPolicies(t *testin
 	}
 }
 
-// TestARemovalThatCannotSweepRollsBackUnderTheRealPolicies is the other
-// direction of the same transaction under the real policies: a revoker that
-// fails must take the whole removal with it.
 func TestARemovalThatCannotSweepRollsBackUnderTheRealPolicies(t *testing.T) {
 	h := newRealAccountHarness(t)
 	owner := addUser(t, h.q)
@@ -251,8 +167,6 @@ func TestARemovalThatCannotSweepRollsBackUnderTheRealPolicies(t *testing.T) {
 		t.Fatal("a removal succeeded with a revoker that failed")
 	}
 
-	// The membership is back, and the event was not written: both writes were inside
-	// the transaction the sweep's failure rolled back.
 	if _, err := h.svc.Member(t.Context(), account.ID, target); err != nil {
 		t.Errorf("the membership was removed even though the sweep failed: %v", err)
 	}
@@ -263,9 +177,6 @@ func TestARemovalThatCannotSweepRollsBackUnderTheRealPolicies(t *testing.T) {
 	}
 }
 
-// TestARemovalWithNoRevokerStillRemovesTheMembershipUnderTheRealPolicies: the
-// sweep may be nil — a deployment with no api key table has no credentials to
-// revoke — and the membership change must still happen.
 func TestARemovalWithNoRevokerStillRemovesTheMembershipUnderTheRealPolicies(t *testing.T) {
 	h := newRealAccountHarness(t)
 	owner := addUser(t, h.q)
@@ -273,7 +184,6 @@ func TestARemovalWithNoRevokerStillRemovesTheMembershipUnderTheRealPolicies(t *t
 	target := addRealMember(t, h, account.ID, RoleMember)
 	ctx := tenancy.WithAccount(t.Context(), account.ID)
 
-	// A service with no revoker, built the production way with a nil.
 	withoutSweep := NewService(
 		tenancy.TxRunner{TxRunner: db.TxRunner{Pool: h.pool}},
 		h.store,
@@ -282,7 +192,7 @@ func TestARemovalWithNoRevokerStillRemovesTheMembershipUnderTheRealPolicies(t *t
 		nil,
 		h.clock,
 		db.Direct{Pool: h.pool},
-		nil, // no mailer: this fixture is about the credential sweep, not the email
+		nil,
 	)
 	if err := withoutSweep.RemoveMember(ctx, RemoveMemberInput{
 		AccountID: account.ID, UserID: target, Actor: owner,
@@ -294,10 +204,6 @@ func TestARemovalWithNoRevokerStillRemovesTheMembershipUnderTheRealPolicies(t *t
 	}
 }
 
-// TestChangeRoleEmitsBothRolesUnderTheRealPolicies is the event shape under the
-// real policies: core's catalog wants the old and the new role, because a
-// consumer that only learns the new one cannot revoke what it previously
-// granted.
 func TestChangeRoleEmitsBothRolesUnderTheRealPolicies(t *testing.T) {
 	h := newRealAccountHarness(t)
 	owner := addUser(t, h.q)
@@ -322,8 +228,6 @@ func TestChangeRoleEmitsBothRolesUnderTheRealPolicies(t *testing.T) {
 	}
 }
 
-// TestRemoveMemberEmitsTheRoleTheyHeldUnderTheRealPolicies is the removal
-// event's role under the real policies.
 func TestRemoveMemberEmitsTheRoleTheyHeldUnderTheRealPolicies(t *testing.T) {
 	h := newRealAccountHarness(t)
 	owner := addUser(t, h.q)
@@ -346,18 +250,6 @@ func TestRemoveMemberEmitsTheRoleTheyHeldUnderTheRealPolicies(t *testing.T) {
 	}
 }
 
-// TestProvisionUnderTheRealPolicies is the registration write path under the
-// real policies.
-//
-// `Provision` and `AddOwner` do not open their own transactions — they run
-// inside the registration's — and the registration's transaction is where the
-// account identity has to come from. The Schema copy opened a bare `db.TxRunner`
-// and called them; on a schema with no policies the membership INSERT meets no
-// `with check`, so the test passed without the identity that production has to
-// set. Here the fixture does what `internal/auth.provisionTenancy` does:
-// `tenancy.BeginAccount` on the same transaction, before `AddOwner`, because
-// `begin_account` is transaction-local and the membership write is the
-// account-scoped statement that needs it.
 func TestProvisionUnderTheRealPolicies(t *testing.T) {
 	h := newRealAccountHarness(t)
 	email := dbtest.UniqueEmail(t)
@@ -374,11 +266,6 @@ func TestProvisionUnderTheRealPolicies(t *testing.T) {
 		}
 		account = created
 
-		// Begin as the account that was just created, for the same reason
-		// `Create` and `internal/auth.provisionTenancy` do: the membership write
-		// below is account-scoped and the account did not exist when the request
-		// arrived. Without this the INSERT is refused with SQLSTATE 42501 under
-		// the real policies.
 		if err := tenancy.BeginAccount(ctx, tx, created.ID); err != nil {
 			return err
 		}
@@ -409,17 +296,6 @@ func TestProvisionUnderTheRealPolicies(t *testing.T) {
 	h.events.only(t, outbox.EventAccountCreated)
 }
 
-// TestTwoPeopleWithTheSameLocalPartBothRegisterUnderTheRealPolicies is the
-// personal-slug uniqueness under the real policies: two people whose email
-// local parts are the same must both be able to register.
-//
-// It does NOT use dbtest.Reset and does NOT count all personal accounts
-// globally. Both would be sensitive to any concurrent insertion by another
-// package sharing the same public DB (Pool) — a truncation race with Reset or
-// a parallel insertion would appear as an extra row and mis-diagnose as a slug
-// collision (3 > 2 while a blocked insert cannot produce more rows). The
-// property under test is that the two registrations in THIS test both succeed
-// and are distinct, so the count is scoped to the accounts this test created.
 func TestTwoPeopleWithTheSameLocalPartBothRegisterUnderTheRealPolicies(t *testing.T) {
 	h := newRealAccountHarness(t)
 	runner := tenancy.TxRunner{TxRunner: db.TxRunner{Pool: h.pool}}
@@ -441,8 +317,6 @@ func TestTwoPeopleWithTheSameLocalPartBothRegisterUnderTheRealPolicies(t *testin
 				return err
 			}
 			created = c
-			// The same reason TestProvisionUnderTheRealPolicies gives: the
-			// membership write is account-scoped and the account is new.
 			if err := tenancy.BeginAccount(ctx, tx, created.ID); err != nil {
 				return err
 			}
@@ -452,11 +326,6 @@ func TestTwoPeopleWithTheSameLocalPartBothRegisterUnderTheRealPolicies(t *testin
 			t.Fatalf("provisioning a personal account for %s: %v", email, err)
 		}
 		createdIDs = append(createdIDs, created.ID)
-		// The derivation itself: the stored slug is PersonalSlug(email, userID)
-		// (line ~402 of the same file asserts the derivation in
-		// TestProvisionUnderTheRealPolicies). If this fails the slug was
-		// derived from the wrong argument or on the wrong path, and a collision
-		// would be the wrong diagnosis.
 		if created.Slug != wantSlugs[i] {
 			t.Errorf("provisioned slug %q, want PersonalSlug %q for user %s", created.Slug, wantSlugs[i], uid)
 		}
@@ -468,25 +337,15 @@ func TestTwoPeopleWithTheSameLocalPartBothRegisterUnderTheRealPolicies(t *testin
 		}
 	}
 
-	// The two slugs must be distinct even though the local parts share the
-	// same "kaka-" prefix — the userID suffix is what separates them.
 	if wantSlugs[0] == wantSlugs[1] {
 		t.Fatalf("two users with the same local part produced the same slug %q — PersonalSlug is not unique per user", wantSlugs[0])
 	}
 
-	// Count only the accounts this test created, so a concurrent insertion by
-	// another package (or a leaked row from TestProvisionUnderTheRealPolicies,
-	// which also uses Pool and leaves one personal account) cannot appear as a
-	// third row. The previous global `WHERE personal` was the isolation bug.
 	var personal int
 	if err := h.q.QueryRow(t.Context(), `SELECT count(*) FROM accounts WHERE personal AND id = ANY($1)`, createdIDs).Scan(&personal); err != nil {
 		t.Fatalf("counting: %v", err)
 	}
 	if personal != 2 {
-		// Dump the rows at the point of failure, not just the count, as the
-		// brief requires — the shape names the origin (duplicate slug for same
-		// user is (a), row with another user's id is (b), numeric suffix is a
-		// retry leaving predecessor behind).
 		rows, _ := h.q.Query(t.Context(), `SELECT id, slug, personal, created_at FROM accounts WHERE id = ANY($1) ORDER BY created_at`, createdIDs)
 		if rows != nil {
 			defer rows.Close()
@@ -501,10 +360,6 @@ func TestTwoPeopleWithTheSameLocalPartBothRegisterUnderTheRealPolicies(t *testin
 		t.Errorf("%d personal accounts exist among the 2 just created, want 2 — the second registration collided on the slug", personal)
 	}
 
-	// Also verify the memberships exist for the two owners (the other half
-	// of "both register") — through the service so the RLS policy is
-	// exercised (a raw `SELECT count(*) FROM account_users WHERE ...` as
-	// the app role with no identity reads zero rows).
 	for i := range createdIDs {
 		m, err := h.svc.Member(t.Context(), createdIDs[i], wantUIDs[i])
 		if err != nil {

@@ -1,51 +1,5 @@
 package client
 
-// THE CREDENTIAL-LEAK TEST.
-//
-// **This is the deliverable, and it is the reason the rest of the package exists.**
-//
-// The brief is specific about what it must prove: construct a client holding a FAKE
-// token, and assert the fake string appears in no log record, no error, no
-// serialized form and no `fmt.Sprintf("%v", client)` — "across a full cycle
-// including an error response. The error path is where credentials leak: the error
-// is built from the response, and the response has the headers."
-//
-// # WHY A FAKE TOKEN AND NOT A REAL ONE
-//
-// The token below is prefixed, unmistakable, and structurally shaped like a real
-// credential so the code under test actually classifies it as one. A token that
-// fails classification would be refused at construction and the test would pass for
-// the wrong reason — which is the failure mode of every leak test written with a
-// token that does not look like a token.
-//
-// It is not a plausible real credential: the entropy is a repeated character, the
-// prefix says `FAKE`, and if it ever escaped into a log the first seven characters
-// would identify it as a test value. That is the same property identity's `anywaye_`
-// prefix buys for real credentials, pointed the other way.
-//
-// # WHY IT IS NOT A GREP
-//
-// A grep over this package's source would pass while the client leaked, because the
-// leak would be in a value at run time: a struct field printed by a caller, an error
-// message assembled from a response header, a `%v` of a struct the caller never
-// thought about. The test below drives a REAL request against an `httptest.Server`
-// that answers with headers and bodies a hostile or careless server might send, and
-// then inspects everything a Go program can be made to print.
-//
-// # WHAT IS SWEPT
-//
-// Every string reachable from a client after a full request cycle:
-//
-//	fmt.Sprintf("%v"), "%+v", "%s", "%q"   of the client, the transport, every error
-//	all exported struct FIELDS, recursively, via reflection
-//	all struct FIELDS including unexported ones, where reflection permits
-//	json.Marshal of the client and of every generated type that carries a secret
-//	every header the response carried, which is where a Set-Cookie would appear
-//	the error's message, and its `fmt.Sprintf("%+v")` with the whole error chain
-//
-// Reflection rather than a hand-written list, because a hand-written list is a
-// second statement of the struct's shape and misses every field added after it —
-// which is the whole class of bug this test is for.
 
 import (
 	"context"
@@ -61,42 +15,17 @@ import (
 	"github.com/anywaye/identity/client/generated"
 )
 
-// fakeToken is the credential the whole file hunts for.
-//
-// 43 base64url characters after the `anywaye_` prefix, which is the shape
-// identity's `IssuedAPIKey.token` documents and the shape `ClassifyCredential` keys
-// on. The body is a repeated character so it is impossible to mistake for a real
-// value at a glance and impossible to generate by accident.
 const fakeToken = "anywaye_FAKE_FAKE_FAKE_FAKE_FAKE_FAKE_FAKE_FAKE_FAKE_FA"
 
-// fakeSessionToken is the same idea for the OTHER auth model: a session token has
-// no prefix, so the shape that identifies it is "not a `anywaye_` value and not a
-// JWS". It is swept separately because a client can hold one and the two take
-// different code paths through AttachCredential.
 const fakeSessionToken = "FAKEfakeSessionTokenFAKEfakeSessionTokenFAKEfake"
 
-// The headers a careless or hostile service might send back. Every one of these is a
-// plausible way a credential gets echoed into a client's memory and then into a log.
 var leakyResponseHeaders = map[string]string{
-	// A session cookie. `Set-Cookie` is the single most common way a credential
-	// arrives somewhere it did not intend, and identity sets both `__Host-session`
-	// and `__Host-mfa-challenge`.
 	"Set-Cookie": "__Host-session=" + fakeToken + "; Path=/; Secure; HttpOnly; SameSite=Lax",
-	// An `Authorization` echoed back by a broken proxy.
 	"Authorization": "Bearer " + fakeToken,
-	// A cookie echoed in a header a debugging proxy added.
 	"X-Debug-Request": "Cookie: __Host-session=" + fakeToken,
-	// A credential in a header that a naive error formatter would quote whole.
 	"X-Request-Id": fakeToken,
 }
 
-// leakyProblemBody is an error body that echoes the caller's credential back.
-//
-// This is not hypothetical: a service that includes the presented token in its
-// `detail` — for a debug build, a proxy that rewrites bodies, an upstream that
-// reports the failing header — produces exactly this, and it is the reason every
-// string on a `ProblemError` goes through the redactor rather than only the ones
-// this package builds itself.
 const leakyProblemBody = `{
   "type": "https://docs.anywaye.com/errors/validation_failed",
   "title": "Validation failed",
@@ -108,16 +37,6 @@ const leakyProblemBody = `{
   "errors": [{"field": "token", "code": "invalid_format"}]
 }`
 
-// TestTheClientNeverPrintsACredential is the invariant, end to end.
-//
-// It runs a full request cycle — success, then an error response carrying the
-// credential in its body and its headers — and then sweeps everything a Go program
-// can be made to print about the resulting client and errors.
-//
-// Table-driven over the two credentials and the two outcomes, because "the token
-// never appears" has to hold for a `anywaye_` value and a session value and for a
-// success and a failure, and asserting it once for one combination is asserting it
-// for one combination.
 func TestTheClientNeverPrintsACredential(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -132,8 +51,6 @@ func TestTheClientNeverPrintsACredential(t *testing.T) {
 
 			client := newTestClient(t, server.URL, tc.token)
 
-			// The success path first: a client that leaks on the happy path is not
-			// rescued by also being careful on the error path.
 			user, err := client.GetCurrentUser(context.Background())
 			if err != nil {
 				t.Fatalf("the success path must succeed for this test to mean anything: %v", err)
@@ -144,9 +61,6 @@ func TestTheClientNeverPrintsACredential(t *testing.T) {
 			}
 			sweep(t, "after a successful call", tc.token, client, nil)
 
-			// The error path, which is the one that matters. The server answers 422
-			// with a body that quotes the caller's own token back, and headers that
-			// carry it three more ways.
 			failure := leakyServerFailure(t)
 			defer failure.Close()
 
@@ -161,26 +75,16 @@ func TestTheClientNeverPrintsACredential(t *testing.T) {
 	}
 }
 
-// sweep is the assertion. Everything that could carry the token is printed and
-// checked, and the failure message names which surface leaked rather than saying
-// "it appeared somewhere".
 func sweep(t *testing.T, when, token string, client *Client, err error) {
 	t.Helper()
 
 	surfaces := map[string]string{}
 
-	// Every formatting verb a caller might reach for, on the client itself. `%+v`
-	// is the one that prints unexported fields on a pointer, which is where a token
-	// stashed in an unexported field would surface; `%#v` prints the Go syntax
-	// including every field name and value.
 	for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%q"} {
 		surfaces["fmt.Sprintf("+verb+", client)"] = fmt.Sprintf(verb, client)
 		surfaces["fmt.Sprintf("+verb+", client.Transport())"] = fmt.Sprintf(verb, client.Transport())
 	}
 
-	// The accessors this package exposes. `BaseURL` and `HasCredential` are the only
-	// two, and both are here because an accessor added later is a leak waiting to
-	// happen.
 	surfaces["client.BaseURL()"] = client.BaseURL()
 	surfaces["client.HasCredential()"] = fmt.Sprintf("%v", client.HasCredential())
 
@@ -188,12 +92,8 @@ func sweep(t *testing.T, when, token string, client *Client, err error) {
 		for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%q"} {
 			surfaces["error "+verb] = fmt.Sprintf(verb, err)
 		}
-		// The redactor's own view of the error, which is the path a consumer's
-		// logging middleware is most likely to take.
 		surfaces["redactor.Error(err)"] = client.redactor.Error(err)
 
-		// Every error in the chain, since `errors.As` reaches through `Unwrap` and
-		// a caller formatting the whole chain would print every link.
 		for link, depth := err, 0; link != nil && depth < 8; depth++ {
 			unwrapper, ok := link.(interface{ Unwrap() error })
 			if !ok {
@@ -206,19 +106,8 @@ func sweep(t *testing.T, when, token string, client *Client, err error) {
 		}
 	}
 
-	// Every field of the client, by reflection, including unexported ones. This is
-	// the half that catches a `token string` field added later — the leak that the
-	// first run of this test actually found.
 	surfaces["reflected client fields"] = reflectAll(client)
 
-	// And every generated secret-bearing value, through `SafeToLog`.
-	//
-	// NOT through raw reflection: these types CONTAIN the token, that is what they
-	// are, and asserting that a `Session` does not print its own token would be
-	// asserting that the type does not exist. What is asserted is that the
-	// function this package provides for printing one redacts it — which is the
-	// answer to the brief's "add one that redacts", given that Go will not let one
-	// package define a `String()` method on another's type.
 	for name, value := range secretBearingValues() {
 		surfaces["client.SafeToLog(generated."+name+")"] = client.SafeToLog(value)
 	}
@@ -238,13 +127,6 @@ func sweep(t *testing.T, when, token string, client *Client, err error) {
 	}
 }
 
-// reflectAll renders every field of a value, recursively, including unexported
-// ones.
-//
-// The recursion has a depth bound and a visited set, and both are load-bearing: a
-// generated type holds `openapi_types.UUID`, which is a `[16]byte`, and an unbounded
-// walk over a self-referential structure — or a very deep one — would not terminate.
-// Without a failure that would look like a hang in somebody else's test.
 func reflectAll(value any) string {
 	var out strings.Builder
 	seen := map[uintptr]bool{}
@@ -257,7 +139,6 @@ func reflectAll(value any) string {
 
 		switch v.Kind() {
 		case reflect.Struct:
-			// A visited set keyed by pointer, so a cyclic structure terminates.
 			if v.CanAddr() {
 				if seen[v.Addr().Pointer()] {
 					return
@@ -269,9 +150,6 @@ func reflectAll(value any) string {
 			for i := 0; i < v.NumField(); i++ {
 				field := t.Field(i)
 
-				// Unexported fields are included deliberately. A token stashed in an
-				// unexported field is invisible to `%v` on a value but visible to
-				// `%+v` on a pointer, and both are things callers do.
 				if field.IsExported() {
 					out.WriteString(field.Name + "=")
 				} else {
@@ -279,9 +157,6 @@ func reflectAll(value any) string {
 				}
 
 				if !field.IsExported() {
-					// Reading an unexported field through reflection panics on
-					// Set but not on Get in modern Go... except for
-					// Interface(), so it is guarded rather than assumed.
 					out.WriteString("<unreadable>")
 					out.WriteString("\n")
 					continue
@@ -321,15 +196,6 @@ func reflectAll(value any) string {
 	return out.String()
 }
 
-// secretBearingValues is every generated type whose JSON contains something a
-// credential lands in.
-//
-// Enumerated by hand rather than discovered, and the reason is stated: reflection
-// cannot tell a `Token` field from an `AccountID` one without reading the names, and
-// a list built by guessing at names is a list that misses `Secret`. Each entry says
-// which field holds the value, so a reader can see what is being swept and a
-// document that adds a credential-carrying field makes this list visibly incomplete
-// rather than silently so.
 func secretBearingValues() map[string]any {
 	issued := generated.IssuedAPIKey{
 		ID:        uuidOf("ab000000-0000-0000-0000-0000000000a1"),
@@ -401,18 +267,6 @@ func secretBearingValues() map[string]any {
 	}
 }
 
-// TestTheResponseHeadersThisPackageKeepsAreCredentialFree is the half of the
-// invariant about what this package does with a response's headers.
-//
-// The leak test above sweeps what the CLIENT holds. This sweeps what the RESPONSE
-// carried, read out of a live server rather than out of a fixture, because a
-// `Set-Cookie` arriving on a response is the mechanism by which a session token
-// enters a process's memory, and this package decides whether any of it is
-// retained.
-//
-// The assertion is that a response's headers are never copied into an error this
-// package builds. A `ProblemError` carries the problem document's members and the
-// trace id — nothing else — and this is what holds that.
 func TestTheResponseHeadersThisPackageKeepsAreCredentialFree(t *testing.T) {
 	server := leakyServerFailure(t)
 	defer server.Close()
@@ -437,7 +291,6 @@ func TestTheResponseHeadersThisPackageKeepsAreCredentialFree(t *testing.T) {
 			truncate(string(serialized), 400))
 	}
 
-	// And the rendered form, which is what a logger prints.
 	for _, verb := range []string{"%v", "%+v", "%s"} {
 		if rendered := fmt.Sprintf(verb, err); strings.Contains(rendered, fakeToken) {
 			t.Errorf("the error rendered with %s contains the credential:\n%s", verb, rendered)
@@ -445,26 +298,9 @@ func TestTheResponseHeadersThisPackageKeepsAreCredentialFree(t *testing.T) {
 	}
 }
 
-// TestTheGeneratedSecretBearingTypesAreSafeToPrint covers the trap the brief names
-// directly, and it is a DIFFERENT assertion from the leak test's.
-//
-// The leak test asks whether THIS PACKAGE leaks. This asks whether the GENERATED
-// TYPES are safe for a caller to print — and the answer, measured, is that they are
-// not, because oapi-codegen gives none of them a `String()` method.
-//
-// The brief's instruction is explicit: "Check whether the generated types have a
-// `String()` or a `MarshalLogObject`, and if the answer is 'no', add one that
-// redacts — do not rely on nobody calling it."
-//
-// So this test records the finding as an executable claim rather than a comment. It
-// asserts that the generated types do NOT print a credential through `%v` — because
-// they do — and it names the mitigation, which is `SafeToLog` below.
 func TestTheGeneratedSecretBearingTypesAreSafeToPrint(t *testing.T) {
 	issued := generated.IssuedAPIKey{Token: fakeToken, Name: "ci-deploy"}
 
-	// The measured fact: `%v` on the generated struct prints the token, because the
-	// generator emits no `String()` and Go's default struct formatting walks every
-	// exported field.
 	printed := fmt.Sprintf("%v", issued)
 	if !strings.Contains(printed, fakeToken) {
 		t.Fatalf("`fmt.Sprintf(\"%%v\", IssuedAPIKey{...})` did not print the token: %s\n"+
@@ -473,8 +309,6 @@ func TestTheGeneratedSecretBearingTypesAreSafeToPrint(t *testing.T) {
 			"opportunity rather than a regression.", printed)
 	}
 
-	// And that `IssuedAPIKey` genuinely has no Stringer, stated as the check the
-	// brief asked for rather than assumed.
 	if _, has := any(issued).(interface{ String() string }); has {
 		t.Error("the generated IssuedAPIKey now implements fmt.Stringer.\n" +
 			"Check that the implementation REDACTS before relaxing anything here: a " +
@@ -482,9 +316,6 @@ func TestTheGeneratedSecretBearingTypesAreSafeToPrint(t *testing.T) {
 			"a credential leak that looks safe because a Stringer exists.")
 	}
 
-	// The mitigation, which is the answer to "add one that redacts": this package
-	// cannot add a method to a type in another package, so it provides a function
-	// instead, and this is the assertion that the function works on the worst case.
 	if got := SafeToLog(issued); strings.Contains(got, fakeToken) {
 		t.Errorf("SafeToLog printed the credential: %s", got)
 	}
@@ -493,9 +324,6 @@ func TestTheGeneratedSecretBearingTypesAreSafeToPrint(t *testing.T) {
 			SafeToLog(issued))
 	}
 
-	// And it must be the default that a caller reaches for, not a thing they have to
-	// remember. That is why it is a function with this name rather than a
-	// `RedactedString` field on every generated type that carries one.
 	if got := SafeToLog(generated.Session{Token: fakeToken}); strings.Contains(got, fakeToken) {
 		t.Errorf("SafeToLog printed a Session's token: %s", got)
 	}
@@ -504,9 +332,7 @@ func TestTheGeneratedSecretBearingTypesAreSafeToPrint(t *testing.T) {
 	}
 }
 
-// --- the fixtures ------------------------------------------------------------
 
-// leakyServer answers 200 with a valid `GET /v1/me` body.
 func leakyServer(t *testing.T) *httptest.Server {
 	t.Helper()
 
@@ -521,8 +347,6 @@ func leakyServer(t *testing.T) *httptest.Server {
 	}))
 }
 
-// leakyServerFailure answers 422 with a problem document that echoes the caller's
-// credential, and headers that carry it three more ways.
 func leakyServerFailure(t *testing.T) *httptest.Server {
 	t.Helper()
 
@@ -537,11 +361,6 @@ func leakyServerFailure(t *testing.T) *httptest.Server {
 	}))
 }
 
-// newTestClient builds a client pointed at an httptest server.
-//
-// `-count=1` is not needed here because nothing in this file reads the
-// environment: `LookupEnv` is supplied and the base URL is explicit. The env-gated
-// tests are in baseurl_test.go and carry the flag there.
 func newTestClient(t *testing.T, baseURL, token string) *Client {
 	t.Helper()
 
@@ -556,15 +375,9 @@ func newTestClient(t *testing.T, baseURL, token string) *Client {
 	return client
 }
 
-// asProblem asserts an error satisfies `ProblemError` and returns it.
 func asProblem(t *testing.T, err error) ProblemError {
 	t.Helper()
 
-	// The INTERFACE, not a concrete type. This is the whole design of errors.go, and
-	// the assertion is here so a regression in it is caught by the leak test rather
-	// than by a caller: if `errors.As` stopped matching the typed errors, the
-	// single catch the brief asks for would silently return false for every code
-	// this build knows, and only work for the ones it does not.
 	var problem ProblemError
 	if !errorsAs(err, &problem) {
 		t.Fatalf("expected a client.ProblemError, got %T: %v\n"+

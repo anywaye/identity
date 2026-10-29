@@ -18,34 +18,13 @@ import (
 	"github.com/anywaye/identity/internal/users"
 )
 
-// The scoped api key surface, against a programmable double.
-//
-// These tests are about the WIRE: status codes, the JSON shape, the one place the
-// secret appears, and the refusals. The use cases' own rules — validation order,
-// the owner check, the transaction — are asserted in internal/apikeys against a
-// real database, and duplicating them here with a double would only prove that the
-// double was told what the test wanted.
 
 const fakeKeyPrefix = apikeys.Prefix
 
-// apiKeySecret is a token-shaped value. It is a CONSTANT rather than something
-// minted per test because none of these tests is about a particular token's
-// randomness — the wire format is asserted in internal/apikeys — and a fixture
-// holding a minted secret in a field is one more place for a failing assertion to
-// print it.
-//
-// It is written out long and obviously synthetic on purpose. A test failure that
-// prints it must not be mistaken for a real credential, and a value that looks
-// real is exactly the kind of thing that ends up in a screenshot.
 const (
 	apiKeySecret = fakeKeyPrefix + "TESTONLYnotArealcredentialTESTONLYnotArealcredential"
 )
 
-// fakeAPIKeys is the APIKeys double.
-//
-// It records what it was handed, which is what lets a test prove that a handler
-// took the account from the PATH and the user from the session rather than from
-// the request body — the line a credential-minting route exists to hold.
 type fakeAPIKeys struct {
 	mu sync.Mutex
 
@@ -110,20 +89,7 @@ func (f *fakeAPIKeys) Revoke(_ context.Context, in apikeys.RevokeInput) (apikeys
 	return apikeys.Key{ID: in.KeyID, AccountID: in.AccountID}, nil
 }
 
-// ---------------------------------------------------------------------------
-// POST /v1/accounts/:id/api-keys
-// ---------------------------------------------------------------------------
 
-// TestMintAPIKeyReturnsTheSecretOnce is the packet's one-time-display requirement
-// on the HTTP response, and the reason it is spelled out as a test rather than
-// asserted in a comment is that "we do not store the token" is easy to claim and
-// easy to get subtly untrue. Three separate claims:
-//
-//  1. the 201 carries the token and it is the only field that does;
-//  2. the response has no field a client could mistake for it — no digest, no
-//     prefix, no second copy;
-//  3. EVERY other response on the surface does not carry it, which is the part
-//     "shown once" actually means.
 func TestMintAPIKeyReturnsTheSecretOnce(t *testing.T) {
 	t.Parallel()
 
@@ -146,14 +112,10 @@ func TestMintAPIKeyReturnsTheSecretOnce(t *testing.T) {
 		t.Fatalf("the body is not JSON: %v\n%s", err, rec.Body)
 	}
 
-	// (1) the secret is here.
 	if body.Token != f.issued.Token {
 		t.Errorf("token = %q, want the issued value", body.Token)
 	}
 
-	// (2) and only here. The nested type is what makes this checkable: the field
-	// lives on issuedAPIKeyResponse and NOT on apiKeyResponse, so the list handler
-	// cannot reach it even by accident.
 	if body.ID != f.issued.Key.ID.String() {
 		t.Errorf("id = %q, want %q", body.ID, f.issued.Key.ID)
 	}
@@ -161,9 +123,6 @@ func TestMintAPIKeyReturnsTheSecretOnce(t *testing.T) {
 	if strings.Contains(rendered, f.issued.Key.TokenDigest) && f.issued.Key.TokenDigest != "" {
 		t.Errorf("the response carries the row's digest: %s", rendered)
 	}
-	// last_used_at is absent on a token that has never been used, and its absence
-	// is load-bearing: a client that sees the field and an empty value may treat
-	// "the field exists" as "this credential has been used".
 	var raw map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
 		t.Fatalf("decoding: %v", err)
@@ -177,7 +136,6 @@ func TestMintAPIKeyReturnsTheSecretOnce(t *testing.T) {
 		}
 	}
 
-	// (3) nowhere else on the surface.
 	listed := apiKeyGet(t, handler, apiKeyPath(f.issued.Key.AccountID), auth.token)
 	if listed.Code != http.StatusOK {
 		t.Fatalf("GET /v1/accounts/:id/api-keys = %d, want 200; body: %s", listed.Code, listed.Body)
@@ -187,17 +145,10 @@ func TestMintAPIKeyReturnsTheSecretOnce(t *testing.T) {
 	}
 }
 
-// TestTheListCarriesNoSecretUnderAnyName is the paranoid version of the same
-// requirement, and it is the assertion people get wrong: it does not check that
-// the field is absent, it checks that the VALUE is not in the body at all. A
-// handler that rendered the whole domain struct would pass a field-name check and
-// fail this one.
 func TestTheListCarriesNoSecretUnderAnyName(t *testing.T) {
 	t.Parallel()
 
 	f := newFakeAPIKeys()
-	// A list holding a revoked token too, so the pointer fields are exercised
-	// rather than being nil all the way down.
 	revokedAt := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
 	reason := "rotated"
 	f.list = []apikeys.Key{
@@ -218,7 +169,6 @@ func TestTheListCarriesNoSecretUnderAnyName(t *testing.T) {
 	if strings.Contains(rec.Body.String(), f.issued.Token) {
 		t.Errorf("the list body contains the issued secret: %s", rec.Body)
 	}
-	// The whole rendered body, searched for anything token-shaped.
 	for _, line := range strings.Split(rec.Body.String(), "\n") {
 		if strings.Contains(line, fakeKeyPrefix) {
 			t.Errorf("the list body carries a token-shaped value: %s", line)
@@ -226,8 +176,6 @@ func TestTheListCarriesNoSecretUnderAnyName(t *testing.T) {
 	}
 }
 
-// TestTheListIsAnArrayNotNull: an account with no credentials is an empty list, and
-// a client should not have to handle both `[]` and `null` for the same thing.
 func TestTheListIsAnArrayNotNull(t *testing.T) {
 	t.Parallel()
 
@@ -241,11 +189,6 @@ func TestTheListIsAnArrayNotNull(t *testing.T) {
 	}
 }
 
-// TestTheScopesSurviveTheWire is the wire-shape half of the scope contract: the
-// client's `scopes` array is the set, unchanged, and it is an array rather than
-// the space-separated string gateway parses from a JWT. A response that rendered the
-// OIDC shape here would be a client that had to split on whitespace to discover
-// what it was granted.
 func TestTheScopesSurviveTheWire(t *testing.T) {
 	t.Parallel()
 
@@ -271,9 +214,6 @@ func TestTheScopesSurviveTheWire(t *testing.T) {
 	}
 }
 
-// TestMintTakesTheAccountFromThePathAndTheUserFromTheSession is the line a
-// credential-minting route exists to hold: nothing in the body can choose the
-// account or the subject.
 func TestMintTakesTheAccountFromThePathAndTheUserFromTheSession(t *testing.T) {
 	t.Parallel()
 
@@ -281,23 +221,11 @@ func TestMintTakesTheAccountFromThePathAndTheUserFromTheSession(t *testing.T) {
 	auth := newFakeAuth()
 	handler := New(nil, WithAuth(auth), WithTenancy(apiKeyTenancy()), WithAPIKeys(f))
 
-	// The path says one account, the session says one user, and the body tries to
-	// say both differently.
 	accountInPath := id.MustNew()
 	rec := apiKeyPost(t, handler, apiKeyPath(accountInPath), auth.token,
 		`{"name":"ci","scopes":["accounts:read"],`+
 			`"account_id":"`+id.MustNew().String()+`","user_id":"`+id.MustNew().String()+`"}`)
 
-	// The unknown fields are the point of the first assertion: a body that could
-	// carry an account_id is a body where the account is ambiguous.
-	//
-	// The answer is decodeBody's, and it is the service-wide one — a 422
-	// validation_failed with a sentence saying the body has a field this endpoint
-	// does not accept, and NO errors[] entry. That is a decision this service makes
-	// everywhere a body carries an unknown field rather than a bad value, and
-	// changing it for one route would give a client two different 422 shapes to
-	// parse. What is asserted here is that the request is refused and that the
-	// use case is never reached, which is the security claim.
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("a body naming its own account = %d, want 422; body: %s", rec.Code, rec.Body)
 	}
@@ -312,7 +240,6 @@ func TestMintTakesTheAccountFromThePathAndTheUserFromTheSession(t *testing.T) {
 		t.Error("the use case was reached at all")
 	}
 
-	// And the clean case does put the path's account in the input.
 	rec = apiKeyPost(t, handler, apiKeyPath(accountInPath), auth.token,
 		`{"name":"ci","scopes":["accounts:read"]}`)
 	if rec.Code != http.StatusCreated {
@@ -329,8 +256,6 @@ func TestMintTakesTheAccountFromThePathAndTheUserFromTheSession(t *testing.T) {
 	}
 }
 
-// TestExpiresInIsSecondsAndOptional: the field is RFC 6749's `expires_in` —
-// seconds from now, not a timestamp — and omitting it is not an error.
 func TestExpiresInIsSecondsAndOptional(t *testing.T) {
 	t.Parallel()
 
@@ -346,10 +271,6 @@ func TestExpiresInIsSecondsAndOptional(t *testing.T) {
 			wantSet: true, want: 30 * 24 * time.Hour,
 		},
 		{
-			// A negative value is passed through rather than clamped, so the use
-			// case's ResolveExpiry is what refuses it. Clamping here would turn a
-			// nonsense request into a request for the floor, which is a different
-			// credential than the one that was asked for.
 			name: "negative", body: `{"name":"ci","scopes":["accounts:read"],"expires_in":-1}`,
 			wantSet: true, want: -time.Second,
 		},
@@ -391,20 +312,10 @@ func TestExpiresInIsSecondsAndOptional(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// authorization
-// ---------------------------------------------------------------------------
 
-// TestTheAPIKeyRoutesRequireAnOwner is the route's minimum, asserted through the
-// matrix's own helper so it is compared with every other account route's minimum
-// rather than as a one-off.
 func TestTheAPIKeyRoutesRequireAnOwner(t *testing.T) {
 	t.Parallel()
 
-	// One tenancy double per role rather than one mutated across subtests: the
-	// subtests are parallel, and a shared double whose `role` field is written by
-	// two of them at once is a harness that fails for a reason that has nothing to
-	// do with the code.
 	for _, role := range accounts.AllRoles() {
 		t.Run(string(role), func(t *testing.T) {
 			t.Parallel()
@@ -432,8 +343,6 @@ func TestTheAPIKeyRoutesRequireAnOwner(t *testing.T) {
 	}
 }
 
-// TestTheAPIKeyRoutesRefuseAnonymous, because owner-only must not be reachable by
-// presenting nothing at all.
 func TestTheAPIKeyRoutesRefuseAnonymous(t *testing.T) {
 	t.Parallel()
 
@@ -462,15 +371,6 @@ func TestTheAPIKeyRoutesRefuseAnonymous(t *testing.T) {
 	}
 }
 
-// TestATokenCannotReachTheCredentialSurface is the negative half of the scope
-// vocabulary, and the part a scope list cannot express: there is no scope for
-// managing api keys, so a token presenting here is refused outright rather than
-// having its scopes consulted.
-//
-// The route table has no row for these three routes ON PURPOSE, and that is what
-// makes the refusal. scopeRequiredBy returns "" for a route nobody declared, and
-// `Allows("")` is false for every granted set — so the routes are closed to tokens
-// by construction rather than by a check somebody has to remember to write.
 func TestATokenCannotReachTheCredentialSurface(t *testing.T) {
 	t.Parallel()
 
@@ -511,14 +411,6 @@ func TestATokenCannotReachTheCredentialSurface(t *testing.T) {
 	}
 }
 
-// TestEveryScopeIsEnforcedOnItsRoutes is the other direction, and the reason the
-// scope table is a table: it walks the router and requires that every account
-// route reachable by a token declares a scope this build knows about.
-//
-// A row naming a scope that does not exist would let a token through a gate that
-// can never be satisfied — the credential is issued, the route is open, and nothing
-// ever matches. A route with no row is closed, which is safe but is a gap somebody
-// has to notice, so this test also reports it.
 func TestEveryScopeIsEnforcedOnItsRoutes(t *testing.T) {
 	t.Parallel()
 
@@ -533,8 +425,6 @@ func TestEveryScopeIsEnforcedOnItsRoutes(t *testing.T) {
 		}
 	}
 
-	// And every scope the vocabulary names is enforced somewhere, so a scope is
-	// never a name with no route behind it.
 	used := make(map[string][]string, len(apikeys.AllScopes()))
 	for route, scope := range accountRouteScopes {
 		used[scope] = append(used[scope], route)
@@ -547,13 +437,7 @@ func TestEveryScopeIsEnforcedOnItsRoutes(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// DELETE /v1/accounts/:id/api-keys/:keyId
-// ---------------------------------------------------------------------------
 
-// TestRevokeWorksWithAndWithoutABody: "revoke this" with no explanation is the
-// common request, and refusing it for want of a JSON document would be a 400 on a
-// DELETE that needs nothing else.
 func TestRevokeWorksWithAndWithoutABody(t *testing.T) {
 	t.Parallel()
 
@@ -598,8 +482,6 @@ func TestRevokeWorksWithAndWithoutABody(t *testing.T) {
 	}
 }
 
-// TestRevokeRefusesAMalformedKeyId: the path is part of a resource's identity, so
-// "not an id this service issued" is the same answer as "an id you cannot see".
 func TestRevokeRefusesAMalformedKeyId(t *testing.T) {
 	t.Parallel()
 
@@ -623,13 +505,7 @@ func TestRevokeRefusesAMalformedKeyId(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// error mapping
-// ---------------------------------------------------------------------------
 
-// TestAPIKeyErrorMapping is the whole table, and each row is a decision rather
-// than a formatting choice. The two that matter most are the two 409s: an operator
-// who clicked twice, and an operator rotating a name.
 func TestAPIKeyErrorMapping(t *testing.T) {
 	t.Parallel()
 
@@ -645,9 +521,6 @@ func TestAPIKeyErrorMapping(t *testing.T) {
 			wantStatus: http.StatusForbidden, wantCode: CodeForbidden,
 		},
 		{
-			// The store answers this for an unknown id, an id in another account,
-			// and an id whose row is gone. One sentence for all three: a different
-			// one would confirm that a guessed id is a real credential.
 			name:       "a key that is not there",
 			give:       apikeys.ErrNotFound,
 			wantStatus: http.StatusNotFound, wantCode: CodeNotFound,
@@ -706,8 +579,6 @@ func TestAPIKeyErrorMapping(t *testing.T) {
 	}
 }
 
-// TestAnInternalFailureIsLoggedNotReturned: the sentence a caller gets must not
-// contain the driver's error, and the operator must get it with a trace id.
 func TestAnInternalFailureIsLoggedNotReturned(t *testing.T) {
 	t.Parallel()
 
@@ -744,8 +615,6 @@ func TestAnInternalFailureIsLoggedNotReturned(t *testing.T) {
 	}
 }
 
-// TestTheRoutesAreAbsentWithoutTheService: a misconfiguration is a 404, not a 500
-// on every request. The same rule as every other optional surface in this service.
 func TestTheRoutesAreAbsentWithoutTheService(t *testing.T) {
 	t.Parallel()
 
@@ -760,12 +629,7 @@ func TestTheRoutesAreAbsentWithoutTheService(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// helpers
-// ---------------------------------------------------------------------------
 
-// fakeAPIKeyCaller resolves a fixed key to a fixed user, and records the values it
-// was handed so a test can prove which surface the credential came from.
 type fakeAPIKeyCaller struct {
 	mu sync.Mutex
 
@@ -794,28 +658,10 @@ func (f *fakeAPIKeyCaller) Authenticate(_ context.Context, token string, now tim
 	return apikeys.Caller{User: f.user, Key: key, Role: f.role}, nil
 }
 
-// apiKeyPath is the collection route for an account's credentials.
-//
-// It is a helper rather than a concatenation at each call site because getting it
-// wrong is silent in a way that matters: `/v1/accounts/{id}` is a real route that
-// answers, so a test pointed at it passes with a 200 from the wrong endpoint and
-// asserts nothing about api keys at all.
 func apiKeyPath(accountID id.UUID) string {
 	return "/v1/accounts/" + accountID.String() + "/api-keys"
 }
 
-// apiKeyTenancy is a fakeTenancy whose caller is an owner.
-//
-// It exists because the three api key routes are owner-only, and a tenancy double
-// left at its zero role would make every test here a 403 — so each one would be
-// asserting the refusal and none of them the success path. The role is set
-// explicitly rather than defaulted in newFakeTenancy because that default would
-// change what every other test in this package proves.
-//
-// The account's ID IS LEFT ZERO on purpose, so fakeTenancy.Get echoes the id from
-// the PATH. A double with a fixed account would make "the handler passed the
-// account from the path" pass no matter what the handler did — the handler would
-// receive the double's id and compare it against the same fixed value.
 func apiKeyTenancy() *fakeTenancy {
 	f := newFakeTenancy()
 	f.role = accounts.RoleOwner

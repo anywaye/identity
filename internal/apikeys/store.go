@@ -14,38 +14,13 @@ import (
 	"github.com/anywaye/identity/internal/platform/id"
 )
 
-// Postgres SQLSTATE 23505, unique_violation.
 const uniqueViolation = "23505"
 
-// errNoRows is pgx's "the query matched nothing", aliased so the intent reads at
-// the call site.
 var errNoRows = pgx.ErrNoRows
 
-// Errors this store returns beyond the package-level ErrNotFound. They are
-// distinct values so the code says what happened, and the HTTP layer renders two
-// of them differently for a reason that is written where it is rendered.
 var (
-	// ErrNameTaken means this account already has a LIVE token with that name.
-	//
-	// It is a 409 and not a 422, and the difference is the point: the request is
-	// perfectly well formed and the state it asks for collides with one that
-	// exists. The index that raises it is partial on revoked_at IS NULL, so a
-	// REVOKED token of the same name does not collide — which is what makes
-	// "revoke the old one, mint the new one" two requests rather than a
-	// transaction that has to find a name free first.
-	//
-	// The case it exists for is operational rather than adversarial: an operator
-	// revoking "ci-deploy" when two live tokens answer to that name is picking one
-	// at random, and picking the wrong one leaves a credential live that somebody
-	// believes they have just destroyed.
 	ErrNameTaken = errors.New("an active api key with that name already exists in this account")
 
-	// ErrAlreadyRevoked means the token exists and has already been withdrawn.
-	//
-	// Distinct from ErrNotFound so an operator who clicks twice is told so. A
-	// 204 either way would leave them believing a second credential had just been
-	// destroyed, which is the belief that ends up written in an incident timeline
-	// as "we turned the old one off" when only one of two was.
 	ErrAlreadyRevoked = errors.New("api key is already revoked")
 )
 
@@ -69,25 +44,11 @@ type Key struct {
 	Scopes      []string
 	CreatedAt   time.Time
 	ExpiresAt   time.Time
-	// LastUsedAt is nil until the token has been used. A pointer because "never
-	// used" and "used at the epoch" are different answers, and the first is the
-	// one an operator wants to notice.
 	LastUsedAt *time.Time
-	// RevokedAt, RevokedBy and RevokeReason are set together or not at all, and
-	// the table's CHECK says so. RevokeReason is a pointer because the empty
-	// string is a legitimate reason ("rotated") and NULL means "none given".
 	RevokedAt    *time.Time
 	RevokedBy    *id.UUID
 	RevokeReason *string
 
-	// Role is the owner of this token's CURRENT role in its account, or "" when
-	// the row was read by something that does not join account_users — the
-	// settings page, which shows a credential whether or not its owner is still
-	// a member.
-	//
-	// It is a field rather than a separate return value because it belongs to the
-	// ANSWER to "who is calling", and a caller that resolved a token has both
-	// halves in one struct with no way to forget one.
 	Role accounts.Role
 }
 
@@ -116,9 +77,6 @@ type NewKey struct {
 	Name      string
 	Digest    string
 	Scopes    []string
-	// CreatedAt and ExpiresAt are passed rather than read from the clock, so the
-	// row and the event announcing it agree and only one of the two is under
-	// test control.
 	CreatedAt time.Time
 	ExpiresAt time.Time
 }
@@ -135,8 +93,6 @@ type Store struct {
 // NewStore returns a Store backed by pool.
 func NewStore(pool db.Pool) *Store { return &Store{pool: pool} }
 
-// keyColumns is the select list, in the order scanKey expects. One constant, so
-// a column added here cannot be forgotten in one query and present in another.
 const keyColumns = `id, user_id, account_id, name, token_digest, scopes, created_at, expires_at, ` +
 	`last_used_at, revoked_at, revoked_by, revoke_reason`
 
@@ -159,11 +115,6 @@ func (s *Store) Create(ctx context.Context, q db.Querier, n NewKey) (Key, error)
 		n.UserID, n.AccountID, n.Name, n.Digest, n.Scopes, n.CreatedAt, n.ExpiresAt))
 	if err != nil {
 		if isUniqueViolation(err) {
-			// The only unique constraint a CALLER can collide with is the partial
-			// index on (account_id, lower(name)) WHERE revoked_at IS NULL. The
-			// digest's index is a 256-bit collision on a value this package
-			// generated, which is a bug and not a request — the same reasoning
-			// internal/oidc's CreateClient uses for its own secret column.
 			return Key{}, ErrNameTaken
 		}
 		return Key{}, fmt.Errorf("apikeys: creating a token: %w", err)
@@ -205,17 +156,10 @@ func (s *Store) Create(ctx context.Context, q db.Querier, n NewKey) (Key, error)
 // Clock, and a token that expires mid-request has to be judged against the same
 // instant the response is timestamped with.
 func (s *Store) ByDigest(ctx context.Context, q db.Querier, digest string, now time.Time) (Key, error) {
-	// An empty digest never reaches the database. It is not a security boundary —
-	// an empty string hashes to a well-formed digest like any other value, which
-	// is the timing story — it is that the query has one shape and no caller
-	// should be able to change it.
 	if digest == "" {
 		return Key{}, ErrNotFound
 	}
 
-	// A var rather than a const, and the reason is prefixed(): it is a function,
-	// and the point of calling it is that a column added to keyColumns cannot be
-	// forgotten in the aliased query. A constant cannot call a function.
 	var query = `
 		SELECT ` + prefixed("k", keyColumns) + `, au.role
 		FROM api_keys k
@@ -331,11 +275,6 @@ func (s *Store) Revoke(ctx context.Context, q db.Querier, rowID, accountID, by i
 
 	out, err := scanKey(q.QueryRow(ctx, query, rowID, accountID, at, by, reason))
 	if errors.Is(err, errNoRows) {
-		// Either the row is gone, it belongs to another account, or it was already
-		// revoked — and the three are told apart by a second read rather than
-		// guessed, for the reason internal/oidc's RevokeClient gives: an operator
-		// with a stale id deserves "not found" and an operator who clicked twice
-		// deserves "already revoked".
 		existing, lookupErr := s.ByID(ctx, q, rowID)
 		if errors.Is(lookupErr, ErrNotFound) {
 			return Key{}, ErrNotFound
@@ -393,11 +332,6 @@ func (s *Store) RevokeAllForMember(ctx context.Context, q db.Querier, accountID,
 		return nil
 	}
 
-	// revoked_by is the member themselves, because they are the only party this
-	// statement knows and the table's whole-revocation CHECK requires a revoker. It
-	// reads as though they withdrew their own credentials, which is wrong in its
-	// literal sense; the reason carries the truth instead, and the comment above is
-	// the other half of it.
 	const query = `
 		UPDATE api_keys
 		SET revoked_at = $3, revoked_by = $2, revoke_reason = 'membership removed'
@@ -435,16 +369,12 @@ func (s *Store) Touch(ctx context.Context, q db.Querier, rowID id.UUID, at time.
 		  AND revoked_at IS NULL
 		  AND (last_used_at IS NULL OR last_used_at < $3)`
 
-	// No RowsAffected check, and the comment is the reason: zero rows is the rate
-	// limit working, and reporting it would turn a busy token into a failing one.
 	if _, err := q.Exec(ctx, query, rowID, at, at.Add(-LastUsedResolution)); err != nil {
 		return fmt.Errorf("apikeys: recording a token's last use: %w", err)
 	}
 	return nil
 }
 
-// rowScanner is the narrow interface both pgx.Row and pgx.Rows satisfy, so one
-// read serves the single-row and the list query.
 type rowScanner interface {
 	Scan(dest ...any) error
 }
@@ -462,11 +392,6 @@ func scanKey(row rowScanner) (Key, error) {
 	return k, nil
 }
 
-// prefixed qualifies a bare column list with a table alias, so the joined
-// resolution query and the plain reads can share one column constant. It is the
-// same helper internal/accounts/store.go has, restated because neither package
-// imports the other and a shared one would be an edge between two tables that
-// have nothing to say to each other.
 func prefixed(alias, columns string) string {
 	out := make([]byte, 0, len(columns)+len(alias)+8)
 	start := 0
@@ -484,15 +409,6 @@ func prefixed(alias, columns string) string {
 	return string(out)
 }
 
-// isUniqueViolation reports whether err is a unique_violation.
-//
-// It matches on the SQLSTATE alone, which is load-bearing rather than lazy: the
-// only unique constraint on this table a caller can collide with is the partial
-// index on (account_id, lower(name)) WHERE revoked_at IS NULL. Matching that
-// index's NAME would be more precise in principle and is in practice brittle —
-// Postgres renames an index when a table is cloned with LIKE ... INCLUDING
-// INDEXES, which is exactly what the integration tests do — and a silently
-// mis-detected duplicate turns a 409 into a 500.
 func isUniqueViolation(err error) bool {
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) {

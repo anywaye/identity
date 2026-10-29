@@ -14,13 +14,6 @@ import (
 	"github.com/anywaye/identity/internal/users"
 )
 
-// Integration tests: they need a real Postgres with the migrations applied. See
-// dbtest.Schema for the gate and migrations/README.md for the setup.
-//
-// They run in a private schema rather than against the shared one. A unique email
-// is enough isolation for rows this service identifies by address; it is not
-// enough for rows identified by (provider, provider_uid), because several of
-// these tests deliberately reuse the same uid to prove the unique index fires.
 
 func newAccountUser(t *testing.T, pool *pgxpool.Pool) id.UUID {
 	t.Helper()
@@ -83,9 +76,6 @@ func TestStoreCreateAndReadBack(t *testing.T) {
 	}
 }
 
-// GitHub issues no refresh token by default, and that has to be stored as NULL
-// rather than as "". An empty string is not a value either caller can act on:
-// it looks refreshable, and it is not.
 func TestStoreCreateStoresNullForAMissingRefreshToken(t *testing.T) {
 	pool := dbtest.Schema(t)
 	store := NewStore(pool)
@@ -118,9 +108,6 @@ func TestStoreCreateStoresNullForAMissingRefreshToken(t *testing.T) {
 	}
 }
 
-// The uniqueness that matters is (provider, provider_uid). Without it two users
-// could both "own" one social identity, and the second login through it would be a
-// silent account takeover.
 func TestStoreCreateRejectsTheSameProviderIdentityTwice(t *testing.T) {
 	pool := dbtest.Schema(t)
 	store := NewStore(pool)
@@ -145,8 +132,6 @@ func TestStoreCreateRejectsTheSameProviderIdentityTwice(t *testing.T) {
 		t.Fatalf("second Create = %v, want errors.Is(_, ErrAlreadyLinked)", err)
 	}
 
-	// And the row still belongs to the first user: a rejected insert must not
-	// leave a half-attached account behind.
 	owner, err := store.ByProviderUID(ctx, pool, ProviderGoogle, "the-same-person")
 	if err != nil {
 		t.Fatalf("ByProviderUID: %v", err)
@@ -156,9 +141,6 @@ func TestStoreCreateRejectsTheSameProviderIdentityTwice(t *testing.T) {
 	}
 }
 
-// The same numeric id at two different providers is two different people. GitHub
-// user 583231 and Google sub 583231 share nothing, and a uniqueness rule that
-// ignored the provider would refuse one of two legitimate sign-ins.
 func TestStoreTheSameUIDOnTwoProvidersIsTwoAccounts(t *testing.T) {
 	pool := dbtest.Schema(t)
 	store := NewStore(pool)
@@ -178,8 +160,6 @@ func TestStoreTheSameUIDOnTwoProvidersIsTwoAccounts(t *testing.T) {
 	}
 }
 
-// The enum is a real database guarantee: a provider this service does not offer
-// cannot be written at all, which is stronger than any check the Go code makes.
 func TestStoreCreateRefusesAProviderOutsideTheEnum(t *testing.T) {
 	pool := dbtest.Schema(t)
 	store := NewStore(pool)
@@ -194,7 +174,6 @@ func TestStoreCreateRefusesAProviderOutsideTheEnum(t *testing.T) {
 	if err == nil {
 		t.Fatal("Create accepted a provider outside the oauth_provider enum")
 	}
-	// Not a conflict: the row was never a duplicate, it was never valid.
 	if errors.Is(err, ErrAlreadyLinked) {
 		t.Errorf("an out-of-enum provider reported as ErrAlreadyLinked: %v", err)
 	}
@@ -210,8 +189,6 @@ func TestStoreLookupsMissCleanly(t *testing.T) {
 	}
 }
 
-// Every OAuth login refreshes the stored token, so this is on the hot path and not
-// an administrative edit. A refresh must not disturb the link itself.
 func TestStoreRefreshTokens(t *testing.T) {
 	pool := dbtest.Schema(t)
 	store := NewStore(pool)
@@ -250,15 +227,11 @@ func TestStoreRefreshTokens(t *testing.T) {
 	if got.ExpiresAt == nil || !got.ExpiresAt.Equal(expiresAt) {
 		t.Errorf("ExpiresAt = %v, want %s", got.ExpiresAt, expiresAt)
 	}
-	// The link is unchanged.
 	if got.UserID != userID || got.ProviderUID != created.ProviderUID || got.ID != created.ID {
 		t.Errorf("RefreshTokens moved the link: %+v", got)
 	}
 }
 
-// Google does not reissue a refresh token on every exchange, so a provider that
-// omits it must leave the stored one in place. Writing NULL would silently
-// downgrade an account to a credential that dies in an hour with no way back.
 func TestStoreRefreshTokensKeepsAnExistingRefreshTokenWhenNoneIsIssued(t *testing.T) {
 	pool := dbtest.Schema(t)
 	store := NewStore(pool)
@@ -300,8 +273,6 @@ func TestStoreRefreshTokensMissesCleanly(t *testing.T) {
 	}
 }
 
-// A deleted user has no connected accounts. The cascade is what frees the
-// provider uid so that the same person can sign up again later.
 func TestStoreDeleteUserCascades(t *testing.T) {
 	pool := dbtest.Schema(t)
 	store := NewStore(pool)
@@ -326,9 +297,6 @@ func TestStoreDeleteUserCascades(t *testing.T) {
 	}
 }
 
-// The store detects a duplicate on SQLSTATE 23505 alone, which is only sound while
-// the table has exactly one application-level unique index. This is what makes
-// that assumption self-enforcing — the same guard internal/users carries.
 func TestConnectedAccountsHasExactlyOneApplicationUniqueIndex(t *testing.T) {
 	pool := dbtest.Schema(t)
 
@@ -363,8 +331,6 @@ func TestConnectedAccountsHasExactlyOneApplicationUniqueIndex(t *testing.T) {
 	}
 }
 
-// A provider uid is whatever the provider says it is, so its length is the only
-// bound available. The CHECK is the last line of defense for an index entry.
 func TestStoreCreateEnforcesTheProviderUIDLength(t *testing.T) {
 	pool := dbtest.Schema(t)
 	store := NewStore(pool)

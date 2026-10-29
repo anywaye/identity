@@ -11,23 +11,13 @@ import (
 	"github.com/anywaye/identity/internal/platform/id"
 )
 
-// The loop is exercised against a fake Claimer and a recording Publisher rather
-// than a database: the interesting behavior is what it does when a publish
-// fails, and that is far easier to arrange deterministically here than through
-// a transport.
 
 var errBusDown = errors.New("nats: no servers available for connection")
 
-// recordingPublisher captures what it was asked to publish and can be told to
-// fail for a chosen event.
 type recordingPublisher struct {
 	mu        sync.Mutex
 	published []Envelope
-	// failFor is keyed by envelope id, not by type: the loop's contract is about
-	// one event failing while the rest go out, and two events of the same type is
-	// the normal case for this service.
 	failFor map[id.UUID]error
-	// blocked, when non-nil, is waited on before each publish.
 	blocked chan struct{}
 }
 
@@ -35,7 +25,6 @@ func newRecordingPublisher() *recordingPublisher {
 	return &recordingPublisher{failFor: map[id.UUID]error{}}
 }
 
-// fail makes the publisher reject one specific event.
 func (p *recordingPublisher) fail(eventID id.UUID, err error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -63,7 +52,6 @@ func (p *recordingPublisher) seen() []Envelope {
 	return append([]Envelope(nil), p.published...)
 }
 
-// fakeBatch is a Batch with no transaction behind it.
 type fakeBatch struct {
 	events    []Envelope
 	published []id.UUID
@@ -96,8 +84,6 @@ func (b *fakeBatch) Release(context.Context) error {
 	return nil
 }
 
-// fakeClaimer hands out a fixed sequence of batches and records how many were
-// taken.
 type fakeClaimer struct {
 	mu       sync.Mutex
 	batches  []*fakeBatch
@@ -155,8 +141,6 @@ func TestServiceRunOncePublishesTheWholeBatch(t *testing.T) {
 	}
 }
 
-// An idle outbox is the normal state of a healthy service. RunOnce must report
-// zero and no error, and must not have claimed anything to complain about.
 func TestServiceRunOnceOnAnIdleOutbox(t *testing.T) {
 	t.Parallel()
 
@@ -175,10 +159,6 @@ func TestServiceRunOnceOnAnIdleOutbox(t *testing.T) {
 	}
 }
 
-// One poison event must not stop the ones behind it. core's event-naming.md:
-// "A consumer that cannot process an event must not block the queue: park it,
-// alert, keep going." The same reasoning applies to the publisher: a single
-// unserializable event cannot be allowed to wedge the outbox.
 func TestServiceKeepsGoingAfterAFailedPublish(t *testing.T) {
 	t.Parallel()
 
@@ -198,12 +178,9 @@ func TestServiceKeepsGoingAfterAFailedPublish(t *testing.T) {
 		t.Errorf("RunOnce reported %d published, want 1 (the poison event should not be counted)", n)
 	}
 
-	// The good one went out.
 	if len(pub.seen()) != 1 || pub.seen()[0].ID != good.ID {
 		t.Errorf("the publisher saw %v, want just the good event", ids(pub.seen()))
 	}
-	// The poison one is marked failed, not published, and the batch still commits
-	// so the good one is not re-sent on the next pass.
 	if len(batch.failed) != 1 || batch.failed[0] != poison.ID {
 		t.Errorf("MarkFailed was called for %v, want just %s", batch.failed, poison.ID)
 	}
@@ -215,8 +192,6 @@ func TestServiceKeepsGoingAfterAFailedPublish(t *testing.T) {
 	}
 }
 
-// The failure reason goes into the row. An operator seeing attempts climb with no
-// explanation has nothing to act on.
 func TestServiceRecordsWhyAPublishFailed(t *testing.T) {
 	t.Parallel()
 
@@ -239,9 +214,6 @@ func TestServiceRecordsWhyAPublishFailed(t *testing.T) {
 	}
 }
 
-// If the batch cannot even be claimed, that is an infrastructure failure and the
-// caller has to hear about it. A loop that swallowed it would spin silently
-// forever with a broken database and a green process.
 func TestServiceRunOnceReportsAClaimFailure(t *testing.T) {
 	t.Parallel()
 
@@ -252,8 +224,6 @@ func TestServiceRunOnceReportsAClaimFailure(t *testing.T) {
 	}
 }
 
-// The batch is always released, even when the loop is canceled mid-publish. A
-// leaked claim holds a transaction and a row lock until the pool reaps it.
 func TestServiceReleasesTheBatchWhenTheContextIsCancelled(t *testing.T) {
 	t.Parallel()
 
@@ -285,8 +255,6 @@ func TestServiceReleasesTheBatchWhenTheContextIsCancelled(t *testing.T) {
 	}
 }
 
-// The loop stops on its own when its context is done. It must not need an
-// external signal, or a SIGTERM would leave it running until the process dies.
 func TestServiceRunStopsOnContextCancellation(t *testing.T) {
 	t.Parallel()
 
@@ -309,10 +277,6 @@ func TestServiceRunStopsOnContextCancellation(t *testing.T) {
 	}
 }
 
-// NoopPublisher is what ships in this packet: the interface exists, the NATS
-// connection is a later one. It must accept events and report success, or the
-// loop would mark everything published and the outbox would silently empty into
-// nowhere.
 func TestNoopPublisherAcceptsWithoutError(t *testing.T) {
 	t.Parallel()
 
@@ -321,8 +285,6 @@ func TestNoopPublisherAcceptsWithoutError(t *testing.T) {
 	}
 }
 
-// The default batch size has to be a real number, and settable, because a loop
-// claiming one event at a time is a loop that cannot catch up.
 func TestServiceBatchSize(t *testing.T) {
 	t.Parallel()
 

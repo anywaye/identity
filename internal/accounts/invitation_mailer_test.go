@@ -1,18 +1,5 @@
 package accounts
 
-// # THIS FILE IS THE PACKET'S RED TEST, AND IT IS RED ON MASTER
-//
-// It fails to BUILD against master's tree, and the build failure is the honest
-// red: `InvitationMailer`, `OutgoingInvitation` and the mailer parameter on
-// `NewService` do not exist, because on master nobody sends an invitation email
-// at all. The test expresses the contract this packet adds — an invite with a
-// wired mailer sends exactly one team_invitation, after the transaction
-// commits, and a send that fails is returned rather than swallowed — and it is
-// committed red so the tree with no mailer in it is a tree somebody can recover.
-//
-// The fakes below are the same shape as service_test.go's recordedEvents and
-// recordedRevocations: the use case's dependencies are interfaces precisely so a
-// test can program the one behavior under test without standing up Postgres.
 
 import (
 	"context"
@@ -32,14 +19,6 @@ import (
 	"github.com/anywaye/identity/internal/users"
 )
 
-// fakeQuerier is a db.Querier that answers every statement with nothing.
-//
-// It exists because the use cases under test read through s.read after the
-// transaction commits, and those reads are faked at the STORE layer — the
-// querier is carried along for tenancy.BeginUser's SET, which is a no-op here.
-// A nil querier would panic inside BeginUser; this one simply answers, and a
-// test that accidentally issues a real query gets a nil row rather than a
-// database.
 type fakeQuerier struct{}
 
 func (fakeQuerier) Exec(context.Context, string, ...any) (pgconn.CommandTag, error) {
@@ -50,8 +29,6 @@ func (fakeQuerier) Query(context.Context, string, ...any) (pgx.Rows, error) { re
 
 func (fakeQuerier) QueryRow(context.Context, string, ...any) pgx.Row { return nil }
 
-// orderLog records the sequence of things that happened, so a test can assert
-// WHERE in the sequence the send happened rather than only that it did.
 type orderLog struct {
 	mu    sync.Mutex
 	steps []string
@@ -69,9 +46,6 @@ func (l *orderLog) snapshot() []string {
 	return append([]string(nil), l.steps...)
 }
 
-// fakeUow runs the function immediately, the way db.TxRunner does, and records
-// the commit as a step of its own: the ordering test reads the log to prove the
-// send is after it.
 type fakeUow struct {
 	order *orderLog
 }
@@ -84,13 +58,6 @@ func (f fakeUow) Do(ctx context.Context, fn func(context.Context, db.Querier) er
 	return nil
 }
 
-// fakeStore is the AccountStore double.
-//
-// It EMBEDS the interface rather than implementing its fourteen methods, because
-// Invite touches three of them and the rest would be noise a reader has to
-// verify is never called. An embedded nil interface panics if something does
-// call one, which is the honest answer for a dependency that should not be
-// reached.
 type fakeStore struct {
 	AccountStore
 	order       *orderLog
@@ -124,7 +91,6 @@ func (f *fakeStore) Member(_ context.Context, _ db.Querier, _ id.UUID, _ id.UUID
 	return f.member, nil
 }
 
-// fakeUsers is the UserEmailReader double.
 type fakeUsers struct {
 	user users.User
 }
@@ -133,7 +99,6 @@ func (f fakeUsers) ByID(_ context.Context, _ db.Querier, _ id.UUID) (users.User,
 	return f.user, nil
 }
 
-// fakeEvents is the EventAppender double.
 type fakeEvents struct {
 	order *orderLog
 }
@@ -143,14 +108,10 @@ func (f *fakeEvents) Append(_ context.Context, _ db.Querier, _ outbox.Envelope) 
 	return nil
 }
 
-// fakeRead is the QuerierSource double: post-commit reads get the no-op
-// querier, because the stores above are faked and issue nothing real.
 type fakeRead struct{}
 
 func (fakeRead) Queryer() db.Querier { return fakeQuerier{} }
 
-// fakeMailer is the InvitationMailer double: it records what it was asked to
-// send, and can be told to fail.
 type fakeMailer struct {
 	order    *orderLog
 	failWith error
@@ -158,9 +119,6 @@ type fakeMailer struct {
 }
 
 func (f *fakeMailer) SendInvitation(_ context.Context, invitation OutgoingInvitation) error {
-	// Recorded before the failure check: a send that was ATTEMPTED and failed
-	// is still a send that happened after the commit, and the ordering test
-	// asserts the attempt, not only the successes.
 	f.order.add("send")
 	if f.failWith != nil {
 		return f.failWith
@@ -169,7 +127,6 @@ func (f *fakeMailer) SendInvitation(_ context.Context, invitation OutgoingInvita
 	return nil
 }
 
-// invitationFixture is one account, one inviter, one invitee.
 type invitationFixture struct {
 	account    Account
 	inviter    users.User
@@ -198,7 +155,6 @@ func newInvitationFixture() invitationFixture {
 	}
 }
 
-// newInvitationService builds a Service over the fakes, with the mailer wired.
 func newInvitationService(
 	order *orderLog,
 	store *fakeStore,
@@ -215,18 +171,13 @@ func newInvitationService(
 		store,
 		fakeUsers{user: fx.inviter},
 		&fakeEvents{order: order},
-		nil, // revokes: Invite revokes nothing, and a nil revoker is supported
+		nil,
 		clk,
 		fakeRead{},
 		mailer,
 	)
 }
 
-// TestInviteSendsExactlyOneInvitationEmail is the packet's red test: an invite
-// with a wired mailer sends exactly one team_invitation, to the invitee, whose
-// link carries the one-time token, and whose account_name and invited_by are
-// the real ones — the account's name and the inviter's name, not placeholders
-// a template would render as blanks.
 func TestInviteSendsExactlyOneInvitationEmail(t *testing.T) {
 	fx := newInvitationFixture()
 	order := &orderLog{}
@@ -279,14 +230,6 @@ func TestInviteSendsExactlyOneInvitationEmail(t *testing.T) {
 	}
 }
 
-// TestInviteSendsAfterTheTransactionCommits holds the ordering that makes the
-// failure semantics survivable.
-//
-// A mail cannot be rolled back, so it cannot go inside the transaction: an
-// invitation that rolled back with its mail sent is a link to nothing, and an
-// invitation that committed with its mail unsent is an admin who can revoke
-// and re-invite. The second is recoverable and the first is not, so the send is
-// after the commit whatever the mailer does with it.
 func TestInviteSendsAfterTheTransactionCommits(t *testing.T) {
 	order := &orderLog{}
 	store := &fakeStore{}
@@ -304,14 +247,6 @@ func TestInviteSendsAfterTheTransactionCommits(t *testing.T) {
 		t.Fatalf("Invite: %v", err)
 	}
 
-	// The invitation's own writes, then the commit, then the send.
-	//
-	// THE ASSERTION IS ON THE LAST FOUR STEPS rather than on the whole log,
-	// because Invite reads the inviter's membership first and that read is its
-	// own transaction — its "commit" is the first entry here, and it is not the
-	// commit the send is ordered against. What must hold is that the
-	// invitation's writes precede ITS commit, and the send follows it: a send
-	// anywhere before that commit is a mail that outlives a rollback.
 	want := []string{"create-invitation", "append-event", "commit", "send"}
 	got := order.snapshot()
 	if len(got) < len(want) || !reflect.DeepEqual(got[len(got)-len(want):], want) {
@@ -320,16 +255,6 @@ func TestInviteSendsAfterTheTransactionCommits(t *testing.T) {
 	}
 }
 
-// TestInviteReturnsTheSendFailureAndKeepsTheInvitation states the failure
-// semantics out loud, because they are the half of this packet that is easy to
-// paper over.
-//
-// The acceptance token is NOT stored — only its digest is — so a send that
-// fails after the commit cannot be retried with the same link: the link is
-// gone. What survives is the invitation row, and that is what the admin acts
-// on. So the failure is RETURNED — the admin is told the invite did not reach
-// anybody — and the row is left in place, revocable and re-invitable. A
-// half-state that says nothing is the defect; this says both halves.
 func TestInviteReturnsTheSendFailureAndKeepsTheInvitation(t *testing.T) {
 	fx := newInvitationFixture()
 	order := &orderLog{}
@@ -351,16 +276,10 @@ func TestInviteReturnsTheSendFailureAndKeepsTheInvitation(t *testing.T) {
 			"emailed when nobody was", err, sendErr)
 	}
 
-	// The invitation row survived: the store was asked for it exactly once, and
-	// the event that announces it was appended — both inside the committed
-	// transaction, which the send failure cannot unwind.
 	if store.createCalls != 1 {
 		t.Errorf("the store was asked to create the invitation %d times, want 1 — "+
 			"the row either survived the failed send or it did not", store.createCalls)
 	}
-	// The same suffix as the ordering test: the inviter-membership read's own
-	// commit leads the log, and what matters is the invitation's writes, its
-	// commit, then the one failed send.
 	want := []string{"create-invitation", "append-event", "commit", "send"}
 	got := order.snapshot()
 	if len(got) < len(want) || !reflect.DeepEqual(got[len(got)-len(want):], want) {
@@ -369,17 +288,12 @@ func TestInviteReturnsTheSendFailureAndKeepsTheInvitation(t *testing.T) {
 	}
 }
 
-// TestInviteWithoutAMailerCreatesTheInvitation is the nil-mailer case, and it
-// is a supported state rather than a broken one: a deployment with no mail path
-// still has a tenancy feature. The invitation is created, the token is
-// returned, and no mail is claimed — the 201 does not say an email was on its
-// way.
 func TestInviteWithoutAMailerCreatesTheInvitation(t *testing.T) {
 	fx := newInvitationFixture()
 	order := &orderLog{}
 	store := &fakeStore{}
 	clk := clock.NewFake(time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC))
-	svc := newInvitationService(order, store, nil, clk, fx) // nil mailer: no mail path
+	svc := newInvitationService(order, store, nil, clk, fx)
 
 	invited, err := svc.Invite(context.Background(), InviteInput{
 		AccountID: fx.account.ID,
@@ -395,8 +309,6 @@ func TestInviteWithoutAMailerCreatesTheInvitation(t *testing.T) {
 		t.Error("Invite returned no token, so the admin has nothing to give the " +
 			"invitee by hand and the invitation is only revocable")
 	}
-	// The same suffix as the ordering test, minus the send: the inviter
-	// membership read's own commit leads the log.
 	want := []string{"create-invitation", "append-event", "commit"}
 	got := order.snapshot()
 	if len(got) < len(want) || !reflect.DeepEqual(got[len(got)-len(want):], want) {

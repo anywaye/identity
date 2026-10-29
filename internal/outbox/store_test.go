@@ -69,8 +69,6 @@ func TestStoreAppendAndReadBack(t *testing.T) {
 		t.Errorf("attempts = %d, want 0", attempts)
 	}
 
-	// The envelope is stored whole so that what is published is byte-identical to
-	// what was committed. It has to be the same document core's schema validates.
 	var decoded Envelope
 	if err := json.Unmarshal(storedEnv, &decoded); err != nil {
 		t.Fatalf("the stored envelope does not parse: %v", err)
@@ -83,9 +81,6 @@ func TestStoreAppendAndReadBack(t *testing.T) {
 	}
 }
 
-// A malformed envelope must not reach the table. The CHECK constraints would
-// catch a bad type, but Append refuses first so the caller learns about it at the
-// call site rather than as a constraint violation three layers down.
 func TestStoreAppendRejectsAnInvalidEnvelope(t *testing.T) {
 	pool := dbtest.Schema(t)
 	store := NewStore(pool)
@@ -111,9 +106,6 @@ func TestStoreAppendRejectsAnInvalidEnvelope(t *testing.T) {
 	}
 }
 
-// The whole point of the table. The event is written inside the caller's
-// transaction, so a failure anywhere in that transaction takes the event with it
-// and no consumer is ever told about a user that does not exist.
 func TestStoreAppendInsideATransactionRollsBackWithIt(t *testing.T) {
 	pool := dbtest.Schema(t)
 	store := NewStore(pool)
@@ -145,9 +137,6 @@ func TestStoreAppendInsideATransactionRollsBackWithIt(t *testing.T) {
 	}
 }
 
-// Re-appending the same envelope is a no-op rather than an error. The envelope id
-// is the consumers' dedupe key, so a retried transaction must not mint a second
-// copy of an event they have already seen.
 func TestStoreAppendIsIdempotent(t *testing.T) {
 	pool := dbtest.Schema(t)
 	store := NewStore(pool)
@@ -176,7 +165,6 @@ func TestStoreClaimReturnsUnpublishedEventsInOrder(t *testing.T) {
 	store := NewStore(pool)
 	ctx := context.Background()
 
-	// Three events, each with its own email so the fixture is identifiable.
 	events := []Envelope{
 		mustUserCreated(t, dbtest.UniqueEmail(t)),
 		mustUserCreated(t, dbtest.UniqueEmail(t)),
@@ -200,8 +188,6 @@ func TestStoreClaimReturnsUnpublishedEventsInOrder(t *testing.T) {
 		t.Fatalf("Claim returned %d events, want at least the %d just written", len(claimed), len(events))
 	}
 
-	// The claim must be ordered by (created_at, id) so a consumer sees them in
-	// the order they happened.
 	for i := 1; i < len(claimed); i++ {
 		if claimed[i].Time.Before(claimed[i-1].Time) {
 			t.Errorf("Claim returned %s before %s; ordering is by occurrence",
@@ -239,9 +225,6 @@ func TestStoreClaimRespectsTheLimit(t *testing.T) {
 	}
 }
 
-// Published events must not come back. A loop that re-published everything would
-// be indistinguishable from one that works, right up until a consumer's
-// deduplication table filled up.
 func TestStoreClaimSkipsPublishedEvents(t *testing.T) {
 	pool := dbtest.Schema(t)
 	store := NewStore(pool)
@@ -276,9 +259,6 @@ func TestStoreClaimSkipsPublishedEvents(t *testing.T) {
 	}
 }
 
-// A failed publish is recorded and the batch still commits. If it rolled back,
-// the event would be re-claimed forever and one poison message would wedge the
-// whole outbox — which is exactly what core's event-naming.md warns against.
 func TestStoreMarkFailedKeepsTheEventForRetry(t *testing.T) {
 	pool := dbtest.Schema(t)
 	store := NewStore(pool)
@@ -320,7 +300,6 @@ func TestStoreMarkFailedKeepsTheEventForRetry(t *testing.T) {
 		t.Errorf("published_at = %v, want NULL so the event is retried", *published)
 	}
 
-	// And it is still claimable, so the retry is real.
 	again, err := store.Claim(ctx, 10)
 	if err != nil {
 		t.Fatalf("Claim: %v", err)
@@ -348,7 +327,6 @@ func TestStoreClaimOnAnEmptyOutbox(t *testing.T) {
 	}
 	defer batch.Release(context.Background())
 
-	// An empty batch is the normal state of a healthy service, not an error.
 	if got := len(batch.Events()); got != 0 {
 		t.Errorf("Claim on an idle outbox returned %d events, want 0", got)
 	}
@@ -365,8 +343,6 @@ func TestStoreClaimRejectsANonPositiveLimit(t *testing.T) {
 	}
 }
 
-// Releasing without committing must leave the events claimable, and must not
-// error. A double release is a no-op.
 func TestStoreBatchReleaseIsSafeToRepeat(t *testing.T) {
 	pool := dbtest.Schema(t)
 	store := NewStore(pool)
@@ -400,8 +376,6 @@ func TestStoreMarkPublishedRejectsAnUnknownID(t *testing.T) {
 	}
 	defer batch.Release(ctx)
 
-	// Marking something that was not in this batch is a programming error, and
-	// silently succeeding would let a loop believe it had published an event.
 	if err := batch.MarkPublished(ctx, id.MustNew()); !errors.Is(err, ErrNotInBatch) {
 		t.Errorf("MarkPublished of an unknown id = %v, want errors.Is(_, ErrNotInBatch)", err)
 	}
@@ -447,6 +421,4 @@ func TestStoreClaimedEnvelopesSurviveTheRoundTrip(t *testing.T) {
 	t.Errorf("the event %s was not claimed", original.ID)
 }
 
-// Guard against a future edit that swaps the pool for something narrower: the
-// store is handed a db.Pool and the tests hand it a real one.
 var _ db.Pool = (*pgxpool.Pool)(nil)

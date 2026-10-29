@@ -14,18 +14,6 @@ import (
 	"github.com/anywaye/identity/internal/users"
 )
 
-// The use cases. Everything a client can do to an account, a membership or an
-// invitation, and the rules that govern each of them.
-//
-// It sits above the store because the interesting part of tenancy is not any one
-// table — it is the ordering and the transactions. Creating an account writes
-// three rows and an event; accepting an invitation creates a membership, marks
-// the invitation and announces the membership, and any two of the three without
-// the third is a bug rather than a state. Those are properties of the use case,
-// not of a handler and not of a schema.
-//
-// NOTHING HERE KNOWS ABOUT HTTP. The handlers translate the errors below into
-// the anywaye error envelope; they do not define the rules.
 
 // UnitOfWork runs a function inside a transaction. db.TxRunner implements it;
 // the interface is the seam that lets these rules be tested without Postgres.
@@ -50,8 +38,6 @@ type AccountStore interface {
 	SetRole(ctx context.Context, q db.Querier, accountID, userID id.UUID, role Role) (Membership, error)
 	RemoveMember(ctx context.Context, q db.Querier, accountID, userID id.UUID) error
 	ListForUser(ctx context.Context, q db.Querier, userID id.UUID) ([]MemberSummary, error)
-	// Search is the staff directory's read over the accounts table: a bounded
-	// substring match on name and slug. It authorizes nothing on its own.
 	Search(ctx context.Context, q db.Querier, query string, limit int) ([]Account, error)
 	CreateInvitation(ctx context.Context, q db.Querier, n NewInvitation) (Invitation, error)
 	InvitationByToken(ctx context.Context, q db.Querier, digest string) (Invitation, error)
@@ -120,22 +106,11 @@ type InvitationMailer interface {
 // and the mail is the only thing that takes it out of the process. The same
 // rule the Invitation struct's comment states.
 type OutgoingInvitation struct {
-	// ID is the invitation's id. It is the key the send's idempotency is
-	// derived from, and the value courier's own consumer uses as the mail's
-	// user_id — an invitee has no user, because the invitation exists
-	// precisely because they have not signed up.
 	ID id.UUID
-	// Email is the invitee's address — the recipient.
 	Email string
-	// Token is the one-time acceptance token, rendered into the link.
 	Token string
-	// AccountName is the account the invitee is invited to, which courier's
-	// template renders after "invited you to join".
 	AccountName string
-	// InvitedBy is who the mail says sent it: the inviter's display name when
-	// they have one, and their address when they do not.
 	InvitedBy string
-	// Role is the role the invitation offers, rendered after "as".
 	Role string
 }
 
@@ -170,10 +145,7 @@ func NewService(
 
 // CreateInput is a request to create an account.
 type CreateInput struct {
-	// Name is what a human sees; the slug is derived from it.
 	Name string
-	// Owner is the user creating it, who becomes its first and (for now) only
-	// owner. It is the caller's authenticated user, never something from a body.
 	Owner id.UUID
 }
 
@@ -210,11 +182,6 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (Created, error) {
 			return err
 		}
 
-		// Begin as the account that was just created, for the same reason
-		// registration does (internal/auth's provisionTenancy): the membership
-		// write below is account-scoped and the account did not exist when the
-		// request arrived, so there is nothing on the context to resolve. Without
-		// this the INSERT is refused with SQLSTATE 42501 and the route 500s.
 		if err := tenancy.BeginAccount(ctx, q, account.ID); err != nil {
 			return fmt.Errorf("beginning as the new account: %w", err)
 		}
@@ -263,11 +230,6 @@ func (s *Service) Provision(ctx context.Context, q db.Querier, userID id.UUID, e
 		name = "Personal"
 	}
 	if err := ValidateName(name); err != nil {
-		// A local part that cannot be a name — "東京", or one over the limit — is
-		// repaired rather than refused, because refusing here would fail a
-		// registration over the *name* of an account the user never chose. The
-		// fallback is the address, which is always sluggable and always unique
-		// once the id is folded in.
 		name = truncateName(email)
 	}
 
@@ -289,9 +251,6 @@ func (s *Service) AddOwner(ctx context.Context, q db.Querier, accountID, userID 
 	if err != nil {
 		return Membership{}, err
 	}
-	// The event belongs to the registration, not to the membership: there is one
-	// identity.account.created for the account, and writing it here rather than in
-	// Provision is what keeps it next to the row it announces.
 	event, err := outbox.NewAccountCreated(s.clock.Now(), account.ID, account.Name, account.Slug, account.Personal, userID)
 	if err != nil {
 		return Membership{}, err
@@ -302,8 +261,6 @@ func (s *Service) AddOwner(ctx context.Context, q db.Querier, accountID, userID 
 	return membership, nil
 }
 
-// addOwner creates a membership with the owner role, inside the caller's
-// transaction.
 func (s *Service) addOwner(ctx context.Context, q db.Querier, account Account, userID id.UUID) (Membership, error) {
 	return s.store.AddMember(ctx, q, Membership{
 		AccountID: account.ID,
@@ -364,10 +321,6 @@ func (s *Service) ListMine(ctx context.Context, userID id.UUID) ([]MemberSummary
 	if err != nil {
 		return nil, err
 	}
-	// Never nil, so a JSON encoder renders `[]` rather than `null` for a user
-	// with no accounts. The store guarantees that already; it is restated because
-	// this method now hands back whatever the callback captured, and a nil slice
-	// captured there is a `null` one level out with nothing left to turn it back.
 	if out == nil {
 		out = []MemberSummary{}
 	}
@@ -436,10 +389,6 @@ func (s *Service) Get(ctx context.Context, accountID, userID id.UUID) (Account, 
 
 		account, err := s.store.ByID(ctx, q, accountID)
 		if err != nil {
-			// A membership with no account is not a state the foreign keys allow, so
-			// this is a database problem rather than a caller one. It is mapped to
-			// the same error anyway: the caller learns nothing about the account's
-			// existence either way.
 			return ErrNotAMember
 		}
 
@@ -521,10 +470,6 @@ func (s *Service) Members(ctx context.Context, accountID id.UUID) ([]MemberSumma
 	if err != nil {
 		return nil, err
 	}
-	// Never nil, so a JSON encoder renders `[]` rather than `null`. The store
-	// already guarantees it on both of its returns; restated for the same reason
-	// ListMine restates it — this method hands back whatever the callback
-	// captured, and a nil slice captured there is a `null` one level out.
 	if out == nil {
 		out = []MemberSummary{}
 	}
@@ -588,9 +533,6 @@ type InviteInput struct {
 	AccountID id.UUID
 	Email     string
 	Role      Role
-	// InvitedBy is the authenticated caller. The inviter's own role is resolved
-	// from the database rather than taken from a request, and it decides whether
-	// an admin may be invited.
 	InvitedBy id.UUID
 }
 
@@ -629,13 +571,6 @@ type Invited struct {
 func (s *Service) Invite(ctx context.Context, in InviteInput) (Invited, error) {
 	email := users.NormalizeEmail(in.Email)
 	if err := users.ValidateEmail(email); err != nil {
-		// The address rules belong to users — one emailPattern, one
-		// MaxEmailLength, one NormalizeEmail — and reusing them is why an
-		// invitation address and a registered address cannot disagree about what
-		// "the same address" means. The error is re-wrapped in this package's own
-		// FieldError so that a caller of this service never has to know which
-		// package a validation type came from; the field and code survive intact,
-		// which is all a client reads.
 		return Invited{}, asFieldError(err)
 	}
 	if !in.Role.Invitable() {
@@ -652,9 +587,6 @@ func (s *Service) Invite(ctx context.Context, in InviteInput) (Invited, error) {
 	if !inviter.Role.AtLeast(RoleAdmin) {
 		return Invited{}, ErrOwnerProtected
 	}
-	// An admin may invite a member; only an owner may hand out admin. The
-	// privilege has to be granted by somebody who already holds it, or an admin
-	// can clone themselves into a second admin who answers to nobody.
 	if in.Role == RoleAdmin && !inviter.Role.AtLeast(RoleOwner) {
 		return Invited{}, ErrRoleNotInvitable
 	}
@@ -695,23 +627,6 @@ func (s *Service) Invite(ctx context.Context, in InviteInput) (Invited, error) {
 		return Invited{}, err
 	}
 
-	// THE MAIL, AFTER THE COMMIT — and the ordering is the whole of it.
-	// A mail cannot be rolled back, so it cannot go inside the transaction: an
-	// invitation that rolled back with its mail sent is a link to nothing, and
-	// an invitation that committed with its mail unsent is an admin who can
-	// revoke and re-invite. The second is recoverable and the first is not, so
-	// the send is after the commit whatever the mailer does with it — the same
-	// ordering internal/recovery's mintAndSend establishes.
-	//
-	// A NIL MAILER IS A DEPLOYMENT WITH NO MAIL PATH, not a failure: the
-	// invitation row is the promise and the token in the response is the
-	// one-time credential, exactly as it is for a deployment that cannot send
-	// recovery mail. A PRESENT mailer whose send fails is RETURNED: the admin
-	// is told the invite did not reach anybody, and the invitation row that
-	// survived is revoked and re-invited rather than guessed about. The token
-	// is not stored — only its digest is — so the failed link is gone for good
-	// and re-inviting mints a new one; that is the honest failure semantics,
-	// and it is why the error is not swallowed.
 	if s.mailer != nil {
 		outgoing, err := s.outgoingInvitation(ctx, out)
 		if err != nil {
@@ -724,13 +639,6 @@ func (s *Service) Invite(ctx context.Context, in InviteInput) (Invited, error) {
 	return out, nil
 }
 
-// outgoingInvitation gathers what the invitation email needs, after the commit.
-//
-// THE READS ARE AFTER THE COMMIT because the mail is: the transaction holds
-// only the invitation's own writes, and everything the mail needs is gathered
-// in the same post-commit block as the send it feeds. A failure here is a send
-// that cannot be composed, and it is returned like a courier failure — the
-// invitation row survives either way.
 func (s *Service) outgoingInvitation(ctx context.Context, invited Invited) (OutgoingInvitation, error) {
 	account, err := s.store.ByID(ctx, s.read.Queryer(), invited.Invitation.AccountID)
 	if err != nil {
@@ -750,14 +658,6 @@ func (s *Service) outgoingInvitation(ctx context.Context, invited Invited) (Outg
 	}, nil
 }
 
-// displayNameOrEmail is who the invitation mail says sent it.
-//
-// THE DISPLAY NAME WHEN THERE IS ONE AND THE ADDRESS WHEN THERE IS NOT,
-// because courier's template renders the value immediately before "invited
-// you to join": a blank there is a mail that does not say who invited them, and
-// a uuid would be worse. Most users have no display name — the column is
-// nullable and registration does not set it — so the address is the common
-// case, and it is a value the invitee can recognize.
 func displayNameOrEmail(u users.User) string {
 	if u.DisplayName != nil && *u.DisplayName != "" {
 		return *u.DisplayName
@@ -788,9 +688,7 @@ func (s *Service) InviteRole(ctx context.Context, accountID id.UUID, email, role
 
 // AcceptInput is a request to redeem an invitation.
 type AcceptInput struct {
-	// Token is the raw token from the invitation's 201 response.
 	Token string
-	// User is the authenticated caller redeeming it.
 	User id.UUID
 }
 
@@ -819,21 +717,6 @@ func (s *Service) Accept(ctx context.Context, in AcceptInput) (Membership, error
 
 	var out Membership
 	err := s.uow.Do(ctx, func(ctx context.Context, q db.Querier) error {
-		// Open the resolution FIRST, as the digest and nothing else. The
-		// account is what this lookup is FOR, so there is no identity to run
-		// it under — and a lookup on a bare connection reads zero rows under
-		// the enforced boundary, which is how a fresh invitation came to 404
-		// (migrations/00029). The transaction carries the digest the caller
-		// presented, computed above before any query ran, and the policy
-		// admits exactly the row carrying it.
-		//
-		// The account follows, AFTER the lookup, and it comes from the row
-		// the caller presented rather than from the request: re-beginning as
-		// the invitation's own account is what admits the membership INSERT
-		// below. The union of the two policies inside this transaction is the
-		// invitation's row plus its account's rows, which is the redemption's
-		// own scope and nothing wider — a token still reveals only its own
-		// invitation and grants no broader read or write.
 		if err := tenancy.BeginCredential(ctx, q, digest); err != nil {
 			return fmt.Errorf("opening the invitation resolution: %w", err)
 		}
@@ -845,31 +728,10 @@ func (s *Service) Accept(ctx context.Context, in AcceptInput) (Membership, error
 			return fmt.Errorf("looking up the invitation: %w", err)
 		}
 
-		// REVOKED FIRST, AND IT BECOMES ErrInvitationNotFound.
-		//
-		// This is the check whose absence made a revoked invitation redeemable
-		// (identity-30), and both halves of how it fails are deliberate.
-		//
-		// It runs before the other two because a withdrawal is the strongest thing
-		// known about the token: whatever else is true of this row, an admin decided
-		// it must not work. It answers NotFound rather than ErrInvitationRevoked
-		// because openapi/v1.yaml already promises that "an invitation an admin
-		// revoked is also 404 — it is not redeemable and there is nothing to redeem",
-		// and because a distinct status would tell whoever holds the token that this
-		// invitation was once real — which is the one piece of an answer an
-		// enumeration of stolen tokens is trying to extract.
-		//
-		// The account's own admin surface does not come through here and is entitled
-		// to the distinction: it reads revocation state directly instead of by
-		// redeeming.
 		if invitation.RevokedAt != nil {
 			return ErrInvitationNotFound
 		}
 
-		// Order matters and it is the order a client would want them in: used before
-		// expired, because an invitation that was accepted and has since expired is
-		// "used" — the caller's link was already spent, and telling them to request a
-		// new one would be wrong advice.
 		if invitation.AcceptedAt != nil {
 			return ErrInvitationUsed
 		}
@@ -877,15 +739,6 @@ func (s *Service) Accept(ctx context.Context, in AcceptInput) (Membership, error
 			return ErrInvitationExpired
 		}
 
-		// Begin as the account the invitation names. It is on the row rather than
-		// on the request, because accepting an invitation is the one account-scoped
-		// write a caller reaches WITHOUT being a member of the account yet — that
-		// is what the invitation is for. So there is no membership to resolve and
-		// nothing on the context, and the membership INSERT below would otherwise
-		// be refused with SQLSTATE 42501.
-		//
-		// The account id comes from the invitation row the caller presented, not
-		// from a request body, so it is not a tenancy the caller chose.
 		if err := tenancy.BeginAccount(ctx, q, invitation.AccountID); err != nil {
 			return fmt.Errorf("beginning as the invited account: %w", err)
 		}
@@ -899,17 +752,6 @@ func (s *Service) Accept(ctx context.Context, in AcceptInput) (Membership, error
 			return err
 		}
 
-		// Conditional: a second redemption of the same token updates zero rows
-		// and rolls the whole transaction back, so two concurrent redemptions
-		// cannot both produce a membership.
-		//
-		// ErrInvitationRevoked is the same withdrawal the check above catches,
-		// arriving late: an admin revoked this token between the read and this
-		// statement, so the row said "live" when it was read. The transaction
-		// rolls back either way — no membership is created — and the caller gets
-		// the same 404 it would have got had the revocation landed a moment
-		// earlier, which is the only answer that keeps "what this token's status
-		// is" from depending on how fast the machine was.
 		if err := s.store.MarkInvitationAccepted(ctx, q, invitation.ID, now); err != nil {
 			if errors.Is(err, ErrInvitationRevoked) {
 				return ErrInvitationNotFound
@@ -920,11 +762,6 @@ func (s *Service) Accept(ctx context.Context, in AcceptInput) (Membership, error
 			return err
 		}
 
-		// The member's address, read here and inside the transaction because the
-		// event below carries it: the consumer that mails the welcome cannot read
-		// the user row, so the event has to bring the address with it. See
-		// outbox.NewMemberAccepted for why it is the member's address and not the
-		// invitation's.
 		member, err := s.users.ByID(ctx, q, in.User)
 		if err != nil {
 			return err
@@ -952,9 +789,6 @@ type ChangeRoleInput struct {
 	AccountID id.UUID
 	UserID    id.UUID
 	Role      Role
-	// Actor is the authenticated caller. It is separate from UserID because the
-	// two roles in the decision are different: the caller's authority to change
-	// roles, and whose role is changing.
 	Actor id.UUID
 }
 
@@ -979,15 +813,10 @@ func (s *Service) ChangeRole(ctx context.Context, in ChangeRoleInput) (Membershi
 			return err
 		}
 		if target.Role == in.Role {
-			// A no-op is still a fact worth recording as a no-op, but it is not
-			// worth an event: "the role changed" would be false.
 			return nil
 		}
 
 		if err := s.guardLastOwner(ctx, q, in.AccountID, target, in.Role); err != nil {
-			// The caller is the owner who would be left with nothing to run. That
-			// is the case a person hits by accident, so it gets its own error and
-			// its own sentence.
 			if errors.Is(err, ErrLastOwner) && target.UserID == in.Actor {
 				return ErrSelfRoleChange
 			}
@@ -1016,23 +845,7 @@ func (s *Service) ChangeRole(ctx context.Context, in ChangeRoleInput) (Membershi
 	return out, nil
 }
 
-// guardLastOwner refuses a change that would leave the account with no owner.
-//
-// The count is read through CountOwners, which takes a row lock on the owner
-// rows, so a concurrent change to a *different* membership cannot interleave
-// between the check and the write. That is the whole reason the check is inside
-// the transaction rather than before it: two owners demoting each other at the
-// same moment both see two owners, both succeed, and the account is left with
-// nobody who can administer it — a state no later request can repair, because
-// every one of them now fails the role check.
-//
-// It returns ErrLastOwner in every case. ChangeRole upgrades that to
-// ErrSelfRoleChange when the caller is the owner being demoted, because "you
-// cannot demote yourself out of the last account you run" is more use to the
-// person who hit it than the general form.
 func (s *Service) guardLastOwner(ctx context.Context, q db.Querier, accountID id.UUID, target Membership, next Role) error {
-	// Only a demotion can lose an owner. Promoting one adds to the count, and a
-	// change between admin and member does not touch it.
 	if target.Role != RoleOwner || next == RoleOwner {
 		return nil
 	}
@@ -1074,8 +887,6 @@ func (s *Service) RemoveMember(ctx context.Context, in RemoveMemberInput) error 
 			if err != nil {
 				return err
 			}
-			// An admin may remove members and other admins; the owner's
-			// membership is a different object and only an owner touches it.
 			if !actor.Role.AtLeast(RoleOwner) {
 				return ErrOwnerProtected
 			}
@@ -1088,27 +899,6 @@ func (s *Service) RemoveMember(ctx context.Context, in RemoveMemberInput) error 
 			return err
 		}
 
-		// A CREDENTIAL THE MEMBER HELD IN THIS ACCOUNT IS REVOKED IN THE SAME
-		// TRANSACTION, and this is the rule that took two attempts to get right.
-		//
-		// The obvious design is that the token stores no role and the resolution
-		// query joins the membership — so a removal stops it on the next request
-		// with nothing to invalidate. That part works. What it does NOT do is stop
-		// the token coming BACK: the same user re-invited to the same account at
-		// the same role satisfies the join again, and a contractor's CI credential
-		// that was supposed to have died at offboarding quietly starts working the
-		// day somebody re-adds them. The test that caught it is
-		// TestARemovedMembershipStopsTheTokenOnTheNextRequest, in internal/httpapi.
-		//
-		// So the removal revokes explicitly. The row is kept, `revoked_at` is set,
-		// and the credential is dead for good: a re-invite is a NEW grant and starts
-		// from nothing, which is the only outcome an operator who offboarded
-		// somebody would recognize as correct.
-		//
-		// The alternative considered and rejected: keying the token on the
-		// membership's `created_at` so a re-invite's new row does not match. It
-		// fails on a clock — two removals and re-adds inside one second, or any test
-		// with a frozen clock, produce the same value and the token revives anyway.
 		if s.revokes != nil {
 			if err := s.revokes.RevokeAllForMember(ctx, q, in.AccountID, in.UserID, now); err != nil {
 				return err
@@ -1126,15 +916,7 @@ func (s *Service) RemoveMember(ctx context.Context, in RemoveMemberInput) error 
 // TransferInput is a request to hand an account to another member.
 type TransferInput struct {
 	AccountID id.UUID
-	// ToUserID is the member who becomes the owner. It must ALREADY be a member:
-	// a transfer is not an invitation, and it takes no token, has no expiry and
-	// cannot be refused by the person it names. Someone who is not in the account
-	// has to be invited first, by a route that says so.
 	ToUserID id.UUID
-	// Actor is the authenticated caller. It is the OWNER's id, resolved from the
-	// request's credential and never from a body field, because "am I the owner"
-	// is the first question and answering it from the request would answer it from
-	// the requester's own sentence.
 	Actor id.UUID
 }
 
@@ -1146,13 +928,8 @@ type TransferInput struct {
 // no longer the owner of this account" without a second request to find out what
 // they are now.
 type Transferred struct {
-	// Account is the account that changed hands. Nothing about it changed — the
-	// id, name, slug and personal flag are all untouched — and it is here so the
-	// response does not have to be assembled from the path.
 	Account Account
-	// PreviousOwner is the former owner's membership, at RoleAdmin.
 	PreviousOwner Membership
-	// NewOwner is the heir's membership, at RoleOwner.
 	NewOwner Membership
 }
 
@@ -1221,16 +998,9 @@ func (s *Service) TransferOwnership(ctx context.Context, in TransferInput) (Tran
 	var out Transferred
 
 	err := s.uow.Do(ctx, func(ctx context.Context, q db.Querier) error {
-		// (1) The caller, on THIS account. Read from the membership table rather
-		// than taken from the middleware's resolved role, for the same reason
-		// Invite reads its inviter: the rule is about the use case, so it holds
-		// however the use case is reached.
 		actor, err := s.store.Member(ctx, q, in.AccountID, in.Actor)
 		if err != nil {
 			if errors.Is(err, ErrNotAMember) {
-				// A stranger is refused the same way an admin is. Ownership is
-				// per-account, so holding the owner role somewhere else is
-				// nothing, and ErrNotOwner says nothing about this account.
 				return ErrNotOwner
 			}
 			return err
@@ -1247,21 +1017,14 @@ func (s *Service) TransferOwnership(ctx context.Context, in TransferInput) (Tran
 			return err
 		}
 
-		// (2) Personal accounts are the system's, not a team's.
 		if account.Personal {
 			return ErrNotTransferable
 		}
 
-		// (4) Before the member count, because it is the caller's own mistake and
-		// the sentence that answers it is different. Checked here rather than
-		// after the target read so that "you cannot transfer this to yourself" is
-		// not gated behind whether the account had two members.
 		if in.ToUserID == in.Actor {
 			return ErrTransferToSelf
 		}
 
-		// (3) Two members, counted inside the transaction so a concurrent removal
-		// cannot land between the count and the promotion.
 		members, err := s.store.Members(ctx, q, in.AccountID)
 		if err != nil {
 			return err
@@ -1270,18 +1033,10 @@ func (s *Service) TransferOwnership(ctx context.Context, in TransferInput) (Tran
 			return ErrNotTransferable
 		}
 
-		// The target must already be in the account. ErrNotAMember here is the
-		// same sentinel a stranger gets, which is right: this request does not
-		// admit anybody, so "not a member" is the whole of what it knows. The
-		// membership is read for the role it holds today, which travels in no
-		// response field and is here only so the promotion's precondition is a
-		// read rather than an assumption.
 		if _, err := s.store.Member(ctx, q, in.AccountID, in.ToUserID); err != nil {
 			return err
 		}
 
-		// THE HEIR FIRST. See the method comment: at no point does the account
-		// pass through a state with no owner.
 		promoted, err := s.store.SetRole(ctx, q, in.AccountID, in.ToUserID, RoleOwner)
 		if err != nil {
 			return err
@@ -1309,12 +1064,6 @@ func (s *Service) TransferOwnership(ctx context.Context, in TransferInput) (Tran
 	return out, nil
 }
 
-// truncateName shortens an over-long personal account name to MaxNameLength.
-//
-// It exists for one case: a registration whose email local part is longer than a
-// name may be. Refusing the registration over the name of an account the user
-// never chose would be the wrong trade, and the name is the only field that has
-// to be shortened — the slug is derived from the user id regardless.
 func truncateName(name string) string {
 	runes := []rune(name)
 	if len(runes) <= MaxNameLength {
@@ -1323,13 +1072,6 @@ func truncateName(name string) string {
 	return string(runes[:MaxNameLength])
 }
 
-// asFieldError converts a users.FieldError into this package's own.
-//
-// The two types are structurally identical and deliberately separately declared:
-// a shared one would put an edge between users and accounts for the sake of four
-// fields, and the HTTP layer would then have to know that an accounts endpoint
-// can fail with a users error. Everything that is not a *users.FieldError is
-// returned unchanged, so a store failure does not come back as a 422.
 func asFieldError(err error) error {
 	var fe *users.FieldError
 	if !errors.As(err, &fe) {

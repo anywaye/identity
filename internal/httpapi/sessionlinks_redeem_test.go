@@ -1,26 +1,5 @@
 package httpapi
 
-// THE REDEMPTION, AT THE ROUTER.
-//
-// # WHY THESE TESTS DRIVE A DOUBLE AND NOT A DATABASE
-//
-// Because what is under test here is TRANSLATION: a status, a body, and above all
-// the cookie. `internal/recovery`'s own tests hold the spend, the refusals and the
-// single-use property against real rows, and
-// `sessionlinks_redeem_integration_test.go` here drives the whole thing over a real
-// database. A double in this file is the right instrument for one question — "does
-// the route hand back exactly what `sessionResponse` and `setSessionCookie` produce,
-// and does it refuse without reaching the use case" — and a test that wanted the
-// token lifecycle would be measuring the thing next door.
-//
-// # THE ONE CLAIM THAT CANNOT BE MADE HERE
-//
-// BYTE AGREEMENT WITH `POST /v1/session`. Both routes call the same two functions, and
-// calling them is what makes them agree; a double cannot prove it, because a
-// double's answer is whatever the test told it to be. The walk is therefore in the
-// integration file, over the real router with real use cases, and this file asserts
-// only that the redeem route CALLS what the login route calls — which is visible as
-// the cookie and the body shape being produced at all.
 
 import (
 	"context"
@@ -39,7 +18,6 @@ import (
 	"github.com/anywaye/identity/internal/users"
 )
 
-// redeem posts a body to the redemption route with one credential.
 func (f *sessionLinkFixture) redeem(t *testing.T, body, credential string) *httptest.ResponseRecorder {
 	t.Helper()
 
@@ -53,19 +31,7 @@ func (f *sessionLinkFixture) redeem(t *testing.T, body, credential string) *http
 	return rec
 }
 
-// ---------------------------------------------------------------------------
-// the happy path
-// ---------------------------------------------------------------------------
 
-// TestARedemptionReturnsASessionAndTheSessionCookie is the route working, and the
-// cookie is the assertion that matters: `sessionResponse` renders a body and
-// `setSessionCookie` renders a cookie, and a redemption that returned only the body
-// would have passed a body-only assertion.
-//
-// THE TOKEN IS THE USE CASE'S, asserted against a value the handler could not have
-// invented: the double returns "redeemed-by-the-use-case", so a handler that
-// generated its own credential — which is what "the route minted a session" would
-// look like — is caught here rather than in production.
 func TestARedemptionReturnsASessionAndTheSessionCookie(t *testing.T) {
 	f := newSessionLinkFixture(t)
 
@@ -100,13 +66,6 @@ func TestARedemptionReturnsASessionAndTheSessionCookie(t *testing.T) {
 	}
 }
 
-// TestTheRedemptionPassesTheTokenAndTheRequestContextToTheUseCase is the wiring.
-//
-// The UserAgent and IP are here because `POST /v1/session` records them on the
-// session row and a delegated session that recorded LESS would be an incident
-// timeline with a hole in it: nobody could tell afterwards whether the session that
-// appeared out of nowhere came from a link. A delegation is not a reason to record
-// less than a password.
 func TestTheRedemptionPassesTheTokenAndTheRequestContextToTheUseCase(t *testing.T) {
 	f := newSessionLinkFixture(t)
 
@@ -138,19 +97,7 @@ func TestTheRedemptionPassesTheTokenAndTheRequestContextToTheUseCase(t *testing.
 	}
 }
 
-// ---------------------------------------------------------------------------
-// the refusals
-// ---------------------------------------------------------------------------
 
-// TestARefusedRedemptionIsTheShapeOfAnUnknownToken is the mapping, and the reason
-// it is one status is the reason the whole recovery section says it is: the token IS
-// the credential on this route, so the caller is the subject or whoever took the
-// link, and every refusal has to be the answer for a link they did not receive.
-//
-// ErrMFAUnavailable is the one row that is NOT that shape, and it is in the table
-// because it must not be: "this deployment cannot say whether anybody has a second
-// factor" is a fact about the server, true of every caller, and a 404 would hide a
-// misconfiguration behind what looks like a very quiet attack.
 func TestARefusedRedemptionIsTheShapeOfAnUnknownToken(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -169,9 +116,6 @@ func TestARefusedRedemptionIsTheShapeOfAnUnknownToken(t *testing.T) {
 			notInDetail: "session_link",
 		},
 		{
-			// The wrapped form, because that is what a real one looks like: `errors.Is`
-			// has to do the work, so a mapper comparing by equality would pass this
-			// suite and fail in production.
 			name:        "a wrapped refusal",
 			err:         wrappedError{inner: recovery.ErrTokenNotFound},
 			want:        http.StatusNotFound,
@@ -224,9 +168,6 @@ func TestARefusedRedemptionIsTheShapeOfAnUnknownToken(t *testing.T) {
 			if rec.Header().Get("Content-Type") != "application/problem+json" {
 				t.Errorf("a %d is not application/problem+json", rec.Code)
 			}
-			// AND NO SESSION, which is the half a status cannot make: a handler that
-			// wrote the session and then declined to answer has still given the user a
-			// credential.
 			if len(rec.Result().Cookies()) != 0 {
 				t.Errorf("a refusal set %d cookie(s): a %d that hands over a session is not a "+
 					"refusal", len(rec.Result().Cookies()), rec.Code)
@@ -235,16 +176,6 @@ func TestARefusedRedemptionIsTheShapeOfAnUnknownToken(t *testing.T) {
 	}
 }
 
-// TestTheRedemptionRouteIsReachableByNoCredentialAndByASessionAndByNothingElse is
-// the credential shape of this route, which is the same three-column question the
-// recovery matrix asks of its eight routes and a different question from the mint's.
-//
-// The redeem route is PUBLIC: the link is the credential, exactly as a challenge is
-// on `POST /v1/session/mfa`. So a session is neither required nor refused, and a
-// scoped api key IS refused — a machine credential that can turn an opaque value into
-// a browser session is the takeover this service's scope vocabulary deliberately has
-// no room for, which is why the mint's 403 is not repeated here and the other
-// direction is taken instead.
 func TestTheRedemptionRouteIsReachableByNoCredentialAndByASessionAndByNothingElse(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -257,10 +188,6 @@ func TestTheRedemptionRouteIsReachableByNoCredentialAndByASessionAndByNothingEls
 			want: http.StatusOK,
 		},
 		{
-			// A session is neither required nor refused, and that is a decision: a
-			// caller holding a valid session and presenting no link is exactly the
-			// hijacked-browser case, and a session in the header changes nothing about
-			// whether the link is right.
 			name:       "with a browser session",
 			credential: "session",
 			want:       http.StatusOK,
@@ -303,8 +230,6 @@ func TestTheRedemptionRouteIsReachableByNoCredentialAndByASessionAndByNothingEls
 					t.Errorf("code = %q, want %q", got, tc.wantCode)
 				}
 			}
-			// A refusal is asserted by the use case being reached, because a scoped key
-			// that reached the redemption would have a browser session in hand.
 			if tc.want >= 400 && len(f.recovery.linkRedeems) != 0 {
 				t.Error("a scoped api key reached the use case. A machine credential that can turn " +
 					"an opaque value into a browser session has no counterpart in this vocabulary")
@@ -313,13 +238,6 @@ func TestTheRedemptionRouteIsReachableByNoCredentialAndByASessionAndByNothingEls
 	}
 }
 
-// TestARedemptionBodyWithNoTokenIsRefusedBeforeTheUseCase is the route's own
-// validation, checked both ways: a 422 and no call into the use case.
-//
-// An EMPTY token is in the table and is not a malformed string — it parses. It is a
-// value no row can hold, and a store that treated it as a wildcard would resolve
-// against every link in the table. The refusal here is also what keeps a 422 from
-// being an oracle: it is the same answer for an empty token and for a whitespace one.
 func TestARedemptionBodyWithNoTokenIsRefusedBeforeTheUseCase(t *testing.T) {
 	cases := []struct {
 		name string
@@ -348,50 +266,20 @@ func TestARedemptionBodyWithNoTokenIsRefusedBeforeTheUseCase(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// the matrix for this surface
-// ---------------------------------------------------------------------------
 
-// sessionLinkMatrixEndpoint is one row of the session-link route table.
-//
-// IT IS A THIRD MATRIX RATHER THAN A ROW IN EITHER OF THE OTHER TWO, and the reason
-// is that the two existing tables each have a shape this surface does not fit.
-//
-// `matrixEndpoints` is about ROLES in an ACCOUNT, and neither of these routes has an
-// account anywhere in its path. `recoveryMatrixEndpoints` walks the four recovery
-// prefixes, and `/v1/session-links` is not one of them — a row added there would be
-// a claim about a route its own coverage walk cannot see, which is the shape of bug
-// router_walk_test.go exists to catch.
-//
-// What this surface asks is the CREDENTIAL question, and the answer differs per
-// route on the same path: the mint is token-only, the redemption is public, and the
-// two share a prefix. That is worth its own table with its own router walk.
 type sessionLinkMatrixEndpoint struct {
 	name   string
 	method string
-	// pattern is spelled exactly as the router spells it, because the coverage check
-	// compares it against a chi.Walk rather than against a string.
 	pattern string
-	// anonymous, withSession and withToken are the status each of the three
-	// credentials receives.
 	anonymous   int
 	withSession int
 	withToken   int
 	body        string
 }
 
-// sessionLinkMatrixEndpoints is the table. Every route `registerSessionLinkRoutes`
-// mounts appears here exactly once, and TestEverySessionLinkRouteIsInTheMatrix walks
-// the router to prove it.
 func sessionLinkMatrixEndpoints() []sessionLinkMatrixEndpoint {
 	return []sessionLinkMatrixEndpoint{
 		{
-			// THE MINT. 403 for both non-token columns rather than 401 for the anonymous
-			// one: this surface is token-only, so "you are not a scoped token" is a
-			// statement about the surface and it is true of a stranger exactly as it is
-			// of a signed-in person. `requireSessionLinkMint` decides on the
-			// credential's SHAPE, which is the same decision its own row in the mint's
-			// table makes.
 			name: "mint a session link", method: http.MethodPost,
 			pattern:     "/v1/session-links",
 			anonymous:   http.StatusForbidden,
@@ -400,14 +288,6 @@ func sessionLinkMatrixEndpoints() []sessionLinkMatrixEndpoint {
 			body:        `{"user_id":"00000000-0000-0000-0000-000000000001"}`,
 		},
 		{
-			// THE REDEMPTION. Anonymous is the success column, and that is the point:
-			// the link IS the credential, so there is nothing else to present. The
-			// session column agrees with it because a session changes nothing about
-			// whether the link is right. The scoped-token column is the refusal, and it
-			// is the one cell on this table that is a security boundary rather than a
-			// shape: the mint can create the value this route turns into a session, and
-			// a credential that could do both without leaving the machine would make
-			// the mint's delegation check decorative.
 			name: "redeem a session link", method: http.MethodPost,
 			pattern:     "/v1/session-links/redeem",
 			anonymous:   http.StatusOK,
@@ -418,8 +298,6 @@ func sessionLinkMatrixEndpoints() []sessionLinkMatrixEndpoint {
 	}
 }
 
-// TestEverySessionLinkRouteIsInTheMatrix is the completeness check, and it walks
-// the ROUTER rather than trusting a restated list.
 func TestEverySessionLinkRouteIsInTheMatrix(t *testing.T) {
 	mounted := mountedSessionLinkRoutes()
 	if len(mounted) == 0 {
@@ -444,8 +322,6 @@ func TestEverySessionLinkRouteIsInTheMatrix(t *testing.T) {
 	}
 }
 
-// TestTheSessionLinkAuthorizationMatrix is the suite, and the assertions per cell are
-// the status AND whether the use case was reached.
 func TestTheSessionLinkAuthorizationMatrix(t *testing.T) {
 	for _, endpoint := range sessionLinkMatrixEndpoints() {
 		t.Run(endpoint.name, func(t *testing.T) {
@@ -476,14 +352,6 @@ func TestTheSessionLinkAuthorizationMatrix(t *testing.T) {
 	}
 }
 
-// mountedSessionLinkRoutes is every route under `/v1/session-links`, read out of chi.
-//
-// THE OPTIONS LITERAL IS THE WHOLE OF THE WALK'S HONESSY, for the reason
-// `router_walk_test.go` records at length: a registrar that returns early for a
-// missing service leaves its routes out, and the check above would then be a check of
-// a smaller service than the one that runs. `auth` and `apiKeyCaller` are set because
-// the mint's middleware needs both, and `TestTheDriftWalkSeesTheSessionLinkSurface`
-// is what keeps the other walks honest about the same surface.
 func mountedSessionLinkRoutes() []string {
 	var found []string
 

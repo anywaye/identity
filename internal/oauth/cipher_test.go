@@ -9,24 +9,16 @@ import (
 	"testing"
 )
 
-// The tokens this service stores on a connected account are bearer credentials
-// for the user's Google or GitHub account: a database dump that yields plaintext
-// values hands an attacker every account on the platform whose user happens to
-// have signed in with a social provider. So the storage format is the security
-// property, and these tests are about it rather than about the plumbing.
 
 func TestCipherSealAndOpenRoundTrip(t *testing.T) {
 	t.Parallel()
 
 	c := mustCipher(t, testKey(1))
 
-	// The containment check is only meaningful for a value long enough not to turn
-	// up by chance in 39 characters of base64 — a one-byte plaintext does, and
-	// that would make this test flaky rather than strict.
 	for _, plaintext := range []string{
 		"ya29.a0AfB_byC-very-long-google-access-token-value",
 		"gho_16C7e42F292c6912E7710c838347Ae178B4a",
-		"x", // a one-byte value must survive: no length is special-cased
+		"x",
 	} {
 		sealed, err := c.Seal(plaintext)
 		if err != nil {
@@ -46,9 +38,6 @@ func TestCipherSealAndOpenRoundTrip(t *testing.T) {
 	}
 }
 
-// AES-GCM is nonce-misuse resistant only if the nonce is unique per key. Seal is
-// called on every OAuth callback, so a random nonce from a test that pins two
-// seals is what keeps this property from being an assumption.
 func TestCipherNonceIsNotRepeated(t *testing.T) {
 	t.Parallel()
 
@@ -67,9 +56,6 @@ func TestCipherNonceIsNotRepeated(t *testing.T) {
 	}
 }
 
-// A different key must not open a value sealed under this one. Without this, a
-// rotation would read every stored token as garbage instead of failing loudly on
-// the first one.
 func TestCipherOpenRejectsAValueSealedUnderAnotherKey(t *testing.T) {
 	t.Parallel()
 
@@ -83,9 +69,6 @@ func TestCipherOpenRejectsAValueSealedUnderAnotherKey(t *testing.T) {
 	}
 }
 
-// Every mutation of the stored bytes has to fail, and it has to fail the same way
-// — as ErrMalformedCiphertext — because the caller turns that into a 500 with a
-// trace id and a log line, not into a per-corruption status code.
 func TestCipherOpenRejectsTamperedOrTruncatedValues(t *testing.T) {
 	t.Parallel()
 
@@ -96,7 +79,6 @@ func TestCipherOpenRejectsTamperedOrTruncatedValues(t *testing.T) {
 	}
 
 	tampered := []byte(sealed)
-	// Flip a bit inside the ciphertext, past the prefix and the nonce.
 	tampered[len(tampered)-1] ^= 0x01
 
 	tests := []struct {
@@ -123,8 +105,6 @@ func TestCipherOpenRejectsTamperedOrTruncatedValues(t *testing.T) {
 	}
 }
 
-// The stored form is a database column with a length CHECK, so it needs a
-// documented shape rather than whatever base64 happens to emit today.
 func TestCipherSealProducesTheDocumentedFormat(t *testing.T) {
 	t.Parallel()
 
@@ -135,7 +115,6 @@ func TestCipherSealProducesTheDocumentedFormat(t *testing.T) {
 		t.Fatalf("Seal: %v", err)
 	}
 
-	// v1. + base64url(12-byte nonce + 1-byte ciphertext + 16-byte tag)
 	if want := len(SealPrefix) + base64.RawURLEncoding.EncodedLen(12+1+16); len(sealed) != want {
 		t.Errorf("len(Seal(%q)) = %d, want %d (prefix plus base64url of nonce, ciphertext and tag)", "x", len(sealed), want)
 	}
@@ -147,9 +126,6 @@ func TestCipherSealProducesTheDocumentedFormat(t *testing.T) {
 	}
 }
 
-// A key of the wrong length is a startup error, not a value to pad or truncate.
-// Zero-padding an operator's 16-byte key would silently produce a key that is
-// half the entropy they believe they configured.
 func TestNewCipherRejectsAKeyOfTheWrongLength(t *testing.T) {
 	t.Parallel()
 
@@ -182,8 +158,6 @@ func mustCipher(t *testing.T, key []byte) *Cipher {
 	return c
 }
 
-// testKey returns n deterministic-but-distinct 32-byte keys, so a test that needs
-// "another key" gets one that is definitely different.
 func testKey(n byte) []byte {
 	key := make([]byte, 32)
 	for i := range key {

@@ -9,61 +9,11 @@ import (
 	"github.com/anywaye/identity/internal/recovery"
 )
 
-// # PER-PURPOSE LINK TEMPLATES, AS A DEPLOYMENT SEES THEM
-//
-// Four variables, and the shape of the rule is a default plus three overrides:
-//
-//	RECOVERY_LINK_TEMPLATE            the link for EVERY purpose that has no
-//	                                  variable of its own. This is the variable that
-//	                                  existed before there were per-purpose ones.
-//	PASSWORD_RESET_LINK_TEMPLATE      the password reset link, and only that.
-//	EMAIL_VERIFICATION_LINK_TEMPLATE  the address-confirmation link, and only that.
-//	EMAIL_CHANGE_LINK_TEMPLATE        the email-change confirmation link, and only
-//	                                  that — the current-address half of an email
-//	                                  change, which is the only warning an account
-//	                                  owner gets that somebody is moving its address.
-//
-// The default is not a convenience. It is what keeps every deployment configured
-// before this change booting, and the cost of it — that an unmigrated deployment's
-// verification link still points at whatever its one template says — is stated in
-// `internal/courier/link_purpose_test.go` and warned about at startup by
-// `buildMailer`. The alternative, deriving a verification path from the reset one,
-// is the platform picking a product's URL, which is the thing `LinkTemplate` exists
-// to avoid.
-//
-// # WHAT IS ASSERTED HERE, AND WHAT IS ASSERTED NEXT DOOR
-//
-// HERE: that a deployment's environment resolves to one template per purpose, that
-// the old environment still resolves to three, that a purpose with neither its own
-// variable nor the default is a STARTUP FAILURE rather than a silent fallback, and
-// that every refusal names the variable that caused it.
-//
-// NEXT DOOR, in `internal/courier`: that the resolved templates actually produce
-// different links and that each carries a credential its own endpoint accepts.
-// Neither file can hold the other's half — this one has no adapter and that one has
-// no environment.
 
-// defaultTemplate is the single template a deployment configured before this
-// change, named here so the compatibility tests and the drift check below cannot
-// drift apart from the fixture they describe.
 const defaultTemplate = "https://app.example.com/reset?token=" + recoveryTokenPlaceholder
 
-// invitationLink is the accept-screen template every courier-wired fixture in
-// this file supplies, the way they supply the credentials: it is required
-// whenever the courier block is wired, and the tables below are about the
-// RECOVERY default, not about the invitation refusal (which courier_test.go
-// holds).
 const invitationLink = "https://app.example.com/invitations/accept?token=" + recoveryTokenPlaceholder
 
-// TestTheDefaultLinkTemplateIsTheDefaultForEveryPurpose is the backwards
-// compatibility claim, as a table over the four configurations a deployment can be
-// in once the per-purpose variables exist.
-//
-// EVERY ROW IS A DEPLOYMENT SOMEONE CAN ACTUALLY RUN, which is why the middle two
-// are here rather than being described in a comment. A deployment that migrates one
-// purpose at a time — set `EMAIL_VERIFICATION_LINK_TEMPLATE`, leave the reset alone
-// — is the row that keeps working, and it is the row that is easy to break by
-// treating the per-purpose variables as required-together.
 func TestTheDefaultLinkTemplateIsTheDefaultForEveryPurpose(t *testing.T) {
 	const resetLink = "https://app.example.com/reset?token=" + recoveryTokenPlaceholder
 	const verifyLink = "https://app.example.com/verify-email?token=" + recoveryTokenPlaceholder
@@ -72,26 +22,15 @@ func TestTheDefaultLinkTemplateIsTheDefaultForEveryPurpose(t *testing.T) {
 	credentials := map[string]string{
 		"COURIER_BASE_URL": "https://courier.example.com",
 		"COURIER_TOKEN":    "svc-3f9a1c7e5b2d8046",
-		// SIGNUP_SIGNING_KEY is the one secret a boot cannot go without, so
-		// every case in this table supplies it. The cases below that expect
-		// ErrInvalidCourier are unaffected: the courier block is checked
-		// before the signup key.
 		"SIGNUP_SIGNING_KEY": base64.RawURLEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef")),
 	}
 
 	cases := []struct {
 		name string
 		env  map[string]string
-		// want is the template each purpose must resolve to, and a purpose absent
-		// from it is a purpose `Load` must have refused.
 		want map[recovery.Purpose]string
 	}{
 		{
-			// THE COMPATIBILITY ROW, and the reason this packet does not break every
-			// install that exists. One variable, three purposes, all links exactly as
-			// they were — which is to say: the reset one is right and the verification
-			// one is what identity-24 found. The compatibility promise is about BOOTING
-			// and about the reset link, and the migration is one more variable.
 			name: "the single template an existing deployment has",
 			env:  map[string]string{"RECOVERY_LINK_TEMPLATE": resetLink},
 			want: map[recovery.Purpose]string{
@@ -101,8 +40,6 @@ func TestTheDefaultLinkTemplateIsTheDefaultForEveryPurpose(t *testing.T) {
 			},
 		},
 		{
-			// THE MIGRATION ROW. One variable added, nothing changed, and the defect
-			// this packet is about is gone.
 			name: "the default plus a verification link of its own",
 			env: map[string]string{
 				"RECOVERY_LINK_TEMPLATE":           resetLink,
@@ -128,10 +65,6 @@ func TestTheDefaultLinkTemplateIsTheDefaultForEveryPurpose(t *testing.T) {
 			},
 		},
 		{
-			// The email-change row of the migration: the current-address half of an
-			// email change carries the confirmation link, and an unmigrated
-			// deployment's link for it is whatever the one template says — the
-			// password reset screen, where a change-confirmation token answers 404.
 			name: "the default plus an email-change link of its own",
 			env: map[string]string{
 				"RECOVERY_LINK_TEMPLATE":           resetLink,
@@ -145,9 +78,6 @@ func TestTheDefaultLinkTemplateIsTheDefaultForEveryPurpose(t *testing.T) {
 			},
 		},
 		{
-			// The default is OPTIONAL once every purpose has a variable of its own. A
-			// deployment that has finished migrating should be able to delete the
-			// legacy variable and not think about it again.
 			name: "per purpose only, with the legacy variable removed",
 			env: map[string]string{
 				"PASSWORD_RESET_LINK_TEMPLATE":     resetLink,
@@ -171,8 +101,6 @@ func TestTheDefaultLinkTemplateIsTheDefaultForEveryPurpose(t *testing.T) {
 			for key, value := range tc.env {
 				env[key] = value
 			}
-			// Required whenever the courier block is wired, so every row supplies
-			// it the way it supplies the credentials.
 			env["INVITATION_LINK_TEMPLATE"] = invitationLink
 
 			cfg, err := Load(lookupFrom(env))
@@ -195,9 +123,6 @@ func TestTheDefaultLinkTemplateIsTheDefaultForEveryPurpose(t *testing.T) {
 					t.Errorf("the %s link is %q, want %q", purpose, got, want)
 				}
 			}
-			// And the resolved set is what `main` hands the adapter, so it must be a
-			// map rather than a value computed at the point of use: a caller that
-			// resolved a purpose itself would be the second place the default lives.
 			if cfg.LinkTemplateFor(recovery.PurposeVerifyEmail) != tc.want[recovery.PurposeVerifyEmail] {
 				t.Error("LinkTemplateFor disagrees with LinkTemplates")
 			}
@@ -205,25 +130,6 @@ func TestTheDefaultLinkTemplateIsTheDefaultForEveryPurpose(t *testing.T) {
 	}
 }
 
-// TestAPurposeWithNeitherItsOwnVariableNorTheDefaultRefusesToBoot is the failure
-// direction, and it is a startup failure because every alternative is worse.
-//
-// The configuration is reachable by accident: a deployment sets
-// `PASSWORD_RESET_LINK_TEMPLATE` and forgets that doing so also means it no longer
-// has a default for anything else. The two ways to answer are both bad, and the
-// packet's subject is the second one:
-//
-//	fall back to another purpose's template   every mail gets a link, the reset one
-//	                                         is right, the verification one is a
-//	                                         button that lands on the wrong screen,
-//	                                         and nothing anywhere is red.
-//	refuse to start                          one line in a startup log naming the
-//	                                         variable, and a deployment that is fixed
-//	                                         before a user finds out.
-//
-// So the test asserts the refusal AND that the message names the missing variable,
-// because "invalid courier configuration" is a symptom and an operator needs the
-// name.
 func TestAPurposeWithNeitherItsOwnVariableNorTheDefaultRefusesToBoot(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -232,12 +138,6 @@ func TestAPurposeWithNeitherItsOwnVariableNorTheDefaultRefusesToBoot(t *testing.
 		wantMissing bool
 	}{
 		{
-			// THE REFUSAL NAMES THE FIRST MISSING PURPOSE IN SORTED ORDER, which is
-			// `email_change` — so a deployment that configured one variable and no
-			// default is told to set EMAIL_CHANGE_LINK_TEMPLATE, not the one it
-			// might have expected. The order is the variables', and it is fixed so
-			// two boots name the same thing. See `linkPurposesInOrder` in
-			// `internal/courier`.
 			name:      "a reset link configured and nothing to fall back to",
 			env:       map[string]string{"PASSWORD_RESET_LINK_TEMPLATE": defaultTemplate},
 			wantNamed: "EMAIL_CHANGE_LINK_TEMPLATE",
@@ -293,14 +193,6 @@ func TestAPurposeWithNeitherItsOwnVariableNorTheDefaultRefusesToBoot(t *testing.
 	}
 }
 
-// TestALinkTemplateIsSetWithoutCredentialsIsRefused is the rest of the
-// all-or-nothing rule, restated for the variables that did not exist when it was
-// written.
-//
-// A deployment that sets a link template and no courier credential believes it can
-// send mail. It cannot: `buildMailer` mounts `recovery.Unavailable{}` and every
-// route that needs a message answers 503, and the template it wrote is read by
-// nothing.
 func TestALinkTemplateIsSetWithoutCredentialsIsRefused(t *testing.T) {
 	cases := []struct {
 		name string
@@ -330,24 +222,6 @@ func TestALinkTemplateIsSetWithoutCredentialsIsRefused(t *testing.T) {
 	}
 }
 
-// TestEveryLinkTemplateIsHeldToTheSameRefusalsAndNamesItsOwnVariable is
-// `ValidateLinkTemplate`'s table applied to EVERY variable that carries one, at
-// boot rather than at construction.
-//
-// THE REASON IT IS PER VARIABLE is that the refusal a boot produces names the
-// variable that caused it, and a single shared message cannot do that: an operator
-// who set four variables and gets "the link template is invalid" has to diff four
-// values against a rule they have to remember. So each variable's refusals are
-// separate cases here, and the assertion is on the variable's name appearing in its
-// own error.
-//
-// THE THREE REFUSALS ARE THE SAME THREE `internal/courier` applies, and this is
-// where the duplication between boot and construction is paid for back:
-// `TestTheBootRulesAndTheClientRulesAgree` holds the base-URL rule in step between
-// the two, and this test holds the same question for the link templates — a boot
-// that accepts a template the client would refuse means a deployment that starts
-// and then cannot send, which is the failure the all-or-nothing rule exists to
-// prevent.
 func TestEveryLinkTemplateIsHeldToTheSameRefusalsAndNamesItsOwnVariable(t *testing.T) {
 	refusals := []struct {
 		name     string
@@ -371,9 +245,6 @@ func TestEveryLinkTemplateIsHeldToTheSameRefusalsAndNamesItsOwnVariable(t *testi
 
 	for _, variable := range variables {
 		t.Run(variable, func(t *testing.T) {
-			// A WORKING value in the other variables this one does not cover, so the
-			// refusal under test is the one being injected and not a configuration
-			// that was already incomplete.
 			for _, tc := range refusals {
 				t.Run(tc.name, func(t *testing.T) {
 					env := map[string]string{
@@ -390,9 +261,6 @@ func TestEveryLinkTemplateIsHeldToTheSameRefusalsAndNamesItsOwnVariable(t *testi
 						env["EMAIL_CHANGE_LINK_TEMPLATE"] =
 							"https://app.example.com/confirm-change?token=" + recoveryTokenPlaceholder
 					}
-					// The other per-purpose variable is covered by the default above,
-					// and the default is validated whatever else is set, so a refusal
-					// here can only be about the injected value.
 					_, err := Load(lookupFrom(env))
 					if !errors.Is(err, ErrInvalidCourier) {
 						t.Fatalf("Load accepted %s=%q, want one matching ErrInvalidCourier", variable, tc.template)
@@ -406,30 +274,6 @@ func TestEveryLinkTemplateIsHeldToTheSameRefusalsAndNamesItsOwnVariable(t *testi
 	}
 }
 
-// TestAnInsecureLinkTemplateIsDescribedAsThoughHTTPSWereTheOnlyOneAccepted is the
-// cosmetic defect identity-24 found alongside the real one, and it is a test
-// because "the message and the code disagree" is exactly the kind of thing that
-// comes back.
-//
-// # WHAT WAS WRONG
-//
-// `validateMailBaseURL` and the link-template validator both said
-//
-//	COURIER_BASE_URL scheme is "ftp", want https
-//
-// while the line above it accepts `http` and the table in
-// `TestTheBootRulesAndTheClientRulesAgree` says `http://localhost:4003` BOOTS. So
-// the message told an operator that a scheme this service accepts is not one it
-// accepts, and the only way to reconcile the two is to distrust one of them. The
-// acceptance is deliberate — a compose stack serves courier over http and
-// `OIDC_ALLOW_INSECURE` is the same shape of decision — so the message is what was
-// wrong.
-//
-// # WHY A WORDING ASSERTION IS THE RIGHT TEST HERE
-//
-// The claim being held is a claim ABOUT A MESSAGE, so the message is the thing under
-// test. `TestTheBootRulesAndTheClientRulesAgree` already holds that http boots, and
-// this holds that the refusal for everything else says so.
 func TestAnInsecureLinkTemplateIsDescribedAsThoughHTTPSWereTheOnlyOneAccepted(t *testing.T) {
 	t.Run("the courier base URL", func(t *testing.T) {
 		_, err := Load(lookupFrom(map[string]string{
@@ -462,22 +306,7 @@ func TestAnInsecureLinkTemplateIsDescribedAsThoughHTTPSWereTheOnlyOneAccepted(t 
 	})
 }
 
-// TestLinkTemplateVariableNamesEveryPurposeThatCanHaveALink is the exported half of
-// the drift check, and it exists so `internal/courier` can hold the two closed sets
-// together without either of them having to import the other.
-//
-// The set here is the purposes a deployment can configure a link FOR, and the set
-// in `internal/courier` is the purposes it can DELIVER. They are equal today and
-// nothing in the type system says so, which is why `link_purpose_test.go` walks
-// both — and why this function is exported at all: the check has to be able to ask
-// the question, and asking it by reading a source file is how it was going to be
-// done otherwise.
 func TestLinkTemplateVariableNamesEveryPurposeThatCanHaveALink(t *testing.T) {
-	// The three purposes whose messages carry a link. `email_change` is in the set
-	// because courier has carried both address-change types since `20373bf` and
-	// this adapter now delivers the current-address half with its confirmation
-	// link; the new-address half carries no link and so has no variable of its
-	// own, but the purpose is one and the variable configures the half that has one.
 	want := map[recovery.Purpose]string{
 		recovery.PurposePasswordReset: "PASSWORD_RESET_LINK_TEMPLATE",
 		recovery.PurposeVerifyEmail:   "EMAIL_VERIFICATION_LINK_TEMPLATE",
@@ -506,25 +335,6 @@ func TestLinkTemplateVariableNamesEveryPurposeThatCanHaveALink(t *testing.T) {
 	}
 }
 
-// TestABlankLinkTemplateIsAbsentRatherThanBroken is the convention, made explicit
-// because it is the one row in the table above that is not a refusal.
-//
-// `lookupValue` trims every variable this package reads, so a value of `"   "` is
-// the same as an absent one — for `COURIER_TOKEN`, for `MFA_ISSUER`, for
-// `RECOVERY_LINK_TEMPLATE` and for every per-purpose variable alike. The
-// alternative, treating a blank as a value and failing on it, would mean a
-// whitespace-only `COURIER_TOKEN` is a startup failure while a whitespace-only
-// `RECOVERY_LINK_TEMPLATE` is not, which is worse than either being uniform.
-//
-// # AND WHAT IT MEANS FOR A DEPLOYMENT, WHICH IS THE PART THAT MATTERS
-//
-// A blank per-purpose variable FALLS BACK to the default rather than becoming a
-// broken link — and the default is the shared one, so `buildMailer` warns about it
-// like any other purpose that resolved to it. An operator who blanked
-// `EMAIL_VERIFICATION_LINK_TEMPLATE` expecting to turn the link off gets the shared
-// template and a warning naming the variable, which is the correct answer: there is
-// no state in which a purpose has no link, because a message with no link is the
-// defect this packet exists to stop.
 func TestABlankLinkTemplateIsAbsentRatherThanBroken(t *testing.T) {
 	cfg, err := Load(lookupFrom(map[string]string{
 		"COURIER_BASE_URL":                 "https://courier.example.com",
@@ -532,7 +342,6 @@ func TestABlankLinkTemplateIsAbsentRatherThanBroken(t *testing.T) {
 		"RECOVERY_LINK_TEMPLATE":           defaultTemplate,
 		"EMAIL_VERIFICATION_LINK_TEMPLATE": "   ",
 		"INVITATION_LINK_TEMPLATE":         invitationLink,
-		// The one required secret, so the boot this test is about can happen.
 		"SIGNUP_SIGNING_KEY": base64.RawURLEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef")),
 	}))
 	if err != nil {
@@ -543,7 +352,6 @@ func TestABlankLinkTemplateIsAbsentRatherThanBroken(t *testing.T) {
 			"absent means the default, not an empty link",
 			recovery.PurposeVerifyEmail, got, defaultTemplate)
 	}
-	// And it is reported as sharing the default, so the startup warning names it.
 	shared := cfg.LinkPurposesUsingTheDefault()
 	found := false
 	for _, purpose := range shared {
@@ -557,10 +365,6 @@ func TestABlankLinkTemplateIsAbsentRatherThanBroken(t *testing.T) {
 			shared, recovery.PurposeVerifyEmail)
 	}
 
-	// The same rule with no default to fall back to: a blank variable is then a
-	// purpose with nothing, which is the refusal the other test asserts. The
-	// invitation template is supplied so the refusal is THIS one and not the
-	// invitation variable's — the two are distinguished by what they name.
 	if _, err := Load(lookupFrom(map[string]string{
 		"COURIER_BASE_URL":                 "https://courier.example.com",
 		"COURIER_TOKEN":                    "svc-3f9a1c7e5b2d8046",

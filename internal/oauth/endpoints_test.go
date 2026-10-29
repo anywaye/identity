@@ -1,11 +1,5 @@
 package oauth
 
-// The endpoint overrides are the one thing in this package that lets a DEPLOYMENT
-// — rather than a test — point the whole sign-in flow at a server it controls. The
-// property that makes that safe is narrow and is asserted here rather than argued:
-// with nothing set, this service dials exactly the URLs it dialed before these
-// variables existed, and with them set the URLs it dials are the ones the deployer
-// chose.
 
 import (
 	"context"
@@ -20,11 +14,6 @@ import (
 	"testing"
 )
 
-// THE DEFAULTS, SPELLED OUT AGAIN ON PURPOSE. A test that compared them to
-// `GoogleAuthorizeURL` would pass if the constant were wrong, which is the one
-// thing this packet must not be able to do: the value that used to be a literal in
-// a struct literal is the value every deployment that sets nothing gets, and it has
-// to be the one Google and GitHub actually serve.
 const (
 	shippedGoogleAuthorizeURL = "https://accounts.google.com/o/oauth2/v2/auth"
 	shippedGoogleTokenURL     = "https://oauth2.googleapis.com/token"
@@ -38,9 +27,6 @@ const (
 	shippedGitHubScopes       = "read:user user:email"
 )
 
-// configuredProviders is a Settings with both providers fully configured and NO
-// endpoint overrides: the deployment that has credentials and says nothing about
-// where to send people.
 func configuredProviders() Settings {
 	return Settings{
 		RedirectBaseURL: "https://identity.anywaye.com",
@@ -50,11 +36,6 @@ func configuredProviders() Settings {
 	}
 }
 
-// THE REGRESSION GUARD FOR THIS PACKET. Every field of both providers, byte for
-// byte, plus the scopes and the one extra authorize option — because "behavior
-// must be identical with nothing set" includes the parameters on the wire, and an
-// override that dropped `access_type=offline` would leave every Google account
-// without a refresh token and every assertion in this file green.
 func TestUnsetOverridesLeaveTheShippedEndpointsAndParameters(t *testing.T) {
 	t.Parallel()
 
@@ -110,10 +91,6 @@ func TestUnsetOverridesLeaveTheShippedEndpointsAndParameters(t *testing.T) {
 	}
 }
 
-// Google's offline access option is the one provider-specific authorize parameter
-// this service sets, and it is invisible in every URL comparison above, so it is
-// asserted on its own. Losing it is a slow failure: every connected account would
-// store a refresh token of NULL and die an hour later with nothing to renew it.
 func TestGoogleKeepsAskingForOfflineAccessWithNoOverridesSet(t *testing.T) {
 	t.Parallel()
 
@@ -129,9 +106,6 @@ func TestGoogleKeepsAskingForOfflineAccessWithNoOverridesSet(t *testing.T) {
 	}
 }
 
-// An override has to reach the URL the BROWSER is sent to, not a field that was
-// set. This asserts on the URL x/oauth2 built, which is the thing a person is about
-// to be redirected to.
 func TestAnAuthorizeOverrideReachesTheURLTheBrowserIsSentTo(t *testing.T) {
 	t.Parallel()
 
@@ -153,11 +127,6 @@ func TestAnAuthorizeOverrideReachesTheURLTheBrowserIsSentTo(t *testing.T) {
 	}
 }
 
-// The other three endpoints are calls this service makes with the access token, so
-// the proof that they were overridden is the server receiving them. The fake answers
-// each path with the shape the real provider returns, because an override that
-// reached the right path and then failed to decode would be a different bug and
-// this test would rather not report it.
 func TestTokenUserInfoAndEmailsOverridesReachTheCallsThisServiceMakes(t *testing.T) {
 	t.Parallel()
 
@@ -187,17 +156,12 @@ func TestTokenUserInfoAndEmailsOverridesReachTheCallsThisServiceMakes(t *testing
 		{
 			name:     ProviderGoogle,
 			provider: ProviderGoogle,
-			// Google returns the address on the identity call, so there is no second
-			// call for an emails override to reach.
 			wantHits: []string{"/google/token", "/google/userinfo"},
 			wantUID:  "google-sub",
 		},
 		{
 			name:     ProviderGitHub,
 			provider: ProviderGitHub,
-			// The query on the emails override has to survive: this service's own
-			// default carries one, so an override that dropped it would be a
-			// regression against the URL it is replacing.
 			wantHits: []string{"/github/token", "/github/user", "/github/emails"},
 			wantUID:  "4242",
 		},
@@ -231,14 +195,6 @@ func TestTokenUserInfoAndEmailsOverridesReachTheCallsThisServiceMakes(t *testing
 	}
 }
 
-// The point of the packet in one test: with nothing set, the ONLY addresses this
-// service dials are the five it dialed before these variables existed. Every
-// request is refused and its URL recorded, so the assertion is about which endpoints
-// were chosen rather than about a field that was set — and an override applied when
-// none was configured moves one of these and fails.
-//
-// X/OAUTH2 ASKS FOR A TOKEN TWICE on a client-secret provider, once per
-// authentication style, so the URLs are compared as a set.
 func TestWithNoOverridesSetTheOnlyOutboundCallsAreTheShippedEndpoints(t *testing.T) {
 	t.Parallel()
 
@@ -263,18 +219,12 @@ func TestWithNoOverridesSetTheOnlyOutboundCallsAreTheShippedEndpoints(t *testing
 		shippedGoogleUserInfoURL,
 		shippedGitHubTokenURL,
 		shippedGitHubUserInfoURL,
-		// GitHub's emails endpoint is NOT here, and its absence is not a gap: this
-		// service only dials /user/emails after /user comes back with no address,
-		// and every call in this test is refused before any answer arrives. The fake
-		// provider test above is where that last URL is exercised.
 	}
 	if got := recorder.Dialed(); !equalPaths(got, want) {
 		t.Errorf("this service dialed %v, want exactly %v", got, want)
 	}
 }
 
-// recordingTransport refuses every request and remembers its URL. It is how the test
-// above turns "the endpoints are the shipped ones" from a claim into a list.
 type recordingTransport struct {
 	mu   sync.Mutex
 	urls []string
@@ -288,8 +238,6 @@ func (rt *recordingTransport) RoundTrip(r *http.Request) (*http.Response, error)
 	return nil, errors.New("refusing to dial in a test that only records endpoints")
 }
 
-// Dialed returns the distinct URLs requested, in the order they were first asked
-// for.
 func (rt *recordingTransport) Dialed() []string {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
@@ -306,10 +254,6 @@ func (rt *recordingTransport) Dialed() []string {
 	return out
 }
 
-// A present-but-wrong value is a startup failure and never a silent fall back to
-// the default: a deployer who set the variable and got Google's real endpoint has a
-// working sign-in flow pointing somewhere they did not choose, with no way to find
-// out.
 func TestAMalformedEndpointOverrideIsRefusedAndNamesTheEndpoint(t *testing.T) {
 	t.Parallel()
 
@@ -343,15 +287,11 @@ func TestAMalformedEndpointOverrideIsRefusedAndNamesTheEndpoint(t *testing.T) {
 			if endpointErr.Provider != ProviderGoogle || endpointErr.Field != "TokenURL" {
 				t.Errorf("EndpointError = %+v, want google/TokenURL", endpointErr)
 			}
-			// The message is what an operator reads, so it has to say which endpoint
-			// and not merely that one of them is bad.
 			for _, want := range []string{ProviderGoogle, "TokenURL", "OAUTH_GOOGLE_TOKEN_URL"} {
 				if strings.Contains(err.Error(), want) {
 					continue
 				}
 				if want == "OAUTH_GOOGLE_TOKEN_URL" {
-					// internal/oauth does not know the variable names; internal/config
-					// turns this error into one. Its own test asserts that.
 					continue
 				}
 				t.Errorf("Validate = %q, want it to name %q", err, want)
@@ -360,10 +300,6 @@ func TestAMalformedEndpointOverrideIsRefusedAndNamesTheEndpoint(t *testing.T) {
 	}
 }
 
-// A deployer who has set an endpoint and not the credentials should hear about the
-// endpoint at boot, not on the day somebody adds the credentials. This is the
-// encryption key's rule — checked whenever present, provider configured or not —
-// applied to the setting whose wrong value is otherwise a working service.
 func TestAnEndpointOverrideIsCheckedWithoutAnyCredentials(t *testing.T) {
 	t.Parallel()
 
@@ -380,10 +316,6 @@ func TestAnEndpointOverrideIsCheckedWithoutAnyCredentials(t *testing.T) {
 	}
 }
 
-// An override for an endpoint a provider does not have is a setting that does
-// nothing while reading as if it did. Google's identity call returns the address,
-// so there is no /user/emails to point anywhere — and a variable that existed for it
-// would be a lie in the table rather than a feature.
 func TestAnOverrideForAnEndpointAProviderDoesNotHaveIsRefused(t *testing.T) {
 	t.Parallel()
 
@@ -400,10 +332,6 @@ func TestAnOverrideForAnEndpointAProviderDoesNotHaveIsRefused(t *testing.T) {
 	}
 }
 
-// A query is allowed and a fragment is not, because this service's own GitHub
-// emails endpoint carries one: a rule that refused queries would refuse the default
-// it ships with, and a rule that allowed fragments would silently accept a URL
-// different from the one the deployer wrote.
 func TestAQueryIsAllowedAndAFragmentIsNot(t *testing.T) {
 	t.Parallel()
 
@@ -418,15 +346,11 @@ func TestAQueryIsAllowedAndAFragmentIsNot(t *testing.T) {
 	}
 }
 
-// An unset override keeps the default rather than emptying the endpoint. A field
-// that could be blanked would be a way to configure a provider this service cannot
-// complete a sign-in with, which is not a supported state — it is a broken one.
 func TestAnUnsetOverrideKeepsTheDefaultRatherThanEmptyingIt(t *testing.T) {
 	t.Parallel()
 
 	s := configuredProviders()
 	s.Google.Endpoints.AuthorizeURL = "https://idp.test/authorize"
-	// TokenURL, UserInfoURL and EmailsURL are all left empty.
 
 	var google Provider
 	for _, p := range s.Providers() {
@@ -449,11 +373,6 @@ func TestAnUnsetOverrideKeepsTheDefaultRatherThanEmptyingIt(t *testing.T) {
 	}
 }
 
-// Every endpoint a deployment can configure is listed in exactly one place — the
-// list `applyTo` and `validate` both walk — so a field added to ProviderEndpoints
-// and forgotten there would be a setting no variable could set and no test would
-// catch. Both directions are checked because either one alone is satisfiable by an
-// empty list.
 func TestEveryEndpointFieldIsInTheOneList(t *testing.T) {
 	t.Parallel()
 
@@ -483,10 +402,6 @@ func TestEveryEndpointFieldIsInTheOneList(t *testing.T) {
 	}
 }
 
-// Every provider this service offers is in the settings table and vice versa. Both
-// directions, because a table that is missing one produces a provider with no
-// settings — and the missing one is silent, because the provider still builds and
-// still signs in.
 func TestEveryProviderThisServiceOffersIsInTheTable(t *testing.T) {
 	t.Parallel()
 
@@ -516,9 +431,6 @@ func TestEveryProviderThisServiceOffersIsInTheTable(t *testing.T) {
 	}
 }
 
-// An override changes where this service dials and NOTHING else. The name, the
-// scopes and the extra authorize options are not configuration, so a deployment
-// that set an endpoint must not be able to change what it asks for.
 func TestAnOverrideChangesNoOtherPartOfAProvider(t *testing.T) {
 	t.Parallel()
 
@@ -550,13 +462,6 @@ func TestAnOverrideChangesNoOtherPartOfAProvider(t *testing.T) {
 	}
 }
 
-// fakeProvider is a stand-in for Google or GitHub: it answers /token,
-// /userinfo, /user and /emails with the shapes the real providers return, and
-// records the paths it was asked for.
-//
-// It exists here rather than through internal/platform/oauthtest because that
-// package imports this one, and an in-package test file importing it back is an
-// import cycle.
 type fakeProvider struct {
 	*httptest.Server
 	t    *testing.T
@@ -578,9 +483,6 @@ func (f *fakeProvider) serve(w http.ResponseWriter, r *http.Request) {
 	f.hits = append(f.hits, r.URL.Path)
 	f.mu.Unlock()
 
-	// The token endpoint takes a form post and answers form-encoded, which is what
-	// x/oauth2 expects to decode; answering JSON here would fail the exchange for a
-	// reason that has nothing to do with the endpoint under test.
 	switch {
 	case strings.HasSuffix(r.URL.Path, "/token"):
 		w.Header().Set("Content-Type", "application/x-www-form-urlencoded")
@@ -593,8 +495,6 @@ func (f *fakeProvider) serve(w http.ResponseWriter, r *http.Request) {
 			"name":           "Kaka",
 		})
 	case strings.HasSuffix(r.URL.Path, "/user"):
-		// A null email is GitHub's normal case for a private address, which is what
-		// makes the emails call happen.
 		writeFakeJSON(f.t, w, map[string]any{
 			"id":    4242,
 			"email": nil,
@@ -610,7 +510,6 @@ func (f *fakeProvider) serve(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// Hits returns the paths the fake was asked for, in order.
 func (f *fakeProvider) Hits() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()

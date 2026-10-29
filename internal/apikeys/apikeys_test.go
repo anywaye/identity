@@ -9,14 +9,7 @@ import (
 	"time"
 )
 
-// The wire format, the scopes and the validators.
-//
-// These are the facts a client compiles against and a reviewer reads before
-// trusting anything else in this packet, so they are tested on their own terms
-// and not only through a route.
 
-// TestTheWireFormatIsAFixedShape is the assertion a client is written against:
-// a token is the brand prefix and exactly 43 base64url characters, every time.
 func TestTheWireFormatIsAFixedShape(t *testing.T) {
 	for i := range 32 {
 		token, digest, err := NewToken()
@@ -32,11 +25,6 @@ func TestTheWireFormatIsAFixedShape(t *testing.T) {
 		if !ok {
 			t.Fatalf("token %d does not carry the prefix", i)
 		}
-		// 32 bytes in base64url without padding is 43 characters: 32*4/3 is 42
-		// and two thirds, and the encoder spends the last character on the two
-		// bits that are left over. Asserted as a literal rather than computed
-		// from SecretBytes so that raising the entropy is a FAILING test here and
-		// not a silently longer token.
 		if len(secret) != 43 {
 			t.Errorf("token %d's secret is %d characters, want 43", i, len(secret))
 		}
@@ -47,12 +35,6 @@ func TestTheWireFormatIsAFixedShape(t *testing.T) {
 			t.Errorf("token %d's secret is not base64url without padding: %q", i, secret)
 		}
 
-		// And the digest is the hex SHA-256 of the WHOLE presented value, prefix
-		// included, because the value a client pastes is the value that gets
-		// hashed. A digest of the secret alone would still verify — this service
-		// strips the prefix and re-adds it — but it would mean two formats of the
-		// same credential hashing differently, and the whole point of hashing the
-		// presented string is that there is exactly one of it.
 		sum := sha256.Sum256([]byte(token))
 		if want := hex.EncodeToString(sum[:]); digest != want {
 			t.Errorf("token %d's digest is %q, want the SHA-256 of the whole value %q", i, digest, want)
@@ -60,9 +42,6 @@ func TestTheWireFormatIsAFixedShape(t *testing.T) {
 	}
 }
 
-// TestTokensAreDistinct is the property that makes a digest column unique: two
-// mints never collide. Thirty-two is not a statistical argument — it is a check
-// that the generator is actually being called and not returning a constant.
 func TestTokensAreDistinct(t *testing.T) {
 	seen := make(map[string]string, 64)
 	for range 64 {
@@ -77,10 +56,6 @@ func TestTokensAreDistinct(t *testing.T) {
 	}
 }
 
-// TestThePrefixIsRecognisable says what the prefix buys, as an assertion rather
-// than as the comment on the constant: a string that begins with it is
-// unmistakably this platform's credential and not a Stripe key, a GitHub token
-// or a password somebody pasted in the wrong field.
 func TestThePrefixIsRecognisable(t *testing.T) {
 	token, _, err := NewToken()
 	if err != nil {
@@ -90,29 +65,14 @@ func TestThePrefixIsRecognisable(t *testing.T) {
 	if !strings.HasPrefix(token, "anywaye_") {
 		t.Errorf("the prefix is %q, want something that names the platform", Prefix)
 	}
-	// Short enough to leave the whole credential inside a CI variable's value
-	// field and a log line's column budget, long enough that grepping for it does
-	// not match every English word beginning with it.
 	if len(Prefix) < 6 {
 		t.Errorf("the prefix is %d characters, too short to be a useful grep term", len(Prefix))
 	}
-	// And it is a PREFIX, not an infix: it cannot be missed by a scanner that
-	// looks at the first few bytes, which is where a leaked credential's first
-	// few bytes are most likely to be noticed.
 	if !strings.Contains(Prefix, "_") {
 		t.Error("the prefix does not end in a separator, so a truncated log line could read as a valid token")
 	}
 }
 
-// TestDigestOfAnythingIsWellFormed is the timing answer, as a test.
-//
-// The concern is a comparison that returns early on a length mismatch. There is
-// no such comparison here, and the reason is that the hashed value is a FIXED
-// WIDTH: an empty string, a one-character string, a truncated credential and a
-// well-formed one all produce the same 64-character hex digest, so the lookup
-// they reach is an ordinary indexed equality in exactly one shape. A malformed
-// credential cannot short-circuit past the store because the store never sees
-// the malformed value at all.
 func TestDigestOfAnythingIsWellFormed(t *testing.T) {
 	token, _, err := NewToken()
 	if err != nil {
@@ -153,10 +113,6 @@ func TestDigestOfAnythingIsWellFormed(t *testing.T) {
 	}
 }
 
-// TestDigestDistinguishesEveryCharacter is the part of the above that says a
-// difference in the presented value is a difference in the stored one. A digest
-// that ignored its last character would make every credential sharing a 42-byte
-// prefix interchangeable.
 func TestDigestDistinguishesEveryCharacter(t *testing.T) {
 	token, digest, err := NewToken()
 	if err != nil {
@@ -177,17 +133,7 @@ func TestDigestDistinguishesEveryCharacter(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// the scope vocabulary
-// ---------------------------------------------------------------------------
 
-// TestEveryScopeIsWiredToARoute is the answer to "a scope nobody ever checks at
-// the point of use is a scope that is a comment".
-//
-// The route each scope names is spelled out here, and internal/httpapi's
-// TestEveryScopeIsEnforcedOnItsRoutes walks the router and fails if one of these
-// strings stops appearing on the route table. Two lists that have to agree, and
-// a disagreement is a failure rather than a comment.
 func TestEveryScopeIsWiredToARoute(t *testing.T) {
 	want := map[string][]string{
 		ScopeAccountsRead: {
@@ -212,10 +158,6 @@ func TestEveryScopeIsWiredToARoute(t *testing.T) {
 			"GET /v1/accounts/{accountID}/oidc-clients/{clientID}",
 			"DELETE /v1/accounts/{accountID}/oidc-clients/{clientID}",
 		},
-		// The admin surface's two scopes. Listed here because the test's claim is
-		// that a scope in the vocabulary is enforced somewhere, and these were
-		// added to the vocabulary with their routes in the same commit — which is
-		// the only order in which the claim stays true.
 		ScopeAuditLogRead: {
 			"GET /v1/accounts/{accountID}/admin/audit-log",
 		},
@@ -223,18 +165,9 @@ func TestEveryScopeIsWiredToARoute(t *testing.T) {
 			"DELETE /v1/accounts/{accountID}/admin/invitations/{invitationID}",
 			"POST /v1/accounts/{accountID}/admin/invitation-revocations",
 		},
-		// The session-link mint, and the only row on a route with no account in its
-		// path — which is why the list above it can be read as "where each scope is
-		// enforced" and this one cannot be read off an account route. It is here in
-		// the same commit as the scope for the same reason as the two above: a scope
-		// and its route land together or the vocabulary's completeness claim is
-		// false in the interval between them.
 		ScopeSessionsWrite: {
 			"POST /v1/session-links",
 		},
-		// The operator surface, and the second set of rows on a route with no account
-		// in its path. Two rather than one because the vocabulary is enforced per
-		// route and a direction nobody can reach is not a capability.
 		ScopeUsersDisable: {
 			"POST /v1/users/{userID}/disable",
 			"POST /v1/users/{userID}/enable",
@@ -260,10 +193,6 @@ func TestEveryScopeIsWiredToARoute(t *testing.T) {
 	}
 }
 
-// TestAllScopesAreInCoreShape checks the naming against core's own convention,
-// which is "scopes for capability (`invoices:write`)". A scope that does not
-// look like the ones every other anywaye service writes is one a developer will
-// not guess at an integration.
 func TestAllScopesAreInCoreShape(t *testing.T) {
 	for _, scope := range AllScopes() {
 		resource, action, found := strings.Cut(scope, ":")
@@ -280,11 +209,6 @@ func TestAllScopesAreInCoreShape(t *testing.T) {
 	}
 }
 
-// TestNoScopeGrantsEverything is the property the whole vocabulary exists for.
-//
-// There is no wildcard, no `*`, and no scope that means "the union of the
-// others". A token is granted the scopes it names, so "read this account" and
-// "delete this account" are two separate decisions a person makes twice.
 func TestNoScopeGrantsEverything(t *testing.T) {
 	for _, scope := range AllScopes() {
 		if scope == "*" || strings.Contains(scope, "*") {
@@ -296,8 +220,6 @@ func TestNoScopeGrantsEverything(t *testing.T) {
 	}
 }
 
-// TestValidateScopes is the creation-time gate: a closed vocabulary, at least
-// one entry, deduped, sorted, and never repaired.
 func TestValidateScopes(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -322,9 +244,6 @@ func TestValidateScopes(t *testing.T) {
 		},
 		{
 			name: "empty is refused rather than defaulted",
-			// The failure this whole packet is about: a token with no scopes is a
-			// session that never expires, and it arrives as "the client did not
-			// send the field".
 			give:    nil,
 			wantErr: &FieldError{Field: "scopes", Code: CodeRequired},
 		},
@@ -340,19 +259,11 @@ func TestValidateScopes(t *testing.T) {
 		},
 		{
 			name: "an unknown scope is refused, not dropped",
-			// internal/oidc's registration path CURATES: it drops what it does not
-			// implement, because a product registering itself asks for what it
-			// would like and an operator curates what it gets. This path does not.
-			// A CI job asking for `accounts:admin` and silently receiving
-			// `accounts:read` is a script that runs and fails for a week.
 			give:    []string{ScopeAccountsRead, "accounts:admin"},
 			wantErr: &FieldError{Field: "scopes", Code: CodeUnsupported},
 		},
 		{
 			name: "a prefix of a real scope is not a real scope",
-			// `accounts` is not `accounts:read`, and accepting it because it
-			// starts with one of the four would hand out a capability set nobody
-			// wrote down.
 			give:    []string{"accounts"},
 			wantErr: &FieldError{Field: "scopes", Code: CodeUnsupported},
 		},
@@ -390,9 +301,6 @@ func TestValidateScopes(t *testing.T) {
 	}
 }
 
-// TestHasScope is the point of use. It is tested here as well as on the routes,
-// because a function that is wrong AND unwired fails exactly the same way as
-// one that is right and unwired — with the second being much harder to notice.
 func TestHasScope(t *testing.T) {
 	given := []string{ScopeAccountsRead, ScopeOIDCClientsWrite}
 
@@ -418,8 +326,6 @@ func TestHasScope(t *testing.T) {
 	}
 }
 
-// TestHasScopeIsNotAPrefixMatch is the specific comparison that would hand out a
-// capability nobody wrote down.
 func TestHasScopeIsNotAPrefixMatch(t *testing.T) {
 	given := []string{ScopeAccountsRead}
 	for _, almost := range []string{"accounts", ScopeAccountsRead + "s", "accounts:Read", "accounts:read:all"} {
@@ -429,9 +335,6 @@ func TestHasScopeIsNotAPrefixMatch(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// the name and the lifetime
-// ---------------------------------------------------------------------------
 
 func TestValidateName(t *testing.T) {
 	cases := []struct {
@@ -456,10 +359,6 @@ func TestValidateName(t *testing.T) {
 			wantErr: &FieldError{Field: "name", Code: CodeTooLong},
 		},
 		{
-			// The limit is in CHARACTERS and not bytes, because the column is
-			// bounded in characters too and a name that passes in a Go test and
-			// fails at the CHECK constraint is a 500 for a user with an emoji in
-			// their CI variable's description.
 			name: "a multi-byte name is counted in characters",
 			give: strings.Repeat("é", MaxNameLength),
 			want: strings.Repeat("é", MaxNameLength),
@@ -475,8 +374,6 @@ func TestValidateName(t *testing.T) {
 			wantErr: &FieldError{Field: "name", Code: CodeInvalidFormat},
 		},
 		{
-			// And the trailing case is asserted positively, because a reader of the
-			// rule above should not have to work out that trimming makes it fine.
 			name: "a trailing newline is trimmed rather than refused",
 			give: "deploy\n",
 			want: "deploy",
@@ -509,19 +406,6 @@ func TestValidateName(t *testing.T) {
 	}
 }
 
-// TestResolveExpiry is the expiry decision, as a table.
-//
-// THE DECISION: expires_at is REQUIRED, with a default of ninety days and a hard
-// ceiling of a year. There is no "never" — not as a sentinel, not as an empty
-// body, not as a flag.
-//
-// WHAT IT COSTS, stated here because the table is where a reader looks: a token
-// that must be replaced every ninety days is friction on exactly the CI job that
-// motivates the feature. The counter is that rotation is two requests — mint the
-// replacement, revoke the old one — and that ninety days is short enough that a
-// credential nobody has rotated in three quarters has almost certainly stopped
-// being used, which is what `last_used_at` is for. A permanent credential has no
-// such moment, and the moment is the entire point.
 func TestResolveExpiry(t *testing.T) {
 	created := time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
 
@@ -562,9 +446,6 @@ func TestResolveExpiry(t *testing.T) {
 			wantErr: &FieldError{Field: "expires_in", Code: CodeOutOfRange},
 		},
 		{
-			// The floor exists because a token that expires in a second is a way to
-			// create a row and get a 401 on the next request, and a caller who
-			// meant "as long as possible" has made a mistake worth answering.
 			name:    "under the floor is refused",
 			give:    durationPtr(time.Second),
 			wantErr: &FieldError{Field: "expires_in", Code: CodeOutOfRange},
@@ -597,10 +478,6 @@ func TestResolveExpiry(t *testing.T) {
 	}
 }
 
-// TestEveryExpiryIsWithinTheCeiling is the constant and the schema's CHECK
-// agreeing. The migration enforces the same year in `api_keys_maximum_lifetime`,
-// and a drift between them is a credential that outlives its own policy on one
-// side of the boundary only.
 func TestEveryExpiryIsWithinTheCeiling(t *testing.T) {
 	created := time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
 	for _, give := range []*time.Duration{nil, durationPtr(MinTTL), durationPtr(MaxTTL), durationPtr(DefaultTTL)} {
@@ -617,28 +494,15 @@ func TestEveryExpiryIsWithinTheCeiling(t *testing.T) {
 	}
 }
 
-// TestTheCeilingIsAYear pins the number, because "a year" is a policy and a
-// policy that drifts silently is one nobody chose.
 func TestTheCeilingIsAYear(t *testing.T) {
 	if want := 365 * 24 * time.Hour; MaxTTL != want {
 		t.Errorf("MaxTTL is %s, want %s", MaxTTL, want)
 	}
-	// And the default is inside it, so the default cannot drift past the ceiling
-	// without this failing.
 	if DefaultTTL > MaxTTL {
 		t.Errorf("DefaultTTL is %s, past the %s ceiling", DefaultTTL, MaxTTL)
 	}
 }
 
-// TestDigestIsNotReversible is the "the hash is not reversible" claim, tested as
-// a property rather than asserted in a comment.
-//
-// What can actually be checked: the digest is a function of the presented value
-// and of nothing else, it does not contain the value, and no prefix or suffix of
-// the value appears in it. What cannot be checked without a preimage search is
-// that SHA-256 resists inversion — that is the specification's job, and the
-// honest claim here is narrower: this service stores no part of the credential,
-// and a dump of the column is not a set of working tokens.
 func TestDigestIsNotReversible(t *testing.T) {
 	token, digest, err := NewToken()
 	if err != nil {
@@ -660,9 +524,6 @@ func TestDigestIsNotReversible(t *testing.T) {
 	if strings.Contains(digest, token) || strings.Contains(digest, secret) {
 		t.Error("the digest contains the credential it was made from")
 	}
-	// No run of the credential's own characters survives in the digest. Eight is
-	// the shortest run worth checking: a 43-character secret has 36 windows of
-	// eight, and any of them appearing in 64 hex characters is not chance.
 	encoded := hex.EncodeToString([]byte(token))
 	for at := 0; at+8 <= len(encoded); at++ {
 		window := encoded[at : at+8]
@@ -672,9 +533,6 @@ func TestDigestIsNotReversible(t *testing.T) {
 	}
 }
 
-// TestDigestIsAFunctionOfTheWholeValue is the other half: same input, same
-// output, every time. A digest that salted itself per call would make every
-// credential unusable.
 func TestDigestIsAFunctionOfTheWholeValue(t *testing.T) {
 	token, digest, err := NewToken()
 	if err != nil {
@@ -687,9 +545,6 @@ func TestDigestIsAFunctionOfTheWholeValue(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// helpers
-// ---------------------------------------------------------------------------
 
 func durationPtr(d time.Duration) *time.Duration { return &d }
 
@@ -705,8 +560,6 @@ func assertScopes(t *testing.T, got, want []string) {
 	}
 }
 
-// assertFieldError says a package validation error came back, without importing
-// errors into every case above.
 func assertFieldError(t *testing.T, err error, target **FieldError) {
 	t.Helper()
 	if err == nil {

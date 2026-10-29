@@ -8,91 +8,18 @@ import (
 	"github.com/anywaye/identity/internal/platform/id"
 )
 
-// The tenancy events: an account came into being, somebody was invited, the
-// invitation was accepted, a role moved, a member left.
-//
-// Every one of them has its subject set to the *account*, including the three
-// that are obviously about a person. That is the decision core's "Why subject is
-// required" section is about: subject is the entity the event is about and the
-// value a consumer correlates per-entity ordering on. A membership change is
-// about the account's member list — five members accepting five invitations is
-// five events in one ordered stream, and a consumer that cared about the order
-// of one person's memberships across accounts would correlate on the user id
-// instead, which is a different question and gets a different event.
-//
-// The time is the moment of the state change, taken from the injected clock for
-// the same reason NewUserCreated takes it: the event and the row it describes
-// have to agree, and only one of the two is under test control.
-//
-// ROLES ARE STRINGS HERE, NOT accounts.Role.
-//
-// This package is transport: it knows the envelope and the payload schemas and
-// nothing about the domain those payloads describe. Taking accounts.Role would
-// make outbox import accounts, and accounts import outbox to append its events —
-// a cycle that exists only because a role happens to be a string on the wire.
-// The caller writes string(role), which is what goes into the JSON anyway, and
-// the two packages stay independent: outbox is reusable by a service with no
-// accounts in it, and accounts can change its role type without touching a
-// published event's shape.
 
-// The event types this service publishes for tenancy.
-//
-// The three-segment form is core's since v0.2 and the packet specifies it. Each
-// is in core's catalog under these exact names except identity.member.accepted
-// — see the note on that constant.
 const (
-	// EventAccountCreated is emitted when an account is provisioned — by
-	// POST /v1/accounts, and by a registration creating its personal account.
 	EventAccountCreated = "identity.account.created"
 
-	// EventMemberInvited is emitted when an invitation is created. Its
-	// data.invitation_id is the thing to act on (core's catalog).
 	EventMemberInvited = "identity.member.invited"
 
-	// EventMemberAccepted is emitted when an invitation is redeemed and the
-	// membership is created.
-	//
-	// CORE DISAGREES WITH THIS NAME, AND THE MANAGER HAS TO RULE ON IT.
-	//
-	// core's docs/event-naming.md catalog has a row for this fact and calls it
-	// `identity.member.joined` ("An invitation is accepted"), and `accepted` is
-	// not in core's action vocabulary — the document says "Stick to this list for
-	// v0; anything else is a manager decision".
-	//
-	// This service follows the packet for identity-04, which specifies
-	// `identity.member.accepted` in its event list, for the same reason
-	// identity-02 followed the packet for `identity.user.created`: the packet is
-	// the manager's decision and the divergence is recorded rather than silently
-	// resolved. The cost is that identity's anywaye.yml now advertises a type core's
-	// catalog does not have, while core's catalog row has no publisher.
-	//
-	// Flipping it is this constant and the matching line in anywaye.yml. Nothing
-	// else moves: the payload schema, the subject, and every consumer keyed on the
-	// account id are unaffected.
 	EventMemberAccepted = "identity.member.accepted"
 
-	// EventMemberRoleChanged is emitted when a role is granted or revoked. The
-	// payload carries the old and the new role, per core's catalog.
 	EventMemberRoleChanged = "identity.member.role_changed"
 
-	// EventAccountOwnershipTransferred is emitted when an account changes hands.
-	//
-	// IT IS ONE EVENT AND NOT TWO role_changed EVENTS, and that is the whole
-	// reason this constant exists. A transfer changes two memberships at once —
-	// the heir is promoted, the previous owner is demoted — and emitting those as
-	// two `identity.member.role_changed` events would publish two independently
-	// ordered facts about a single atomic change. A consumer that received them
-	// could interleave either with any other event in the account's stream and
-	// reconstruct a state that never existed: an account with two owners, or with
-	// none. Both of those are exactly the states the transfer exists to prevent.
-	//
-	// So the event names BOTH sides — data.previous_owner_id and
-	// data.new_owner_id — and a consumer applies it as the one thing it is.
 	EventAccountOwnershipTransferred = "identity.account.ownership_transferred"
 
-	// EventMemberRemoved is emitted when a member is removed. The payload carries
-	// the role they held, because "who was removed" is not the question a
-	// downstream service asks; "what could they do until now" is.
 	EventMemberRemoved = "identity.member.removed"
 )
 
@@ -257,25 +184,10 @@ func NewAccountOwnershipTransferred(now time.Time, accountID, previousOwnerID, n
 	})
 }
 
-// newTenancyEvent is newSubjectEvent with the account as the subject, which is
-// the rule for every event in this file: see the package comment's note on why a
-// membership change is an event about the account.
 func newTenancyEvent(now time.Time, eventType string, accountID id.UUID, payload any) (Envelope, error) {
 	return newSubjectEvent(now, eventType, accountID.String(), payload)
 }
 
-// newSubjectEvent is the shared construction for every event this service
-// publishes: a fresh envelope id, a subject, the injected time, and a payload
-// marshaled from a struct.
-//
-// The struct-and-marshal is not ceremony. Concatenating these fields into a JSON
-// string by hand is how a name containing a quote produces a payload that is not
-// a JSON object, and Validate would then reject the event at the one place that
-// could have caught it with a useful message.
-//
-// The subject is a parameter rather than derived, because the entity an event is
-// about is not always the entity whose id the caller happens to have in hand:
-// tenancy events are about the account, the OIDC events are about the client.
 func newSubjectEvent(now time.Time, eventType, subject string, payload any) (Envelope, error) {
 	eventID, err := id.New()
 	if err != nil {

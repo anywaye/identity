@@ -9,14 +9,6 @@ import (
 	"time"
 )
 
-// The client aggregate: the credential a product presents, and the three lists
-// that decide what it is allowed to do with one.
-//
-// Everything asserted here is a security property, not a formatting choice. A
-// client that can be talked into a redirect URI outside its registration turns
-// this service into an open redirector for every product on it; a client id that
-// can be guessed turns the token endpoint into an oracle; a plaintext secret in
-// the row turns one database dump into a credential for every product.
 
 func TestNewClientCredentialsAreRandomAndUnguessable(t *testing.T) {
 	t.Parallel()
@@ -32,10 +24,6 @@ func TestNewClientCredentialsAreRandomAndUnguessable(t *testing.T) {
 		}
 		seen[clientID] = true
 
-		// The id travels in a form body and an Authorization header, so it has to
-		// be URL-safe with no escaping, and it has to be long enough that guessing
-		// is not a plan. 32 bytes is the same budget as a session token, for the
-		// same reason.
 		if clientID != base64.RawURLEncoding.EncodeToString(mustDecode(t, clientID)) {
 			t.Errorf("client id %q is not base64url", clientID)
 		}
@@ -48,14 +36,6 @@ func TestNewClientCredentialsAreRandomAndUnguessable(t *testing.T) {
 	}
 }
 
-// The secret is stored as a digest and never as itself.
-//
-// SHA-256 rather than argon2id, and the reason is the one internal/sessions
-// already wrote down for its token column: argon2id exists to make GUESSING
-// expensive, and a 256-bit random value has no guessable structure to slow down.
-// A slow hash here would cost tens of milliseconds on every token request and
-// buy nothing. The invariant that matters on both columns is the same one — the
-// presented value is never stored, so a dump of this table yields no credential.
 func TestSecretDigestIsNotTheSecret(t *testing.T) {
 	t.Parallel()
 
@@ -74,7 +54,6 @@ func TestSecretDigestIsNotTheSecret(t *testing.T) {
 	if strings.ToLower(digest) != digest {
 		t.Errorf("the digest %q is not lower case; the column is compared with equality", digest)
 	}
-	// Stable, because the token endpoint looks a client up by digest equality.
 	if SecretDigest(secret) != digest {
 		t.Error("SecretDigest is not stable for one secret")
 	}
@@ -90,7 +69,6 @@ func TestValidateRedirectURIs(t *testing.T) {
 		name string
 		give []string
 		want []string
-		// wantCode is the FieldError code the caller will put in errors[].
 		wantCode string
 	}{
 		{
@@ -104,11 +82,6 @@ func TestValidateRedirectURIs(t *testing.T) {
 			want: []string{"https://a.example.com/cb", "https://b.example.com/cb"},
 		},
 		{
-			// The loopback carve-out is what lets a product develop against a
-			// local parlor without the registration accepting any http origin at
-			// all. The library would allow any registered http URI for a
-			// confidential client; refusing at registration is the earlier and
-			// cheaper place to say no.
 			name: "loopback http is allowed",
 			give: []string{"http://localhost:3000/cb", "http://127.0.0.1:8080/cb"},
 			want: []string{"http://127.0.0.1:8080/cb", "http://localhost:3000/cb"},
@@ -118,14 +91,9 @@ func TestValidateRedirectURIs(t *testing.T) {
 		{name: "a bare host is not a redirect target", give: []string{"app.example.com/cb"}, wantCode: CodeInvalidFormat},
 		{name: "a custom scheme is not", give: []string{"myapp://cb"}, wantCode: CodeInvalidFormat},
 		{
-			// A fragment cannot survive the round trip: the authorization response
-			// is appended to the query string, so a registered fragment would end
-			// up somewhere the client never reads it.
 			name: "a fragment is not", give: []string{"https://app.example.com/cb#done"}, wantCode: CodeInvalidFormat,
 		},
 		{
-			// A wildcard would make the exact-match check in ValidateAuthReqRedirectURI
-			// meaningless, which is the whole of the open-redirect defense.
 			name: "a wildcard is not", give: []string{"https://*.example.com/cb"}, wantCode: CodeInvalidFormat,
 		},
 		{name: "empty", give: []string{""}, wantCode: CodeInvalidFormat},
@@ -151,22 +119,6 @@ func TestValidateRedirectURIs(t *testing.T) {
 	}
 }
 
-// The grant types this provider honors, and the refusal of everything else.
-//
-// THIS ROW USED TO ASSERT THAT `refresh_token` WAS UNSUPPORTED, and the change
-// is written down here rather than left as a silent diff. The old row was
-// guarding an absence, not a constraint: it asserted that ValidateGrantTypes
-// refused `refresh_token`, and the reason was `internal/oidc/client.go`'s "no
-// refresh token store exists". Packet TG-C2 built the store, so the constraint
-// the test named stopped being true. What the row was NOT guarding was the
-// behavior — there was no grant to exercise, so nothing downstream was pinned
-// by it. The refusal that still holds for the right reasons is the two rows
-// below it, and they are unchanged: `client_credentials` has no service
-// identity, and the JWT profile has no client private key.
-//
-// The refresh grant itself is proven elsewhere, against a database:
-// internal/oidc/refreshtoken_test.go and the token-endpoint rows in
-// internal/httpapi/oidc_integration_test.go.
 func TestValidateGrantTypes(t *testing.T) {
 	t.Parallel()
 
@@ -178,7 +130,6 @@ func TestValidateGrantTypes(t *testing.T) {
 	}{
 		{name: "authorization_code alone", give: []string{GrantAuthorizationCode}, want: []string{GrantAuthorizationCode}},
 		{name: "deduplicated", give: []string{GrantAuthorizationCode, GrantAuthorizationCode}, want: []string{GrantAuthorizationCode}},
-		// The one entry that is no longer a refusal, and the reason is above.
 		{name: "a refresh token grant", give: []string{GrantAuthorizationCode, GrantRefreshToken}, want: []string{GrantAuthorizationCode, GrantRefreshToken}},
 		{name: "client credentials", give: []string{GrantClientCredentials}, wantCode: CodeUnsupported},
 		{name: "nothing at all", give: nil, wantCode: CodeRequired},
@@ -203,9 +154,6 @@ func TestValidateGrantTypes(t *testing.T) {
 	}
 }
 
-// A registration that cannot ask for openid is a registration whose tokens carry
-// no identity at all, so it is refused at the door rather than producing a
-// credential that authenticates nobody.
 func TestValidateRegistrationScopesRequiresOpenID(t *testing.T) {
 	t.Parallel()
 
@@ -221,10 +169,6 @@ func TestValidateRegistrationScopesRequiresOpenID(t *testing.T) {
 	}
 }
 
-// IsActive is the one question every lookup asks, and the answer for a revoked
-// client is false rather than "the row is gone": the row stays so an audit can
-// see the credential existed, and revoked_at is what makes the difference
-// readable.
 func TestRevokedClientIsNotActive(t *testing.T) {
 	t.Parallel()
 

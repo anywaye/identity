@@ -1,20 +1,5 @@
-# Toolchain pins for this repository. identity is a single static Go binary with
-# no other runtime dependency, so the go pin and the linter pin are the whole
-# file.
-#
-#   mise install     # install the pinned toolchain
-#   mise run prime   # the gate
 [tools]
 go = "1.26"
-# golangci-lint is the binary `TestTheLintExclusionNamesEveryEnabledLinter`
-# (client/lint_exclusion_test.go) asks for its enabled set, so a machine
-# without it is red rather than green. Pinned here, and the gate job's install
-# step reads this line rather than carrying its own copy. The value tracks
-# kit's `golangci/golangci-lint-action` step
-# (`anywaye/kit/ci/ci.reusable.yml`, `version: v2.14.0`) the way
-# gateway's own mise.toml does: a bump touches both, in the same commit, or
-# local and CI disagree about which linters are enabled — which is the drift
-# the test exists to catch.
 "golangci-lint" = "2.14.0"
 
 [tasks.prime]

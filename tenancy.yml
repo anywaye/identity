@@ -1,198 +1,25 @@
-# tenancy.yml — what identity declares about its own account boundary.
-#
-# Checked by anywaye/core's contract harness:
-#
-#     /Users/kaka/Code/any/anywaye/core/harness/bin/tenancy-check .
-#
-# It REPLACES `tenancy.probe.yml`, which was the pilot's measurement rather than a
-# declaration: core's scanner could not see `anywaye.protect_table`, so a file
-# describing what this migration really writes was reported as "the migrations
-# create no policy at all". That is fixed in core (577b3f3), the probe is deleted
-# in the same commit as this file, and nothing about the database changed to make
-# it fit — `pg_class.relforcerowsecurity` and `internal/tenancy` already agreed it
-# was protected.
-#
-# THE `rls` BLOCK IS THE SUBSTRATE'S, NOT OURS. `migrations/00016_account_isolation.sql`
-# is kit's `templates/database/tenancy/substrate.sql` copied verbatim, so this
-# block records five `select anywaye.protect_table(...)` calls and what the template
-# writes for each. It does not claim any policy, any predicate or any `force` bit
-# that this repository wrote: every one of the twenty-four policies `pg_policies`
-# holds on these five tables is generated — twenty from `protect_table` and
-# `protect_credential_table`, plus `account_users_anywaye_members` and
-# `account_users_anywaye_resolve`, which are measured in tg-a1's report and
-# unreadable by the checker for the reasons given at each table below — and the
-# `constrained` lines below are the five CALLS, which is the only place the
-# template's shape is written down in this tree.
 version: 1
 service: identity
 
-# This service holds other people's accounts and reads and writes their rows. The
-# table below is the audit log of a security boundary, so `false` here would be a
-# lie rather than a declaration.
 accountScoped: true
 
 scope:
-  # The column every account-scoped statement in this service scopes by. Spelled
-  # `account_id` and not `tenant_id` because that is what the migrations call it,
-  # and the schema is explicit that the checker searches for what the service uses
-  # rather than guessing between the fleet's three vocabularies.
   key: account_id
-  # FILES, NOT DIRECTORIES, and the reason is a completeness obligation rather than
-  # tidiness. These are the production stores whose SQL reaches one of the five
-  # protected tables; a directory would drag in `_test.go` fixtures, whose
-  # `dbtest.Schema` clones have an `account_id` column and no policies and are not
-  # entry points into anything.
-  #
-  # TWO OF THE THREE STORES CONTRIBUTE NO ATTRIBUTED SITE, and naming them
-  # anyway is the point. The scanner reads `internal/apikeys/store.go` and `internal/oidc/store.go`
-  # in full and attributes no account-scoped statement in either, because their
-  # credential lookups are addressed by an unguessable secret rather than by an
-  # account — `api_keys` by `token_digest`, `oidc_clients` by `client_id` — and
-  # because the statements that DO carry `where account_id` wrap their verb and
-  # their table onto separate lines, and core attributes only a statement that
-  # OPENS ON ONE LINE (all six are listed and classified above `entryPoints`). The credential half WAS a measured production limitation
-  # rather than a gap in this list: it is pinned by
-  # `internal/tenancy/credential_lookup_test.go` and written up in
-  # `REPORT-identity-isolation-02` §3. Naming the two files is what
-  # makes it checkable — the day somebody adds `and account_id = $2` to either
-  # lookup, or rewrites one of those six as a single line, this checker goes red
-  # naming the statement, which is the moment the fix lands and nobody has to
-  # remember to come back here.
-  #
-  # identity-isolation-04 CHANGED THE `api_keys` HALF, and the paragraph above is
-  # now history rather than a live claim: that lookup is no longer a limitation,
-  # because it resolves by the presented digest under a policy of its own — see
-  # `rls.tables[api_keys]` and
-  # `TestTenancyACredentialResolvesByTheDigestTheCallerPresentedAndNothingElse`.
-  # The `oidc_clients` half still stands, and it is a finding for core rather than
-  # a gap in this list: `client_id` is a public identifier in the authorization
-  # URL, so it is the wrong table for a mechanism that widens a read to the row
-  # whose value the caller presented.
-  #
-  # WHAT IS DELIBERATELY NOT HERE, named so it cannot be mistaken for an
-  # oversight: `internal/accounts/store.go`, which holds this service's other five
-  # account-scoped statements (lines 286, 356, 386, 593, 625). See the comment
-  # above `entryPoints` for why they are absent rather than declared, which is a
-  # finding for core rather than a line in this file.
   sources:
     - internal/admin/store.go
     - internal/apikeys/store.go
     - internal/oidc/store.go
-    # THE FOURTH FILE, added after tg-a1 walked the tree for SQL reaching a
-    # protected table and found this one outside the list. `pgProfileReader.Profile`
-    # reads `account_users` twice — the personal-account name and the membership
-    # list behind the `accounts` claim — and until it was named here the checker
-    # could not see any of it, which is the one failure shape this file exists to
-    # prevent: a green that is green because nobody wrote the file down. Naming it
-    # moved `tenancy.enumeration-partial` from eleven sites to fourteen, and the
-    # three it contributes are:
-    #
-    #   internal/oidc/profiles.go:125  join account_users  on au.account_id (name)
-    #   internal/oidc/profiles.go:136  join account_users  on au.account_id (list)
-    #   internal/oidc/profiles.go:167  the `claimAccount` wire struct's json tag
-    #
-    # The two joins are the statements. The third is not a statement at all — it is
-    # the same shape as `auditColumns`, `keyColumns` and `clientColumns`: a line
-    # carrying the tenancy key that no read passes through.
-    #
-    # ITS VERDICT, MEASURED rather than argued, on the real tables as the app role
-    # (`internal/tenancy/profile_read_test.go`): with no identity set — which is
-    # the state production runs it in, because the userinfo path reads through
-    # `db.Direct{Pool: pool}` and a bare pool carries no GUC — the read returns
-    # ZERO rows; with `anywaye.begin_user` naming the subject it returns exactly
-    # that subject's rows; with another user's identity it returns none; with an
-    # `begin_account` set it returns that account's rows only. So it is NOT a
-    # hole — `account_users_anywaye_members` (00018) and the four account policies
-    # hold it in every state, and the Go predicate is a second copy of the same
-    # bound. It is NOT an entry point either: the read is scoped by USER, which
-    # `operation`/`enforced.line` cannot express for the same reason the three
-    # secret-addressed lookups cannot.
-    #
-    # WHAT IS DELIBERATELY NOT PURSUED HERE, named so it is not mistaken for an
-    # oversight: that zero-row answer is also a FUNCTIONAL fact — the `accounts`
-    # claim on the userinfo path is empty in production, and every existing test
-    # asserts it through a fake ProfileReader, so nothing has caught it. That is
-    # an OIDC packet's surface, not this declaration's; the tenancy claim is the
-    # one above and it is proven.
     - internal/oidc/profiles.go
 
 rls:
-  # True, and it is the reason this file exists rather than saying `false` and
-  # listing nothing: migration 00016 makes Postgres refuse a cross-account read.
-  # A service whose database enforces nothing has to be able to SAY that, and this
-  # service cannot.
   databaseEnforced: true
-  # The template's own function, and not `app.current_account()`: `protect_table`
-  # writes every predicate as `account_id = (select anywaye.current_account_id())`,
-  # so naming anything else here would make `tenancy.rls-permissive` correct.
-  #
-  # It is the WRAPPED spelling that matters, and this field cannot express the
-  # wrapper because the schema's pattern requires the bare name ending in `()`. The
-  # wrap is `(select …)`, and it is why the substrate's policies are evaluated once
-  # per statement rather than once per row.
   identity: anywaye.current_account_id()
-  # The DDL tree, and separate from `scope.sources` above because the two checks
-  # read different things: this one reads `create policy` and
-  # `alter table … row level security`, the other reads statements.
   sources:
     - migrations
-  # All five, each with all four policies, and the number is the arithmetic of the
-  # template: `protect_table` writes one policy per command and refuses to write
-  # `for all`, so a declaration naming three of the four gets
-  # `tenancy.rls-undeclared` on the fourth. Permissive policies are OR-ed together,
-  # so the one nobody declared can widen the three that were.
-  #
-  # `roles` is the honest half of a shape the migration text cannot state. The
-  # template writes `to %I, %I` bound to `current_user` and
-  # `coalesce(p_login_role, current_user || '_app')`, so the two principals are
-  # decided by the session that ran the migration rather than written in the file:
-  # `identity` owns every table here and `identity_app` is the role kit's cluster
-  # provisions for it (`KIT_POSTGRES_DATABASES: identity`). Neither is `PUBLIC`,
-  # which is what the template never leaves off, and neither carries BYPASSRLS —
-  # a policy bound to a bypassing role is enforced on no read at all, and the
-  # checker reads these names for exactly that.
   tables:
     - table: account_users
       forced: true
       policies:
-        # FOUR ARE DECLARED. FIFTH AND SIXTH ARE LIVE IN THE DATABASE AND THE
-        # CHECKER CANNOT SEE EITHER, so naming them here turns 0 failures into
-        # 2 (`tenancy.rls-policy-absent`, "the migrations do not create it").
-        # Measured, not assumed — the edit was made and the checker run:
-        #
-        #     psql "$TEST_DATABASE_URL" -tAc "select tablename, policyname from
-        #       pg_policies where schemaname='public' order by 1,2"
-        #
-        #   account_users  account_users_anywaye_members   00018:283
-        #   account_users  account_users_anywaye_resolve   00028:92
-        #
-        # Both are REAL and both are LIVE. `anywaye.protect_membership_table`
-        # (00018) calls `protect_table` for the same four policies above and adds
-        # `<table>_anywaye_members`, `for select`, `using (user_id = (select
-        # anywaye.current_user_id()))` — a policy scoped by the CALLER, not by the
-        # account, for the same reason a resolve policy is. 00028's DO block adds
-        # `account_users_anywaye_resolve`, `for select`, `using (EXISTS (SELECT 1
-        # FROM api_keys k WHERE k.account_id = account_users.account_id AND
-        # k.user_id = account_users.user_id AND k.token_digest = (SELECT
-        # anywaye.current_credential_digest()) AND k.revoked_at IS NULL))`.
-        #
-        # WHY THEY ARE NOT DECLARED, and it is not an oversight wearing a
-        # comment. Both are written through `EXECUTE format(...)` inside
-        # plpgsql, so no line in this tree BEGINS `create policy` and the DDL
-        # scanner's `_POLICY_STATEMENT` cannot attribute either to a table.
-        # `select anywaye.protect_membership_table(...)` is a THIRD writer the
-        # checker's `_PROTECT_TABLE` does not resolve — it matches
-        # `protect_(credential_)?table` and `membership_table` is neither. So
-        # declaring them is a false red and NOT declaring them is a real gap in
-        # the declaration, and the only fix that closes both is core's:
-        # resolve `protect_membership_table` the way `protect_credential_table`
-        # is already resolved, and read a `create policy` out of a
-        # `format('create policy %I on %s ...')` string.
-        #
-        # The table IS forced, so both are evaluated against the owner rather
-        # than being catalog decoration, and both bind the substrate's two roles
-        # and neither carries BYPASSRLS. `internal/tenancy/isolation.sql` is
-        # where this repository asserts what the catalog actually holds.
         - name: account_users_anywaye_select
           command: select
           clause: using
@@ -252,34 +79,6 @@ rls:
           constrained:
             file: migrations/00016_account_isolation.sql
             line: 867
-        # FIVE POLICIES, NOT FOUR, AND THE FIFTH IS 00029's. `account_invitations`
-        # reached a credential table in identity-isolation-05: the redemption
-        # lookup is `WHERE token_digest = $1` with no account predicate and none
-        # it could carry, because the account is WHAT THE QUERY IS FOR. So 00029
-        # calls `anywaye.protect_credential_table('account_invitations',
-        # 'token_digest')`, which writes the four account policies above AGAIN
-        # (idempotently — the same four, byte for byte) and then adds this one:
-        # `for select`, `using (token_digest = (select
-        # anywaye.current_credential_digest()))`.
-        #
-        # WHY IT IS DECLARED AND NOT LEFT OUT. It is the same shape as
-        # `api_keys_anywaye_resolve` above and the same argument: a fifth policy
-        # on a declared protected table, in the roles the other four name, is a
-        # row-level-security boundary nobody is accountable for unless it is
-        # written down. Permissive policies are OR-ed, so the one left out is the
-        # one that can widen the four that were named — which is exactly what
-        # `tenancy.rls-undeclared` reported here before this entry existed.
-        #
-        # IT IS NOT AN ACCOUNT POLICY, AND THE DECLARATION DOES NOT PRETEND IT IS.
-        # Its predicate is the digest the CALLER PRESENTED, not the account acting
-        # on it: an authentication request has no account. `clause: using` is the
-        # honest spelling of the mechanism (a `using` clause filters and raises
-        # nothing), and `roles` is the substrate's two because the template's
-        # `to %I, %I` binds them — neither is PUBLIC and neither carries
-        # BYPASSRLS, which is the half the checker reads these names for.
-        # A resolution session still meets the four account policies on every
-        # write, where a NULL identity is 42501, so presenting a token grants no
-        # broader write scope than 00025 had.
         - name: account_invitations_anywaye_resolve
           command: select
           clause: using
@@ -287,29 +86,6 @@ rls:
           constrained:
             file: migrations/00029_invitation_credential_resolve.sql
             line: 47
-    # FIVE POLICIES, NOT FOUR, and the fifth is not an account policy at all. 00016
-    # calls `anywaye.protect_credential_table('api_keys', 'token_digest')`, which
-    # CALLS `protect_table` — so the four account policies below are byte-for-byte the
-    # ones every other protected table has — and then adds one `for select` policy
-    # whose USING clause is `token_digest = (select anywaye.current_credential_digest())`.
-    #
-    # WHY IT IS DECLARED RATHER THAN LEFT OUT. It is a policy on a declared protected
-    # table, in the roles the table's other policies name, and a declaration that
-    # listed four of the five would be a list that cannot be walked in either
-    # direction — the omission is invisible to the reader and to the checker alike.
-    #
-    # CORE CANNOT SEE ANY OF THE FIVE, AND `tenancy-check` SAYS SO. Its recogniser is
-    # `^select (anywaye.)?protect_table\(\s*'(table)'` — a literal table name as the
-    # FIRST argument — and this table's call is
-    # `protect_credential_table('api_keys', 'token_digest')`. So the checker reports
-    # `rls-not-enabled`, `rls-owner-bypass` and four `rls-policy-absent` against a
-    # table whose `relrowsecurity` and `relforcerowsecurity` are both true and whose
-    # five policies exist. That is a FALSE RED in core's scanner, measured in
-    # REPORT-identity-isolation-04 §4, and the fix is core's: widen
-    # `_PROTECT_TABLE` to `protect_(?:credential_)?table`. The alternative — deleting
-    # this table from `rls.tables` to make the checker quiet — would declare that
-    # Postgres does not protect the one table holding every machine credential, which
-    # is the lie this file exists to be unable to tell.
     - table: api_keys
       forced: true
       policies:
@@ -341,9 +117,6 @@ rls:
           constrained:
             file: migrations/00016_account_isolation.sql
             line: 895
-        # The resolve policy. Its predicate is the digest the CALLER PRESENTED, not the
-        # account, so `clause: using` with the other four is the honest reading and the
-        # declaration does not pretend this row is account-scoped.
         - name: api_keys_anywaye_resolve
           command: select
           clause: using
@@ -414,123 +187,27 @@ rls:
             file: migrations/00016_account_isolation.sql
             line: 915
 
-# `tenancy.enumeration-partial` NAMES FOURTEEN SITES IN `scope.sources` THAT IT
-# COULD NOT ATTRIBUTE, and the finding says the author must read them and confirm
-# each one is declared. Done, and they are two classes:
-#
-# SIX ARE NOT STATEMENTS. `internal/admin/store.go:27`,
-# `internal/apikeys/store.go:140`, `internal/oidc/store.go:92` and
-# `internal/oidc/profiles.go:167` are the `auditColumns`, `keyColumns`,
-# `clientColumns` and `claimAccount` constants and struct tags, and
-# `internal/admin/store.go:67` and `internal/oidc/store.go:99` are the column lists
-# of the two `insert into` statements. A column list carrying the word `account_id`
-# is not an account-scoped read, and an `insert` is absent from
-# `entryPoints[].operation` by the schema's own rule: it creates a row rather than
-# reaching an existing one.
-#
-# EIGHT ARE REAL ACCOUNT-SCOPED STATEMENTS THE SCANNER COULD NOT REACH, and they
-# are listed here because that is a measured limit of the checker rather than a
-# property of this service:
-#
-#   internal/apikeys/store.go:222      the credential lookup's `join account_users`
-#   internal/apikeys/store.go:287      select  api_keys      where account_id = $1
-#   internal/apikeys/store.go:329      update  api_keys      where id = $1 and account_id = $2
-#   internal/apikeys/store.go:404      update  api_keys      where account_id = $1 and user_id = $2
-#   internal/oidc/store.go:159         select  oidc_clients  where account_id = $1
-#   internal/oidc/store.go:234         update  oidc_clients  where id = $1 and account_id = $2
-#   internal/oidc/profiles.go:125      the personal-account name read's `join account_users`
-#   internal/oidc/profiles.go:136      the membership list read's `join account_users`
-#
-# The last two arrived with the fourth source and are the two the new proof is
-# for: `internal/tenancy/profile_read_test.go`.
-#
-# All six DO carry their own `where account_id`, and none is attributed. The
-# reason was re-measured on core's own `scan_file` rather than inferred, and it is
-# not the one this paragraph used to give: `sql_operation` matches
-# `select … from <t>`, `update <t> set` and `delete from <t>` as SINGLE-LINE
-# regexes, so a statement opens only when its verb, its table and (for an update)
-# its `set` sit on one line. Every statement above lives in a Go raw string with
-# those on separate lines, so no size of `ATTRIBUTION_WINDOW` would help — the
-# window is not the constraint, the single-line match is. Of every
-# `account_id`-carrying line in these three files, exactly ONE sits under an
-# opening (`internal/admin/store.go:126`, read back from the site at :127),
-# which is why `admin-audit-log-list` is the only entry point there is. The
-# finding for core is not "the window should follow the statement" — it is that a
-# Go raw string cannot be read line by line at all. It is in
-# `REPORT-identity-isolation-03` §4.
-#
-# And the reason none of the six is DECLARED is the same reason the five in
-# `internal/accounts/store.go` are not: see below.
-#
-# THE DECLARED ENUMERATION, AND IT IS ONE ENTRY POINT, WHICH IS NOT THE SAME AS ONE
-# BEING ENOUGH. `internal/tenancy/tenancy_test.go` proves the three-way denial on
-# REAL ROWS for `account_audit_log` only, and that is the single entry point below.
-# The reason is a property of the table rather than a choice: 00012 gives
-# `account_audit_log` no foreign keys, so its fixture needs no users and no
-# accounts and cannot collide with another package's rows in a shared database.
-#
-# WHAT IS NOT DECLARED, and it is named rather than left for a reader to infer:
-#
-#   internal/accounts/store.go:310  select  account_users       (account_id = $1)
-#   internal/accounts/store.go:380  select  account_users       (account_id = $1)
-#   internal/accounts/store.go:410  delete  account_users       (account_id = $1)
-#   internal/accounts/store.go:819  update  account_invitations (account_id = $2)
-#   internal/accounts/store.go:851  update  account_invitations (account_id = $1)
-#
-# All five ARE account-scoped and all five DO carry their own `where account_id`,
-# which is the half of the boundary this service had before 00016. They are absent
-# because `negative.cases` requires three arms naming three assertion lines in a
-# test, and this repository has no row-level denial fixture for `account_users` or
-# `account_invitations` — seeding either means writing `users` and `accounts` rows
-# that other packages' tests also write, and `tenancy_test.go`'s own header says
-# why that was declined. Declaring them with the arms pointing at the
-# `account_audit_log` proof would make the checker green and the declaration
-# false, so they are declared nowhere and written down here instead. The two ways
-# out are somebody's: core grows a way for an entry point to name a TABLE's denial
-# proof and inherit it, or identity seeds four more tables. Both are in
-# `REPORT-identity-isolation-03` §4 and in
-# `HANDOFF-identity-isolation` §4.
-#
-# AND THE THREE SECRET-ADDRESSED LOOKUPS CANNOT BE DECLARED AT ALL, which is worth
-# stating because it is the format meeting a real fact: `api_keys` by
-# `token_digest`, `account_invitations` by `token_digest` and `oidc_clients` by
-# `client_id` are reached with no account predicate, and `operation: call` still
-# requires `enforced.line` to carry the tenancy key. Their measurement is
-# `internal/tenancy/credential_lookup_test.go`, which is green while pinning that a
-# request with no identity reads zero of them.
 entryPoints:
   - id: admin-audit-log-list
     operation: select
     subject: account_audit_log
     enforced:
-      # The predicate, and the index it uses: this statement is account-scoped in
-      # Go as well as by the policy, and 00016's `protect_table` requires a leading
-      # `account_id` index precisely so the filter is not a sequential scan behind
-      # a primary-key lookup.
       mechanism: query-filter
       file: internal/admin/store.go
       line: 127
     negative:
       asserts: absent
       cases:
-        # ARM ONE, no identity — the state a request that never authenticated is
-        # in. Go has no `nil` for a row count, so the token is the helper whose
-        # return is being compared against 0.
         - id: no-identity
           asserts: absent
           expects: countAuditRows
           file: internal/tenancy/tenancy_test.go
           line: 332
-        # ARM TWO, another account's VALID identity. The arm with the information
-        # in it: the credential is real and belongs to somebody else, and the
-        # result has to be indistinguishable from an account that does not exist.
         - id: other-account
           asserts: absent
           expects: countAuditRowsIn
           file: internal/tenancy/tenancy_test.go
           line: 347
-        # ARM THREE, its own rows. The positive control, and the only arm a table
-        # that denies everybody cannot pass.
         - id: own-account
           asserts: present
           expects: countAuditRowsIn

@@ -1,27 +1,3 @@
-// Package agents holds the agent principal: the identity that exists before
-// anybody owns it.
-//
-// WHY IT LIVES HERE AND NOT IN CONDUCTOR. Decision D3. Identity is the fleet's
-// auth authority — conductor forwards a bearer here and verifies nothing itself,
-// fail-closed — and this service already owns scoped opaque API keys
-// (SHA-256 at rest), introspection, session-links (a minted link IS the
-// credential) and invitations (a thing exists, a human confirms it, it binds to
-// an account). An agent claim is that last flow with a stranger on the other end
-// of the link, and the principal that flow binds is this.
-//
-// THE ONE DIFFERENCE FROM api_keys, AND IT IS THE WHOLE PACKET. An api key is
-// minted by a signed-in user FOR an account they already hold, so it is born
-// knowing its account and its owner. An agent registers itself: nobody is
-// authenticated, there is no account, and the principal's first state carries no
-// authority at all. So this is a NEW LIFECYCLE over the same hashing and
-// introspection machinery — not a second token system, and not a second place
-// anything verifies a credential.
-//
-// WHAT THIS PACKET OWNS AND WHAT IT DOES NOT. The substrate: the principal, its
-// lifecycle, its credential digests and its audit rows. W1-P2 (public
-// registration, the scoped-token create/show/rotate/revoke set) and W2-P2 (claim
-// binds, mint the scoped token) build on it. Nothing here mounts a route; the
-// claim route that exercises the bind lives in internal/httpapi.
 package agents
 
 import (
@@ -38,36 +14,9 @@ import (
 	"github.com/anywaye/identity/internal/platform/id"
 )
 
-// The lifecycle, in order, with the transitions written out.
-//
-// TWO TRANSITIONS IN AND A THIRD THAT IS NOT THE REVERSE OF ANYTHING:
-//
-//	unclaimed → claimed   a human, authenticated, on the claim screen. The link
-//	                      is the credential and the click is explicit; nothing
-//	                      auto-accepts, which is the invitation flow's whole
-//	                      rule and deciding D4.
-//	claimed   → disabled  the account's owner turns it off. The row, the id, the
-//	                      name and the trail all survive — which is why a disable
-//	                      is not a delete.
-//	disabled  → claimed  re-enabling, by the same owner.
-//
-// AND THE ONE THAT DOES NOT EXIST AT ALL: unclaimed → disabled. An agent nobody
-// has claimed is a stranger's registration, and "disabled" is an act of ownership
-// over something with no owner yet. The table's CHECK refuses the state; this
-// function refuses the move, so a caller cannot ask for either.
-//
-// The ordering is a total order rather than a set because the transitions are
-// reachable in exactly one direction of history except for the re-enable, and a
-// caller that has to reason about that in three places reasons about it wrongly
-// in the third.
 const (
-	// StatusUnclaimed is what a registration produces: it exists, it holds no
-	// authority, and nothing it can do depends on a row in `accounts`.
 	StatusUnclaimed = "unclaimed"
-	// StatusClaimed is bound to a human account.
 	StatusClaimed = "claimed"
-	// StatusDisabled was claimed and has been turned off. Its tokens do not
-	// resolve; the row is kept.
 	StatusDisabled = "disabled"
 )
 
@@ -132,7 +81,6 @@ func MayTransition(from, to string) bool {
 	return false
 }
 
-// --- the credential, and the one thing this package will not store --------
 
 // Prefix is what every credential this package issues begins with.
 //
@@ -199,10 +147,6 @@ func Digest(token string) string {
 func NewToken() (token, digest string, err error) {
 	raw := make([]byte, SecretBytes)
 	if _, err := io.ReadFull(rand.Reader, raw); err != nil {
-		// Same reasoning as every mint in this service: a failure of crypto/rand
-		// means there is no trustworthy entropy, and minting a credential from a
-		// degraded source is not something to discover when it turns out to be
-		// guessable.
 		return "", "", fmt.Errorf("reading random bytes for an agent token: %w", err)
 	}
 	token = Prefix + base64.RawURLEncoding.EncodeToString(raw)
@@ -265,13 +209,7 @@ type Token struct {
 	TokenDigest string
 	CreatedAt   time.Time
 	ExpiresAt   time.Time
-	// LastUsedAt is nil until the credential has been used. A pointer because
-	// "never used" and "used at the epoch" are different answers, and the first
-	// is the one an operator wants to notice.
 	LastUsedAt *time.Time
-	// RevokedAt and RevokedReason are set together or not at all, and the
-	// table's CHECK says so. RevokedReason is a pointer because "" is a real
-	// answer and NULL is "none given".
 	RevokedAt     *time.Time
 	RevokedReason *string
 }
@@ -301,9 +239,5 @@ func (t Token) UsableAt(now time.Time, agentStatus string) bool {
 	if t.IsRevoked() || t.IsExpired(now) {
 		return false
 	}
-	// An unknown status is refused rather than treated as live. The closed set is
-	// a code fact, and a row carrying a status this build has never seen is a row
-	// written by a future or broken deployment — the direction that fails there
-	// is closed, never open.
 	return agentStatus == StatusClaimed
 }

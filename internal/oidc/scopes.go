@@ -6,41 +6,11 @@ import (
 	"strings"
 )
 
-// The scopes this service hands out, and the only ones it will.
-//
-// The set is deliberately four names and not "whatever a client registered".
-// A scope is a promise about what identity is willing to put in a token that
-// leaves this process, and every name on the list is a claim this service can
-// actually produce from a row it already owns:
-//
-//	openid    the protocol. Required on every request; without it there is no
-//	          id_token and no userinfo, and a caller asking for one without the
-//	          other has asked for something that does not exist.
-//	email     users.email, from the registration.
-//	profile   the one human-readable name identity holds, which is the personal
-//	          account's name. See nameFromPersonalAccount.
-//	accounts  the caller's memberships and their roles, from account_users.
-//	publish   the caller's verified GitHub account id (`github_id`), from
-//	          connected_accounts. Separate from `accounts` because a product
-//	          that renders memberships has no business holding the id that keys
-//	          a registry row — and MD21's publisher path is the only reader.
-//
-// The ones the OIDC specification defines and this list omits — phone, address,
-// offline_access — are omissions, not oversights. identity has no phone column,
-// no address column, and no refresh-token store, so advertising any of them
-// would be advertising a claim this service cannot fill. A product that asks for
-// one gets a 400 naming it, which is a better answer than a token that quietly
-// omits the field the product is about to render.
 const (
 	ScopeOpenID   = "openid"
 	ScopeEmail    = "email"
 	ScopeProfile  = "profile"
 	ScopeAccounts = "accounts"
-	// ScopePublish releases `github_id`. It is its own scope rather than a
-	// rider on `accounts` because the two answer different questions: `accounts`
-	// is "what can this user see", and `publish` is "who does this user publish
-	// as". A client asking for membership rendering should not thereby acquire
-	// the identifier that keys a publisher row.
 	ScopePublish = "publish"
 )
 

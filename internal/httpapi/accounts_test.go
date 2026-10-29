@@ -18,11 +18,6 @@ import (
 	"github.com/anywaye/identity/internal/users"
 )
 
-// These are the handler tests, against a programmable double for the tenancy use
-// cases. They pin the mapping from a domain error to a status code, which is the
-// half of the surface the integration suite cannot check: once a handler has
-// called the service successfully, what it wrote is real, and the interesting
-// failures are the ones a real database would refuse to produce twice.
 
 func TestTenancyStatusCodes(t *testing.T) {
 	tests := []struct {
@@ -38,10 +33,6 @@ func TestTenancyStatusCodes(t *testing.T) {
 			wantCode:   CodeNotFound,
 		},
 		{
-			// A caller with no membership in an account is told the account does
-			// not exist. core: "403 is not allowed to leak existence". A 403 here
-			// would confirm to any authenticated user that the id they guessed is
-			// a real account, which is a free tenant-enumeration oracle.
 			name:       "not being a member is a 404, not a 403",
 			err:        accounts.ErrNotAMember,
 			wantStatus: http.StatusNotFound,
@@ -66,9 +57,6 @@ func TestTenancyStatusCodes(t *testing.T) {
 			wantCode:   CodeConflict,
 		},
 		{
-			// core's deprecation section puts 410 on the surface that is gone with a
-			// link to its replacement, and an expired invitation is exactly that:
-			// it is not redeemable and the fix is to ask for a new one.
 			name:       "an expired invitation is a 410",
 			err:        accounts.ErrInvitationExpired,
 			wantStatus: http.StatusGone,
@@ -81,9 +69,6 @@ func TestTenancyStatusCodes(t *testing.T) {
 			wantCode:   CodeGone,
 		},
 		{
-			// A wrong token is a 404, not a 403 and not a 410. 403 would say "this
-			// invitation exists, you may not have it"; 410 would say it too. Only
-			// 404 is indistinguishable from an invitation that was never created.
 			name:       "a wrong token is a 404",
 			err:        accounts.ErrInvitationNotFound,
 			wantStatus: http.StatusNotFound,
@@ -108,9 +93,6 @@ func TestTenancyStatusCodes(t *testing.T) {
 			wantCode:   CodeForbidden,
 		},
 		{
-			// Inviting the owner role is a well-formed request for something that
-			// does not exist, which is 422 rather than 403: nothing about the
-			// caller is wrong.
 			name:       "inviting an owner is a 422",
 			err:        accounts.ErrRoleNotInvitable,
 			wantStatus: http.StatusUnprocessableEntity,
@@ -157,7 +139,6 @@ func TestTenancyStatusCodes(t *testing.T) {
 			if got := rec.Header().Get("Content-Type"); got != "application/problem+json" {
 				t.Errorf("Content-Type = %q, want application/problem+json", got)
 			}
-			// core: errors[] appears only on a 422.
 			if tt.wantStatus == http.StatusUnprocessableEntity {
 				if len(p.Errors) == 0 {
 					t.Error("a 422 with no errors[]; core scopes that array to 422 and it is empty")
@@ -169,8 +150,6 @@ func TestTenancyStatusCodes(t *testing.T) {
 	}
 }
 
-// A 500 must not carry the internal error to the caller. A driver message names
-// a host, a pool and sometimes a role.
 func TestTenancyInternalErrorsAreLoggedNotReturned(t *testing.T) {
 	fake := newFakeTenancy()
 	fake.createErr = errors.New("dial tcp 10.0.0.5:5432: connection refused")
@@ -194,15 +173,6 @@ func TestTenancyInternalErrorsAreLoggedNotReturned(t *testing.T) {
 	}
 }
 
-// RequireAccountRole is the authorization decision, and it is the one place that
-// decides between 404 and 403. Those two answers are not interchangeable: a 403
-// on an account the caller cannot see confirms the account exists.
-//
-// The middleware is exercised directly, on a probe route, rather than through a
-// real endpoint. That is what lets a case choose the minimum it is testing
-// against: through PATCH the minimum is fixed at admin, so "a member is refused
-// the owner minimum" would be untestable — the route would refuse them for a
-// different reason and the test would prove nothing.
 func TestRequireAccountRoleDistinguishesInvisibleFromForbidden(t *testing.T) {
 	accountID := id.MustNew()
 	auth := newFakeAuth()
@@ -220,8 +190,6 @@ func TestRequireAccountRoleDistinguishesInvisibleFromForbidden(t *testing.T) {
 		{name: "a member does not meet the admin minimum", role: accounts.RoleMember, min: accounts.RoleAdmin, wantStatus: http.StatusForbidden},
 		{name: "an admin does not meet the owner minimum", role: accounts.RoleAdmin, min: accounts.RoleOwner, wantStatus: http.StatusForbidden},
 		{
-			// The one the whole function exists for. A 403 here would confirm to
-			// any authenticated caller that the account id they guessed is real.
 			name:       "no membership is a 404, whatever the minimum",
 			role:       accounts.RoleMember,
 			min:        accounts.RoleMember,
@@ -236,9 +204,6 @@ func TestRequireAccountRoleDistinguishesInvisibleFromForbidden(t *testing.T) {
 			wantStatus: http.StatusNotFound,
 		},
 		{
-			// A 500 rather than a 403: the membership could not be read, which is
-			// not evidence that the caller is under-privileged. Answering 403 would
-			// turn a database blip into a wrong authorization answer.
 			name:       "a lookup failure is a 500",
 			role:       accounts.RoleMember,
 			min:        accounts.RoleMember,
@@ -274,13 +239,6 @@ func TestRequireAccountRoleDistinguishesInvisibleFromForbidden(t *testing.T) {
 	}
 }
 
-// probeRouter mounts the middleware on its own route, with a minimum the test
-// chooses, and a handler that only reports that it was reached.
-//
-// It builds an options value directly rather than going through New, because New
-// returns an http.Handler and the middleware under test is a method on options.
-// The trace middleware is still wrapped around it so a decoded problem carries
-// the header the body claims.
 func probeRouter(a Auth, ten Tenancy, min accounts.Role) http.Handler {
 	opts := options{
 		auth:    a,
@@ -294,8 +252,6 @@ func probeRouter(a Auth, ten Tenancy, min accounts.Role) http.Handler {
 	return traceMiddleware(r)
 }
 
-// The two denials must be indistinguishable in what they reveal, or the
-// difference between them becomes the oracle. Neither may name the account.
 func TestTheTwoDenialsDoNotLeakExistence(t *testing.T) {
 	accountID := id.MustNew()
 	auth := newFakeAuth()
@@ -319,9 +275,6 @@ func TestTheTwoDenialsDoNotLeakExistence(t *testing.T) {
 		"under-privileged": denial(accounts.RoleMember, accounts.RoleAdmin, nil),
 	}
 
-	// The slug is what must not appear: it is the one fact about the account the
-	// caller does not already have. The id is in `instance`, which is the request
-	// path core specifies, and the caller sent that path.
 	for label, body := range bodies {
 		if strings.Contains(body, "secret-project") {
 			t.Errorf("a %s denial names the account's slug: %s", label, body)
@@ -332,14 +285,7 @@ func TestTheTwoDenialsDoNotLeakExistence(t *testing.T) {
 	}
 }
 
-// Every /v1 route requires a credential. This is the anonymous row of the matrix,
-// asserted for the whole surface rather than per endpoint, because the one
-// endpoint that must *not* require one is POST /v1/users and it is registered
-// before the account routes.
 func TestTenancyRoutesAreAbsentWithoutTenancy(t *testing.T) {
-	// With no tenancy service there are no account routes at all, so a
-	// misconfigured process answers 404 rather than a stack of 500s. Same rule as
-	// the auth routes.
 	h := New(nil, WithAuth(newFakeAuth()))
 
 	for _, path := range []string{
@@ -356,8 +302,6 @@ func TestTenancyRoutesAreAbsentWithoutTenancy(t *testing.T) {
 	}
 }
 
-// The account detail response carries the caller's own role, so a client can
-// render "you are an admin" without a second request. The shape is the contract.
 func TestAccountResponseShape(t *testing.T) {
 	accountID := id.MustNew()
 	created := testInstant
@@ -398,10 +342,6 @@ func TestAccountResponseShape(t *testing.T) {
 	}
 }
 
-// The account list is a plain JSON array, not the {data, page} envelope. That is
-// a deliberate, recorded deviation from core's pagination convention; see
-// openapi/v1.yaml's Known gaps. What matters here is that it is an array and
-// never null, because `null` and `[]` mean different things to a generated SDK.
 func TestAccountListIsAnArrayNotNull(t *testing.T) {
 	fake := newFakeTenancy()
 	fake.list = []accounts.MemberSummary{}
@@ -424,26 +364,6 @@ func TestAccountListIsAnArrayNotNull(t *testing.T) {
 	}
 }
 
-// EVERY ENTRY OF A MEMBER LIST HAS TO IDENTIFY THE MEMBER, and it did not.
-//
-// `membershipResponses` projected only `Role`, because `accounts.MemberSummary`
-// carries the ACCOUNT and the role and never the user — the struct is shaped for
-// `ListMine`, which answers "which accounts does this user belong to", and
-// `Members` reuses it for "who is in this account". The consequence on the wire
-// was three entries that differed only by role:
-//
-//	[{"account_id":"","user_id":"","role":"admin","created_at":"0001-01-01T00:00:00Z"}, …]
-//
-// A member list nobody can tell apart is not a member list, and it is worse than
-// a missing one: a client rendering it draws three rows with no way to send
-// `PATCH` or `DELETE` against any of them, because the path needs a user id the
-// response does not carry.
-//
-// It went unnoticed because the operation is in no document — so there is no
-// generated client and no consumer whose complaint would have surfaced it. That
-// is the same gap packet identity-28 closes, and this is what closing it found.
-// The fix is on the projection and on the summary; the assertion is here because
-// a member list is exactly the kind of response a refactor silently empties.
 func TestEveryMemberInAMemberListIdentifiesItself(t *testing.T) {
 	accountID, ownerID, memberID, adminID := id.MustNew(), id.MustNew(), id.MustNew(), id.MustNew()
 	joined := time.Date(2026, 9, 1, 9, 0, 0, 0, time.UTC)
@@ -470,9 +390,6 @@ func TestEveryMemberInAMemberListIdentifiesItself(t *testing.T) {
 			t.Fatalf("GET %s = %d, want 200; body: %s", target, rec.Code, rec.Body)
 		}
 
-		// Read the raw body rather than one projection: `GET /v1/accounts/{id}`
-		// nests the array under `members` and `/members` under `memberships`, and a
-		// test that only knows one of them would pass while the other stayed empty.
 		var envelope struct {
 			Members     []membershipResponse `json:"members"`
 			Memberships []membershipResponse `json:"memberships"`
@@ -517,10 +434,6 @@ func TestEveryMemberInAMemberListIdentifiesItself(t *testing.T) {
 	}
 }
 
-// The invitation token is returned exactly once, in the 201, and never again.
-// A 200 on the same token has to be impossible, which is the store's conditional
-// UPDATE; here the point is narrower: the create response is the only place it
-// appears.
 func TestInvitationResponseCarriesTheTokenOnce(t *testing.T) {
 	accountID := id.MustNew()
 	fake := newFakeTenancy()
@@ -552,15 +465,11 @@ func TestInvitationResponseCarriesTheTokenOnce(t *testing.T) {
 	if body.Token != "the-one-time-token" {
 		t.Errorf("token = %q, want the one-time token", body.Token)
 	}
-	// The digest is what the row holds; it must not be in the response.
 	if strings.Contains(rec.Body.String(), fake.invite.Invitation.TokenDigest) {
 		t.Errorf("the response carries the stored digest: %s", rec.Body)
 	}
 }
 
-// Accepting an invitation returns the membership that now exists. It is the
-// moment the caller needs to know their role, and the token is gone from the
-// response by then.
 func TestAcceptInvitationReturnsTheMembership(t *testing.T) {
 	accountID := id.MustNew()
 	userID := id.MustNew()
@@ -587,24 +496,6 @@ func TestAcceptInvitationReturnsTheMembership(t *testing.T) {
 	}
 }
 
-// Every status openapi/v1.yaml documents for this route, asserted at the
-// handler that produces it.
-//
-// The contract promises four, and they are four different facts: 404 for a token
-// that names nothing, 410 for one that expired, 410 for one already spent, 409
-// for a membership that already exists. There was no test covering any of them,
-// which is how identity-30's revoked invitation went unnoticed for as long as it
-// did — the route had a happy path and a documentation.
-//
-// THE REVOKED CASE IS THE FIRST ROW, and that is the whole design decision:
-// accounts.Accept turns a revoked invitation into ErrInvitationNotFound, so the
-// handler has nothing to distinguish and nothing to leak. It is the 404 a wrong
-// token gets, because a status that differed would tell whoever holds a stolen
-// token that this invitation was once real — the one thing an enumeration of
-// tokens is trying to extract. The service test
-// (TestAcceptIsRefusedAfterRevocation) is what proves a revocation really does
-// arrive here as ErrInvitationNotFound; this table is what proves the answer it
-// arrives with.
 func TestAcceptInvitationAnswersTheDocumentedStatuses(t *testing.T) {
 	cases := map[string]struct {
 		err  error
@@ -631,10 +522,6 @@ func TestAcceptInvitationAnswersTheDocumentedStatuses(t *testing.T) {
 	}
 }
 
-// A malformed id in the path is a 404, not a 422. The path is part of a
-// resource's identity: "this id is not an id this service issued" and "this id
-// is an id this service issued but you cannot see it" must be the same answer,
-// or the second one becomes probeable.
 func TestMalformedAccountIDIsNotFound(t *testing.T) {
 	for _, path := range []string{
 		"/v1/accounts/not-a-uuid",
@@ -644,8 +531,6 @@ func TestMalformedAccountIDIsNotFound(t *testing.T) {
 		"/v1/accounts/%2e%2e%2f%2e%2e",
 	} {
 		t.Run(path, func(t *testing.T) {
-			// Authenticated, because 401 is checked first and 401 is the right
-			// answer for an anonymous caller whatever the path says.
 			auth := newFakeAuth()
 			rec := requestAs(t, New(nil, WithAuth(auth), WithTenancy(newFakeTenancy())),
 				auth.token, http.MethodGet, path, "")
@@ -656,15 +541,6 @@ func TestMalformedAccountIDIsNotFound(t *testing.T) {
 	}
 }
 
-// The role path parameter is parsed the same way whether it arrives as
-// accounts.Role or as a string, and an unknown one is a 422 that names the field
-// rather than a 400 or a 500.
-//
-// Note what is NOT in this table: `{"role": 7}`. A JSON value of the wrong type
-// is a 400 in this service, grouped with a syntax error by decodeBody, and that
-// grouping was decided and reviewed in identity-02 — see its comment. A tenancy
-// endpoint does not get a third opinion, so the behavior is asserted here
-// rather than left to be rediscovered.
 func TestRoleBodyErrorsAreFieldErrors(t *testing.T) {
 	accountID := id.MustNew()
 	userID := id.MustNew()
@@ -684,8 +560,6 @@ func TestRoleBodyErrorsAreFieldErrors(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// The caller has to be an owner to reach the route at all, so that the
-			// 422 under test is about the body and not about the minimum.
 			tenancy := newFakeTenancy()
 			tenancy.role = accounts.RoleOwner
 
@@ -710,11 +584,6 @@ func TestRoleBodyErrorsAreFieldErrors(t *testing.T) {
 	}
 }
 
-// A JSON value of the wrong type is a 400, not a 422, and it stays that way on
-// the tenancy routes. decodeBody groups json.UnmarshalTypeError with syntax
-// errors and core reserves 400 for "malformed syntax the client could not have
-// known"; whether a number where a string belongs counts is that group's call,
-// and it was made in identity-02 for every endpoint in the service.
 func TestRoleOfTheWrongJSONTypeIs400(t *testing.T) {
 	auth := newFakeAuth()
 	tenancy := newFakeTenancy()

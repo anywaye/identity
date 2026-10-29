@@ -23,29 +23,16 @@ import (
 
 var start = time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
 
-// ---------------------------------------------------------------------------
-// doubles
-// ---------------------------------------------------------------------------
 
-// fakeUsers is an in-memory users.Store. Modeling the state faithfully matters:
-// the lockout tests are only meaningful if the counter and the lock survive
-// across calls the way a row does.
 type fakeUsers struct {
 	byEmail map[string]users.User
 	byID    map[id.UUID]users.User
 	nextID  int
 
-	// createErr is returned by Create, to exercise a failure inside the
-	// registration transaction.
 	createErr error
-	// recordErr is returned by RecordFailedLogin.
 	recordErr error
-	// cleared counts ClearFailures calls.
 	cleared int
-	// searchErr is returned by Search, to exercise a failure of the staff
-	// directory read.
 	searchErr error
-	// creates counts Create calls.
 	creates int
 }
 
@@ -62,8 +49,6 @@ func (f *fakeUsers) Create(_ context.Context, _ db.Querier, p users.CreateParams
 		return users.User{}, users.ErrEmailTaken
 	}
 
-	// Sequential ids, not random: a test asserting on which event was written
-	// needs a stable subject.
 	var raw id.UUID
 	raw[15] = byte(f.nextID)
 	f.nextID++
@@ -105,14 +90,6 @@ func (f *fakeUsers) RecordFailedLogin(_ context.Context, _ db.Querier, userID id
 	return nil
 }
 
-// Disable and Enable mirror the real store's pair, including the ErrNotFound on a
-// user that is not there — a double that returned nil would let a test assert that
-// a missing user disables cleanly, which is the shape of the bug this pair exists
-// to refuse.
-//
-// The write lands on BOTH maps, for the same reason RecordFailedLogin does: a
-// user fetched by email and a user fetched by id must not disagree about whether
-// the account is disabled.
 func (f *fakeUsers) Disable(_ context.Context, _ db.Querier, userID id.UUID, at time.Time) error {
 	u, ok := f.byID[userID]
 	if !ok {
@@ -146,8 +123,6 @@ func (f *fakeUsers) UpdateName(_ context.Context, _ db.Querier, userID id.UUID, 
 	return nil
 }
 
-// UpdateTheme mirrors UpdateName, including the ErrNotFound on a user that is not
-// there and the write to both maps, for the reasons UpdateName gives.
 func (f *fakeUsers) UpdateTheme(_ context.Context, _ db.Querier, userID id.UUID, theme *string) error {
 	u, ok := f.byID[userID]
 	if !ok {
@@ -172,12 +147,6 @@ func (f *fakeUsers) ClearFailures(_ context.Context, _ db.Querier, userID id.UUI
 	return nil
 }
 
-// Search matches on email and display name like the store does, substring and
-// case-insensitive, so a unit test asserting "the use case passed the query
-// through" can do it without a database. The bounds are the store's, not this
-// fake's: limit handling is asserted against the real query in the integration
-// suite, and a fake that reimplemented the clamp would be a second place for
-// the two to disagree.
 func (f *fakeUsers) Search(_ context.Context, _ db.Querier, query string, limit int) ([]users.DirectoryEntry, error) {
 	if f.searchErr != nil {
 		return nil, f.searchErr
@@ -205,46 +174,24 @@ func (f *fakeUsers) Search(_ context.Context, _ db.Querier, query string, limit 
 	return out, nil
 }
 
-// fakeSessions records what was minted and hands the tokens back.
 type fakeSessions struct {
 	minted []sessions.NewSession
-	live   map[string]id.UUID // digest -> session id
-	// owners maps a session id back to its user, so ByToken can return the field
-	// Authenticate needs to load the user.
+	live   map[string]id.UUID
 	owners map[id.UUID]id.UUID
 	nextID int
-	// revoked records revoked session ids.
 	revoked []id.UUID
-	// createErr and byTokenErr simulate infrastructure failures, and listErr is the
-	// third kind: a failure of the LISTING, which is what distinguishes "the store
-	// could not be asked" from "there are no sessions". A fake that returned an
-	// empty list on error would let a use case report a signed-in user as having no
-	// sessions during a database blip, which is the worst answer available.
 	createErr  error
 	byTokenErr error
 	listErr    error
-	// nowSeen records the clock the lookup was called with, so a test can prove
-	// expiry is judged against the injected clock rather than the database's.
 	nowSeen []time.Time
 
-	// listedFor records the user id each ListLiveForUser was asked about, and
-	// revokedOne records the (user, session) pair each RevokeOneForUser carried.
-	//
-	// THE USER ID IS RECORDED RATHER THAN INFERRED FROM THE RESULT, because the
-	// assertion these exist for is "the use case asked about the CALLER and nobody
-	// else" — and a fake that filtered correctly would return the right list while
-	// having been handed the wrong id. A test that only checked the returned rows
-	// would pass against a service that asked about user B and got B's rows back.
 	listedFor  []id.UUID
 	revokedOne []revokeOneCall
 }
 
-// revokeOneCall is one recorded RevokeOneForUser.
 type revokeOneCall struct {
 	userID    id.UUID
 	sessionID id.UUID
-	// found is what the store answered, so a test can drive the "no such session
-	// of yours" branch without a second fake.
 	found bool
 }
 
@@ -277,13 +224,6 @@ func (f *fakeSessions) ByToken(_ context.Context, _ db.Querier, token string, no
 	return sessions.Session{ID: sid, UserID: f.owners[sid]}, nil
 }
 
-// RevokeAllForUser deletes every session the user holds, which is what makes a
-// disable a revocation rather than a flag.
-//
-// The rows are removed from `live`, not merely counted, so `ByToken` misses
-// afterwards exactly as it does when the DELETE has committed — and a test that
-// asserted on a counter while leaving the map alone would pass against an
-// implementation that revoked nothing observable.
 func (f *fakeSessions) RevokeAllForUser(_ context.Context, _ db.Querier, userID id.UUID) error {
 	for digest, sid := range f.live {
 		if f.owners[sid] == userID {
@@ -303,14 +243,6 @@ func (f *fakeSessions) Revoke(_ context.Context, _ db.Querier, sessionID id.UUID
 	return nil
 }
 
-// ListLiveForUser mirrors the real query's two properties that matter here: the
-// OWNER is part of the predicate, and an expired row is not returned.
-//
-// The expiry half is modeled with `expired` rather than by comparing against a
-// clock argument, because the real store takes `now` from the caller and a fake
-// that ignored it could not distinguish "the use case passed the wrong instant"
-// from "the use case passed the right one" — `nowSeen` is what makes that
-// distinguishable.
 func (f *fakeSessions) ListLiveForUser(_ context.Context, _ db.Querier, userID id.UUID, now time.Time) ([]sessions.Session, error) {
 	f.listedFor = append(f.listedFor, userID)
 	f.nowSeen = append(f.nowSeen, now)
@@ -336,13 +268,6 @@ func (f *fakeSessions) ListLiveForUser(_ context.Context, _ db.Querier, userID i
 	return out, nil
 }
 
-// RevokeOneForUser answers from the OWNER map rather than from `revoked`, so a
-// revoke aimed at somebody else's session reports false exactly as the real
-// statement's WHERE clause does — and removes nothing.
-//
-// AN ALREADY-REVOKED SESSION IS NOT IN `live` AND SO ANSWERS FALSE, which is the
-// whole of the idempotence claim: a client that retries a revoke gets the same
-// answer it got the first time rather than a different one.
 func (f *fakeSessions) RevokeOneForUser(_ context.Context, _ db.Querier, userID, sessionID id.UUID) (bool, error) {
 	owner := f.owners[sessionID]
 	live := false
@@ -364,12 +289,9 @@ func (f *fakeSessions) RevokeOneForUser(_ context.Context, _ db.Querier, userID,
 	return true, nil
 }
 
-// fakeEvents captures the envelopes written inside the caller's transaction.
 type fakeEvents struct {
 	appended []outbox.Envelope
-	// appendErr fails the append, which must roll the whole registration back.
 	appendErr error
-	// queriersUsed records what querier each append was handed.
 	queriersUsed []db.Querier
 }
 
@@ -382,14 +304,9 @@ func (f *fakeEvents) Append(_ context.Context, q db.Querier, e outbox.Envelope) 
 	return nil
 }
 
-// fakeUnitOfWork runs fn against a marker querier and records whether it would
-// commit. It cannot really roll back, so tests that need the rollback behavior
-// use the integration suite; this double exists to prove the two writes share one
-// transaction and one context.
 type fakeUnitOfWork struct {
 	ran     int
 	querier db.Querier
-	// failWith, when set, is returned without running fn.
 	failWith error
 }
 
@@ -401,32 +318,17 @@ func (f *fakeUnitOfWork) Do(ctx context.Context, fn func(context.Context, db.Que
 	return fn(ctx, f.querier)
 }
 
-// fakeAccessRevoker records what the disable asked of the OIDC token table.
-//
-// IT RECORDS THE QUERIER AND NOT JUST THE ARGS, and that is the point of it
-// existing: the claim under test is that the sweep runs INSIDE the transaction, and
-// a double that only counted calls could not tell a sweep on the transaction's
-// `q` from a sweep on the pool. `markerQuerier` is what makes the two
-// distinguishable.
 type fakeAccessRevoker struct {
 	sweeps []accessSweepCall
-	// err is returned instead of recording a successful sweep, so a test can
-	// program a failure at the exact statement the atomicity claim is about.
 	err error
 }
 
-// accessSweepCall is one recorded RevokeAccessTokensForUser.
 type accessSweepCall struct {
 	userID  id.UUID
 	at      time.Time
 	querier db.Querier
 }
 
-// IT RECORDS THE CALL BEFORE IT RETURNS THE ERROR, and that order is what lets a
-// test prove the sweep was REACHED rather than that something failed. A double
-// that returned `err` without appending would leave `sweeps` empty on the failure
-// path, so every assertion about "the one sweep that failed" would be an assertion
-// about a slice holding nothing — green by having nothing to be wrong about.
 func (f *fakeAccessRevoker) RevokeAccessTokensForUser(_ context.Context, q db.Querier, userID id.UUID, at time.Time) error {
 	f.sweeps = append(f.sweeps, accessSweepCall{userID: userID, at: at, querier: q})
 	if f.err != nil {
@@ -435,7 +337,6 @@ func (f *fakeAccessRevoker) RevokeAccessTokensForUser(_ context.Context, q db.Qu
 	return nil
 }
 
-// fixture wires a Service over the doubles with a fake clock and a cheap hasher.
 type fixture struct {
 	svc      *Service
 	users    *fakeUsers
@@ -450,9 +351,6 @@ type fixture struct {
 	clock    *clock.Fake
 }
 
-// markerQuerier is a db.Querier that does nothing. It exists so a test can tell
-// which seam a statement went through by comparing identity, rather than by
-// inspecting SQL.
 type markerQuerier struct{ name string }
 
 func (m markerQuerier) Exec(context.Context, string, ...any) (pgconn.CommandTag, error) {
@@ -465,8 +363,6 @@ func (m markerQuerier) Query(context.Context, string, ...any) (pgx.Rows, error) 
 	return nil, errors.New("markerQuerier returns no rows")
 }
 
-// fakeReader hands out a marker querier for statements that need no transaction,
-// so a test can tell a read from a write inside the registration transaction.
 type fakeReader struct{ q db.Querier }
 
 func (r *fakeReader) Queryer() db.Querier { return r.q }
@@ -479,9 +375,6 @@ func newFixture() *fixture {
 		tenancy:  &fakeTenancy{},
 		clock:    clock.NewFake(start),
 	}
-	// A marker querier, so a test can tell the transaction from the pool.
-	// Two distinct markers: a test asserting that the event was written through
-	// the transaction must fail if the reader is used instead.
 	f.reader = &fakeReader{q: markerQuerier{name: "reader"}}
 	f.uow = &fakeUnitOfWork{querier: markerQuerier{name: "transaction"}}
 
@@ -497,10 +390,6 @@ func newFixture() *fixture {
 		f.tenancy,
 		f.mfa,
 		f.access,
-		// disabled-04: the recorder is a required dependency beside the revoker, and
-		// it is wired in EVERY fixture rather than only in the tests that care, so a
-		// test in another file cannot accidentally pass against an implementation that
-		// skipped a nil recorder — because nothing would ever have been nil.
 		f.audit,
 		users.NewHasherWithParams(&argon2id.Params{
 			Memory: 8 * 1024, Iterations: 1, Parallelism: 1, SaltLength: 16, KeyLength: 32,
@@ -512,14 +401,6 @@ func newFixture() *fixture {
 	return f
 }
 
-// newFixtureWithoutAccessRevoker wires the same service with the sweep MISSING.
-//
-// It exists because "an unwired sweeper must not silently skip" is a property of
-// the constructor as well as of the use case: the argument is a required positional
-// parameter, and this is the only way a test can reach the nil that a mistake in
-// `cmd/identity` would produce. Every other fixture wires a working one, so a test
-// that did not ask for this would pass against an implementation that skipped a nil
-// sweep — because nothing would ever have been nil.
 func newFixtureWithoutAccessRevoker() *fixture {
 	f := newFixture()
 	f.access = nil
@@ -532,11 +413,6 @@ func newFixtureWithoutAccessRevoker() *fixture {
 		f.tenancy,
 		f.mfa,
 		nil,
-		// The recorder stays WIRED here on purpose. This fixture is about the missing
-		// SWEEPER; leaving the recorder out as well would mean the test reached
-		// ErrNoAccessTokenRevoker with two things missing, so it would keep passing
-		// if the two refusals were ever collapsed into one. One fault per fixture is
-		// what makes "the nil sweep is what stopped it" a fact.
 		f.audit,
 		users.NewHasherWithParams(&argon2id.Params{
 			Memory: 8 << 10, Iterations: 1, Parallelism: 1, SaltLength: 16, KeyLength: 32,
@@ -548,12 +424,6 @@ func newFixtureWithoutAccessRevoker() *fixture {
 	return f
 }
 
-// newFixtureWithoutAuditRecorder wires the same service with the AUDIT WRITER missing.
-//
-// The sibling of newFixtureWithoutAccessRevoker, and it exists for the same reason:
-// "an unwired recorder must not silently skip" is a property of the constructor as
-// well as of the use case, and this is the only way a test can reach the nil that a
-// mistake in `cmd/identity` would produce. Every other fixture wires a working one.
 func newFixtureWithoutAuditRecorder() *fixture {
 	f := newFixture()
 	f.svc = NewService(
@@ -564,8 +434,6 @@ func newFixtureWithoutAuditRecorder() *fixture {
 		f.events,
 		f.tenancy,
 		f.mfa,
-		// The revoker stays WIRED, for the reason the recorder stays wired in the
-		// sibling fixture: one missing thing at a time.
 		f.access,
 		nil,
 		users.NewHasherWithParams(&argon2id.Params{
@@ -578,9 +446,6 @@ func newFixtureWithoutAuditRecorder() *fixture {
 	return f
 }
 
-// seedSession puts one live session row in the double, so a test can claim that a
-// session SURVIVED something. `f.sessions.live` and `owners` are private to this
-// file, and reaching into them here is what keeps that privacy worth having.
 func (f *fixture) seedSession(userID id.UUID) {
 	f.sessions.nextID++
 	var raw id.UUID
@@ -591,8 +456,6 @@ func (f *fixture) seedSession(userID id.UUID) {
 	f.sessions.owners[sid] = userID
 }
 
-// register creates a user directly, bypassing the use case, so a test can set up
-// a known credential.
 func (f *fixture) register(t *testing.T, email, password string) users.User {
 	t.Helper()
 
@@ -608,27 +471,10 @@ func (f *fixture) register(t *testing.T, email, password string) users.User {
 
 func mustAddr(s string) netip.Addr { return netip.MustParseAddr(s) }
 
-// ptr is a time pointer, for the fields whose nil means something.
-//
-// The lockout tests need a LockedUntil in the future and there are four of them,
-// so a helper earns its place; a general-purpose pointer helper would not.
 func ptr(t time.Time) *time.Time { return &t }
 
-// ptrStr is the display name's spelling of the same idea. It exists for the same
-// reason ptr does: a display name is a *string* because nil is the clearing case,
-// so every test that sets one needs a non-nil pointer to a value and re-writing
-// `name := "Kaka"; &name` at each call site would say less than the name does.
 func ptrStr(s string) *string { return &s }
 
-// disable and enable are the concept's two directions, driven through the use
-// case rather than by poking the double.
-//
-// They go through `Service.Disable` on purpose: the property under test everywhere
-// in disabled_test.go is that the COLUMN and the SESSION REVOCATION are one
-// transaction, and a helper that set the double's field directly would let every
-// one of those tests pass against an implementation that never revoked anything.
-// The fake sessions store is a real map, so `Authenticate` misses afterwards for
-// the same reason production does — the row is gone.
 func (f *fixture) disable(t *testing.T, userID id.UUID) {
 	t.Helper()
 	if err := f.svc.Disable(context.Background(), disableFor(userID, f.clock.Now())); err != nil {
@@ -655,9 +501,6 @@ func mustHash(t *testing.T, password string) string {
 	return digest
 }
 
-// ---------------------------------------------------------------------------
-// Register
-// ---------------------------------------------------------------------------
 
 func TestRegisterCreatesTheUserAndTheEventInOneTransaction(t *testing.T) {
 	t.Parallel()
@@ -682,7 +525,6 @@ func TestRegisterCreatesTheUserAndTheEventInOneTransaction(t *testing.T) {
 		t.Error("the digest contains the plaintext password")
 	}
 
-	// Exactly one event, and it is about this user.
 	if len(f.events.appended) != 1 {
 		t.Fatalf("%d events were written, want exactly 1", len(f.events.appended))
 	}
@@ -699,7 +541,6 @@ func TestRegisterCreatesTheUserAndTheEventInOneTransaction(t *testing.T) {
 	if e.Subject != got.ID.String() {
 		t.Errorf("event subject = %q, want the user id %q", e.Subject, got.ID)
 	}
-	// The event must not carry the credential out to every subscriber.
 	if strings.Contains(string(e.Data), f.users.byEmail["kaka@example.com"].PasswordDigest) {
 		t.Error("the event payload contains the password digest")
 	}
@@ -707,8 +548,6 @@ func TestRegisterCreatesTheUserAndTheEventInOneTransaction(t *testing.T) {
 		t.Errorf("event payload = %s, want it to carry the email", e.Data)
 	}
 
-	// One transaction, and the event went in through it rather than through the
-	// pool. This is the assertion the whole outbox exists for.
 	if f.uow.ran != 1 {
 		t.Errorf("the unit of work ran %d times, want 1", f.uow.ran)
 	}
@@ -759,8 +598,6 @@ func TestRegisterValidatesBeforeTouchingTheDatabase(t *testing.T) {
 			_, err := f.svc.Register(context.Background(), tt.give)
 			assertFieldError(t, err, tt.wantCode)
 
-			// Nothing was written and nothing was hashed. Validating first is
-			// what keeps a malformed request from costing an argon2id operation.
 			if f.uow.ran != 0 {
 				t.Error("a transaction was opened for an invalid registration")
 			}
@@ -774,9 +611,6 @@ func TestRegisterValidatesBeforeTouchingTheDatabase(t *testing.T) {
 	}
 }
 
-// A registration that fails to write the event must not leave a user behind, and
-// one that fails to write the user must not leave an event. The transaction is
-// what makes both true; this asserts the service goes through it for both writes.
 func TestRegisterPropagatesAnAppendFailure(t *testing.T) {
 	t.Parallel()
 
@@ -805,13 +639,11 @@ func TestRegisterRejectsATakenAddress(t *testing.T) {
 	if !errors.Is(err, users.ErrEmailTaken) {
 		t.Errorf("Register = %v, want errors.Is(_, users.ErrEmailTaken)", err)
 	}
-	// No second event for a registration that did not happen.
 	if len(f.events.appended) != 0 {
 		t.Error("an event was written for a rejected registration")
 	}
 }
 
-// The event id is minted per registration and is the consumers' dedupe key.
 func TestRegisterMintsAFreshEventIDEachTime(t *testing.T) {
 	t.Parallel()
 
@@ -850,9 +682,6 @@ func TestRegisterUsesTheInjectedClock(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Login
-// ---------------------------------------------------------------------------
 
 func TestLoginSucceedsAndMintsASession(t *testing.T) {
 	t.Parallel()
@@ -879,7 +708,6 @@ func TestLoginSucceedsAndMintsASession(t *testing.T) {
 		t.Errorf("ExpiresAt = %s, want %s — the TTL comes from the configuration", got.ExpiresAt, want)
 	}
 
-	// The token is handed to the client; only its digest is stored.
 	if len(f.sessions.minted) != 1 {
 		t.Fatalf("%d sessions were minted, want 1", len(f.sessions.minted))
 	}
@@ -898,8 +726,6 @@ func TestLoginSucceedsAndMintsASession(t *testing.T) {
 	}
 }
 
-// The whole enumeration story: a wrong password and an unknown address produce
-// the same error, so the response cannot be used to discover who has an account.
 func TestLoginDoesNotDistinguishAWrongPasswordFromAnUnknownAddress(t *testing.T) {
 	t.Parallel()
 
@@ -934,9 +760,6 @@ func TestLoginDoesNotDistinguishAWrongPasswordFromAnUnknownAddress(t *testing.T)
 	}
 }
 
-// An unknown address must not leave state behind. There is no row to count a
-// failure against, and inventing one would let anyone lock any address out by
-// trying passwords at it.
 func TestLoginAgainstAnUnknownAddressWritesNoState(t *testing.T) {
 	t.Parallel()
 
@@ -957,9 +780,6 @@ func TestLoginAgainstAnUnknownAddressWritesNoState(t *testing.T) {
 	}
 }
 
-// The lockout matrix. Five consecutive failures lock the account for fifteen
-// minutes; the sixth attempt is refused with the remaining window rather than
-// being answered.
 func TestLoginLockoutMatrix(t *testing.T) {
 	t.Parallel()
 
@@ -971,7 +791,6 @@ func TestLoginLockoutMatrix(t *testing.T) {
 		f := newFixture()
 		f.register(t, "kaka@example.com", password)
 
-		// Attempts one through four: refused, and the counter climbs.
 		for attempt := 1; attempt <= sessions.MaxFailedAttempts-1; attempt++ {
 			_, err := f.svc.Login(context.Background(), LoginInput{Email: "kaka@example.com", Password: "wrong"})
 			if !errors.Is(err, ErrInvalidCredentials) {
@@ -986,7 +805,6 @@ func TestLoginLockoutMatrix(t *testing.T) {
 			}
 		}
 
-		// The fifth trips it.
 		_, err := f.svc.Login(context.Background(), LoginInput{Email: "kaka@example.com", Password: "wrong"})
 		if !errors.Is(err, ErrInvalidCredentials) {
 			t.Fatalf("the fifth attempt = %v, want ErrInvalidCredentials", err)
@@ -997,7 +815,6 @@ func TestLoginLockoutMatrix(t *testing.T) {
 			t.Fatal("not locked after five consecutive failures")
 		}
 
-		// The sixth is refused with the remaining window, and is not answered.
 		_, err = f.svc.Login(context.Background(), LoginInput{Email: "kaka@example.com", Password: password})
 		var locked *LockedError
 		if !errors.As(err, &locked) {
@@ -1011,7 +828,6 @@ func TestLoginLockoutMatrix(t *testing.T) {
 		}
 	})
 
-	// The clock, not a sleep: the window opens on the injected instant.
 	t.Run("the lock lifts when the window closes", func(t *testing.T) {
 		t.Parallel()
 
@@ -1024,7 +840,6 @@ func TestLoginLockoutMatrix(t *testing.T) {
 			}
 		}
 
-		// One nanosecond before the window closes: still locked.
 		f.clock.Set(start.Add(sessions.LockoutDuration - time.Nanosecond))
 		var locked *LockedError
 		if _, err := f.svc.Login(context.Background(), LoginInput{Email: "kaka@example.com", Password: password}); !errors.As(err, &locked) {
@@ -1034,7 +849,6 @@ func TestLoginLockoutMatrix(t *testing.T) {
 			t.Errorf("RetryAfter = %s, want 1ns", got)
 		}
 
-		// At the window's end: the right password works again, with no sleep.
 		f.clock.Set(start.Add(sessions.LockoutDuration))
 		got, err := f.svc.Login(context.Background(), LoginInput{Email: "kaka@example.com", Password: password})
 		if err != nil {
@@ -1045,8 +859,6 @@ func TestLoginLockoutMatrix(t *testing.T) {
 		}
 	})
 
-	// A success in the middle restarts the run, so guessing one in five does not
-	// accumulate towards a lockout.
 	t.Run("a success resets the run", func(t *testing.T) {
 		t.Parallel()
 
@@ -1070,7 +882,6 @@ func TestLoginLockoutMatrix(t *testing.T) {
 			t.Error("locked despite a successful login")
 		}
 
-		// Four more failures must still not lock it.
 		for range sessions.MaxFailedAttempts - 1 {
 			if _, err := f.svc.Login(context.Background(), LoginInput{Email: "kaka@example.com", Password: "wrong"}); !errors.Is(err, ErrInvalidCredentials) {
 				t.Fatalf("Login = %v, want ErrInvalidCredentials", err)
@@ -1082,8 +893,6 @@ func TestLoginLockoutMatrix(t *testing.T) {
 		}
 	})
 
-	// Failures on one account must not affect another. Otherwise anyone could
-	// lock every account on the platform out by guessing at each of them.
 	t.Run("failures are per account", func(t *testing.T) {
 		t.Parallel()
 
@@ -1103,9 +912,6 @@ func TestLoginLockoutMatrix(t *testing.T) {
 	})
 }
 
-// A locked account is refused before the password is checked. There is no reason
-// to spend argon2id on an account nobody may log into, and the order means a
-// locked account cannot be probed at all.
 func TestLoginChecksTheLockBeforeThePassword(t *testing.T) {
 	t.Parallel()
 
@@ -1125,7 +931,6 @@ func TestLoginChecksTheLockBeforeThePassword(t *testing.T) {
 		t.Error("a locked attempt minted a session")
 	}
 
-	// The lock is not extended by the attempt.
 	u, _ := f.users.ByEmail(context.Background(), f.uow.querier, "kaka@example.com")
 	var locked *LockedError
 	_, err := f.svc.Login(context.Background(), LoginInput{Email: "kaka@example.com", Password: "wrong"})
@@ -1138,9 +943,6 @@ func TestLoginChecksTheLockBeforeThePassword(t *testing.T) {
 	_ = u
 }
 
-// Clearing the failure run and minting the session is one transaction. If the
-// session cannot be written, the counter must not be reset, or a partial failure
-// would hand an attacker free attempts.
 func TestLoginMintsTheSessionAndClearsFailuresTogether(t *testing.T) {
 	t.Parallel()
 
@@ -1156,9 +958,6 @@ func TestLoginMintsTheSessionAndClearsFailuresTogether(t *testing.T) {
 	if err == nil {
 		t.Fatal("Login succeeded even though the session could not be written")
 	}
-	// Only the successful attempt opens a transaction: a refused login is a
-	// single UPDATE against users and needs no atomicity, so routing it through
-	// one would be a BEGIN/COMMIT per failed password for nothing.
 	if f.uow.ran != 1 {
 		t.Errorf("the unit of work ran %d times, want 1 — only the successful attempt", f.uow.ran)
 	}
@@ -1167,9 +966,6 @@ func TestLoginMintsTheSessionAndClearsFailuresTogether(t *testing.T) {
 	}
 }
 
-// A failure to record the failed attempt is an infrastructure problem, and it
-// must surface: a login path that swallows it would stop counting and the
-// lockout would silently stop working.
 func TestLoginReportsAFailureToRecordTheAttempt(t *testing.T) {
 	t.Parallel()
 
@@ -1208,7 +1004,6 @@ func TestLoginValidatesTheInputShape(t *testing.T) {
 			_, err := f.svc.Login(context.Background(), tt.give)
 			assertFieldError(t, err, tt.wantCode)
 
-			// A malformed request is answered before any password is hashed.
 			if f.uow.ran != 0 {
 				t.Error("a transaction was opened for a malformed login")
 			}
@@ -1216,8 +1011,6 @@ func TestLoginValidatesTheInputShape(t *testing.T) {
 	}
 }
 
-// An over-long password is rejected before argon2id sees it. Without this an
-// unauthenticated caller chooses how much memory-hashing work each request costs.
 func TestLoginRejectsAnOverLongPassword(t *testing.T) {
 	t.Parallel()
 
@@ -1250,9 +1043,6 @@ func TestLoginRecordsTheRequestAddress(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Authenticate and Logout
-// ---------------------------------------------------------------------------
 
 func TestAuthenticateResolvesATokenToItsUser(t *testing.T) {
 	t.Parallel()
@@ -1277,8 +1067,6 @@ func TestAuthenticateResolvesATokenToItsUser(t *testing.T) {
 	}
 }
 
-// Every unusable token is one error, so /v1/me cannot be used to probe which
-// tokens once existed.
 func TestAuthenticateRejectsUnusableTokens(t *testing.T) {
 	t.Parallel()
 
@@ -1304,8 +1092,6 @@ func TestAuthenticateRejectsUnusableTokens(t *testing.T) {
 	}
 }
 
-// The expiry check is made against the injected clock. If it were the database's,
-// a test could not move time and a frozen system clock would change the answer.
 func TestAuthenticateUsesTheInjectedClock(t *testing.T) {
 	t.Parallel()
 
@@ -1316,7 +1102,7 @@ func TestAuthenticateUsesTheInjectedClock(t *testing.T) {
 		t.Fatalf("Login: %v", err)
 	}
 
-	f.clock.Now() // establish a baseline
+	f.clock.Now()
 	if _, err := f.svc.Authenticate(context.Background(), login.Token); err != nil {
 		t.Fatalf("Authenticate: %v", err)
 	}
@@ -1329,14 +1115,6 @@ func TestAuthenticateUsesTheInjectedClock(t *testing.T) {
 	}
 }
 
-// A name that was written is a name that a later read returns, and a cleared
-// one is a read that says "no name" rather than a read that says "".
-//
-// THE ROUND TRIP IS THROUGH Authenticate, and that is the whole point of driving
-// it this way: a test asserting that UpdateDisplayName was *called* with a value
-// proves the call was made, not that anything is now true about the row. The
-// read half of /v1/me is Authenticate, so asserting against the read half is
-// what makes the two halves one fact rather than two.
 func TestUpdateDisplayNameIsVisibleToTheNextAuthenticate(t *testing.T) {
 	t.Parallel()
 
@@ -1356,8 +1134,6 @@ func TestUpdateDisplayNameIsVisibleToTheNextAuthenticate(t *testing.T) {
 		return got.DisplayName
 	}
 
-	// A user who has never set a name reads as no name, which is the state the
-	// migration leaves every existing row in.
 	if got := readName(); got != nil {
 		t.Errorf("DisplayName before any write = %q, want nil", *got)
 	}
@@ -1369,8 +1145,6 @@ func TestUpdateDisplayNameIsVisibleToTheNextAuthenticate(t *testing.T) {
 		t.Errorf("DisplayName after the write = %v, want Kaka", got)
 	}
 
-	// Clearing is nil, and nil reads back as nil rather than as an empty string
-	// — the two are one state and this is where that stops being a comment.
 	if err := f.svc.UpdateDisplayName(context.Background(), login.User.ID, nil); err != nil {
 		t.Fatalf("UpdateDisplayName clear: %v", err)
 	}
@@ -1379,10 +1153,6 @@ func TestUpdateDisplayNameIsVisibleToTheNextAuthenticate(t *testing.T) {
 	}
 }
 
-// A write against a row that is not there is an error rather than a silent
-// success. The caller is always resolved from a credential first, so this cannot
-// happen through the route — which is exactly why it is asserted here instead
-// of being left to the next reader to assume.
 func TestUpdateDisplayNameOnAMissingUserIsRefused(t *testing.T) {
 	t.Parallel()
 
@@ -1409,15 +1179,11 @@ func TestLogoutRevokesTheSession(t *testing.T) {
 		t.Fatalf("Logout: %v", err)
 	}
 
-	// This is the requirement: the token is dead immediately.
 	if _, err := f.svc.Authenticate(context.Background(), login.Token); !errors.Is(err, ErrUnauthenticated) {
 		t.Errorf("the token still authenticates after Logout: %v", err)
 	}
 }
 
-// Logging out with something that is not a session is a no-op, not an error. A
-// client retrying a logout, or a browser sending a stale cookie, should get an
-// answer rather than a 500.
 func TestLogoutIsIdempotent(t *testing.T) {
 	t.Parallel()
 
@@ -1455,13 +1221,6 @@ func TestLogoutLeavesOtherSessionsAlone(t *testing.T) {
 	}
 }
 
-// The listing asks about the CALLER and nobody else, and says so by recording the
-// user id it was handed.
-//
-// The assertion is on `listedFor` rather than on the returned rows, and that is the
-// point of the whole design: a use case that asked about the wrong user and got
-// that user's rows back would return a perfectly plausible list. Only the id it
-// passed distinguishes the two.
 func TestListSessionsAsksAboutTheCallerAndNobodyElse(t *testing.T) {
 	t.Parallel()
 
@@ -1487,9 +1246,6 @@ func TestListSessionsAsksAboutTheCallerAndNobodyElse(t *testing.T) {
 	}
 }
 
-// Exactly one entry carries Current, and it is the session the request arrived on.
-// A client that cannot tell which of these is the one it is using has to ask the
-// user, which is the whole gap this route closes.
 func TestListSessionsMarksExactlyTheCurrentSession(t *testing.T) {
 	t.Parallel()
 
@@ -1513,9 +1269,6 @@ func TestListSessionsMarksExactlyTheCurrentSession(t *testing.T) {
 		t.Fatalf("ListSessions returned %d entries, want 2", len(list))
 	}
 
-	// The session the request arrived on is the SECOND login's row, so the id to
-	// look for is read back out of the fake rather than computed: a session id is
-	// minted by the store and this test is about which one gets marked.
 	var secondID id.UUID
 	for digest, sid := range f.sessions.live {
 		if digest == sessions.Digest(second.Token) {
@@ -1538,8 +1291,6 @@ func TestListSessionsMarksExactlyTheCurrentSession(t *testing.T) {
 	}
 }
 
-// A dead token is ErrUnauthenticated rather than an empty list. An empty list is a
-// client concluding its session is fine.
 func TestListSessionsRefusesAnUnusableToken(t *testing.T) {
 	t.Parallel()
 
@@ -1551,7 +1302,6 @@ func TestListSessionsRefusesAnUnusableToken(t *testing.T) {
 	}
 }
 
-// A failure of the store is propagated and not turned into an empty list.
 func TestListSessionsReportsAStoreFailure(t *testing.T) {
 	t.Parallel()
 
@@ -1570,11 +1320,6 @@ func TestListSessionsReportsAStoreFailure(t *testing.T) {
 	}
 }
 
-// The revocation carries the CALLER'S user id together with the id from the path,
-// and that pair is the boundary. A service that resolved the caller and then
-// handed the store a bare session id would still answer 404 for a stranger's id —
-// by accident of the store's signature — and this is the assertion that says the
-// owner is on the way.
 func TestRevokeSessionCarriesTheCallersUserId(t *testing.T) {
 	t.Parallel()
 
@@ -1612,7 +1357,6 @@ func TestRevokeSessionCarriesTheCallersUserId(t *testing.T) {
 		t.Errorf("RevokeOneForUser was given session %s, want the id from the request %s", call.sessionID, secondID)
 	}
 
-	// And the effect, through the observable path rather than through the record.
 	if _, err := f.svc.Authenticate(context.Background(), second.Token); !errors.Is(err, ErrUnauthenticated) {
 		t.Error("the revoked session still authenticates")
 	}
@@ -1621,11 +1365,6 @@ func TestRevokeSessionCarriesTheCallersUserId(t *testing.T) {
 	}
 }
 
-// Revoking the session the request itself arrived on is ALLOWED, and the
-// consequence is that the caller is signed out. The alternative the packet offered
-// — a 409 — is rejected in `Service.RevokeSession`'s own comment; this test is the
-// behavior half of that decision, and the reason it is here rather than in the
-// handler tests is that the decision belongs to the use case.
 func TestRevokingTheCurrentSessionIsAllowedAndSignsYouOut(t *testing.T) {
 	t.Parallel()
 
@@ -1660,8 +1399,6 @@ func TestRevokingTheCurrentSessionIsAllowedAndSignsYouOut(t *testing.T) {
 	}
 }
 
-// One error for four situations, so the route cannot become a probe for whether a
-// given session id is live in this deployment at all.
 func TestRevokeSessionReportsOneErrorForEveryWayOfBeingWrong(t *testing.T) {
 	t.Parallel()
 
@@ -1688,10 +1425,6 @@ func TestRevokeSessionReportsOneErrorForEveryWayOfBeingWrong(t *testing.T) {
 		}
 	}
 
-	// Revoke the first session, then name it again with the SECOND session's
-	// credential. The caller has to stay authenticated for the second half of the
-	// table to be about the session id rather than about the token — which is why
-	// `keepToken` exists rather than reusing the credential that was just revoked.
 	if err := f.svc.RevokeSession(context.Background(), login.Token, ownID); err != nil {
 		t.Fatalf("the first revoke: %v", err)
 	}
@@ -1718,7 +1451,6 @@ func TestRevokeSessionReportsOneErrorForEveryWayOfBeingWrong(t *testing.T) {
 	}
 }
 
-// The password digest must never appear in a value the HTTP layer can render.
 func TestUserResultsCarryNoDigest(t *testing.T) {
 	t.Parallel()
 
@@ -1734,14 +1466,6 @@ func TestUserResultsCarryNoDigest(t *testing.T) {
 		t.Fatalf("Authenticate: %v", err)
 	}
 
-	// The digest lives on the domain type on purpose — login needs it — so the
-	// guarantee is that no *result* type carries it. Both results are structs
-	// whose only user field is a public projection.
-	// Authenticate returns the domain user, because login needs the digest and
-	// the handler needs the address. The guarantee is therefore about the shapes
-	// the HTTP layer renders, and the handler's projection is asserted there. What
-	// matters here is that the two *result* types have no digest field at all, so
-	// a digest cannot be rendered by accident.
 	projections := map[string]any{
 		"register":     RegisteredUser{ID: user.ID, Email: user.Email},
 		"login":        login.User,

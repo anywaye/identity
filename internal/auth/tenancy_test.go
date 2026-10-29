@@ -22,25 +22,11 @@ import (
 	"github.com/anywaye/identity/internal/users"
 )
 
-// A registration creates a personal account for its user, and the three writes —
-// user, account, membership — plus the two events are one transaction.
-//
-// These are the tests for that. The unit test proves the provisioner is reached
-// through the registration's transaction rather than beside it; the integration
-// tests prove the writes really are atomic.
 
-// fakeTenancy is an in-memory PersonalAccountProvisioner. It records the querier
-// it was handed for the same reason the other doubles do: a test asserting the
-// account was written inside the transaction must fail if the code reaches for
-// the pool instead.
 type fakeTenancy struct {
 	provisioned []tenancyCall
-	// err is returned by Provision, to exercise a failure in the middle of the
-	// registration.
 	err error
-	// queriersUsed records the querier each call was handed.
 	queriersUsed []db.Querier
-	// addOwnerErr is returned by AddOwner.
 	addOwnerErr error
 }
 
@@ -65,8 +51,6 @@ func (f *fakeTenancy) AddOwner(_ context.Context, _ db.Querier, _ id.UUID, _ id.
 	return accounts.Membership{Role: accounts.RoleOwner}, nil
 }
 
-// A new registration provisions exactly one personal account, for the user it
-// just created, with that user's normalized address.
 func TestRegisterProvisionsAPersonalAccount(t *testing.T) {
 	f := newFixture()
 
@@ -89,9 +73,6 @@ func TestRegisterProvisionsAPersonalAccount(t *testing.T) {
 	}
 }
 
-// Inside the transaction, not beside it. A personal account written outside
-// would commit or roll back independently of the user, and "a user with no
-// account" is a state nothing downstream can repair.
 func TestRegisterProvisionsThroughTheTransaction(t *testing.T) {
 	f := newFixture()
 
@@ -109,7 +90,6 @@ func TestRegisterProvisionsThroughTheTransaction(t *testing.T) {
 			t.Errorf("call %d used querier %v, want the registration's transaction %v — the personal account is not in the same transaction as the user", i, q, f.uow.querier)
 		}
 	}
-	// And the same transaction wrote the events.
 	if len(f.events.queriersUsed) == 0 {
 		t.Fatal("no events were appended")
 	}
@@ -120,9 +100,6 @@ func TestRegisterProvisionsThroughTheTransaction(t *testing.T) {
 	}
 }
 
-// A registration that is refused writes no account. The account is created after
-// the user, so a failure earlier in the transaction has to stop it being reached
-// at all rather than being cleaned up afterwards.
 func TestRegisterProvisionsNothingWhenTheRequestIsInvalid(t *testing.T) {
 	f := newFixture()
 
@@ -136,10 +113,6 @@ func TestRegisterProvisionsNothingWhenTheRequestIsInvalid(t *testing.T) {
 	}
 }
 
-// A failure to provision fails the registration. The alternative — a user who
-// exists with no account — is the state the packet's "same transaction" exists
-// to prevent, and a service that returns 201 for it has told the client
-// something false.
 func TestRegisterFailsWhenTheAccountCannotBeProvisioned(t *testing.T) {
 	f := newFixture()
 	f.tenancy.err = errors.New("the accounts table is unavailable")
@@ -155,8 +128,6 @@ func TestRegisterFailsWhenTheAccountCannotBeProvisioned(t *testing.T) {
 	}
 }
 
-// A failure to grant ownership fails the registration too, for the same reason:
-// an account with no owner cannot be administered by anybody, ever.
 func TestRegisterFailsWhenOwnershipCannotBeGranted(t *testing.T) {
 	f := newFixture()
 	f.tenancy.addOwnerErr = errors.New("the membership write was rejected")
@@ -169,8 +140,6 @@ func TestRegisterFailsWhenOwnershipCannotBeGranted(t *testing.T) {
 	}
 }
 
-// failingTenancy provisions for real and then refuses to grant ownership, so a
-// test can watch the registration roll back an account it really did write.
 type failingTenancy struct {
 	inner *accounts.Service
 }
@@ -185,9 +154,6 @@ func (f *failingTenancy) AddOwner(context.Context, db.Querier, id.UUID, id.UUID)
 
 func clockForTest() clock.Clock { return clock.NewFake(start) }
 
-// realTenancy is the production provisioner: the real accounts.Service over the
-// real store. It exists in a _test.go file so the wiring in cmd/identity and the
-// wiring in a test cannot drift — both are the same three lines.
 func realTenancy(pool db.Pool, clk clock.Clock) PersonalAccountProvisioner {
 	return accounts.NewService(
 		db.TxRunner{Pool: pool},
@@ -197,12 +163,10 @@ func realTenancy(pool db.Pool, clk clock.Clock) PersonalAccountProvisioner {
 		apikeys.NewStore(pool),
 		clk,
 		db.Direct{Pool: pool},
-		nil, // no mailer: registration does not email anybody
+		nil,
 	)
 }
 
-// newServiceWithTenancy builds the service the same way newIntegrationService
-// does, with an arbitrary provisioner, so a test can break one link.
 func newServiceWithTenancy(t *testing.T, pool *pgxpool.Pool, tenancy PersonalAccountProvisioner) *Service {
 	t.Helper()
 
@@ -214,13 +178,7 @@ func newServiceWithTenancy(t *testing.T, pool *pgxpool.Pool, tenancy PersonalAcc
 		outbox.NewStore(pool),
 		tenancy,
 		realSecondFactor(t, pool, clockForTest()),
-		// The real sweep over the real table, as main wires it: `Disable` refuses
-		// to run without one, so a nil here would answer every disable in this
-		// file with ErrNoAccessTokenRevoker rather than with what is under test.
 		oidc.NewStore(pool),
-		// And the writer, for the sibling reason: `Disable` and `Enable` both refuse
-		// to run without one, so a nil here would answer every operator test in this
-		// file with ErrNoUserAuditRecorder rather than with what is under test.
 		useraudit.NewStore(pool),
 		users.NewHasherWithParams(&argon2id.Params{
 			Memory: 8 * 1024, Iterations: 1, Parallelism: 1, SaltLength: 16, KeyLength: 32,
@@ -231,13 +189,7 @@ func newServiceWithTenancy(t *testing.T, pool *pgxpool.Pool, tenancy PersonalAcc
 	)
 }
 
-// ---------------------------------------------------------------------------
-// the same thing, over a real database
-// ---------------------------------------------------------------------------
 
-// The end-to-end version: a registration over real SQL leaves a user, a personal
-// account named after the email's local part, an owner membership, and two
-// events — all committed together.
 func TestIntegrationRegisterProvisionsTenancyInTheSameTransaction(t *testing.T) {
 	svc, pool, _ := newIntegrationService(t)
 	ctx := context.Background()
@@ -278,7 +230,6 @@ func TestIntegrationRegisterProvisionsTenancyInTheSameTransaction(t *testing.T) 
 		t.Errorf("the membership belongs to %s, want %s", accountUser, registered.ID)
 	}
 
-	// Two events, both committed: the user and the account.
 	var types []string
 	rows, err := pool.Query(ctx, `SELECT type FROM outbox_events WHERE subject = $1 OR subject = $2 ORDER BY created_at`, registered.ID, accountID)
 	if err != nil {
@@ -307,17 +258,11 @@ func TestIntegrationRegisterProvisionsTenancyInTheSameTransaction(t *testing.T) 
 	}
 }
 
-// The atomicity claim, proved by breaking it. A registration whose account write
-// fails must leave no user, no account and no event — the half-written state the
-// transaction exists to prevent.
 func TestIntegrationRegisterRollsBackTenancy(t *testing.T) {
 	pool := dbtest.Schema(t)
 	ctx := context.Background()
 	email := dbtest.UniqueEmail(t)
 
-	// A provisioner that takes no shortcut: it writes the account for real, and
-	// then the ownership grant fails. That is the only ordering in which the
-	// rollback has something to undo.
 	failing := &failingTenancy{inner: accounts.NewService(
 		db.TxRunner{Pool: pool},
 		accounts.NewStore(pool),
@@ -326,7 +271,7 @@ func TestIntegrationRegisterRollsBackTenancy(t *testing.T) {
 		apikeys.NewStore(pool),
 		clockForTest(),
 		db.Direct{Pool: pool},
-		nil, // no mailer: registration does not email anybody
+		nil,
 	)}
 	broken := newServiceWithTenancy(t, pool, failing)
 

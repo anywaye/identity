@@ -139,9 +139,6 @@ func TestDefaultOptionsAreSelfConsistent(t *testing.T) {
 	}
 }
 
-// TestOpenAndPingIntegration is the real Postgres path. It is skipped unless
-// TEST_DATABASE_URL points at a reachable database, so the default suite needs
-// no Postgres and CI runs it against the compose service.
 func TestOpenAndPingIntegration(t *testing.T) {
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {
@@ -170,8 +167,6 @@ func TestOpenAndPingIntegration(t *testing.T) {
 	}
 }
 
-// TestOpenAppliesConfiguredPoolSize proves the pool honors Options, again
-// only when a real database is available.
 func TestOpenAppliesConfiguredPoolSize(t *testing.T) {
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	if dsn == "" {

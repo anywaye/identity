@@ -21,16 +21,7 @@ import (
 	"github.com/anywaye/identity/internal/users"
 )
 
-// THE ASSERTION THE WHOLE PACKET EXISTS FOR, over a real Postgres.
-//
-// Everything here is integration: the real use cases, the real SQL, the real
-// sessions table. A double could only report what Login returned, and the failure
-// this packet is about is a login that returns no token AND WRITES A SESSION
-// ANYWAY — which is invisible to any test that does not count rows. So every test
-// below counts rows, and the fixture exists to make that cheap.
 
-// mfaHarness is one registered user with the real auth service, the real
-// second-factor service, and a parked clock over a private schema.
 type mfaHarness struct {
 	t      *testing.T
 	svc    *Service
@@ -39,19 +30,14 @@ type mfaHarness struct {
 	clk    *clock.Fake
 	user   users.User
 	email  string
-	// holds is what the USER has: the secret in their authenticator and one
-	// recovery code from the confirmation. The service never has both at once,
-	// which is the property the whole package is built on.
 	holds enrolledFactor
 }
 
-// enrolledFactor is a user's second factor, as they hold it.
 type enrolledFactor struct {
 	Secret       string
 	RecoveryCode string
 }
 
-// code is what that user's authenticator app is showing at instant.
 func (e enrolledFactor) code(t *testing.T, at time.Time) string {
 	t.Helper()
 	code, err := mfa.Code(e.Secret, at)
@@ -85,7 +71,6 @@ func newMFAHarness(t *testing.T) *mfaHarness {
 	}
 }
 
-// enroll runs the whole first-time enrollment, keeping what a user would keep.
 func (h *mfaHarness) enroll() enrolledFactor {
 	h.t.Helper()
 	ctx := context.Background()
@@ -109,7 +94,6 @@ func (h *mfaHarness) enroll() enrolledFactor {
 	return holds
 }
 
-// login is a correct password.
 func (h *mfaHarness) login() LoginResult {
 	h.t.Helper()
 	result, err := h.svc.Login(context.Background(), LoginInput{
@@ -121,8 +105,6 @@ func (h *mfaHarness) login() LoginResult {
 	return result
 }
 
-// sessions is how many session rows this user holds. It is a method rather than a
-// bare query because every assertion in this file is about this number.
 func (h *mfaHarness) sessions() int {
 	h.t.Helper()
 	var n int
@@ -133,14 +115,7 @@ func (h *mfaHarness) sessions() int {
 	return n
 }
 
-// ---------------------------------------------------------------------------
-// the central property
-// ---------------------------------------------------------------------------
 
-// TestACorrectPasswordMintsNoSessionForAnAccountWithASecondFactor is the packet's
-// "single most important line", stated as four assertions on two different things —
-// the return value and the table — because a service that got it half right would
-// return the right answer and still have written a credential.
 func TestACorrectPasswordMintsNoSessionForAnAccountWithASecondFactor(t *testing.T) {
 	h := newMFAHarness(t)
 	h.enroll()
@@ -164,8 +139,6 @@ func TestACorrectPasswordMintsNoSessionForAnAccountWithASecondFactor(t *testing.
 	}
 }
 
-// TestTheSessionExistsOnlyAfterTheSecondFactor is the other half: the challenge
-// DOES finish, and the session it produces is the only one there has ever been.
 func TestTheSessionExistsOnlyAfterTheSecondFactor(t *testing.T) {
 	h := newMFAHarness(t)
 	h.enroll()
@@ -191,7 +164,6 @@ func TestTheSessionExistsOnlyAfterTheSecondFactor(t *testing.T) {
 		t.Errorf("%d sessions after a completed second-factor login, want exactly 1", got)
 	}
 
-	// And the token really is a session: the login is over, not merely answered.
 	user, err := h.svc.Authenticate(context.Background(), result.Token)
 	if err != nil {
 		t.Fatalf("the token from a second-factor login does not authenticate: %v", err)
@@ -201,8 +173,6 @@ func TestTheSessionExistsOnlyAfterTheSecondFactor(t *testing.T) {
 	}
 }
 
-// TestARecoveryCodeFinishesTheLoginToo, because a user with a lost phone has
-// nothing else and the code is the reason recovery codes exist.
 func TestARecoveryCodeFinishesTheLoginToo(t *testing.T) {
 	h := newMFAHarness(t)
 	holds := h.enroll()
@@ -222,7 +192,6 @@ func TestARecoveryCodeFinishesTheLoginToo(t *testing.T) {
 		t.Errorf("%d sessions, want 1", got)
 	}
 
-	// Single use, over the whole login rather than at one endpoint.
 	h.clk.Advance(mfa.Period + time.Second)
 	next := h.login().Challenge.Token
 	if _, err := h.svc.CompleteSecondFactor(context.Background(), CompleteSecondFactorInput{
@@ -236,9 +205,6 @@ func TestARecoveryCodeFinishesTheLoginToo(t *testing.T) {
 	}
 }
 
-// TestAReplayedCodeIsRefusedAndNoSecondSessionAppears: the replay guard, seen from
-// the login rather than from the second-factor package, which is where an attacker
-// would meet it.
 func TestAReplayedCodeIsRefusedAndNoSecondSessionAppears(t *testing.T) {
 	h := newMFAHarness(t)
 	h.enroll()
@@ -269,16 +235,10 @@ func TestAReplayedCodeIsRefusedAndNoSecondSessionAppears(t *testing.T) {
 	}
 }
 
-// TestAWrongCodeProducesNoSession, and it counts the failure against the SECOND
-// factor rather than the password — the packet's per-factor requirement, seen from
-// the login.
 func TestAWrongCodeProducesNoSession(t *testing.T) {
 	h := newMFAHarness(t)
 	h.enroll()
 
-	// One short of the threshold: the fifth wrong code is what LOCKS, so four is
-	// the last count at which a correct code is still accepted. Using five here
-	// would test the lockout rather than the reset.
 	for i := range sessions.MaxFailedAttempts - 1 {
 		if _, err := h.svc.CompleteSecondFactor(context.Background(),
 			CompleteSecondFactorInput{ChallengeToken: h.login().Challenge.Token, Code: "000000"}); !errors.Is(err, mfa.ErrInvalidFactor) {
@@ -289,9 +249,6 @@ func TestAWrongCodeProducesNoSession(t *testing.T) {
 		}
 	}
 
-	// The password's counter is untouched: five wrong CODES must not have cost five
-	// password attempts, or an attacker could accelerate the slow factor from the
-	// fast one's budget.
 	user, err := users.NewStore(h.pool).ByID(context.Background(), h.pool, h.user.ID)
 	if err != nil {
 		t.Fatalf("reading the user: %v", err)
@@ -300,8 +257,6 @@ func TestAWrongCodeProducesNoSession(t *testing.T) {
 		t.Errorf("the password's counter moved: %d attempts, locked until %v", user.FailedLoginAttempts, user.LockedUntil)
 	}
 
-	// And a correct code after four wrong ones still works, which is what makes the
-	// counter a counter rather than a lockout on every fifth login.
 	h.clk.Advance(mfa.Period + time.Second)
 	if _, err := h.svc.CompleteSecondFactor(context.Background(),
 		CompleteSecondFactorInput{ChallengeToken: h.login().Challenge.Token, Code: h.holds.code(t, h.clk.Now())}); err != nil {
@@ -312,24 +267,17 @@ func TestAWrongCodeProducesNoSession(t *testing.T) {
 	}
 }
 
-// TestTheSecondFactorsLockoutIsSeparateFromThePasswords is the same property from
-// the other direction: the two counters really are two rows, and exhausting one
-// leaves the other alone.
 func TestTheSecondFactorsLockoutIsSeparateFromThePasswords(t *testing.T) {
 	h := newMFAHarness(t)
 	h.enroll()
 	ctx := context.Background()
 
-	// Five wrong passwords: the password counter locks, the factor's does not.
 	for range sessions.MaxFailedAttempts {
 		if _, err := h.svc.Login(ctx, LoginInput{Email: h.email, Password: "wrong"}); !errors.Is(err, ErrInvalidCredentials) {
 			t.Fatalf("a wrong password = %v, want ErrInvalidCredentials", err)
 		}
 	}
 
-	// The factor still works, and so does a login with a good password — which is
-	// what "the limits are per-factor" has to mean if the password lockout is not
-	// also a second-factor lockout.
 	status, err := h.second.StatusFor(ctx, h.user.ID)
 	if err != nil {
 		t.Fatalf("StatusFor: %v", err)
@@ -341,15 +289,12 @@ func TestTheSecondFactorsLockoutIsSeparateFromThePasswords(t *testing.T) {
 		t.Errorf("%d recovery codes, want %d", status.RecoveryCodesRemaining, mfa.RecoveryCodeCount)
 	}
 
-	// And the password's lock IS real, so the two are not merely both zero.
 	var locked *LockedError
 	if _, err := h.svc.Login(ctx, LoginInput{Email: h.email, Password: "correct horse battery"}); !errors.As(err, &locked) {
 		t.Errorf("the password lockout did not take: %v", err)
 	}
 }
 
-// TestNoSecondFactorConfiguredStillLogsYouIn is the compatibility property: an
-// account with no second factor has the login it had before this packet.
 func TestNoSecondFactorConfiguredStillLogsYouIn(t *testing.T) {
 	h := newMFAHarness(t)
 
@@ -368,9 +313,6 @@ func TestNoSecondFactorConfiguredStillLogsYouIn(t *testing.T) {
 	}
 }
 
-// TestAPendingEnrollmentDoesNotChangeTheLogin is the "stored but never confirmed"
-// property at the layer that matters: a user with an open setup form is not an
-// MFA user yet, so they are not challenged.
 func TestAPendingEnrollmentDoesNotChangeTheLogin(t *testing.T) {
 	h := newMFAHarness(t)
 	ctx := context.Background()
@@ -391,17 +333,10 @@ func TestAPendingEnrollmentDoesNotChangeTheLogin(t *testing.T) {
 	}
 }
 
-// TestAServiceWithNoSecondFactorDependencyRefusesToLogIn is the wiring guard. A
-// login that cannot ask whether MFA is on must not proceed, because proceeding IS
-// the bypass — and the refusal has to be a named error rather than a nil panic, so
-// an operator is told what is wrong with the deployment instead of a stack trace.
 func TestAServiceWithNoSecondFactorDependencyRefusesToLogIn(t *testing.T) {
 	svc, pool, clk, _ := newIntegrationServiceWithMFA(t)
 	ctx := context.Background()
 
-	// A SECOND service over the same pool, built without the dependency. This is the
-	// one wiring a future change could produce by accident, and it is why the guard
-	// is a test rather than a comment.
 	unwired := NewService(
 		db.TxRunner{Pool: pool},
 		db.Direct{Pool: pool},
@@ -410,12 +345,7 @@ func TestAServiceWithNoSecondFactorDependencyRefusesToLogIn(t *testing.T) {
 		outbox.NewStore(pool),
 		realTenancy(pool, clk),
 		nil,
-		// The sweep is wired even in the deliberately-unwired service: this test
-		// is about the MISSING SECOND FACTOR, and a nil here would make every
-		// answer it reads about the login irrelevant.
 		oidc.NewStore(pool),
-		// And the writer, for the sibling reason: one deliberately-unwired dependency
-		// per fixture, or a test cannot tell which one it is proving.
 		useraudit.NewStore(pool),
 		users.NewHasherWithParams(&argon2id.Params{
 			Memory: 8 * 1024, Iterations: 1, Parallelism: 1, SaltLength: 16, KeyLength: 32,
@@ -433,7 +363,6 @@ func TestAServiceWithNoSecondFactorDependencyRefusesToLogIn(t *testing.T) {
 	if _, err := unwired.Login(ctx, LoginInput{Email: email, Password: "correct horse battery"}); !errors.Is(err, ErrNoSecondFactor) {
 		t.Errorf("a login with no second-factor dependency = %v, want ErrNoSecondFactor", err)
 	}
-	// Not a panic, and not a session: the count is what proves it.
 	var n int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM sessions`).Scan(&n); err != nil {
 		t.Fatalf("counting sessions: %v", err)
@@ -444,15 +373,11 @@ func TestAServiceWithNoSecondFactorDependencyRefusesToLogIn(t *testing.T) {
 
 }
 
-// TestACompletedLoginClearsBOTHCounters, because a two-factor login restarts both
-// runs and neither one survives on its own.
 func TestACompletedLoginClearsBOTHCounters(t *testing.T) {
 	h := newMFAHarness(t)
 	h.enroll()
 	ctx := context.Background()
 
-	// Three wrong passwords, then three wrong codes. Neither counter has reached
-	// its threshold, so the login is still possible.
 	for range 3 {
 		if _, err := h.svc.Login(ctx, LoginInput{Email: h.email, Password: "wrong"}); !errors.Is(err, ErrInvalidCredentials) {
 			t.Fatalf("a wrong password = %v, want ErrInvalidCredentials", err)
@@ -466,7 +391,6 @@ func TestACompletedLoginClearsBOTHCounters(t *testing.T) {
 		}
 	}
 
-	// A correct code finishes the login, and both runs restart.
 	h.clk.Advance(2 * mfa.Period)
 	if _, err := h.svc.CompleteSecondFactor(ctx, CompleteSecondFactorInput{
 		ChallengeToken: h.login().Challenge.Token, Code: h.holds.code(t, h.clk.Now()),
@@ -486,14 +410,7 @@ func TestACompletedLoginClearsBOTHCounters(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StatusFor: %v", err)
 	}
-	// Three wrong codes then one right: the run restarted, so four more wrong codes
-	// would be needed to lock. The count is checked through the lockout below rather
-	// than by reading the column, because StatusFor deliberately does not expose it.
 	_ = status
-	// Five, because the fifth is what sets the lock and the sixth is what observes
-	// it. A counter that had NOT been cleared by the completed login would already
-	// be at three, so this loop would lock on the third and the assertions below
-	// would fail — which is exactly what the test is for.
 	for range sessions.MaxFailedAttempts {
 		if _, err := h.svc.CompleteSecondFactor(ctx, CompleteSecondFactorInput{
 			ChallengeToken: h.login().Challenge.Token, Code: "000000",

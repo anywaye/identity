@@ -1,42 +1,3 @@
-// Package oauth is social sign-in: the providers, the CSRF state that guards the
-// round trip, the code-for-token exchange, and the `connected_accounts` table
-// that ties a provider's identifier to a user of this service.
-//
-// It is a anywaye concept rather than platform infrastructure, so it lives at
-// internal/oauth rather than under internal/platform. What it deliberately does
-// not contain is the decision about *which user* a callback resolves to: that is
-// a use case, it sits in internal/auth alongside register and login, and this
-// package knows nothing about sessions.
-//
-// # THE SOCIAL-LOGIN SURFACE IS NOT MOUNTED
-//
-// Read that before concluding the feature ships. Of everything in this package,
-// only NewState and VerifyState are live — the OIDC login's round trip uses them.
-// The rest is written and tested against a real database, and **no route, handler
-// or use case reaches any of it**: there is no `/v1/auth/oauth`, no
-// `internal/httpapi/oauth.go`, no `OAUTH_*` configuration variable, and
-// `connected_accounts` is an applied migration nothing writes to. A product
-// integrating "Continue with Google" against this service gets a 404.
-//
-// The gap is deliberate and the reasoning is in README.md's "Social login is not
-// built, and the code that looks like it is". In short: the parts that are hard are
-// done, and what is missing is a product decision about which user a callback
-// resolves to, plus a cross-site browser surface this service does not have. Both
-// are a packet of their own on the platform's security boundary.
-//
-// Two consequences for anyone working in here:
-//
-//   - The code is kept rather than deleted because it is correct, and because the
-//     migration that backs it is applied and an applied migration is not edited.
-//     What it must not be is *invisible*, which is why the package doc, the
-//     README, `anywaye.yml` and TestTheSocialLoginSurfaceIsNotMounted all say the
-//     same thing.
-//   - AGENTS.md's "stubs stay honest" rule cuts the other way from the usual
-//     reading of it: a tested-but-unwired method is called a lie, and the honest
-//     state is "a paragraph in the README and no code". This package is the
-//     exception, and it earns that by being recorded in four places rather than
-//     one. Deleting it is the alternative, and it is a bigger intervention than
-//     leaving it — so the decision is written down instead of defaulted.
 package oauth
 
 import (
@@ -50,19 +11,9 @@ import (
 	"strings"
 )
 
-// Errors the cipher returns. Both are matched with errors.Is by internal/config,
-// which turns them into a startup failure, and by the store's readers.
 var (
-	// ErrInvalidEncKey means the configured key is not 32 bytes. It is never
-	// padded or truncated: an operator who pastes a 16-byte key has configured
-	// half the entropy they think they have, and quietly stretching it would
-	// hide that until the day it matters.
 	ErrInvalidEncKey = errors.New("oauth encryption key must be 32 bytes")
 
-	// ErrMalformedCiphertext means a stored value is not something this Cipher
-	// wrote: no prefix, an unknown version, not base64, truncated, or sealed
-	// under a different key. All of those are one failure at the call site —
-	// there is no recovery that distinguishes them — so they are one error.
 	ErrMalformedCiphertext = errors.New("oauth token ciphertext is malformed")
 )
 
@@ -97,9 +48,6 @@ func NewCipher(key []byte) (*Cipher, error) {
 
 	block, err := aes.NewCipher(key)
 	if err != nil {
-		// Unreachable for a 32-byte key; aes.NewCipher only rejects lengths the
-		// check above already rejected. Wrapped rather than ignored so a future
-		// AES change surfaces here instead of vanishing.
 		return nil, fmt.Errorf("building the AES cipher: %w", err)
 	}
 
@@ -122,8 +70,6 @@ func NewCipher(key []byte) (*Cipher, error) {
 func (c *Cipher) Seal(plaintext string) (string, error) {
 	nonce := make([]byte, c.aead.NonceSize())
 	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		// As in internal/platform/id: a degraded entropy source is a condition to
-		// stop on, not to produce credentials from.
 		return "", fmt.Errorf("reading random bytes for the GCM nonce: %w", err)
 	}
 
@@ -149,9 +95,6 @@ func (c *Cipher) Open(value string) (string, error) {
 
 	nonceSize := c.aead.NonceSize()
 	if len(raw) < nonceSize+c.aead.Overhead() {
-		// A nonce alone, or a nonce and a partial tag. GCM would reject these too;
-		// checking first keeps the error ours rather than a panic-shaped surprise
-		// from slicing below.
 		return "", fmt.Errorf("%w: %d bytes is shorter than a nonce and a tag", ErrMalformedCiphertext, len(raw))
 	}
 

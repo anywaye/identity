@@ -1,14 +1,3 @@
-// Package id is the service's identifier type: RFC 4122 version 4 UUIDs.
-//
-// It exists instead of github.com/google/uuid because this service's dependency
-// budget is argon2id, pgx and the router (AGENTS.md: "no dependency without a
-// cause stated in review"). A canonical UUID is sixteen bytes and a formatting
-// loop, and a fourth direct dependency to obtain it is not a trade this
-// repository makes.
-//
-// The underlying type is [16]byte on purpose: that is exactly what pgx scans a
-// Postgres uuid column into, so ids cross the database boundary with no
-// conversion layer on the hot path.
 package id
 
 import (
@@ -29,11 +18,7 @@ type UUID [16]byte
 type Variant byte
 
 const (
-	// RFC4122 is the variant every UUID this package generates uses.
 	RFC4122 Variant = iota
-	// NReserved covers the other three variants, which this package never
-	// generates. Parse accepts them so it can read a value from anywhere; New
-	// cannot produce them.
 	NReserved
 )
 
@@ -42,7 +27,6 @@ const (
 // caller-supplied and end up in a log line.
 var ErrInvalid = errors.New("invalid UUID")
 
-// hyphens are the four fixed dashes of the canonical 8-4-4-4-12 form.
 var hyphens = [4]int{8, 13, 18, 23}
 
 // New returns a random version 4 UUID.
@@ -58,8 +42,8 @@ func New() (UUID, error) {
 		return UUID{}, fmt.Errorf("reading random bytes for a UUID: %w", err)
 	}
 
-	u[6] = (u[6] & 0x0f) | 0x40 // version 4
-	u[8] = (u[8] & 0x3f) | 0x80 // RFC 4122 variant
+	u[6] = (u[6] & 0x0f) | 0x40
+	u[8] = (u[8] & 0x3f) | 0x80
 
 	return u, nil
 }
@@ -92,9 +76,6 @@ func Parse(s string) (UUID, error) {
 		return UUID{}, fmt.Errorf("%w: length %d, want 36", ErrInvalid, len(trimmed))
 	}
 
-	// Strip the dashes, then require exactly 32 hex characters. Checking the
-	// dash positions afterwards is what rejects "0011223-34455-..." — 32 hex
-	// characters in the wrong places is not a UUID.
 	var hexDigits [32]byte
 	n := 0
 	for i := 0; i < len(trimmed); i++ {

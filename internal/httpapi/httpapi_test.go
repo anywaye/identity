@@ -15,18 +15,14 @@ import (
 
 var errUnreachable = errors.New("dependency unreachable")
 
-// okCheck reports a healthy dependency without touching the network.
 func okCheck(name string) Check {
 	return Check{Name: name, Ping: func(context.Context) error { return nil }}
 }
 
-// failingCheck reports an unreachable dependency.
 func failingCheck(name string) Check {
 	return Check{Name: name, Ping: func(context.Context) error { return errUnreachable }}
 }
 
-// blockingCheck blocks until the caller's context expires, so readiness
-// deadline handling can be exercised without sleeping in the test.
 func blockingCheck(name string) Check {
 	return Check{Name: name, Ping: func(ctx context.Context) error {
 		<-ctx.Done()
@@ -41,12 +37,6 @@ type response struct {
 	JSON        map[string]any
 }
 
-// do performs a request and decodes the body as JSON.
-//
-// Both application/json and application/problem+json are accepted. The split is
-// core's: 2xx responses are plain JSON, every non-2xx is an RFC 9457 problem
-// document. A helper that only accepted the first would have hidden the change
-// that made the 404 and the 405 conform.
 func do(t *testing.T, handler http.Handler, method, target string) response {
 	t.Helper()
 
@@ -79,8 +69,6 @@ func TestHealthz(t *testing.T) {
 		{name: "no dependencies", checks: nil, method: http.MethodGet, want: http.StatusOK},
 		{name: "healthy dependency", checks: []Check{okCheck("postgres")}, method: http.MethodGet, want: http.StatusOK},
 		{name: "unhealthy dependency", checks: []Check{failingCheck("postgres")}, method: http.MethodGet, want: http.StatusOK},
-		// A 405 is a problem document now, so the JSON-shape assertion below is
-		// skipped for it like every other non-2xx.
 		{name: "empty method is a 405", checks: nil, method: http.MethodPost, want: http.StatusMethodNotAllowed},
 	}
 
@@ -117,7 +105,6 @@ func TestReadyz(t *testing.T) {
 		wantStatus any
 	}{
 		{
-			// v0 ships without a database: readiness must still succeed.
 			name:       "no DATABASE_URL means nothing to check",
 			checks:     nil,
 			want:       http.StatusOK,
@@ -186,8 +173,6 @@ func TestReadyz(t *testing.T) {
 func TestReadyzDeadlineIsServiceUnavailable(t *testing.T) {
 	t.Parallel()
 
-	// A dependency that never answers must not hold the probe open: the
-	// deadline is what turns a hang into a 503.
 	handler := New([]Check{blockingCheck("postgres")}, WithReadinessTimeout(20*time.Millisecond))
 
 	got := do(t, handler, http.MethodGet, "/readyz")
@@ -217,9 +202,6 @@ func TestReadyzReceivesADeadline(t *testing.T) {
 	}
 }
 
-// A 404 is a problem document, like every other non-2xx response. core's error
-// envelope has no exception for "not found", and a bespoke body here is how a
-// client ends up parsing two error shapes.
 func TestUnknownRouteIsProblem404(t *testing.T) {
 	t.Parallel()
 
@@ -272,8 +254,6 @@ func TestWithLoggerSendsProbeFailuresToTheLog(t *testing.T) {
 	}
 }
 
-// TestProbeFailureIsNotLeakedToClients guards against leaking internal
-// dependency error strings to unauthenticated callers.
 func TestProbeFailureIsNotLeakedToClients(t *testing.T) {
 	t.Parallel()
 
@@ -343,8 +323,6 @@ func TestResponseBodyIsASingleJSONObject(t *testing.T) {
 	}
 }
 
-// recordingHandler captures slog output so tests can assert on what the
-// service logs rather than on what it prints to a real stderr.
 type recordingHandler struct {
 	entries []string
 }

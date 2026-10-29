@@ -6,31 +6,10 @@ import (
 	"github.com/anywaye/identity/internal/platform/id"
 )
 
-// The OIDC events: a relying party registered itself, and one was revoked.
-//
-// The entity is `oidc_client` and not `client`, even though the table is called
-// oidc_clients. A bare `client` is exactly the kind of generic name core's rule
-// 2 exists to push a prefix onto — but the prefix here is the SERVICE, not a
-// disambiguator, so the spelling is `identity.oidc_client.created` and not
-// `identity.client.created`. The service is the only thing on the platform that
-// issues OIDC registrations, and saying so in the name is free.
-//
-// core's catalog has no row for either type yet. core is a different repository
-// and this packet does not touch it, so the reconciliation is the one
-// EventMemberAccepted already documents: the publisher entry in anywaye.yml and
-// the code here agree, and core's catalog gains the rows when the manager merges
-// them.
 
-// The event types this service publishes for OIDC client registrations.
 const (
-	// EventOIDCClientCreated is emitted when a product registers itself as an
-	// OpenID Connect relying party.
 	EventOIDCClientCreated = "identity.oidc_client.created"
 
-	// EventOIDCClientRevoked is emitted when a registration stops being honored.
-	// The row is kept rather than deleted: an audit of which credentials existed
-	// is worth more than a tidier table, and `revoked_at` is what makes the
-	// difference readable afterwards.
 	EventOIDCClientRevoked = "identity.oidc_client.revoked"
 )
 

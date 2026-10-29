@@ -14,26 +14,6 @@ import (
 	"github.com/anywaye/identity/internal/platform/id"
 )
 
-// The refresh token: a long-lived credential, stored the way every other
-// credential in this service is stored.
-//
-// THREE PROPERTIES, each of which is a check rather than a comment:
-//
-//   - THE VALUE IS NEVER STORED. The column holds the lower-case hex SHA-256 of
-//     32 bytes from crypto/rand, which is the same construction as
-//     sessions.token_digest, api_keys.token_digest and
-//     oidc_clients.secret_digest. The digest is 64 characters and the CHECK
-//     constraint in the migration says so, so a row that somehow holds a value
-//     fails at the database rather than in review.
-//   - IT ROTATES ON USE. A refresh consumes its row and mints a replacement,
-//     linked by replaced_by. A stolen token is therefore useful for exactly one
-//     request, after which it is a token that has already been used.
-//   - A REUSE REVOKES THE FAMILY. Presenting a token that has already been used
-//     is the one thing that cannot happen by accident — a client that rotates
-//     correctly never does it — so it is treated as theft rather than as a
-//     retry, and every token descended from the same login is revoked. Rotation
-//     without reuse detection is a delay, not a defense: it makes the thief work
-//     twice and then lets them keep the fruit.
 
 // RefreshToken is one issued refresh token.
 type RefreshToken struct {
@@ -53,32 +33,16 @@ type NewRefreshToken struct {
 	ID          id.UUID
 	ClientRowID id.UUID
 	Subject     id.UUID
-	// TokenDigest is the lower-case hex SHA-256 of the value, and it is the
-	// ONLY half of the credential this method is given. See the header.
 	TokenDigest string
 	Scopes      []string
 	IssuedAt    time.Time
 	ExpiresAt   time.Time
 }
 
-// The four refusals a presented refresh token can get, and why there are four
-// rather than one.
-//
-// The library collapses them all into an `invalid_grant` at the token endpoint,
-// so none of them reaches a caller as a distinct fact. They are kept apart here
-// because the log has to say which happened: "this token is old" is a client
-// that has not signed in for a month, "this token was already used" is theft,
-// and one error for both makes the second invisible in an incident.
 var (
-	// ErrNoRefreshToken means the digest is not one this service issued.
 	ErrNoRefreshToken = errors.New("refresh token is not valid")
-	// ErrRefreshTokenExpired means the row is past its expiry.
 	ErrRefreshTokenExpired = errors.New("refresh token has expired")
-	// ErrRefreshTokenRevoked means the row, or its family, was revoked.
 	ErrRefreshTokenRevoked = errors.New("refresh token has been revoked")
-	// ErrRefreshTokenReused means a token that was already spent was presented
-	// again. The family is revoked before this is returned, so a caller that
-	// receives it has nothing left to clean up.
 	ErrRefreshTokenReused = errors.New("refresh token has already been used")
 )
 
@@ -103,8 +67,6 @@ const RefreshTokenTTL = 30 * 24 * time.Hour
 func NewRefreshTokenValue() (value, digest string, err error) {
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
-		// Not a swallowed failure: a degraded entropy source is not something to
-		// discover when a credential turns out to be guessable.
 		return "", "", fmt.Errorf("reading random bytes for a refresh token: %w", err)
 	}
 	value = base64.RawURLEncoding.EncodeToString(raw)
@@ -184,24 +146,11 @@ func (s *Store) RotateRefreshToken(ctx context.Context, q db.Querier, digest str
 		return RefreshToken{}, classifyErr
 	}
 
-	// A token that was already spent is the one state that is never an accident.
-	// Everything else — expired, revoked, never issued — is something a client
-	// can do by being slow, by being logged out, or by being wrong.
-	// EXPIRY IS CHECKED FIRST, and the order is a property rather than a style
-	// choice. A token that is both expired AND revoked — which is what a client
-	// sweep leaves behind — has to read as expired, because expiry is a fact
-	// about the token and revocation is a fact about this service's response to
-	// it. Read the other way round, a deployment that revoked everything during
-	// an incident would stop being able to tell an attacker holding a lapsed
-	// token from a user who simply has not signed in for a month, because every
-	// refusal would say "revoked".
 	if !claimed.ExpiresAt.After(now) {
 		return RefreshToken{}, ErrRefreshTokenExpired
 	}
 	if claimed.UsedAt != nil {
 		if _, err := s.RevokeRefreshTokenFamily(ctx, q, claimed.ID, now); err != nil {
-			// The refusal is returned either way. A client must not be able to
-			// keep using a reused token because a cleanup UPDATE failed.
 			return RefreshToken{}, fmt.Errorf("%w (and the family could not be revoked: %w)", ErrRefreshTokenReused, err)
 		}
 		return RefreshToken{}, ErrRefreshTokenReused
@@ -212,29 +161,7 @@ func (s *Store) RotateRefreshToken(ctx context.Context, q db.Querier, digest str
 	return RefreshToken{}, ErrNoRefreshToken
 }
 
-// RevokeRefreshTokenFamily revokes every token descended from one row and
-// REPORTS HOW MANY ROWS IT TOUCHED.
-//
-// THE COUNT IS NOT TELEMETRY, and the reason is the failure this signature was
-// changed for: a walk that goes the wrong way reports SUCCESS with
-// RowsAffected=1. It revokes the anchor row — which exists, which has
-// revoked_at IS NULL, and which the UPDATE therefore matches — and terminates
-// there. Every caller then believes a family is dead when only the row it was
-// handed is, and the first thing that notices is a rotation that succeeds on a
-// token reuse was supposed to have killed. An UPDATE that affects one row looks
-// exactly like an UPDATE that affected one row.
-//
-// THE DIRECTION IS `replaced_by`, FORWARD, and it is written out because the
-// natural-looking SQL is the wrong one. The link means "the row that replaced
-// me", so the chain from a root is root -> successor -> successor's successor,
-// and the walk has to follow it that way:
 
-//	WITH RECURSIVE chain AS (
-//	    SELECT id, replaced_by FROM oidc_refresh_tokens WHERE id = $1
-//	    UNION ALL
-//	    SELECT s.id, s.replaced_by FROM oidc_refresh_tokens s
-//	    JOIN chain ON s.id = chain.replaced_by
-//	)
 
 // The join condition that reads the other way round — `s.replaced_by =
 // c.id`, joining on CHAIN's id — is the mistake, and it is a mistake that

@@ -16,27 +16,12 @@ import (
 	"github.com/anywaye/identity/internal/ratelimit"
 )
 
-// THE AGENT SURFACE OVER THE REAL ROUTER AND THE REAL SQL.
-//
-// internal/agents proves the use cases; this file proves what a CLI and a claim
-// screen actually meet on the wire: the 201's three-object shape, that a
-// generated-username collision retries WITHOUT the endpoint ever saying "taken",
-// that a refresh leaves the agent unclaimed, and that the token lifecycle reads
-// and writes through the agent's own bearer credential. The rate limit rides the
-// real limiter, so the 429 is the one a deployment answers.
 
 const agentHTTPClaimUI = "https://anywaye.example"
 
-// agentServer is the real service over a private schema, configured the way main
-// configures it for the agent surface: the claim UI base and the use case that
-// renders claim URLs from it.
 type agentServer struct {
 	handler http.Handler
 	clk     *clock.Fake
-	// pool is the app-role pool under test, kept so a test can read the rows a
-	// route did or did not write. The owner pool is deliberately NOT kept: a
-	// test that asserted through the owner would prove nothing about the
-	// boundary, and the private schema carries no row-level security anyway.
 	pool *pgxpool.Pool
 }
 
@@ -46,12 +31,6 @@ func newAgentServer(t *testing.T, limiterMax int) *agentServer {
 	pool, _ := dbtest.SchemaWithOwner(t)
 	clk := clock.NewFake(time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC))
 
-	// WithTenancy is what mounts the account-scoped routes, and the CLAIM is
-	// account-scoped: without it the service offers registration and the
-	// self-service half but no way for a human to finish claiming anything. A
-	// test server built without it would prove the agent surface does half of
-	// what it claims, which is the shape of bug the router walks are supposed to
-	// catch and this one would have silently introduced.
 	opts := []Option{
 		WithAuth(authServiceFor(pool, clk)),
 		WithTenancy(realTenancy(pool, clk)),
@@ -61,20 +40,12 @@ func newAgentServer(t *testing.T, limiterMax int) *agentServer {
 	if limiterMax > 0 {
 		opts = append(opts, WithRateLimiter(ratelimit.New(clk, map[string]ratelimit.Limit{
 			"/v1/agents": {Max: limiterMax, Window: time.Minute},
-			// The claim preview is in the same map because it is the OTHER
-			// unauthenticated route this registrar mounts, and an anonymous route
-			// that spends a database read per request with no bound is the one
-			// place this surface could be driven by a scanner. Its key is the
-			// route, so the registration's own limit is unaffected.
 			"/v1/agents/claim/{token}": {Max: limiterMax, Window: time.Minute},
 		})))
 	}
 	return &agentServer{handler: New(nil, opts...), clk: clk, pool: pool}
 }
 
-// TestTheRegistrationHTTPShapeIsTheContract is the happy path the CLI codes against:
-// agent.unclaimed, an api_key.token, a claim.url — three objects, and the claim URL
-// points at the configured screen.
 func TestTheRegistrationHTTPShapeIsTheContract(t *testing.T) {
 	s := newAgentServer(t, 100)
 
@@ -104,10 +75,6 @@ func TestTheRegistrationHTTPShapeIsTheContract(t *testing.T) {
 	}
 }
 
-// TestTheRegistrationRetriesAUsernameCollisionWithoutSayingTaken is the wire half
-// of the conflict-retry property, and the disclosure half is the reason it is
-// asserted here too: two registrations of the same name are two 201s with two
-// DIFFERENT handles, and no 409 ever appears.
 func TestTheRegistrationRetriesAUsernameCollisionWithoutSayingTaken(t *testing.T) {
 	s := newAgentServer(t, 100)
 
@@ -132,14 +99,9 @@ func TestTheRegistrationRetriesAUsernameCollisionWithoutSayingTaken(t *testing.T
 	}
 }
 
-// TestARegistrationWithNoClaimScreenIsAServiceUnavailable is the fail-closed
-// direction on the wire: a deployment with AGENT_CLAIM_UI_URL unset refuses to
-// mint an agent it could never let a human claim.
 func TestARegistrationWithNoClaimScreenIsAServiceUnavailable(t *testing.T) {
 	pool, _ := dbtest.SchemaWithOwner(t)
 	clk := clock.NewFake(time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC))
-	// No WithClaimUI: the registration route is still mounted, and the use case
-	// refuses with ErrNoClaimUI, which the handler renders as a 503.
 	handler := New(nil,
 		WithAuth(authServiceFor(pool, clk)),
 		WithAgents(agents.NewService(pool)),
@@ -152,9 +114,6 @@ func TestARegistrationWithNoClaimScreenIsAServiceUnavailable(t *testing.T) {
 	}
 }
 
-// TestTheRefreshRegeneratesALinkAndKeepsTheAgentUnclaimed is the refresh property
-// over the wire: the agent's own token gets a NEW claim URL and the agent stays
-// unclaimed — a refresh never claims.
 func TestTheRefreshRegeneratesALinkAndKeepsTheAgentUnclaimed(t *testing.T) {
 	s := newAgentServer(t, 100)
 
@@ -183,18 +142,7 @@ func TestTheRefreshRegeneratesALinkAndKeepsTheAgentUnclaimed(t *testing.T) {
 	}
 }
 
-// TestTheAgentTokenLifecycleOverHTTP drives create, list, rotate and revoke through
-// the agent's own credential, proving the credential is shown only at mint/rotate
-// and that a duplicate live name is a 409.
-//
-// THE AGENT IS CLAIMED FIRST, and that is not setup for its own sake: every route
-// this test drives is behind `agentClaimedOnly` (D4), so a lifecycle driven by an
-// unclaimed principal would be a 403 that has nothing to do with the credential
-// mechanics. The claim is done through the real route so the principal under test
-// is one the production path actually produced.
 func TestTheAgentTokenLifecycleOverHTTP(t *testing.T) {
-	// ONE WORLD, and it is the claim world's: the claim that unlocks this surface
-	// has to happen in the same schema the lifecycle is driven against.
 	w := newClaimWorld(t)
 	s := w.handler
 	reg, claimed, _ := w.claimOne(t, "Noel")
@@ -204,7 +152,6 @@ func TestTheAgentTokenLifecycleOverHTTP(t *testing.T) {
 	}
 	_ = reg
 
-	// Mint a named credential; the plaintext is here once.
 	mint := sendWith(t, s, http.MethodPost, "/v1/agents/tokens", tok, "", `{"name":"deploy"}`)
 	if mint.Code != http.StatusCreated {
 		t.Fatalf("minting = %d, want 201; body: %s", mint.Code, mint.Body)
@@ -218,14 +165,11 @@ func TestTheAgentTokenLifecycleOverHTTP(t *testing.T) {
 	}
 	tokenID := issued.ID
 
-	// A duplicate live name is a 409.
 	dup := sendWith(t, s, http.MethodPost, "/v1/agents/tokens", tok, "", `{"name":"deploy"}`)
 	if dup.Code != http.StatusConflict {
 		t.Errorf("a second live token of one name = %d, want 409; body: %s", dup.Code, dup.Body)
 	}
 
-	// List: two credentials (the registration's bootstrap + the claim's), and no
-	// body carries a token.
 	list := sendWith(t, s, http.MethodGet, "/v1/agents/tokens", tok, "", "")
 	if list.Code != http.StatusOK {
 		t.Fatalf("listing = %d, want 200; body: %s", list.Code, list.Body)
@@ -241,7 +185,6 @@ func TestTheAgentTokenLifecycleOverHTTP(t *testing.T) {
 		t.Error("the list body carries a plaintext token, and no list endpoint may re-read one")
 	}
 
-	// Rotate: a new plaintext, same name, one call.
 	rot := sendWith(t, s, http.MethodPost, "/v1/agents/tokens/"+tokenID+"/rotate", tok, "", `{}`)
 	if rot.Code != http.StatusCreated {
 		t.Fatalf("rotating = %d, want 201; body: %s", rot.Code, rot.Body)
@@ -254,15 +197,12 @@ func TestTheAgentTokenLifecycleOverHTTP(t *testing.T) {
 		t.Error("the rotation did not mint a distinct new token")
 	}
 
-	// Revoke the rotated token by its id.
 	del := sendWith(t, s, http.MethodDelete, "/v1/agents/tokens/"+rotated.ID, tok, "", "")
 	if del.Code != http.StatusNoContent {
 		t.Fatalf("revoking the rotated token = %d, want 204; body: %s", del.Code, del.Body)
 	}
 }
 
-// TestTheAgentRegistrationRateLimitRidesTheRealLimiter is the rate-limit proof:
-// one limiter, Max:1, and the second registration over it is a 429.
 func TestTheAgentRegistrationRateLimitRidesTheRealLimiter(t *testing.T) {
 	s := newAgentServer(t, 1)
 
@@ -280,9 +220,6 @@ func TestTheAgentRegistrationRateLimitRidesTheRealLimiter(t *testing.T) {
 	}
 }
 
-// TestTheAgentSelfServiceRoutesRefuseAStranger is the anonymous half of the
-// enumeration audit: the self-service routes answer 401 with no credential, so no
-// token id or claim link arrives from a stranger.
 func TestTheAgentSelfServiceRoutesRefuseAStranger(t *testing.T) {
 	s := newAgentServer(t, 100)
 

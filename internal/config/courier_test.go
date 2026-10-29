@@ -8,12 +8,6 @@ import (
 	"testing"
 )
 
-// The courier block, as a table over the four states a deployment can be in.
-//
-// FOUR ROWS AND NO MORE, because the shape of the rule is all-or-nothing: absent,
-// partial, present-and-valid, present-and-invalid. A test with one row per variable
-// would be testing six configurations and would miss the one that matters, which is
-// the pair that differs by a single missing variable.
 func TestTheCourierBlockIsAllOrNothing(t *testing.T) {
 	const validURL = "https://courier.example.com"
 	const validLink = "https://app.example.com/reset?token=" + recoveryTokenPlaceholder
@@ -22,7 +16,6 @@ func TestTheCourierBlockIsAllOrNothing(t *testing.T) {
 		name    string
 		env     map[string]string
 		wantErr error
-		// wantEnabled is what CourierEnabled reports on success.
 		wantEnabled bool
 		wantNoToken bool
 	}{
@@ -67,12 +60,6 @@ func TestTheCourierBlockIsAllOrNothing(t *testing.T) {
 			wantErr: ErrInvalidCourier,
 		},
 		{
-			// THE PACKET'S BOOT RULE, and the reason INVITATION_LINK_TEMPLATE is
-			// required rather than defaulted: the invite route is mounted
-			// unconditionally, so a deployment with a mail path and no
-			// invitation template fails at send time on every invite — a 500
-			// that names nothing actionable. The refusal is at boot, naming
-			// the variable, which is the same rule OIDC_SIGNING_KEY follows.
 			name: "a base URL and a token with the recovery templates but no invitation template",
 			env: map[string]string{
 				"COURIER_BASE_URL":       validURL,
@@ -82,10 +69,6 @@ func TestTheCourierBlockIsAllOrNothing(t *testing.T) {
 			wantErr: ErrInvalidCourier,
 		},
 		{
-			// The same rule from the other side: an invitation template with no
-			// mail path is a deployment that believes it can send invitations
-			// and cannot. It is refused rather than ignored, for the reason the
-			// recovery link template with no mail path is.
 			name: "an invitation template with no base URL",
 			env: map[string]string{
 				"INVITATION_LINK_TEMPLATE": validLink,
@@ -177,10 +160,6 @@ func TestTheCourierBlockIsAllOrNothing(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			env := tc.env
 			if tc.wantErr == nil {
-				// SIGNUP_SIGNING_KEY is the one secret a boot cannot go
-				// without, so the two success cases supply it. The error
-				// cases are unaffected: the courier block is checked before
-				// the signup key, so they refuse for their own reason first.
 				env = withSignupKey(env)
 			}
 			cfg, err := Load(lookupFrom(env))
@@ -189,15 +168,9 @@ func TestTheCourierBlockIsAllOrNothing(t *testing.T) {
 				if !errors.Is(err, tc.wantErr) {
 					t.Fatalf("Load error = %v, want one matching %v", err, tc.wantErr)
 				}
-				// A partial or invalid block must not leave a half-configured
-				// deployment behind: `Load` returns the zero Config on any error, and
-				// a caller that ignored the error would otherwise find a process that
-				// believes it can send mail.
 				if cfg.CourierEnabled() {
 					t.Error("Load returned a Config that reports a mail path alongside an error")
 				}
-				// And the message must NAME the variable, because an operator reading
-				// a startup log cannot act on "invalid courier configuration".
 				if !strings.Contains(err.Error(), "COURIER_") &&
 					!strings.Contains(err.Error(), "RECOVERY_LINK_TEMPLATE") &&
 					!strings.Contains(err.Error(), "INVITATION_LINK_TEMPLATE") {
@@ -213,8 +186,6 @@ func TestTheCourierBlockIsAllOrNothing(t *testing.T) {
 				t.Errorf("CourierEnabled = %t, want %t", got, tc.wantEnabled)
 			}
 			if tc.wantEnabled {
-				// And the token is readable through the accessor that distinguishes
-				// "absent" from "present", because those lead to different wiring.
 				token, err := cfg.CourierToken()
 				if err != nil {
 					t.Fatalf("CourierToken: %v", err)
@@ -227,17 +198,7 @@ func TestTheCourierBlockIsAllOrNothing(t *testing.T) {
 	}
 }
 
-// TestAnAbsentCourierBlockIsDistinguishableFromABrokenOne is the assertion the two
-// sentinels exist for.
-//
-// `main` mounts `recovery.Unavailable{}` for one and refuses to start for the other.
-// An operator who cannot tell them apart from the log has been told nothing, and
-// the confusion costs an afternoon: "it started, so the mail is configured" against
-// a deployment whose COURIER_BASE_URL has a typo in it.
 func TestAnAbsentCourierBlockIsDistinguishableFromABrokenOne(t *testing.T) {
-	// The signup key is supplied because a boot without it is a startup
-	// failure: this test is about the COURIER block's two states, and a
-	// deployment that cannot boot has neither.
 	absent, err := Load(lookupFrom(withSignupKey(map[string]string{})))
 	if err != nil {
 		t.Fatalf("an absent courier block must not be an error: %v", err)
@@ -245,8 +206,6 @@ func TestAnAbsentCourierBlockIsDistinguishableFromABrokenOne(t *testing.T) {
 	if _, err := absent.CourierToken(); !errors.Is(err, ErrNoCourierToken) {
 		t.Errorf("an absent token = %v, want ErrNoCourierToken", err)
 	}
-	// The two must not be the same value. `errors.Is` matching across them would
-	// mean a caller could not choose what to do.
 	if errors.Is(ErrNoCourierToken, ErrInvalidCourier) || errors.Is(ErrInvalidCourier, ErrNoCourierToken) {
 		t.Error("the absent and invalid sentinels are the same value, so no caller can tell them apart")
 	}
@@ -255,21 +214,12 @@ func TestAnAbsentCourierBlockIsDistinguishableFromABrokenOne(t *testing.T) {
 	if !errors.Is(err, ErrInvalidCourier) {
 		t.Fatalf("a partial block = %v, want ErrInvalidCourier", err)
 	}
-	// And a broken one does NOT read as absent, which is the mistake the two
-	// sentinels prevent.
 	if errors.Is(err, ErrNoCourierToken) {
 		t.Error("a partial block reported itself as an absent token, so a deployment with a typo would mount Unavailable instead of failing to start")
 	}
 	_ = broken
 }
 
-// TestTheBootRulesAndTheClientRulesAgree is the drift check between the two places
-// a courier URL is validated.
-//
-// The duplication is deliberate and recorded in `validateMailBaseURL`'s comment;
-// this is what pays for it. A rule that changed on one side and not the other would
-// mean a deployment boot refuses nothing the client refuses, or the reverse, and
-// the failure would appear in whichever direction nobody tested.
 func TestTheBootRulesAndTheClientRulesAgree(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -299,13 +249,7 @@ func TestTheBootRulesAndTheClientRulesAgree(t *testing.T) {
 	}
 }
 
-// TestTheBootPlaceholderIsCouriersPlaceholder holds the one constant that is
-// duplicated rather than imported, which is a decision with a cost and this is what
-// pays it back.
 func TestTheBootPlaceholderIsCouriersPlaceholder(t *testing.T) {
-	// Read the courier package's declaration. Importing it would invert the
-	// layering — `internal/courier` implements `recovery.Mailer` and this package
-	// is the service's configuration — so a source read is the honest check.
 	source := readSource(t, "courier")
 	if !strings.Contains(source, `TokenPlaceholder = "`+recoveryTokenPlaceholder+`"`) {
 		t.Errorf("internal/courier no longer declares TokenPlaceholder as %q; a link "+
@@ -313,8 +257,6 @@ func TestTheBootPlaceholderIsCouriersPlaceholder(t *testing.T) {
 	}
 }
 
-// readSource reads a sibling package's source, for the one check that cannot use an
-// import without inverting the layering.
 func readSource(t *testing.T, pkg string) string {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join("..", pkg, "mailer.go"))

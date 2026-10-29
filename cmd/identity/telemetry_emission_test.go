@@ -18,40 +18,7 @@ import (
 	"github.com/anywaye/identity/internal/httpapi"
 )
 
-// The end-to-end emission proof, and the test the fleet's measurement asked for.
-//
-// WHAT WAS ALREADY HERE, and why this file is not a duplicate of it. The span
-// middleware is mounted, the allowlist is a choke point, the exporter builds an
-// OTLP/HTTP client and canary_test.go sweeps every field a caller controls for
-// canaries. All of that asserts about spans this service CONSTRUCTS, through a
-// recorder installed in place of the exporter. Not one of those tests can fail
-// because the real path — `installTelemetry` in this file's package, the function
-// `run` calls before anything else — builds no provider, or builds one whose
-// exporter dials nothing, or dials something that is not a collector.
-//
-// That gap is not hypothetical. "A service that produces no spans" and "a service
-// that produces spans which arrive nowhere" are indistinguishable from a
-// dashboard: both show zero. Every test above passes in a process where
-// `installTelemetry` returns a shutdown that flushes an empty exporter, which is
-// exactly the state the fleet measured on 2026-09-30 and could not tell from
-// "identity opens no span".
-//
-// So this asserts the only thing that can distinguish them: bytes arriving over a
-// socket at an address this process was configured with, carrying the span the
-// middleware claims to open.
-//
-// IT IS SUBSTRING ASSERTION ON A PROTOBUF, and that is a deliberate trade rather
-// than a shortcut. Decoding it properly needs `go.opentelemetry.io/proto/otlp`,
-// which is in the module graph only as an indirect dependency of the exporter —
-// importing it makes it a DIRECT requirement of this service, with its version and
-// its CVEs, so that a test could parse a message. The bytes a span name and a
-// route template are encoded into are the same bytes in the first and second case,
-// so "the collector received a request whose body contains the span name and the
-// route template" is a real assertion about what crossed the wire. The structured
-// reading of the same bytes is what the OTel SDK's own exporter is for.
 
-// otlpReceiver is a collector stand-in: the smallest thing that can answer the
-// exporter's request, and the smallest thing that can notice being called.
 type otlpReceiver struct {
 	mu       sync.Mutex
 	calls    []receivedExport
@@ -59,7 +26,6 @@ type otlpReceiver struct {
 	endpoint string
 }
 
-// receivedExport is one POST, as the receiver saw it.
 type receivedExport struct {
 	method      string
 	path        string
@@ -173,23 +139,6 @@ func installForTest(t *testing.T) func() {
 	}
 }
 
-// TestARequestProducesAnExportThatCrossesTheWire is DONE MEANS 2, asserted
-// end-to-end rather than against a recorder: a configured endpoint, a real
-// request through the real router, and bytes at the far end of a socket.
-//
-// THE NUMERIC FACTS ARE NOT ASSERTED AS TEXT HERE, and dropping those two
-// assertions is worth writing down. Protobuf encodes a span's `trace_id` as
-// sixteen raw bytes and an int64 status code as a varint, so neither appears in
-// the payload as the ASCII a reader would type. The first draft of this test
-// asserted `"200"` and the caller's trace id in hex; both failed against a
-// correctly working exporter, which is the shape of a test that teaches its
-// author a falsehood about the wire.
-//
-// What IS asserted below is everything protobuf carries as a length-prefixed
-// string — the span name, the route template, the resource attributes — because
-// those are the facts that decide whether a span is usable in HyperDX. The
-// numeric ones are asserted where they can be READ as numbers, through the
-// recorder, in internal/httpapi's suite.
 func TestARequestProducesAnExportThatCrossesTheWire(t *testing.T) {
 	receiver := newOTLPReceiver(t)
 	t.Setenv("IDENTITY_OTEL_ENDPOINT", receiver.endpoint)
@@ -221,9 +170,6 @@ func TestARequestProducesAnExportThatCrossesTheWire(t *testing.T) {
 		t.Errorf("Content-Type = %q, want application/x-protobuf", export.contentType)
 	}
 
-	// The span's own facts, in the bytes that crossed the socket. The span NAME is
-	// what core's grammar requires and what a trace view groups by; the ROUTE
-	// TEMPLATE is what makes the span usable rather than merely present.
 	for _, want := range []struct{ what, needle string }{
 		{"the span name", "identity.request"},
 		{"the route template", "/healthz"},
@@ -262,17 +208,6 @@ func TestATraceparentArrivingOverTheWireIsContinued(t *testing.T) {
 	}
 	flush()
 
-	// THE ID IS SEARCHED FOR AS ITS SIXTEEN RAW BYTES, not as hex text, and that is
-	// the whole substance of this assertion. Protobuf's `bytes` field carries the
-	// trace id exactly as it is — 0x4b 0xf9 0x2f … — so the hexadecimal STRING the
-	// caller sent is not in the payload and never was. An earlier draft of this test
-	// searched for the hex and failed against a working exporter, which is a test
-	// that has learned its author a falsehood about the wire rather than a test that
-	// found a defect.
-	//
-	// So the caller continues this trace if and only if those sixteen bytes are on
-	// the socket, which is the property DONE MEANS 3 asks for and the one that makes
-	// a fleet's traces join up rather than arriving as one-hop fragments.
 	export := receiver.oneExport(t)
 	raw, err := hex.DecodeString(callersTrace)
 	if err != nil {
@@ -285,10 +220,6 @@ func TestATraceparentArrivingOverTheWireIsContinued(t *testing.T) {
 	}
 }
 
-// TestAMalformedTraceparentOverTheWireIsStillServed is the rule that keeps
-// correlation metadata from becoming a denial-of-service vector, asserted on the
-// wire: a garbage header is ignored, the request is served, and the span is
-// exported under a fresh trace.
 func TestAMalformedTraceparentOverTheWireIsStillServed(t *testing.T) {
 	receiver := newOTLPReceiver(t)
 	t.Setenv("IDENTITY_OTEL_ENDPOINT", receiver.endpoint)
@@ -306,25 +237,9 @@ func TestAMalformedTraceparentOverTheWireIsStillServed(t *testing.T) {
 	}
 	flush()
 
-	// Still exactly one export: the request is traced, just not under the id the
-	// header asked for.
 	receiver.oneExport(t)
 }
 
-// TestAServerErrorCrossesTheWireWithTheFleetsErrorClass is the last unproven half
-// of DONE MEANS 2 — `error.type` in core's own vocabulary, on a span that actually
-// leaves the process.
-//
-// The recorder suite already proves a 5xx becomes an error span carrying
-// `internal_error`, but "the span carries it" and "the collector receives it" were
-// different claims until the path bug, and only one of them was ever tested. So
-// this drives a failing readiness probe through `httpapi.New` directly — the same
-// constructor `newApp` calls, with the same middleware chain, rather than a
-// hand-built one — and asserts the class is in the bytes.
-//
-// A readiness check that always fails is the cheapest 5xx in this service: no
-// database, no fault injection, and a route that genuinely exists, so the span also
-// has to carry its route template.
 func TestAServerErrorCrossesTheWireWithTheFleetsErrorClass(t *testing.T) {
 	receiver := newOTLPReceiver(t)
 	t.Setenv("IDENTITY_OTEL_ENDPOINT", receiver.endpoint)
@@ -360,22 +275,6 @@ func TestAServerErrorCrossesTheWireWithTheFleetsErrorClass(t *testing.T) {
 	}
 }
 
-// TestTelemetryOffDialsNothing is DONE MEANS 1, and it is the one direction a
-// dashboard cannot show. A service that emits nothing and a service that emits
-// nothing BECAUSE IT WAS TOLD TO look identical from HyperDX, and the packet's
-// requirement is specific: UNSET means a true no-op — nothing dials, nothing
-// allocates.
-//
-// So this points the endpoint at a real, listening, counting receiver and then
-// switches telemetry off, and asserts the count is still zero after a request has
-// been served. A provider with an exporter that has nowhere to go still allocates a
-// span per request, computes attributes nobody reads, and costs a goroutine and a
-// batch timer for the life of the process; core's otel-endpoint schema pins
-// `startupCost` to `none` and this is the assertion that holds this service to it.
-//
-// THE RECEIVER IS STILL RUNNING. The alternative — pointing the endpoint at a
-// refused port and asserting no error — passes for a service that dials once and
-// swallows the failure, which is the shape this is looking for.
 func TestTelemetryOffDialsNothing(t *testing.T) {
 	receiver := newOTLPReceiver(t)
 	t.Setenv("IDENTITY_OTEL_ENDPOINT", receiver.endpoint)
@@ -400,12 +299,6 @@ func TestTelemetryOffDialsNothing(t *testing.T) {
 	}
 }
 
-// TestAPerSignalSwitchOffAlsoDialsNothing is the finer half of the kill switch,
-// and it exists because the check that finds it is cheap and the one that misses
-// it is somebody's invoice.
-//
-// All three signals are covered, not only traces: a no-op that only covers traces
-// is a service that still phones home for metrics.
 func TestAPerSignalSwitchOffAlsoDialsNothing(t *testing.T) {
 	for _, variable := range []string{"OTEL_TRACES_EXPORTER", "OTEL_METRICS_EXPORTER", "OTEL_LOGS_EXPORTER"} {
 		t.Run(variable, func(t *testing.T) {
@@ -433,16 +326,6 @@ func TestAPerSignalSwitchOffAlsoDialsNothing(t *testing.T) {
 	}
 }
 
-// probeOnlyConfig is the configuration a process with no DATABASE_URL runs on: the
-// probes and nothing else.
-//
-// No pool and no /v1 routes, so the test needs no database and no migration, and
-// what it exercises is the serving path itself — which is the thing under test.
-// Every request below is a real request through the real router.
-//
-// It carries SIGNUP_SIGNING_KEY because a boot without it is a startup failure:
-// the lookup answers "" for everything else, which is the "no environment" of a
-// process with nothing configured.
 func probeOnlyConfig() config.Config {
 	const signupKey = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY"
 	cfg, err := config.Load(func(key string) (string, bool) {

@@ -1,24 +1,5 @@
 package httpapi
 
-// THE STAFF SURFACE: `GET /v1/operator/me`, `GET /v1/operator/users` and
-// `POST /v1/operator/users/:id/disable|enable`.
-//
-// Every test here drives the REAL router through `requireStaffSession` against
-// a programmable `Auth` double, so what is under test is the credential gate,
-// the query validation and the response projection — the three things this
-// packet adds — and not the transaction, which internal/auth's own tests hold
-// against a real database.
-//
-// THE `reached` COLUMN IS THE ASSERTION AND THE STATUS IS THE FOOTNOTE, on
-// operator_test.go's terms: every refusal below asserts that the use case was
-// NOT called, because a disable that answered 403 after stamping the column
-// has turned an account off for a caller who was told it did not happen.
-//
-// THE FOUR CREDENTIALS ARE THE SUBJECT OF THIS FILE: a staff session (the one
-// credential that reaches), an ordinary session, a tenant admin's session, a
-// scoped api key, and no credential at all. An account admin is refused not
-// because of the role they lack but because no account role implies global
-// staff authority — and that refusal is a check with a name.
 
 import (
 	"context"
@@ -34,8 +15,6 @@ import (
 	"github.com/anywaye/identity/internal/users"
 )
 
-// staffFixture is the staff surface's router: one auth double whose user the
-// test marks staff or not, and the session token that resolves to them.
 type staffFixture struct {
 	handler http.Handler
 	auth    *fakeAuth
@@ -61,8 +40,6 @@ func newStaffFixture(t *testing.T, staff bool) *staffFixture {
 	}
 }
 
-// sendStaff issues a request as one credential: a session bearer, a
-// machine-key bearer, or nothing.
 func sendStaff(t *testing.T, h http.Handler, method, target, credential string) *httptest.ResponseRecorder {
 	t.Helper()
 
@@ -75,11 +52,7 @@ func sendStaff(t *testing.T, h http.Handler, method, target, credential string) 
 	return rec
 }
 
-// ---------------------------------------------------------------------------
-// GET /v1/operator/me
-// ---------------------------------------------------------------------------
 
-// TestOperatorMeReportsTheSignedInStaffUser is the route working.
 func TestOperatorMeReportsTheSignedInStaffUser(t *testing.T) {
 	f := newStaffFixture(t, true)
 
@@ -111,9 +84,6 @@ func TestOperatorMeReportsTheSignedInStaffUser(t *testing.T) {
 		t.Error("user.staff = false for a staff caller: the route reports the caller's status and the gate already established it")
 	}
 
-	// The shape is stable and nested: exactly one top-level `user` key, and
-	// exactly the three documented keys inside it — so a client can rely on
-	// it and a future field cannot arrive unannounced.
 	var raw map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
 		t.Fatalf("re-decoding the me response: %v", err)
@@ -139,13 +109,11 @@ func TestOperatorMeReportsTheSignedInStaffUser(t *testing.T) {
 	}
 }
 
-// TestOperatorMeRefusesEverybodyElse is the gate on the status route.
 func TestOperatorMeRefusesEverybodyElse(t *testing.T) {
 	cases := []struct {
 		name       string
 		staff      bool
 		credential string
-		// unauthenticated, when true, makes the session resolve to nothing.
 		unauthenticated bool
 		want            int
 		wantCode        string
@@ -183,15 +151,6 @@ func TestOperatorMeRefusesEverybodyElse(t *testing.T) {
 	}
 }
 
-// TestAMachineKeyNeverSatisfiesTheHumanSurface is the credential-kind
-// disjointness, on all four routes at once.
-//
-// A scoped api key holding every scope in the vocabulary is still refused
-// here: the staff property lives on the user, a token carries scopes rather
-// than a staff flag, and consulting them would be reading a field that cannot
-// answer the question. The audit trail must be able to say whether a person
-// or a pipeline acted, and a credential that crossed surfaces would make that
-// unanswerable.
 func TestAMachineKeyNeverSatisfiesTheHumanSurface(t *testing.T) {
 	f := newStaffFixture(t, true)
 	subject := id.MustNew()
@@ -228,11 +187,7 @@ func TestAMachineKeyNeverSatisfiesTheHumanSurface(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// GET /v1/operator/users
-// ---------------------------------------------------------------------------
 
-// TestTheStaffDirectorySearchReturnsTheMinimalProjection is the route working.
 func TestTheStaffDirectorySearchReturnsTheMinimalProjection(t *testing.T) {
 	f := newStaffFixture(t, true)
 	when := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
@@ -259,7 +214,6 @@ func TestTheStaffDirectorySearchReturnsTheMinimalProjection(t *testing.T) {
 		t.Fatalf("the directory returned %d entries, want 2; body: %s", len(body.Users), rec.Body)
 	}
 
-	// The use case was asked with the term and the default bound.
 	if len(f.auth.searched) != 1 {
 		t.Fatalf("the directory was searched %d times, want 1", len(f.auth.searched))
 	}
@@ -270,8 +224,6 @@ func TestTheStaffDirectorySearchReturnsTheMinimalProjection(t *testing.T) {
 		t.Errorf("the search limit = %d, want the default %d", f.auth.searched[0].limit, users.DefaultSearchLimit)
 	}
 
-	// Every entry carries the documented fields, and the response carries
-	// nothing a reader could mistake for a credential.
 	allowed := map[string]bool{"id": true, "email": true, "display_name": true, "disabled_at": true, "email_verified_at": true, "created_at": true}
 	forbidden := []string{
 		"password_digest", "password", "token", "api_key", "recovery",
@@ -289,9 +241,6 @@ func TestTheStaffDirectorySearchReturnsTheMinimalProjection(t *testing.T) {
 				t.Errorf("entry %d carries %q, which no document declares", i, key)
 			}
 		}
-		// The timestamps are PRESENT, never omitted: a fresh account's nulls
-		// are keys with null values, which is how a client tells "never"
-		// from "missing".
 		for _, key := range []string{"id", "email", "disabled_at", "email_verified_at", "created_at"} {
 			if _, present := entry[key]; !present {
 				t.Errorf("entry %d omits %q, which the document promises", i, key)
@@ -299,9 +248,6 @@ func TestTheStaffDirectorySearchReturnsTheMinimalProjection(t *testing.T) {
 		}
 	}
 
-	// The values: the verified entry's timestamp renders, the others are null.
-	// Entry 0 verified its address and was never disabled; entry 1 is disabled
-	// and never verified.
 	if got := body.Users[0]["email_verified_at"]; got == nil {
 		t.Errorf("entry 0's email_verified_at is null, want %s", verifiedAt.Format(time.RFC3339))
 	}
@@ -315,7 +261,6 @@ func TestTheStaffDirectorySearchReturnsTheMinimalProjection(t *testing.T) {
 		t.Errorf("entry 1's disabled_at is null, want %s", disabledAt.Format(time.RFC3339))
 	}
 
-	// An empty directory is `[]` and not `null`.
 	f.auth.searchResults = nil
 	empty := sendStaff(t, f.handler, http.MethodGet, "/v1/operator/users?query=kaka", f.session)
 	if empty.Code != http.StatusOK {
@@ -326,8 +271,6 @@ func TestTheStaffDirectorySearchReturnsTheMinimalProjection(t *testing.T) {
 	}
 }
 
-// TestTheStaffDirectorySearchValidationIsAContract is the query bounds, as a
-// table: the search a directory will not run, and the bound it will not cross.
 func TestTheStaffDirectorySearchValidationIsAContract(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -373,7 +316,6 @@ func TestTheStaffDirectorySearchValidationIsAContract(t *testing.T) {
 	}
 }
 
-// TestTheStaffDirectoryHonoursAnExplicitLimit is the bound passing through.
 func TestTheStaffDirectoryHonoursAnExplicitLimit(t *testing.T) {
 	f := newStaffFixture(t, true)
 
@@ -386,7 +328,6 @@ func TestTheStaffDirectoryHonoursAnExplicitLimit(t *testing.T) {
 	}
 }
 
-// TestTheStaffDirectoryRefusesEverybodyElse is the gate on the search.
 func TestTheStaffDirectoryRefusesEverybodyElse(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -427,8 +368,6 @@ func TestTheStaffDirectoryRefusesEverybodyElse(t *testing.T) {
 	}
 }
 
-// TestADirectoryFailureIsA500WithNothingInIt is the operational half: the
-// caller gets a trace id and the cause stays in the log.
 func TestADirectoryFailureIsA500WithNothingInIt(t *testing.T) {
 	f := newStaffFixture(t, true)
 	f.auth.searchErr = errDatabaseWentAway
@@ -449,12 +388,7 @@ func TestADirectoryFailureIsA500WithNothingInIt(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// POST /v1/operator/users/{userID}/disable|enable
-// ---------------------------------------------------------------------------
 
-// TestAStaffHumanDisablesAndReEnables is the route working in both directions,
-// with the human actor on the audit input.
 func TestAStaffHumanDisablesAndReEnables(t *testing.T) {
 	f := newStaffFixture(t, true)
 	subject := id.MustNew()
@@ -499,7 +433,6 @@ func TestAStaffHumanDisablesAndReEnables(t *testing.T) {
 	}
 }
 
-// TestTheStaffDisableEnableRefusesEverybodyElse is the gate on the mutations.
 func TestTheStaffDisableEnableRefusesEverybodyElse(t *testing.T) {
 	cases := []struct {
 		name            string
@@ -548,10 +481,6 @@ func TestTheStaffDisableEnableRefusesEverybodyElse(t *testing.T) {
 	}
 }
 
-// TestARefusedStaffMutationDisclosesNoExistence is the enumeration half: the
-// gate runs before the subject is parsed, so a caller who may not act learns
-// nothing about whether the named user exists — and not even whether the id
-// is well-formed.
 func TestARefusedStaffMutationDisclosesNoExistence(t *testing.T) {
 	for _, target := range []string{
 		"/v1/operator/users/" + id.MustNew().String() + "/disable",
@@ -572,9 +501,6 @@ func TestARefusedStaffMutationDisclosesNoExistence(t *testing.T) {
 	}
 }
 
-// TestTheStaffMutationsRefusalsAreTheStatusesThisServicePromises is the error
-// mapping: unknown subject behind the gate is a 404 staff can act on, and
-// anything else is a 500 with a trace id.
 func TestTheStaffMutationsRefusalsAreTheStatusesThisServicePromises(t *testing.T) {
 	for _, action := range []string{"disable", "enable"} {
 		t.Run(action+"/an id this service never issued", func(t *testing.T) {
@@ -621,17 +547,7 @@ func TestTheStaffMutationsRefusalsAreTheStatusesThisServicePromises(t *testing.T
 	}
 }
 
-// ---------------------------------------------------------------------------
-// the surface's place in this repository's tables
-// ---------------------------------------------------------------------------
 
-// TestTheDriftWalkSeesTheStaffSurface is the behavioral instance of
-// router_walk_test.go's bug, for the four routes this packet mounts.
-//
-// They hang off `auth` — the use cases are `auth.Service`'s — so no walk
-// literal needs a new field to see them. The row asserts the walks FIND them
-// rather than that a field was set, because a route no walk can see is a route
-// whose document entry, audit row and README row nothing verifies.
 func TestTheDriftWalkSeesTheStaffSurface(t *testing.T) {
 	want := []operationKey{
 		{Method: "GET", Path: "/v1/operator/me"},
@@ -655,10 +571,6 @@ func TestTheDriftWalkSeesTheStaffSurface(t *testing.T) {
 	}
 }
 
-// TestAStaffSessionCannotUseTheMachineOperatorSurface is the regression in the
-// other direction: the packet adds a human path and must not widen the machine
-// one. A session — staff or not — is 403 on the scoped-token routes, and the
-// use case is never reached.
 func TestAStaffSessionCannotUseTheMachineOperatorSurface(t *testing.T) {
 	f := newStaffFixture(t, true)
 	subject := id.MustNew()

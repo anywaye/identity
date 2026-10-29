@@ -1,83 +1,5 @@
 package client
 
-// RFC 9457 PROBLEM DOCUMENTS, AND THE TYPED FALLBACK THAT IS THE POINT.
-//
-// Every non-2xx response from identity is `application/problem+json` — its own
-// document says so, and core's `docs/openapi-conventions.md` says "No service
-// invents its own error body". That uniformity is the opportunity: one shape means
-// one place to turn a failure into a value a caller can branch on with `errors.As`
-// rather than by reading a string.
-//
-// # `ProblemError` IS AN INTERFACE, AND THAT IS THE WHOLE DESIGN
-//
-// It is the Go equivalent of TypeScript's `instanceof AnywayeProblemError`, and it
-// has to be an interface rather than a base struct for a reason that is easy to get
-// wrong. This was tried as a base struct first, embedded BY VALUE:
-//
-//	type ValidationError struct{ ProblemError }
-//
-// and the obvious catch does not work:
-//
-//	var problem *client.ProblemError
-//	errors.As(err, &problem)   // false, for every typed error
-//
-// `errors.As` matches on assignability, and embedding does not create an
-// assignment: `*ValidationError` is not assignable to `*ProblemError`, with a value
-// OR a pointer embedding. Verified rather than assumed — a three-line program with
-// the same shape, which the compiler rejected.
-//
-// That failure mode is the worst one available. The caller writes the single catch
-// the brief asks for, it compiles, it returns false, and it returns false ONLY for
-// the codes this build happens to have a type for — so the fallback, the thing that
-// exists to make an unknown code survivable, is the only code that works. The
-// hierarchy would be exactly backwards.
-//
-// So `ProblemError` is an interface. Every concrete error implements it, a caller
-// catches it with `errors.As`, and the typed errors are an ADDITION to the catch
-// rather than a thing that has to be known in advance:
-//
-//	var problem client.ProblemError
-//	if errors.As(err, &problem) {
-//	    switch problem.Code() { … }              // works for every code, seen or not
-//	}
-//	// and, when the specific one is wanted:
-//	var validation *client.ValidationError
-//	errors.As(err, &validation)                 // narrows, and may be false
-//
-// # WHY `code` CHOOSES THE TYPE AND `status` IS THE FALLBACK
-//
-// core's conventions: "`type` is a stable `https://docs.anywaye.com/errors/<code>` URI —
-// the machine-readable contract" and "`code` is the same slug as the last segment of
-// `type`". So `code` is the contract and `status` is a fact about one response, which
-// a service could get wrong or omit, since RFC 9457 makes `status` advisory.
-//
-// Mapping on `code` first and falling back to `status` means a service answering 403
-// with `code: "forbidden"` produces the right type even if the number drifts, and a
-// service that omits `code` entirely is still mapped from the number.
-//
-// # THE FALLBACK IS THE REQUIREMENT, NOT A CONVENIENCE
-//
-// The brief is explicit: "A client that returns `ok, false` on an unknown problem
-// type breaks the day the API grows, and it breaks silently."
-//
-// So `UnknownProblemError` is a REAL TYPE, not a nil and not a bare error. A code
-// this build has never heard of produces one, carrying that code, that status, that
-// type URI and that trace id intact.
-//
-// This is not hypothetical for identity specifically: its own document lists four
-// codes that are NOT in core's reserved list — `account_locked`, `invalid_json`,
-// `payload_too_large`, `service_unavailable` — and flags them for core as a proposal
-// rather than a fait accompli. Those codes will exist before core's list catches up.
-// A client that had to be regenerated to handle a code its own service documents
-// would be wrong on day one.
-//
-// # WHY SEPARATE TYPES RATHER THAN ONE WITH A STATUS FIELD
-//
-// Because a caller frequently wants `errors.As(&unauthenticated)` rather than a
-// field comparison, and because `account_locked` needs a retry-after that `forbidden`
-// does not have — a 423 is the one failure in this set where the right action is to
-// wait and try again, and an error type that carries the wait is the difference
-// between a client that backs off and one that does not.
 
 import (
 	"encoding/json"
@@ -111,35 +33,21 @@ const RetryAfterHeader = "Retry-After"
 type ProblemError interface {
 	error
 
-	// Code is the anywaye problem code: the last segment of `type`, in snake_case.
-	// Empty when the service omitted it, which is legal under RFC 9457 and is
-	// mapped from the status instead.
 	Code() string
 
-	// HTTPStatus is the status the response carried.
 	HTTPStatus() int
 
-	// Document is the decoded problem, with every string member redacted.
 	Document() generated.Problem
 
-	// TraceID is always equal to the `X-Trace-Id` response header. Support starts
-	// here, which is why the redactor does not touch it.
 	TraceID() string
 }
 
-// problem is the unexported base every concrete problem error embeds.
-//
-// Unexported so the set of types is exactly what this file lists — a caller cannot
-// construct one, and cannot depend on a field this package might change. It is
-// embedded BY VALUE, which is safe here precisely because callers catch through the
-// `ProblemError` interface rather than through this struct.
 type problem struct {
 	operation string
 	status    int
 	document  generated.Problem
 	redactor  Redactor
 
-	// retryAfter is -1 when the response carried no readable `Retry-After`.
 	retryAfter int
 }
 
@@ -148,8 +56,6 @@ func (p *problem) HTTPStatus() int             { return p.status }
 func (p *problem) Document() generated.Problem { return p.document }
 func (p *problem) TraceID() string             { return p.document.TraceID }
 
-// render is the shared message, so every type says the same thing about the same
-// failure and only the type name differs.
 func (p *problem) render(kind string) string {
 	where := ""
 	if p.operation != "" {
@@ -173,11 +79,6 @@ func (p *problem) render(kind string) string {
 	return p.redactor.String(msg)
 }
 
-// The concrete types. Each is a named type rather than a status field because a
-// caller wants `errors.As` for it, and each is named after the CODE rather than the
-// status — so a service whose status drifts does not silently change the type, and
-// a service answering 404 with a different code still produces the type the caller
-// asked for by code.
 
 // UnauthenticatedError is 401: the credential was absent, unknown, expired or
 // revoked. identity answers all four with one body, and so does this.
@@ -282,26 +183,13 @@ func (e *UnknownProblemError) ProblemCode() string { return e.Code() }
 //     is a status and there is no problem document, so producing a `ProblemError`
 //     would be a lie about `type` and `title`.
 type CallError struct {
-	// Operation is the `operationId` the call was made through, which is the name of
-	// the generated method and therefore the thing a reader recognizes.
 	Operation string
-	// Status is the HTTP status, or 0 when there was no HTTP response.
 	Status int
 
-	// message is what the caller already knows, stored ALREADY redacted rather than
-	// redacted at render time.
-	//
-	// The value that goes in here is built out of things this package does not own —
-	// `net/http`'s `*url.Error` text, a JSON decoder's complaint, a server's own
-	// words. Redacting once, at construction, means there is no field on this type
-	// that holds an unscrubbed string, so a future `fmt.Printf("%+v", err)` prints a
-	// message that was already safe.
 	message string
 
-	// snippet is a redacted excerpt of a body that was not a problem document.
 	snippet string
 
-	// contentType is what the service said it sent, or "".
 	contentType string
 
 	redactor Redactor
@@ -351,22 +239,10 @@ func (e *CallError) Unwrap() error { return nil }
 type MFARequiredError struct {
 	CallError
 
-	// Challenge is what to pass to `POST /v1/session/mfa`, as `challenge` or as the
-	// `__Host-mfa-challenge` cookie. Single-use, ten minutes, and worthless alone.
 	Challenge generated.MFAChallenge
 }
 
 func (e *MFARequiredError) Error() string {
-	// The sentence names POST /v1/session/mfa because that is where the challenge
-	// goes from EITHER source. Two operations produce this error — a password login
-	// and a completed social callback — and a caller handling it with `errors.As`
-	// finishes the login the same way for both, which is the point of the second
-	// source existing: one code path for "the login is not finished yet" rather
-	// than one per way of starting it.
-	//
-	// "the password was correct" would be a lie on the social path, where no
-	// password was presented at all, so the sentence is about the credential being
-	// accepted rather than about which one it was.
 	return e.redactor.String(e.Operation +
 		": the credential was accepted and this account has a second factor, so no session " +
 		"exists. Answer POST /v1/session/mfa with the challenge to get one.")
@@ -427,11 +303,6 @@ func MFARequiredFrom(operation string, body []byte, redact Redactor) error {
 // Kept a pure function of its arguments — no `*http.Response`, no transport — which
 // is what lets the per-code table below be a table rather than a fixture.
 func ProblemFrom(operation string, status int, contentType, retryAfter string, body []byte, redact Redactor) error {
-	// A 2xx carrying a problem body is a contract violation, and it returns rather
-	// than handing the caller a Problem where its types promised a result. A typed
-	// client that quietly returns the wrong shape is worse than one that stops: the
-	// first produces a `json.UnmarshalTypeError` three frames from the mistake and
-	// the second produces a diagnosis at it.
 	if status >= 200 && status < 300 {
 		return &CallError{
 			Operation: operation, Status: status, redactor: redact,
@@ -447,18 +318,12 @@ func ProblemFrom(operation string, status int, contentType, retryAfter string, b
 		return notAProblem(operation, status, contentType, body, redact)
 	}
 
-	// A body that parsed but is not a problem: `{}` from a proxy, or a service
-	// answering a bare JSON error. Structural rather than trusting the status, because
-	// a 502 from a WAF is a JSON object and not a problem document.
 	if decoded.Type == "" && decoded.Title == "" {
 		return notAProblem(operation, status, contentType, body, redact)
 	}
 
 	decoded = sanitiseProblem(decoded, redact)
 	if decoded.Status == 0 {
-		// RFC 9457 makes `status` advisory, so a service that omits it is legal. Fill
-		// it from the response rather than leaving 0, which on a 4xx or 5xx would mean
-		// "no HTTP response" everywhere else in this package.
 		decoded.Status = status
 	}
 
@@ -477,17 +342,9 @@ func ProblemFrom(operation string, status int, contentType, retryAfter string, b
 		return constructor(*built)
 	}
 
-	// THE FALLBACK. A code nobody here has heard of still produces a typed, named,
-	// `errors.As`-able error carrying that code, this status and this trace id. Not
-	// `ok, false`, and not a bare error.
 	return &UnknownProblemError{problem: *built}
 }
 
-// notAProblem builds the error for a response that carried no problem document.
-//
-// Its own function because three paths reach it — an unparseable body, a parsed body
-// with no `type` and no `title`, and a 2xx — and three copies of the same message
-// assembly is three places for the wording to drift.
 func notAProblem(operation string, status int, contentType string, body []byte, redact Redactor) error {
 	shown := contentType
 	if shown == "" {
@@ -499,19 +356,10 @@ func notAProblem(operation string, status int, contentType string, body []byte, 
 		message: "the response did not carry an RFC 9457 problem document (Content-Type: " +
 			shown + "). Something between this client and identity answered — a proxy, a " +
 			"gateway, a rate limiter — so there is no anywaye code to branch on.",
-		// The excerpt is kept because a reverse proxy's HTML 502 is otherwise
-		// undiagnosable from the client side, and dropped when redaction removed all
-		// of it: `Redacted` means there was something credential-shaped in there and
-		// none of it is going in an error.
 		snippet: redact.String(truncate(strings.TrimSpace(string(body)), 200)),
 	}
 }
 
-// problemTypes maps a problem's `code` to the type that carries it.
-//
-// Data rather than a switch, because the fallback is the interesting part and a
-// `default` clause reads as an error path: a missing map entry reads as "this code is
-// not known yet", which is what it means.
 var problemTypes = map[string]func(problem) error{
 	"unauthorized":      func(p problem) error { return &UnauthenticatedError{p} },
 	"forbidden":         func(p problem) error { return &ForbiddenError{p} },
@@ -522,14 +370,6 @@ var problemTypes = map[string]func(problem) error{
 	"account_locked":    func(p problem) error { return &AccountLockedError{p} },
 }
 
-// statusTypes is the fallback, keyed by status, for a service that omits `code`.
-//
-// Narrower than the code map on purpose. Only statuses that are unambiguous across
-// the whole fleet appear. A 423 maps to nothing here, because a bare 423 without a
-// code could be identity's `account_locked` and something else entirely elsewhere,
-// and inventing a type for it would be a guess. An unmapped status produces
-// `*UnknownProblemError`, which is the correct answer for "I know the status and not
-// the meaning".
 var statusTypes = map[int]func(problem) error{
 	http.StatusUnauthorized:        func(p problem) error { return &UnauthenticatedError{p} },
 	http.StatusForbidden:           func(p problem) error { return &ForbiddenError{p} },
@@ -539,17 +379,6 @@ var statusTypes = map[int]func(problem) error{
 	http.StatusTooManyRequests:     func(p problem) error { return &RateLimitedError{p} },
 }
 
-// sanitiseProblem returns a copy with every string member redacted.
-//
-// A free function rather than a method, because `generated.Problem` belongs to
-// another package and Go does not let one package define methods on another's type.
-// That constraint does useful work: redaction cannot be attached to the type, so it
-// cannot be forgotten at a call site that decodes a problem some other way.
-//
-// A copy rather than an in-place edit, so the caller's decoded document is not
-// mutated. Member by member rather than by marshaling to JSON and redacting the
-// result, because marshaling would reorder, re-encode and lose the distinction
-// between an absent `errors` and an empty one.
 func sanitiseProblem(p generated.Problem, r Redactor) generated.Problem {
 	out := p
 	out.Type = r.String(p.Type)
@@ -558,9 +387,6 @@ func sanitiseProblem(p generated.Problem, r Redactor) generated.Problem {
 	out.Instance = r.String(p.Instance)
 	out.Code = generated.ProblemCode(r.String(string(p.Code)))
 
-	// TraceID is NOT redacted, deliberately: it is generated by the service rather
-	// than supplied by the caller, it is what support starts from, and a redactor
-	// that ate it would make every unsupported failure harder to report.
 
 	if p.Errors != nil {
 		fields := make([]generated.FieldError, len(*p.Errors))
@@ -575,14 +401,6 @@ func sanitiseProblem(p generated.Problem, r Redactor) generated.Problem {
 	return out
 }
 
-// parseRetryAfter reads a `Retry-After` header in its delta-seconds form, returning
-// -1 when there is nothing to read.
-//
-// RFC 9110 also allows an HTTP-date, which this does not parse: the document says
-// identity's value is "whole seconds, rounded up", so delta-seconds is the only form
-// this service emits. An HTTP-date from something else in the chain is reported as
-// ABSENT rather than guessed at, because a wrong retry time is worse than a caller
-// falling back to its own policy.
 func parseRetryAfter(raw string) int {
 	if raw == "" {
 		return -1

@@ -10,48 +10,9 @@ import (
 	"strings"
 )
 
-// The recovery codes, and why they are shaped the way they are.
-//
-// A recovery code is the worst credential in this system and it is still
-// preferable to the alternative, which is a locked-out user. It has 80 bits of
-// entropy, it is typed into a form, and it is very likely to end up written on
-// paper. Every design choice below follows from those three facts.
-//
-// THE SHAPE: 16 base32 characters in four groups of four, separated by dashes.
-//
-//	7KQF-4W2X-9DTR-M3HN
-//
-// Base32 rather than hex, because base32 is 20% more compact at the same
-// entropy: 80 bits is 20 hex characters or 16 base32 ones, and a code a user has
-// to retype is a code they will mistype. It is encoding/base32 from the standard
-// library and not a hand-rolled alphabet — the packet forbids reimplementing
-// base32, and the reason is the same one that put pquerna/otp in go.mod: this is
-// a specification, and a private implementation of a specification is a
-// vulnerability with tests.
-//
-// Grouped, because a 16-character unbroken string is mistyped at a
-// rate that shows up as "my code does not work" support tickets, and a human
-// reading a code back over the phone needs somewhere to pause.
-//
-// The alphabet is the RFC 4648 base32 alphabet — A-Z and 2-7 — and the four
-// digits it omits are the whole reason for using it rather than hex. 0, 1, 8 and
-// 9 are not in the set, which means the four transcription confusions that
-// actually happen with typed codes — 0 for O, 1 for I, 1 for l, 8 for B — cannot
-// occur at all. A mistyped digit is REJECTED, loudly, instead of being silently
-// accepted as a different code, and a user who is told their code is wrong can
-// try again rather than wondering which character went missing.
-//
-// The case confusions that remain are resolved by the uppercase normalisation in
-// NormalizeRecoveryCode rather than by choosing a different alphabet: a user with
-// Caps Lock off types a lower-case L and gets an upper-case L, which is the
-// character they meant.
 
-// recoveryAlphabet is RFC 4648 base32 without padding, which is the same encoding
-// an authenticator app uses for a TOTP secret. Reusing it means one decoder in
-// this package and one thing to get right.
 var recoveryAlphabet = base32.StdEncoding.WithPadding(base32.NoPadding)
 
-// recoveryGroup is how many characters sit between dashes.
 const recoveryGroup = 4
 
 // NewRecoveryCodes mints a full set.
@@ -81,15 +42,11 @@ func NewRecoveryCodes() ([]string, error) {
 func NewRecoveryCode() (string, error) {
 	raw := make([]byte, RecoveryCodeBytes)
 	if _, err := io.ReadFull(rand.Reader, raw); err != nil {
-		// As in internal/platform/id and internal/sessions: a degraded entropy
-		// source is a condition to stop on, not something to produce a credential
-		// from.
 		return "", fmt.Errorf("mfa: reading random bytes for a recovery code: %w", err)
 	}
 	return formatRecoveryCode(recoveryAlphabet.EncodeToString(raw)), nil
 }
 
-// formatRecoveryCode adds the dashes.
 func formatRecoveryCode(joined string) string {
 	var b strings.Builder
 	for i, r := range joined {
@@ -141,15 +98,8 @@ func IsRecoveryCode(value string) bool {
 	return true
 }
 
-// recoveryEncodingLen is the length of RecoveryCodeBytes in base32, computed
-// rather than typed so RecoveryCodeBytes and this cannot drift.
 var recoveryEncodingLen = (RecoveryCodeBytes*8 + 4) / 5
 
-// recoveryAlphabetChars is the RFC 4648 §6 alphabet, upper case, which is the one
-// recoveryAlphabet encodes with. It is spelled out so IsRecoveryCode has
-// something to test membership against, and
-// TestRecoveryAlphabetIsTheOneTheEncoderUses is what keeps the two from drifting:
-// a hand-copied alphabet next to an encoder is a hand-copied alphabet.
 const recoveryAlphabetChars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
 
 // RecoveryDigest is the value stored in mfa_recovery_codes.code_digest.

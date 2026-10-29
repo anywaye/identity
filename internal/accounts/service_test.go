@@ -18,13 +18,6 @@ import (
 	"github.com/anywaye/identity/internal/users"
 )
 
-// These drive the real Service over the real Store against a private schema.
-//
-// The rules worth testing here are the ones a hand-written fake would let you
-// get wrong: the ones that depend on what is in the database at the moment of
-// the decision — how many owners there are, whether an address already has a
-// pending invitation, whether the user is already a member — and the ones about
-// which writes land in the same transaction as which.
 
 type harness struct {
 	svc     *Service
@@ -34,11 +27,6 @@ type harness struct {
 	clock   *clock.Fake
 	q       db.Querier
 
-	// pool is q's concrete type, kept so a fixture can open a transaction of its
-	// own. q is typed as the interface because most fixtures only ever issue a
-	// statement, and a type assertion in each of those would be noise. The one
-	// fixture that needs `db.TxRunner` — which takes a pool — is
-	// addRealMember in get_rls_test.go.
 	pool *pgxpool.Pool
 }
 
@@ -66,19 +54,11 @@ func newHarness(t *testing.T) *harness {
 			revokes,
 			clk,
 			db.Direct{Pool: pool},
-			nil, // no mailer: these tests are about the tenancy writes, not the email
+			nil,
 		),
 	}
 }
 
-// recordedRevocations is the CredentialRevoker double.
-//
-// It exists rather than the real api key store because this package CANNOT import
-// that one: internal/apikeys imports this package for accounts.Role, so a real one
-// here would be an import cycle that exists only because a role is a type on both
-// sides. The double records what the use case asked for, which is the whole of
-// this package's half of the contract — the table it reaches is apikeys' problem
-// and is tested there.
 type recordedRevocations struct {
 	mu       sync.Mutex
 	calls    []revocation
@@ -107,13 +87,8 @@ func (r *recordedRevocations) count() int {
 	return len(r.calls)
 }
 
-// recordedEvents keeps the envelopes, so a test can assert that an event was
-// written rather than only that a method was called.
 type recordedEvents struct {
 	appended []outbox.Envelope
-	// failWith makes every Append fail, which is how a test proves a use case
-	// writes its event INSIDE the transaction it is tested for: a service that
-	// appended afterwards would have committed its writes by the time this fired.
 	failWith error
 }
 
@@ -125,16 +100,10 @@ func (r *recordedEvents) Append(_ context.Context, _ db.Querier, e outbox.Envelo
 	return nil
 }
 
-// reset drops the recorded events, so a test can assert about the events ITS OWN
-// action produced rather than about the ones a fixture's setup emitted. Every
-// event assertion in the transfer tests needs it: building the fixture writes an
-// identity.account.created, and "appended exactly [ownership_transferred]" is
-// only a statement about the transfer if the create has been cleared first.
 func (r *recordedEvents) reset() {
 	r.appended = nil
 }
 
-// types is the list of event types appended so far, for failure messages.
 func (r *recordedEvents) types() []string {
 	out := make([]string, 0, len(r.appended))
 	for _, e := range r.appended {
@@ -143,7 +112,6 @@ func (r *recordedEvents) types() []string {
 	return out
 }
 
-// only asserts that the appended events are exactly wantTypes, in any order.
 func (r *recordedEvents) only(t *testing.T, wantTypes ...string) {
 	t.Helper()
 
@@ -165,7 +133,6 @@ func (r *recordedEvents) only(t *testing.T, wantTypes ...string) {
 	}
 }
 
-// payloadFor returns the raw data of the first appended event of the given type.
 func (r *recordedEvents) payloadFor(t *testing.T, eventType string) outbox.Envelope {
 	t.Helper()
 
@@ -178,9 +145,6 @@ func (r *recordedEvents) payloadFor(t *testing.T, eventType string) outbox.Envel
 	return outbox.Envelope{}
 }
 
-// addUser writes a user row and returns its id. A fixture helper, not a use
-// case: most of these tests care about memberships, not about how a user comes
-// to exist.
 func addUser(t *testing.T, q db.Querier) id.UUID {
 	t.Helper()
 	return addUserWithEmail(t, q, dbtest.UniqueEmail(t))
@@ -198,8 +162,6 @@ func addUserWithEmail(t *testing.T, q db.Querier, email string) id.UUID {
 	return uid
 }
 
-// member makes a user with the given role in an account, without going through
-// the invitation path. Fixtures need the end state, not the journey.
 func (h *harness) member(t *testing.T, accountID id.UUID, role Role) id.UUID {
 	t.Helper()
 
@@ -210,8 +172,6 @@ func (h *harness) member(t *testing.T, accountID id.UUID, role Role) id.UUID {
 	return uid
 }
 
-// owned makes an account with owner as its sole owner, through the real use
-// case so the fixture is the shape a client's would produce.
 func (h *harness) owned(t *testing.T, name string, owner id.UUID) Account {
 	t.Helper()
 
@@ -247,8 +207,6 @@ func TestCreateMakesTheCallerTheOwner(t *testing.T) {
 		t.Errorf("slug = %q, want %q — it is derived from the name", account.Slug, "acme-corp")
 	}
 
-	// The creator is the owner, and that is the only membership. If this were
-	// wrong the account would exist with nobody able to administer it.
 	assertRole(t, h, account.ID, owner, RoleOwner)
 
 	h.events.only(t, outbox.EventAccountCreated)
@@ -283,17 +241,11 @@ func TestCreateRejectsAnInvalidName(t *testing.T) {
 		})
 	}
 
-	// A refused Create writes nothing at all: not an account, not an event.
 	if got := h.events.types(); len(got) != 0 {
 		t.Errorf("refused creates emitted %v, want none", got)
 	}
 }
 
-// The slug is derived from the name and is unique, so the second account called
-// "Acme Corp" is a 409 and the first is untouched. The refusal is the point: a
-// silent "-2" suffix would hand the second person a handle nobody chose and move
-// nothing for the first, but it would also mean the caller never learns their
-// account is not the one they asked for.
 func TestCreateRejectsATakenSlugThroughTheService(t *testing.T) {
 	h := newHarness(t)
 	owner := addUser(t, h.q)
@@ -320,23 +272,6 @@ func TestCreateRejectsATakenSlugThroughTheService(t *testing.T) {
 	}
 }
 
-// TestGetIsInvisibleToANonMember and TestListMineIsScopedToTheCaller are GONE
-// from this file, and the reason is the whole subject of get_rls_test.go.
-//
-// Both asserted a property of the account boundary — "a non-member cannot read
-// this account", "this list is scoped to the caller" — and both passed on
-// `dbtest.Schema`, whose tables are cloned with `LIKE … INCLUDING ALL` and
-// therefore carry NO row-level security. A test that asserts a boundary
-// property and passes against a table where every row is visible to every
-// caller is not testing the boundary; it is testing the query.
-//
-// They now run against `dbtest.Pool` — the public tables, the app role, the
-// policies live — as TestGetFindsTheCallersOwnAccountUnderTheRealPolicies and
-// TestListMineIsScopedToTheCallerUnderTheRealPolicies in get_rls_test.go. That
-// is the only arrangement in which the assertions can fail for the right
-// reason: with the policies installed, a missing `tenancy.BeginUser` makes
-// `Get` refuse the owner their own account and `ListMine` answer `[]` to a user
-// who owns one, which is exactly the defects those two use cases had.
 
 func TestInviteLifecycle(t *testing.T) {
 	h := newHarness(t)
@@ -353,7 +288,6 @@ func TestInviteLifecycle(t *testing.T) {
 	}
 	invitation, token := invited.Invitation, invited.Token
 
-	// The token is returned exactly once and the row holds only its digest.
 	if token == "" {
 		t.Fatal("Invite returned no token, so nobody could ever accept it")
 	}
@@ -370,7 +304,6 @@ func TestInviteLifecycle(t *testing.T) {
 		t.Errorf("expires_at = %s, want %s (the injected now plus %s)", invitation.ExpiresAt, want, InvitationTTL)
 	}
 
-	// The invitee is not a member until they accept.
 	if _, err := h.svc.Member(t.Context(), account.ID, invitee); !errors.Is(err, ErrNotAMember) {
 		t.Errorf("the invitee is a member before accepting: %v", err)
 	}
@@ -383,7 +316,6 @@ func TestInviteLifecycle(t *testing.T) {
 		t.Errorf("Accept returned %+v, want a member of %s with role %q", m, account.ID, RoleMember)
 	}
 
-	// Both events, both in the redemption's transaction.
 	h.events.only(t,
 		outbox.EventAccountCreated,
 		outbox.EventMemberInvited,
@@ -391,13 +323,11 @@ func TestInviteLifecycle(t *testing.T) {
 	)
 }
 
-// Expiry is checked against the injected clock, never by sleeping.
 func TestAcceptIsRefusedAfterExpiry(t *testing.T) {
 	h := newHarness(t)
 	owner := addUser(t, h.q)
 	account := h.owned(t, "Expiring", owner)
 
-	// One second before the window closes, the invitation still works.
 	justInTime, err := h.svc.Invite(t.Context(), InviteInput{
 		AccountID: account.ID, Email: dbtest.UniqueEmail(t), Role: RoleMember, InvitedBy: owner,
 	})
@@ -409,7 +339,6 @@ func TestAcceptIsRefusedAfterExpiry(t *testing.T) {
 		t.Fatalf("one second before expiry: %v", err)
 	}
 
-	// A second invitation, and the clock moved past its window.
 	late, err := h.svc.Invite(t.Context(), InviteInput{
 		AccountID: account.ID, Email: dbtest.UniqueEmail(t), Role: RoleMember, InvitedBy: owner,
 	})
@@ -424,17 +353,11 @@ func TestAcceptIsRefusedAfterExpiry(t *testing.T) {
 	}
 }
 
-// A wrong token, an unknown token, a tampered token and a malformed one are all
-// the same error. Distinguishing them is how an invitation endpoint becomes an
-// oracle for "was somebody invited to this account".
 func TestAcceptIsSilentForAWrongToken(t *testing.T) {
 	h := newHarness(t)
 	owner := addUser(t, h.q)
 	account := h.owned(t, "Silent", owner)
 
-	// A pending invitation to this same account, whose token we then decline to
-	// present: the miss is silent even when a valid one exists, so the endpoint
-	// cannot be turned into "does this person have an invitation here".
 	if _, err := h.svc.Invite(t.Context(), InviteInput{
 		AccountID: account.ID, Email: dbtest.UniqueEmail(t), Role: RoleMember, InvitedBy: owner,
 	}); err != nil {
@@ -490,24 +413,6 @@ func TestAcceptIsRefusedTwice(t *testing.T) {
 	}
 }
 
-// A REVOKED INVITATION DOES NOT REDEEM.
-//
-// This is the test for identity-30, and it is a regression test against a
-// shipped bypass: RevokePendingInvitation stamps revoked_at and the row stays —
-// deliberately, so the audit trail can tell "withdrawn" from "never existed" —
-// while Accept looked the token up, saw AcceptedAt nil and not-expired, and
-// created the membership anyway. The token the account's admin had withdrawn was
-// a working credential.
-//
-// Three claims, and the third is the one that would catch a partial fix:
-//
-//  1. Accept refuses.
-//  2. It refuses with ErrInvitationNotFound specifically, not ErrInvitationUsed
-//     and not ErrInvitationExpired. openapi/v1.yaml promises 404 for a revoked
-//     invitation, and a distinct status would tell whoever holds a stolen token
-//     that this invitation was once real.
-//  3. Nothing was written. A refusal that returned the right error while leaving
-//     the membership behind would pass 1 and 2 and still be a bypass.
 func TestAcceptIsRefusedAfterRevocation(t *testing.T) {
 	h := newHarness(t)
 	owner := addUser(t, h.q)
@@ -521,8 +426,6 @@ func TestAcceptIsRefusedAfterRevocation(t *testing.T) {
 		t.Fatalf("Invite: %v", err)
 	}
 
-	// Revoked through the same store statement the admin surface uses, so this
-	// test does not pass by revoking in a way production never does.
 	changed, err := h.store.RevokePendingInvitation(t.Context(), h.q, account.ID, invited.Invitation.ID)
 	if err != nil {
 		t.Fatalf("RevokePendingInvitation: %v", err)
@@ -547,14 +450,6 @@ func TestAcceptIsRefusedAfterRevocation(t *testing.T) {
 	}
 }
 
-// The atomic half: a revocation that lands between the lookup and the UPDATE
-// must not be overwritten by a redemption that started before it.
-//
-// This is not reachable through Accept — the whole thing is one transaction and
-// the read is inside it — so it is tested at the store, which is where the
-// guarantee actually lives. The call above was on a row this transaction had not
-// touched; a service-level test of it would be a test of timing rather than of
-// the WHERE clause.
 func TestMarkInvitationAcceptedRefusesARevokedRow(t *testing.T) {
 	h := newHarness(t)
 	owner := addUser(t, h.q)
@@ -575,7 +470,6 @@ func TestMarkInvitationAcceptedRefusesARevokedRow(t *testing.T) {
 		t.Fatalf("MarkInvitationAccepted on a revoked row = %v, want ErrInvitationRevoked", err)
 	}
 
-	// And it did not quietly stamp accepted_at on the way to reporting that.
 	var accepted, revoked bool
 	if err := h.q.QueryRow(t.Context(),
 		`SELECT accepted_at IS NOT NULL, revoked_at IS NOT NULL FROM account_invitations WHERE id = $1`,
@@ -590,9 +484,6 @@ func TestMarkInvitationAcceptedRefusesARevokedRow(t *testing.T) {
 	}
 }
 
-// Accepting an invitation for an account you are already in is a 409, not a
-// silent success: the caller's intent was to add a membership, and the state
-// they asked for already holds.
 func TestAcceptRefusesASecondMembership(t *testing.T) {
 	h := newHarness(t)
 	owner := addUser(t, h.q)
@@ -620,8 +511,6 @@ func TestAcceptRefusesASecondMembership(t *testing.T) {
 	}
 }
 
-// The email is normalized exactly as a registration's is, so "kaka@example.com"
-// and "Kaka@Example.com" cannot both hold a pending invitation to one account.
 func TestInviteNormalizesTheEmail(t *testing.T) {
 	h := newHarness(t)
 	owner := addUser(t, h.q)
@@ -646,25 +535,7 @@ func TestInviteNormalizesTheEmail(t *testing.T) {
 	}
 }
 
-// TestOnlyAnOwnerMayInviteAnAdmin is GONE from this file, and the reason is the
-// subject of get_rls_test.go and invite_members_rls_test.go.
-//
-// It asserted the invite privilege rules — an admin may invite a member, only an
-// owner may invite an admin, a member may not invite anybody — and it passed on
-// `dbtest.Schema`, where the inviter's membership read always succeeds because
-// there is no policy to filter it. Two of its four cases (an admin inviting an
-// admin, a member inviting anybody) are already
-// TestInviteFindsTheInviterUnderTheRealPolicies on `dbtest.Pool`. The other two —
-// an ADMIN inviting a member and an OWNER inviting an admin, both successes —
-// are unique, and a success is the assertion that most needs the boundary: it
-// is the inviter's row being visible and the invitation's `with check` being
-// satisfied, neither of which a policy-free schema can refuse. It now runs as
-// TestOnlyAnOwnerMayInviteAnAdminUnderTheRealPolicies in
-// invite_members_rls_test.go, against the production wiring.
 
-// Even the owner cannot invite an owner. Ownership is granted, not carried by a
-// link: an account whose owner arrives by accepting a forwarded email has an
-// owner nobody chose.
 func TestInviteRefusesTheOwnerRole(t *testing.T) {
 	h := newHarness(t)
 	owner := addUser(t, h.q)
@@ -682,8 +553,6 @@ func TestInviteRoleParsesTheRequestString(t *testing.T) {
 	owner := addUser(t, h.q)
 	account := h.owned(t, "Strings", owner)
 
-	// The string form, which is what a request body carries, has to go through
-	// the same rules as the typed one.
 	_, err := h.svc.InviteRole(t.Context(), account.ID, dbtest.UniqueEmail(t), "owner", owner)
 	if !errors.Is(err, ErrRoleNotInvitable) {
 		t.Errorf("InviteRole(\"owner\") = %v, want ErrRoleNotInvitable", err)
@@ -726,9 +595,6 @@ func TestInviteRejectsABadEmail(t *testing.T) {
 	}
 }
 
-// The last-owner protection, in every shape. An account with no owner has nobody
-// who can administer it and every later request to it fails forever, so this is
-// the invariant most worth pinning.
 func TestLastOwnerProtection(t *testing.T) {
 	t.Run("the only owner cannot demote themselves", func(t *testing.T) {
 		h := newHarness(t)
@@ -788,7 +654,6 @@ func TestLastOwnerProtection(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("promoting to owner: %v", err)
 		}
-		// Now the original owner may step down: the account has two.
 		if _, err := h.svc.ChangeRole(t.Context(), ChangeRoleInput{
 			AccountID: account.ID, UserID: owner, Role: RoleMember, Actor: successor,
 		}); err != nil {
@@ -798,8 +663,6 @@ func TestLastOwnerProtection(t *testing.T) {
 	})
 }
 
-// An admin may remove members and other admins. The owner's membership is a
-// different object: only an owner touches it, and only while another remains.
 func TestRemoveMemberThroughTheService(t *testing.T) {
 	h := newHarness(t)
 	owner := addUser(t, h.q)
@@ -807,7 +670,6 @@ func TestRemoveMemberThroughTheService(t *testing.T) {
 	admin := h.member(t, account.ID, RoleAdmin)
 	target := h.member(t, account.ID, RoleMember)
 
-	// An admin removing a member: allowed.
 	if err := h.svc.RemoveMember(t.Context(), RemoveMemberInput{
 		AccountID: account.ID, UserID: target, Actor: admin,
 	}); err != nil {
@@ -817,7 +679,6 @@ func TestRemoveMemberThroughTheService(t *testing.T) {
 		t.Errorf("the member survived removal: %v", err)
 	}
 
-	// An admin removing the owner: refused, and the owner stays.
 	err := h.svc.RemoveMember(t.Context(), RemoveMemberInput{
 		AccountID: account.ID, UserID: owner, Actor: admin,
 	})
@@ -826,7 +687,6 @@ func TestRemoveMemberThroughTheService(t *testing.T) {
 	}
 	assertRole(t, h, account.ID, owner, RoleOwner)
 
-	// An owner removing a non-owner: allowed, even when that owner is the last.
 	if err := h.svc.RemoveMember(t.Context(), RemoveMemberInput{
 		AccountID: account.ID, UserID: admin, Actor: owner,
 	}); err != nil {
@@ -834,22 +694,6 @@ func TestRemoveMemberThroughTheService(t *testing.T) {
 	}
 }
 
-// TestRemoveMemberRevokesTheCredentialsTheyHeld is the rule this package exists to
-// enforce on behalf of another one, and it is worth its own test here rather than
-// only in internal/apikeys because THE USE CASE IS WHERE THE DECISION LIVES.
-//
-// THE STORY IT TELLS IS AN OFFBOARDING. A user is removed from an account, which
-// stops every machine credential they hold in it — and the second half is the one
-// that is easy to miss: the credential must not come BACK when the same person is
-// re-invited. A token whose authority is only re-evaluated would satisfy the
-// membership join again the moment a new row existed, and a contractor's CI
-// credential that was supposed to have died at offboarding would quietly start
-// working the day somebody re-adds them. So the removal revokes, explicitly, in the
-// same transaction.
-//
-// It is the same transaction on purpose. A membership deleted and a credential
-// left live is a state neither is defensible on its own: the operator believes both
-// happened or neither did.
 func TestRemoveMemberRevokesTheCredentialsTheyHeld(t *testing.T) {
 	h := newHarness(t)
 	owner := addUser(t, h.q)
@@ -872,15 +716,10 @@ func TestRemoveMemberRevokesTheCredentialsTheyHeld(t *testing.T) {
 	if got.userID != target {
 		t.Errorf("the sweep was scoped to user %s, want the member who was removed %s", got.userID, target)
 	}
-	// The same instant the removal and the event carry, so "when was this
-	// credential withdrawn" and "when was this person removed" have one answer.
 	if !got.at.Equal(h.clock.Now()) {
 		t.Errorf("the sweep ran at %s, want the service clock's %s", got.at, h.clock.Now())
 	}
 
-	// A REFUSED removal sweeps nothing. An admin who cannot remove the owner must
-	// not leave that owner's credentials revoked on the way to being told no — a
-	// sweep outside the transaction's success path is a partial write.
 	before := h.revokes.count()
 	if err := h.svc.RemoveMember(t.Context(), RemoveMemberInput{
 		AccountID: account.ID, UserID: owner, Actor: h.member(t, account.ID, RoleAdmin),
@@ -892,10 +731,6 @@ func TestRemoveMemberRevokesTheCredentialsTheyHeld(t *testing.T) {
 	}
 }
 
-// TestARemovalThatCannotSweepRollsBack is the other direction of the same
-// transaction, and it is the one that would be a real incident: the membership is
-// gone and the credentials are live, or the reverse. A revoker that fails must take
-// the whole removal with it.
 func TestARemovalThatCannotSweepRollsBack(t *testing.T) {
 	h := newHarness(t)
 	owner := addUser(t, h.q)
@@ -909,8 +744,6 @@ func TestARemovalThatCannotSweepRollsBack(t *testing.T) {
 		t.Fatal("a removal succeeded with a revoker that failed")
 	}
 
-	// The membership is back, and the event was not written: both writes were inside
-	// the transaction the sweep's failure rolled back.
 	if _, err := h.svc.Member(t.Context(), account.ID, target); err != nil {
 		t.Errorf("the membership was removed even though the sweep failed: %v", err)
 	}
@@ -921,18 +754,12 @@ func TestARemovalThatCannotSweepRollsBack(t *testing.T) {
 	}
 }
 
-// TestARemovalWithNoRevokerStillRemovesTheMembership: the sweep may be nil — a
-// deployment with no api key table has no credentials to revoke — and the
-// membership change must still happen. Refusing to offboard anybody because a
-// table that does not exist is not available would be a availability bug dressed up
-// as a safety one.
 func TestARemovalWithNoRevokerStillRemovesTheMembership(t *testing.T) {
 	h := newHarness(t)
 	owner := addUser(t, h.q)
 	account := h.owned(t, "Departures", owner)
 	target := h.member(t, account.ID, RoleMember)
 
-	// A service with no revoker, built the production way with a nil.
 	withoutSweep := NewService(
 		db.TxRunner{Pool: h.q.(db.Pool)},
 		h.store,
@@ -941,7 +768,7 @@ func TestARemovalWithNoRevokerStillRemovesTheMembership(t *testing.T) {
 		nil,
 		h.clock,
 		db.Direct{Pool: h.q.(db.Pool)},
-		nil, // no mailer: this fixture is about the credential sweep, not the email
+		nil,
 	)
 	if err := withoutSweep.RemoveMember(t.Context(), RemoveMemberInput{
 		AccountID: account.ID, UserID: target, Actor: owner,
@@ -966,9 +793,6 @@ func TestRemoveMemberMisses(t *testing.T) {
 	}
 }
 
-// core's catalog: "data carries old and new role". A consumer that only learns
-// the new role cannot revoke what it previously granted, and one that only
-// learns the old one cannot rebuild the current state.
 func TestChangeRoleEmitsBothRoles(t *testing.T) {
 	h := newHarness(t)
 	owner := addUser(t, h.q)
@@ -1025,8 +849,6 @@ func TestRenameGoesThroughTheService(t *testing.T) {
 	if renamed.Name != "After" {
 		t.Errorf("name = %q, want %q", renamed.Name, "After")
 	}
-	// The slug does not move: it is a handle that goes into logs, emails and a
-	// future hostname, and one that moved would break every link already sent.
 	if renamed.Slug != account.Slug {
 		t.Errorf("slug = %q, want the original %q", renamed.Slug, account.Slug)
 	}
@@ -1053,9 +875,6 @@ func TestDelete(t *testing.T) {
 	}
 }
 
-// Provision and AddOwner do not open their own transactions: they run
-// inside the registration's, which is the whole point of the packet's "same
-// transaction" requirement.
 func TestProvision(t *testing.T) {
 	h := newHarness(t)
 	email := dbtest.UniqueEmail(t)
@@ -1098,9 +917,6 @@ func TestProvision(t *testing.T) {
 	h.events.only(t, outbox.EventAccountCreated)
 }
 
-// Two people whose email local parts are the same must both be able to
-// register. This is the failure a plain Slugify would have produced: the second
-// is a 409 on a table they never knew they were competing for.
 func TestTwoPeopleWithTheSameLocalPartBothRegister(t *testing.T) {
 	h := newHarness(t)
 	runner := db.TxRunner{Pool: h.q.(db.Pool)}
@@ -1129,8 +945,6 @@ func TestTwoPeopleWithTheSameLocalPartBothRegister(t *testing.T) {
 	}
 }
 
-// tamper returns token with its last character changed: a well-formed token that
-// matches no invitation, which is the closest thing to "a caller who guesses".
 func tamper(token string) string {
 	if token == "" {
 		return "x"

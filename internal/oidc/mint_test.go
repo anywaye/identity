@@ -11,11 +11,6 @@ import (
 	"github.com/anywaye/identity/internal/platform/id"
 )
 
-// The exchanged token's claim set, asserted against the SAME verifier shape a
-// receiver uses: go-jose's own parser, the provider's published public key, and
-// no access to anything private. A test that read the claims by decoding the
-// payload would prove nothing about the signature — which is the half a
-// consumer actually relies on.
 func TestMintAccountTokenSignsTheAccountScopedClaimSet(t *testing.T) {
 	t.Parallel()
 
@@ -29,8 +24,6 @@ func TestMintAccountTokenSignsTheAccountScopedClaimSet(t *testing.T) {
 		t.Fatalf("MintAccountToken: %v", err)
 	}
 
-	// The public half, straight out of the published key set: exactly what a
-	// verifier that fetched /.well-known/jwks.json holds.
 	jwksJSON, err := provider.JWKS()
 	if err != nil {
 		t.Fatalf("JWKS: %v", err)
@@ -54,17 +47,12 @@ func TestMintAccountTokenSignsTheAccountScopedClaimSet(t *testing.T) {
 	var claims struct {
 		jwt.Claims
 		AccountID string `json:"account_id"`
-		// Accounts exists ONLY so its absence is assertable: a second answer to
-		// "which account" in the same token is the defect the endpoint was built
-		// to remove.
 		Accounts []any `json:"accounts"`
 	}
 	if err := parsed.Claims(set.Keys[0].Key, &claims); err != nil {
 		t.Fatalf("the signature does not verify against the published key: %v", err)
 	}
 
-	// Judged AT the mint instant: `iat` is the caller's clock, and validating
-	// against wall time would make this test depend on when it runs.
 	if err := claims.Validate(jwt.Expected{Issuer: "https://identity.test", AnyAudience: jwt.Audience{"billing"}, Time: now}); err != nil {
 		t.Errorf("the standard claims do not validate: %v", err)
 	}
@@ -91,8 +79,6 @@ func TestMintAccountTokenSignsTheAccountScopedClaimSet(t *testing.T) {
 	}
 }
 
-// Two mints are two tokens, even in one frozen instant: the jti is what lets a
-// receiver keep a replay ledger without comparing whole strings.
 func TestMintAccountTokenIsUniquePerCall(t *testing.T) {
 	t.Parallel()
 

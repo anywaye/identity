@@ -8,28 +8,10 @@ import (
 	"github.com/anywaye/identity/internal/platform/id"
 )
 
-// The double for the agent claim use case.
-//
-// IT EXISTS SO THE WALKS CAN SEE THE ROUTE. `servedRoutes`, `mountedAccountRoutes`,
-// `mountedFamilyRoutes` and `walkOptions` each build an `options` literal, and a
-// field any of them leaves out is a surface the corresponding walk cannot read —
-// which is how five routes were mounted and green with no document entry. This
-// double is what makes the claim route visible to all four; the route it stands in
-// for is served by `agents.Service` in a real process.
-//
-// The assertions are deliberately few. A double that asserted real behavior would
-// be a second implementation of the use case, and the use case's own tests in
-// internal/agents are where the behavior is proved. What this one owes the suite
-// is queued answers with production's shapes: a claim that looks like the one
-// production produces, and ErrNotFound where production finds nothing.
 type fakeAgents struct {
 	claims []agents.Claimed
-	// err is returned on the next call, and nil is the default so the happy path
-	// needs no setup.
 	err error
 
-	// The W1-P2 fields, same err pattern per method so a test can drive a
-	// refusal, plus an optional authenticated owner and list result.
 	regErr     error
 	refreshErr error
 	authErr    error
@@ -38,8 +20,6 @@ type fakeAgents struct {
 	owner      *agents.Owner
 	tokens     []agents.Token
 
-	// The claim preview's queued error and results, same pattern as the token
-	// lifecycle's, so a test can drive the collapsed 404 and the 200 shape.
 	previewErr error
 	previews   []agents.ClaimPreview
 }
@@ -55,11 +35,6 @@ func (f *fakeAgents) Claim(_ context.Context, in agents.ClaimInput) (agents.Clai
 		f.claims = f.claims[1:]
 		return out, nil
 	}
-	// A claimed agent is what the route renders, and it is the shape the table's
-	// CHECK produces rather than a hand-written struct literal that could drift
-	// from it: an account, an instant and no link. The id is minted per call
-	// because the route renders it and a shared one would make two claims in one
-	// test look like the same agent.
 	agent := agents.Agent{
 		ID:                 id.MustNew(),
 		Name:               "Noel",
@@ -70,19 +45,7 @@ func (f *fakeAgents) Claim(_ context.Context, in agents.ClaimInput) (agents.Clai
 	return agents.Claimed{Agent: agent}, nil
 }
 
-// --- the claim preview ------------------------------------------------
 
-// PreviewClaim resolves a presented claim link to an unclaimed agent.
-//
-// THE DEFAULT IS ErrNotFound AND THAT IS THE FAITHFUL DEFAULT, not a shortcut.
-// Production resolves a claim link through the store's own ByClaimDigest, which
-// filters the digest, the status AND the expiry in one statement, so a link
-// nobody set up does not resolve — every time. A double that answered a happy
-// path for any segment would be a double that made the route's collapsed 404
-// unreachable, and the census's own probe (`TestEveryAuditedRouteStillAnswersWhatItsRowSays`,
-// which asks for a link it did not create) would then be answered 200 and the
-// audit row would have to be rewritten to describe a lie. So: a link a test
-// queues resolves, and anything else is one 404, exactly as on the claim route.
 func (f *fakeAgents) PreviewClaim(_ context.Context, in agents.PreviewInput) (agents.ClaimPreview, error) {
 	if f.previewErr != nil {
 		return agents.ClaimPreview{}, f.previewErr
@@ -95,20 +58,7 @@ func (f *fakeAgents) PreviewClaim(_ context.Context, in agents.PreviewInput) (ag
 	return agents.ClaimPreview{}, agents.ErrNotFound
 }
 
-// --- the W1-P2 surface ------------------------------------------------
-//
-// These make the fake satisfy the whole Agents interface, which is what lets the
-// router walks (servedRoutes, mountedFamilyRoutes, walkOptions) MOUNT the
-// registration and token routes and therefore require their document entries and
-// enumeration-audit rows. Their behavior is deliberately thin: the use cases have
-// their own tables in internal/agents, and this double's only obligation here is
-// that the surface is WIRED, not that it is correct.
-//
-// regErr is queued for the next Register, mirroring Claim's err, so a test can
-// drive the mapper's refusal arms.
 
-// Register mints a stand-in registration. It records nothing the assertion reads;
-// it exists so the route it mounts answers something shaped like production's.
 func (f *fakeAgents) Register(_ context.Context, in agents.RegisterInput) (agents.Registered, error) {
 	if f.regErr != nil {
 		return agents.Registered{}, f.regErr
@@ -137,8 +87,6 @@ func (f *fakeAgents) Register(_ context.Context, in agents.RegisterInput) (agent
 	}, nil
 }
 
-// RefreshClaimLink hands back a fresh link without claiming, matching production's
-// refreshed shape.
 func (f *fakeAgents) RefreshClaimLink(_ context.Context, in agents.RefreshClaimInput) (agents.RefreshedClaim, error) {
 	if f.refreshErr != nil {
 		return agents.RefreshedClaim{}, f.refreshErr
@@ -154,9 +102,6 @@ func (f *fakeAgents) RefreshClaimLink(_ context.Context, in agents.RefreshClaimI
 	}, nil
 }
 
-// Authenticate resolves the bearer credential to an owner. With an authenticated
-// owner configured it returns it; otherwise it hands back an unclaimed principal,
-// which is what a freshly-registered agent's token resolves to.
 func (f *fakeAgents) Authenticate(_ context.Context, _ string, _ time.Time) (agents.Owner, error) {
 	if f.authErr != nil {
 		return agents.Owner{}, f.authErr
@@ -172,7 +117,6 @@ func (f *fakeAgents) Authenticate(_ context.Context, _ string, _ time.Time) (age
 	}, nil
 }
 
-// IssueToken mints a stand-in credential.
 func (f *fakeAgents) IssueToken(_ context.Context, in agents.TokenInput) (agents.IssuedToken, error) {
 	if f.tokenErr != nil {
 		return agents.IssuedToken{}, f.tokenErr
@@ -189,12 +133,10 @@ func (f *fakeAgents) IssueToken(_ context.Context, in agents.TokenInput) (agents
 	}, nil
 }
 
-// ListTokens returns whatever the test queued.
 func (f *fakeAgents) ListTokens(_ context.Context, _ id.UUID) ([]agents.Token, error) {
 	return f.tokens, f.listErr
 }
 
-// RevokeToken returns the passed row on success.
 func (f *fakeAgents) RevokeToken(_ context.Context, _, tokenID id.UUID, _ string, _ string, _ time.Time) (agents.Token, error) {
 	if f.tokenErr != nil {
 		return agents.Token{}, f.tokenErr
@@ -202,7 +144,6 @@ func (f *fakeAgents) RevokeToken(_ context.Context, _, tokenID id.UUID, _ string
 	return agents.Token{ID: tokenID, Name: "bootstrap"}, nil
 }
 
-// RotateToken mints a stand-in replacement.
 func (f *fakeAgents) RotateToken(_ context.Context, agentID, tokenID id.UUID, _ *time.Duration, _ string, now time.Time) (agents.IssuedToken, error) {
 	if f.tokenErr != nil {
 		return agents.IssuedToken{}, f.tokenErr

@@ -1,29 +1,3 @@
-// Package deletion is the end of a person's presence in this service.
-//
-// # WHY THIS IS A PACKAGE AND NOT A METHOD ON auth
-//
-// `internal/auth` owns the lifecycle transitions that keep a person here —
-// register, sign in, disable, enable, change the password — and a deletion is the
-// one that does not. It is the only flow in this service whose subject is a row
-// that is GONE at the end of the transaction, which is a different shape of
-// problem from every other flow: the ordering constraints run the other way,
-// because most of the writes depend on the row still being readable, and the
-// last statement has to be the one that removes it.
-//
-// Putting it on `auth.Service` would also have been wrong for a reason the house
-// rules already know: `auth.Service` is wired with the session store, the access
-// token store, the user audit recorder and the outbox, and a deletion needs
-// tenancy reads and a different audit answer. A fifth dependency on a service
-// that already has four is how a use case acquires a cycle.
-//
-// # WHAT IT OWNS, AND WHAT IT DELEGATES
-//
-// The transaction and the ORDER are this package's. Everything that touches a
-// table is a collaborator behind an interface, for the reason
-// `accounts.AccountStore`'s doc comment gives: the interesting failures here are
-// "the account removal failed after the credentials were revoked" and "the
-// outbox write failed after the user row was deleted", and neither can be
-// arranged without a seam.
 package deletion
 
 import (
@@ -100,11 +74,6 @@ type UserStore interface {
 type AccountReader interface {
 	PersonalAccounts(ctx context.Context, q db.Querier, userID id.UUID) ([]accounts.Account, error)
 	SolelyOwnedTeamAccounts(ctx context.Context, q db.Querier, userID id.UUID) ([]accounts.Account, error)
-	// Delete removes a personal account. It is on this interface rather than
-	// reached through a second dependency because the account removal and the two
-	// reads are the same table and splitting them would make it possible to wire
-	// a reader that can see accounts and a remover that cannot, which fails at
-	// runtime in the one transaction where it matters.
 	Delete(ctx context.Context, q db.Querier, accountID id.UUID) error
 }
 
@@ -174,15 +143,7 @@ func NewService(
 // method that cannot be told who is deleting whom is a method whose transaction
 // cannot be given the right policy identity.
 type DeleteInput struct {
-	// UserID is the SUBJECT and the CALLER at once, which is what self-service
-	// means. There is no actor field and that is not an omission: the only route
-	// to this use case is `DELETE /v1/me`, the subject is the session's own user,
-	// and an actor who could differ from the subject would be a second code path
-	// with no test.
 	UserID id.UUID
-	// At is the service's clock, used for every revocation stamp and for the
-	// event's `occurred_at`, so the three cannot disagree about when this
-	// happened.
 	At time.Time
 }
 
@@ -244,44 +205,10 @@ func (s *Service) Delete(ctx context.Context, in DeleteInput) error {
 	}
 
 	return s.uow.Do(ctx, func(ctx context.Context, q db.Querier) error {
-		// THE IDENTITY THIS TRANSACTION STANDS IN, and it is the USER rather than
-		// an account. Both queries above read `account_users`, whose delete and
-		// update policies demand an ACCOUNT identity — but this transaction has no
-		// account, because the subject of it is a person who belongs to as many
-		// accounts as they like (DECISIONS.md D14).
-		//
-		// `account_users_anywaye_members` (00018) is the fifth policy, and it filters
-		// on `user_id = anywaye.current_user_id()` — which is admitted for SELECT and
-		// nothing else, deliberately ("discovery is not authorisation"). (00028
-		// adds a sixth, `account_users_anywaye_resolve`, for the credential
-		// transaction; no digest is set here so it admits nothing.) Two of the
-		// writes below do not need it: `users` and `accounts` carry no policy at all
-		// (00016 says so and explains why — `accounts` has no `account_id` column for
-		// a predicate to use), and the membership rows go by the `users` foreign-key
-		// CASCADE, which referential-integrity triggers execute outside the row
-		// security policies. That last fact is measured rather than assumed:
-		// `TestTheUserRowActuallyGoes` runs this whole function against the real
-		// policies and counts the memberships afterwards.
-		//
-		// So the deletion is admitted by exactly one policy, for one read, and needs
-		// no privilege this service does not already grant itself for `ListMine`.
 		if err := tenancy.BeginUser(ctx, q, in.UserID); err != nil {
 			return fmt.Errorf("naming the caller for the deletion: %w", err)
 		}
 
-		// Step 1, and the only read-before-write in the sequence. See the header.
-		//
-		// IT LEAVES THE TRANSACTION STANDING IN WHATEVER ACCOUNT IT LAST
-		// COUNTED. `SolelyOwnedTeamAccounts` has to switch identity per account,
-		// because the row-level security policies hide every OTHER owner's
-		// membership from a caller standing in as the user — so the count can only
-		// be asked from inside each account. `begin_user` and `begin_account` set
-		// the same GUC and there is no way to hold both, which makes the re-begin
-		// below a REQUIREMENT of the read that follows rather than tidiness: the
-		// personal-account read matches the caller's own membership rows and
-		// returns an empty list under an account identity, silently, and a
-		// deletion that then leaves the personal account behind is the exact
-		// orphan `internal/users`' `DeleteForAccount` doc comment warns about.
 		sole, err := s.accounts.SolelyOwnedTeamAccounts(ctx, q, in.UserID)
 		if err != nil {
 			return fmt.Errorf("checking for team accounts this user solely owns: %w", err)
@@ -290,15 +217,12 @@ func (s *Service) Delete(ctx context.Context, in DeleteInput) error {
 			return soleOwnedError(sole)
 		}
 
-		// Step 2.
 		if s.sweep != nil {
 			if err := s.sweep.RevokeEveryCredential(ctx, q, in.UserID, in.At); err != nil {
 				return fmt.Errorf("ending the deleted user's credentials: %w", err)
 			}
 		}
 
-		// Step 3a: the accounts that die with them. See the note above for why the
-		// identity is set again rather than assumed.
 		if err := tenancy.BeginUser(ctx, q, in.UserID); err != nil {
 			return fmt.Errorf("naming the caller for the personal account list: %w", err)
 		}
@@ -312,10 +236,6 @@ func (s *Service) Delete(ctx context.Context, in DeleteInput) error {
 			}
 		}
 
-		// Step 3b: the user. Named with the last personal account removed (or the
-		// nil id) so the pairing is legible at this line and in the store's own
-		// tests, and so a user with no personal account — which a fixture can
-		// produce and `Provision` cannot — still reaches this write.
 		var lastAccount id.UUID
 		if len(personal) > 0 {
 			lastAccount = personal[len(personal)-1].ID
@@ -324,7 +244,6 @@ func (s *Service) Delete(ctx context.Context, in DeleteInput) error {
 			return fmt.Errorf("removing the user row: %w", err)
 		}
 
-		// Step 4.
 		event, err := outbox.NewUserDeleted(in.At, in.UserID)
 		if err != nil {
 			return fmt.Errorf("building the %s event: %w", outbox.EventUserDeleted, err)
@@ -333,12 +252,6 @@ func (s *Service) Delete(ctx context.Context, in DeleteInput) error {
 	})
 }
 
-// soleOwnedError builds the refusal, naming every account.
-//
-// The account NAME and its SLUG are both in the message because they are the two
-// things a person can act on: the name is what they will recognize from the
-// product's UI, and the slug is what they will find in an API response. An id is
-// in neither category for a human, and this refusal is read by one.
 func soleOwnedError(sole []accounts.Account) error {
 	names := make([]string, 0, len(sole))
 	for _, account := range sole {

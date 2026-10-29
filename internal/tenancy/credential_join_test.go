@@ -8,36 +8,6 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// TestTenancyACredentialJoinSeesItsMembership is the class of test the F2
-// site-loop walk found missing: every suite in the repository is green while
-// every API key 401s on introspection, because no test runs ByDigest's JOIN
-// under the enforced boundary.
-//
-// WHAT IT EXERCISES. The exact shape of apikeys.Store.ByDigest —
-// `api_keys JOIN account_users … WHERE token_digest = $1` — inside a
-// transaction that carries ONLY the digest GUC, as the application role, on
-// the real protected tables. `api_keys` resolves by digest since 00016, but
-// the JOIN's other half, `account_users`, carries only account/user
-// predicates, and the credential transaction sets neither — so the join reads
-// zero rows and the lookup answers ErrNotFound (401) for a live key.
-//
-// WHY HERE AND NOT IN internal/apikeys. Every test there runs on a private
-// fixture schema that dbtest.Schema clones with LIKE INCLUDING ALL, which does
-// not copy row-level security. The RLS half is absent from those tests by
-// construction, so a ByDigest test there passes with the wiring and would
-// pass with no wiring at all. This is the same reason
-// TestTenancyACredentialResolvesByTheDigestTheCallerPresentedAndNothingElse
-// runs against the real tables.
-//
-// WHY THE APP ROLE, REACHED BY SET ROLE. The tenancy proof connects as the
-// owner and sets identities; the owner is named in every policy, so that
-// proves the policies exist. This test proves what production answers, and
-// production connects as identity_app. The connection below is the owner DSN
-// with `SET ROLE identity_app` — the same impersonation the package proof
-// uses, possible because the cluster grants the app role to the owner — so
-// every policy evaluates for exactly the role production answers under. What
-// SET ROLE does not prove is that the role can log in at all; that is proven
-// everywhere dbtest.Pool connects as it, and is not this test's claim.
 func TestTenancyACredentialJoinSeesItsMembership(t *testing.T) {
 	ownerDSN := dsnOrSkip(t)
 
@@ -50,10 +20,6 @@ func TestTenancyACredentialJoinSeesItsMembership(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = owner.Close(context.Background()) })
 
-	// A second connection for the assertions, impersonating the login
-	// production uses. Seeding stays on the owner connection: the app role
-	// cannot write the unprotected tables the fixture is built from, and the
-	// seed is not what is under test.
 	app, err := pgx.Connect(ctx, ownerDSN)
 	if err != nil {
 		t.Fatalf("connecting for the app-role assertions: %v", err)
@@ -65,9 +31,6 @@ func TestTenancyACredentialJoinSeesItsMembership(t *testing.T) {
 
 	tenantA, tenantB := seedJoinRows(ctx, t, owner)
 
-	// 1. THE RESOLUTION ITSELF. A live key's digest returns its row and its
-	// owner's live role, with no account identity set — the account is what
-	// the lookup is FOR and cannot also be what it is scoped by.
 	for _, tc := range []struct {
 		name      string
 		digest    string
@@ -98,10 +61,6 @@ func TestTenancyACredentialJoinSeesItsMembership(t *testing.T) {
 		})
 	}
 
-	// 2. THE NARROWNESS. A digest-A session reading account_users sees exactly
-	// A's membership row — the row the presented credential names — and a
-	// digest-A session naming B's digest directly sees nothing. The fix must
-	// open the membership of the presented credential and nothing else.
 	t.Run("a resolution sees exactly the presented credential's membership", func(t *testing.T) {
 		var members []string
 		err := inTransaction(ctx, app, `select anywaye.begin_credential($1)`, digestFor(tenantA),
@@ -143,14 +102,7 @@ func TestTenancyACredentialJoinSeesItsMembership(t *testing.T) {
 		}
 	})
 
-	// 3. A WITHDRAWN CREDENTIAL OPENS NOTHING. Revoking A's key must close the
-	// membership half again: the row is still there, the digest still matches,
-	// and the resolution must still answer nothing.
 	t.Run("a revoked credential resolves nothing", func(t *testing.T) {
-		// The revocation sets the whole triple: the table's CHECK refuses a
-		// revoked_at without its revoked_by, so a one-column UPDATE is a
-		// 23514 rather than a revocation. revoked_by is the key's own user,
-		// read back rather than threaded through the seed.
 		if err := inTransaction(ctx, owner, `select anywaye.begin_account($1)`, tenantA,
 			func(ctx context.Context, tx pgx.Tx) error {
 				_, err := tx.Exec(ctx,
@@ -170,22 +122,11 @@ func TestTenancyACredentialJoinSeesItsMembership(t *testing.T) {
 	})
 }
 
-// joinRow is one row of the ByDigest-shaped join: whose key, and the role its
-// owner holds right now.
 type joinRow struct {
 	accountID string
 	role      string
 }
 
-// byDigestJoinAs runs the ByDigest query TEXT inside a digest-only
-// transaction as the connected role.
-//
-// It is the query rather than the method, for the reason the package's other
-// RLS proofs give: internal/apikeys cannot be imported here (it reaches this
-// package through internal/accounts), so the shape is copied and the comment
-// on Store.ByDigest names this test as the proof that shape holds under RLS.
-// If the query changes there, this copy must change with it — a drift that
-// shows up as a red join, which is the loud direction.
 func byDigestJoinAs(ctx context.Context, conn *pgx.Conn, digest string, now time.Time) ([]joinRow, error) {
 	const query = `
 		SELECT k.account_id::text, au.role::text
@@ -215,13 +156,6 @@ func byDigestJoinAs(ctx context.Context, conn *pgx.Conn, digest string, now time
 	return out, err
 }
 
-// seedJoinRows writes one account, user, MEMBERSHIP and api key per tenant,
-// each under its own identity, and returns the account ids.
-//
-// The membership row is the difference from seedCredentialRows: without it the
-// join under test has nothing to find even on a correct database, and the
-// resolution would read zero rows for a reason the test built rather than the
-// boundary. Every assertion in this file is only meaningful with it present.
 func seedJoinRows(ctx context.Context, t *testing.T, owner *pgx.Conn) (tenantA, tenantB string) {
 	t.Helper()
 

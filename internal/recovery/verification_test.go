@@ -7,16 +7,7 @@ import (
 	"github.com/anywaye/identity/internal/platform/dbtest"
 )
 
-// THE VERIFICATION FLOW.
-//
-// It is the smallest of the three and the one with the fewest moving parts, which is
-// why the assertions here are about what it does NOT do almost as much as what it
-// does: a verification that revoked a session or minted one would be a security
-// change wearing a "confirm your address" label.
 
-// TestAVerificationProvesTheAddressAndNothingElse is the whole flow in one
-// assertion, and then the two negatives that make it a property rather than a
-// feature.
 func TestAVerificationProvesTheAddressAndNothingElse(t *testing.T) {
 	h := newHarness(t, false)
 	who := h.registerSimple()
@@ -34,13 +25,6 @@ func TestAVerificationProvesTheAddressAndNothingElse(t *testing.T) {
 
 	assertVerified(t, h, who)
 
-	// THE TWO NEGATIVES.
-	//
-	// A verification changes no secret, so ending the account's sessions over it
-	// would punish somebody for clicking a link — and minting a session would turn
-	// possession of an inbox into a browser credential, which is the one thing this
-	// service has never done and the reason a token is not a session everywhere
-	// else in it.
 	if got := h.sessionsFor(who.id); got != sessionsBefore {
 		t.Errorf("%d sessions after a verification, want %d: verifying an address is not a "+
 			"security change", got, sessionsBefore)
@@ -49,9 +33,6 @@ func TestAVerificationProvesTheAddressAndNothingElse(t *testing.T) {
 		t.Error("a verification revoked the account's access tokens")
 	}
 
-	// And the event is on the outbox, so a consumer can find out.
-	// Scoped to THIS account, because every test in this package shares one database
-	// and an unscoped count would be measuring the run rather than the flow.
 	var seen int
 	if err := h.pool.QueryRow(t.Context(),
 		`SELECT count(*) FROM outbox_events WHERE type = 'identity.user.email_verified' AND subject = $1`,
@@ -63,13 +44,6 @@ func TestAVerificationProvesTheAddressAndNothingElse(t *testing.T) {
 	}
 }
 
-// TestAReusedVerificationTokenIsRefused and TestAnExpiredVerificationTokenIsRefused
-// are the same two negatives as the password reset's, on the third flow.
-//
-// They are written out rather than shared because the flows have different
-// consequences on failure: a reused reset token would change a password, a reused
-// verification token would mark an address proved. A table of them would be one
-// test whose failure names neither.
 func TestAReusedVerificationTokenIsRefused(t *testing.T) {
 	h := newHarness(t, true)
 	who := h.registerSimple()
@@ -82,9 +56,6 @@ func TestAReusedVerificationTokenIsRefused(t *testing.T) {
 		t.Fatal("a verification token was accepted twice")
 	}
 
-	// The instant recorded is the FIRST proof, not the most recent click: a column
-	// that moved every time somebody followed a second link would make "when was
-	// this address verified" answer a question with no answer.
 	var at *time.Time
 	if err := h.pool.QueryRow(t.Context(),
 		`SELECT email_verified_at FROM users WHERE id = $1`, who.id).Scan(&at); err != nil {
@@ -108,21 +79,6 @@ func TestAnExpiredVerificationTokenIsRefused(t *testing.T) {
 	assertNotVerified(t, h, who)
 }
 
-// TestAVerificationRequestForAVerifiedAddressIsNotDistinguished: the answer to
-// "send me another verification link" on an account that is already proved is the
-// same answer every other address gets.
-//
-// IT REPLACED A TEST THAT ASSERTED THE OPPOSITE. This function used to return
-// ErrAlreadyVerified for a verified account, which the HTTP layer answered 409 —
-// on a route with `security: []`, so the 409 was a line in a list of verified
-// accounts for anybody who posted a list of addresses. The eleven lines above the
-// branch named that exact threat and then took it.
-//
-// THE ASSERTION IS NOT ONLY "no error". A `if user.IsVerified() { return nil }`
-// would satisfy an error-only check while leaving the route's behavior a function
-// of the row, which is the shape the 409 came from. So this also asserts the
-// message was SENT: a proved address is treated exactly as an unproved one, all the
-// way through the mint and the delivery.
 func TestAVerificationRequestForAVerifiedAddressIsNotDistinguished(t *testing.T) {
 	h := newHarness(t, true)
 	who := h.registerSimple()
@@ -133,8 +89,6 @@ func TestAVerificationRequestForAVerifiedAddressIsNotDistinguished(t *testing.T)
 	}
 	firstProof := h.now()
 
-	// Past the cooldown, so the request is answered by the lookup and not by the
-	// window — otherwise "no second message" would prove nothing about the row.
 	h.clk.Advance(RequestWindow + time.Second)
 
 	if err := h.svc.RequestVerification(t.Context(), who.email); err != nil {
@@ -146,10 +100,6 @@ func TestAVerificationRequestForAVerifiedAddressIsNotDistinguished(t *testing.T)
 			"is treated exactly as it is for an unverified account", got)
 	}
 
-	// And redeeming the second link is harmless rather than a second state change:
-	// the instant recorded is still the first proof, because `MarkEmailVerified` is
-	// conditional on the column still being null. That is what makes sending a
-	// confirmation to a proved address cost a message and nothing else.
 	if err := h.svc.RedeemVerification(t.Context(), RedeemVerificationInput{
 		Token: tokenFrom(t, h.mailer.last(t)),
 	}); err != nil {
@@ -165,8 +115,6 @@ func TestAVerificationRequestForAVerifiedAddressIsNotDistinguished(t *testing.T)
 	}
 }
 
-// TestAVerificationRequestForAnUnknownAddressIsSilent: the same enumeration answer
-// the reset request gives, because the question behind the two is the same one.
 func TestAVerificationRequestForAnUnknownAddressIsSilent(t *testing.T) {
 	h := newHarness(t, true)
 
@@ -181,8 +129,6 @@ func TestAVerificationRequestForAnUnknownAddressIsSilent(t *testing.T) {
 	}
 }
 
-// TestAVerificationRequestInsideTheWindowSendsNothing: the same cooldown as the
-// reset, on the second anonymous request route.
 func TestAVerificationRequestInsideTheWindowSendsNothing(t *testing.T) {
 	h := newHarness(t, true)
 	who := h.registerSimple()
@@ -201,12 +147,6 @@ func TestAVerificationRequestInsideTheWindowSendsNothing(t *testing.T) {
 	}
 }
 
-// TestVerificationStatusIsA200WithABooleanRatherThanAnError: the question every
-// settings page asks, answered for an unverified account.
-//
-// It is 200 rather than a 404 because "not verified" is the state every account is
-// in until somebody follows a link, and a client that has to distinguish it from
-// "this is not your account" cannot render a banner.
 func TestVerificationStatusIsA200WithABooleanRatherThanAnError(t *testing.T) {
 	h := newHarness(t, false)
 	who := h.registerSimple()
@@ -235,9 +175,7 @@ func TestVerificationStatusIsA200WithABooleanRatherThanAnError(t *testing.T) {
 	}
 }
 
-// --- helpers -----------------------------------------------------------------
 
-// requestVerification runs the whole request step and returns the mailed token.
 func (h *harness) requestVerification(t *testing.T, who account) string {
 	t.Helper()
 	if err := h.svc.RequestVerification(t.Context(), who.email); err != nil {

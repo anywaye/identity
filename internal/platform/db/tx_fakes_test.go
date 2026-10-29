@@ -8,15 +8,10 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// fakeTx is a pgx.Tx that records what was done to it. Only the three methods
-// TxRunner calls are implemented; the rest panic, so an unexpected call is a loud
-// test failure rather than a silent no-op.
 type fakeTx struct {
 	committed  bool
 	rolledBack bool
 	commitErr  error
-	// queryerUsedByFunction records the Querier TxRunner handed to the function,
-	// so a test can prove it was the transaction rather than the pool.
 	queryerUsedByFunction Querier
 }
 
@@ -60,21 +55,13 @@ func (t *fakeTx) Begin(context.Context) (pgx.Tx, error) {
 
 func (t *fakeTx) Conn() *pgx.Conn { return nil }
 
-// fakePool hands out one fakeTx and nothing else.
 type fakePool struct {
 	tx *fakeTx
-	// pool records the things a test asserts about the pool side: that Begin ran
-	// or did not, and the querier the pool itself would have handed out.
 	pool poolFacts
 }
 
-// poolFacts is kept separate from fakePool so the fake transaction does not have
-// to carry the counters.
 type poolFacts struct {
-	// began counts Begin calls so a test can assert no transaction was opened.
 	began bool
-	// poolQuerier is what the pool itself would hand out, to prove the function
-	// was given the transaction instead.
 	poolQuerier Querier
 }
 
@@ -93,8 +80,6 @@ func (p *fakePool) Query(context.Context, string, ...any) (pgx.Rows, error) {
 	return nil, errors.New("not implemented in this test double")
 }
 
-// fakeRunner bundles what the tests need: the runner, the transaction it opened,
-// and the pool's own view of events.
 type fakeRunner struct {
 	TxRunner
 	tx   *fakeTx

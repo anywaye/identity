@@ -12,16 +12,7 @@ import (
 	"github.com/anywaye/identity/internal/platform/id"
 )
 
-// fakeTenancy is a programmable stand-in for accounts.Service, so the handlers
-// can be exercised for status codes, response shapes and which use case was
-// called without a database. The end-to-end suite drives the real service over
-// real SQL.
-//
-// Every use case has an error field, because the interesting handler behavior
-// is the mapping from a domain error to a status code and that cannot be produced
-// by a real database on demand.
 type fakeTenancy struct {
-	// What the lookups return when no error is set.
 	account  accounts.Account
 	role     accounts.Role
 	members  []accounts.MemberSummary
@@ -29,12 +20,10 @@ type fakeTenancy struct {
 	invite   accounts.Invited
 	accepted accounts.Membership
 
-	// What each use case should fail with.
 	createErr     error
 	getErr        error
 	listErr       error
 	membersErr    error
-	// searchedAccounts* record the operator account search.
 	searchedAccountsQuery  string
 	searchedAccountsLimit  int
 	searchedAccounts       []accounts.Account
@@ -47,8 +36,6 @@ type fakeTenancy struct {
 	removeErr     error
 	transferErr   error
 
-	// Recorded inputs, so a test can prove the handler passed the caller's own id
-	// rather than one from the request body.
 	listedFor  id.UUID
 	createdFor id.UUID
 	invitedBy  id.UUID
@@ -56,21 +43,15 @@ type fakeTenancy struct {
 	acceptedBy id.UUID
 	changedFor ChangeRoleCall
 	removedFor RemoveMemberCall
-	// transferredFor is TransferOwnershipCall, and the pair of ids in it is the
-	// whole of what this route has to get right.
 	transferredFor TransferOwnershipCall
 }
 
-// TransferOwnershipCall is what the handler asked for. Heir is from the body and
-// Actor is from the credential, and keeping them in one struct is what lets a test
-// assert they are not the same field.
 type TransferOwnershipCall struct {
 	AccountID id.UUID
 	Heir      id.UUID
 	Actor     id.UUID
 }
 
-// ChangeRoleCall is what the handler asked for.
 type ChangeRoleCall struct {
 	AccountID id.UUID
 	UserID    id.UUID
@@ -78,7 +59,6 @@ type ChangeRoleCall struct {
 	Actor     id.UUID
 }
 
-// RemoveMemberCall is what the handler asked for.
 type RemoveMemberCall struct {
 	AccountID id.UUID
 	UserID    id.UUID
@@ -128,13 +108,6 @@ func (f *fakeTenancy) SearchAccounts(_ context.Context, query string, limit int)
 	return f.searchedAccounts, nil
 }
 
-// Get answers for the account id it was ASKED ABOUT.
-//
-// Echoing the requested id rather than returning a fixed row is what makes the
-// double honest: a handler that put the account in the path and a handler that put
-// some other account there produce different ids here, so a test asserting "the use
-// case was given the account from the path" can actually fail. A double returning
-// one canned account would pass that assertion whatever the handler did.
 func (f *fakeTenancy) Get(_ context.Context, accountID, userID id.UUID) (accounts.Account, accounts.Role, error) {
 	if f.getErr != nil {
 		return accounts.Account{}, "", f.getErr
@@ -198,10 +171,6 @@ func (f *fakeTenancy) RemoveMember(_ context.Context, in accounts.RemoveMemberIn
 	return f.removeErr
 }
 
-// TransferOwnership records the heir and the actor, so a test can prove the
-// caller came from the credential and the heir from the body — the two ids that
-// must never be confused, since swapping them would let a caller name anybody as
-// the owner of an account they do not run.
 func (f *fakeTenancy) TransferOwnership(_ context.Context, in accounts.TransferInput) (accounts.Transferred, error) {
 	f.transferredFor = TransferOwnershipCall{AccountID: in.AccountID, Heir: in.ToUserID, Actor: in.Actor}
 	if f.transferErr != nil {
@@ -214,20 +183,9 @@ func (f *fakeTenancy) TransferOwnership(_ context.Context, in accounts.TransferI
 	}, nil
 }
 
-// testInstant is the fixed instant the doubles stamp, so a response body's
-// timestamps are exact rather than approximate.
 var testInstant = time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
 
-// ---------------------------------------------------------------------------
-// request helpers
-// ---------------------------------------------------------------------------
 
-// request sends a request with NO credential and fails the test if the route
-// answers with a success.
-//
-// It is a separate function rather than a flag on requestAs so that "forgot to
-// authenticate" is not a thing a test can express by accident: the anonymous row
-// of the matrix is a different call site from every other row.
 func request(t *testing.T, h http.Handler, method, target, body string) *httptest.ResponseRecorder {
 	t.Helper()
 
@@ -238,7 +196,6 @@ func request(t *testing.T, h http.Handler, method, target, body string) *httptes
 	return rec
 }
 
-// requestAs sends a request carrying a bearer token.
 func requestAs(t *testing.T, h http.Handler, token, method, target, body string) *httptest.ResponseRecorder {
 	t.Helper()
 

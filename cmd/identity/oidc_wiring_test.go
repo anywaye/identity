@@ -17,16 +17,7 @@ import (
 	"github.com/anywaye/identity/internal/platform/dbtest"
 )
 
-// The OIDC wiring. What matters here is that the two configurations are
-// actually connected: a process with a key and a database IS a provider, and a
-// process without one is not. Everything the provider does is covered in
-// internal/oidc and internal/httpapi; what cannot be covered from there is
-// whether newApp wires it at all.
 
-// testKeyPEM returns a throwaway RSA key as a PEM, for the configuration.
-//
-// Generated per call rather than a fixture file: a PEM checked into a repository
-// is a PEM somebody eventually copies into a deployment.
 func testKeyPEM(t *testing.T) string {
 	t.Helper()
 
@@ -41,7 +32,6 @@ func testKeyPEM(t *testing.T) string {
 	return string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}))
 }
 
-// oidcConfig is a complete OIDC configuration for a test process.
 func oidcConfig(t *testing.T, dsn string) config.Config {
 	t.Helper()
 
@@ -53,14 +43,10 @@ func oidcConfig(t *testing.T, dsn string) config.Config {
 		OIDCSigningKey: testKeyPEM(t),
 		OIDCKeyID:      "anywaye-wiring-test",
 		OIDCLoginUIURL: "https://login.example.com/sign-in/oidc",
-		// The one secret a boot cannot go without, carried here so the app mints
-		// and verifies under a real key rather than the nil a zero Config holds.
 		SignupSigningKeyValue: signupKeyValue,
 	}
 }
 
-// With a database and a key, the process is an OpenID Connect provider: the
-// discovery document, the key set and the registration routes are all served.
 func TestNewAppServesTheOIDCProvider(t *testing.T) {
 	dsn := testDatabaseURL(t)
 
@@ -82,7 +68,6 @@ func TestNewAppServesTheOIDCProvider(t *testing.T) {
 		t.Errorf("issuer = %v, want the configured one", doc["issuer"])
 	}
 
-	// The RFC 8414 alias, which the library does not register and identity does.
 	alias := serveBody(t, a, http.MethodGet, oidc.PathOAuthAuthorizationServer, "", nil)
 	if alias.Code != http.StatusOK {
 		t.Errorf("GET %s = %d, want 200", oidc.PathOAuthAuthorizationServer, alias.Code)
@@ -93,10 +78,6 @@ func TestNewAppServesTheOIDCProvider(t *testing.T) {
 		t.Errorf("GET %s = %d, want 200", oidc.PathJWKS, keys.Code)
 	}
 
-	// The registration routes, which need an account and a session. This asserts
-	// they are MOUNTED and not that they succeed: a 401 here means the route
-	// exists and the authorization gate ran, and a 404 means the wiring is
-	// missing.
 	registered := serveBody(t, a, http.MethodPost, "/v1/accounts/00000000-0000-4000-8000-000000000000/oidc-clients", `{}`, nil)
 	if registered.Code != http.StatusUnauthorized {
 		t.Errorf("POST an OIDC client route anonymously = %d, want 401; a 404 means the route is not mounted",
@@ -104,9 +85,6 @@ func TestNewAppServesTheOIDCProvider(t *testing.T) {
 	}
 }
 
-// Without a key, the process serves its probes and its /v1 surface and is not an
-// OpenID Connect provider. The routes are ABSENT rather than present-and-500, the
-// same rule a missing DATABASE_URL follows.
 func TestNewAppWithoutOIDCKeysIsNotAProvider(t *testing.T) {
 	dsn := testDatabaseURL(t)
 
@@ -132,16 +110,9 @@ func TestNewAppWithoutOIDCKeysIsNotAProvider(t *testing.T) {
 		}
 	}
 
-	// The /v1 surface is untouched, which is the point: a process that is not a
-	// provider is not a broken one. The registration carries a signup timestamp
-	// pair, as every registration now must — the verify is wired by the same
-	// option as the mint, and a deployment that can register can verify.
 	registerUserWithPair(t, a, dbtest.UniqueEmail(t), "correct horse battery staple")
 }
 
-// Keys with no database is the configuration that cannot work, and it says so by
-// mounting nothing rather than by serving a provider that can sign tokens for
-// clients nobody can register or revoke.
 func TestNewAppWithOIDCKeysButNoDatabaseIsNotAProvider(t *testing.T) {
 	cfg := oidcConfig(t, "")
 	cfg.DatabaseURL = ""
@@ -152,7 +123,6 @@ func TestNewAppWithOIDCKeysButNoDatabaseIsNotAProvider(t *testing.T) {
 	}
 	defer a.Close()
 
-	// Liveness first: the process is up, it is just not a provider.
 	rec := serveBody(t, a, http.MethodGet, "/healthz", "", nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /healthz = %d, want 200", rec.Code)
@@ -166,9 +136,6 @@ func TestNewAppWithOIDCKeysButNoDatabaseIsNotAProvider(t *testing.T) {
 	}
 }
 
-// A key that will not parse is a startup failure, not a warning. A provider that
-// invents its own key signs tokens nobody can verify and rotates its own trust
-// anchor on every restart.
 func TestNewAppRefusesAnUnparseableSigningKey(t *testing.T) {
 	dsn := testDatabaseURL(t)
 
@@ -180,14 +147,6 @@ func TestNewAppRefusesAnUnparseableSigningKey(t *testing.T) {
 	}
 }
 
-// A provider with no login UI is a STARTUP FAILURE, and this case is here rather
-// than only in `internal/config`'s table because of WHERE the check has to be.
-//
-// `config.Load` refuses an OIDC block with no login UI, but this suite builds a
-// `config.Config` LITERAL, exactly as a one-off tool would — and a Config written
-// as a literal never went near Load. So the second half of the rule has to live
-// where the provider is constructed, or a Config built any other way boots into a
-// provider that publishes a discovery document and cannot complete a flow.
 func TestNewAppRefusesToBeAProviderWithNoLoginUI(t *testing.T) {
 	dsn := testDatabaseURL(t)
 
@@ -206,10 +165,6 @@ func TestNewAppRefusesToBeAProviderWithNoLoginUI(t *testing.T) {
 	}
 }
 
-// With a database, a key and a login UI, the login interaction is mounted and it
-// redirects rather than rendering. This is the wiring case for the packet: it
-// proves `OIDCLoginUIURL` reaches the provider, which nothing above it in the
-// tree can see.
 func TestNewAppSendsTheBrowserToTheConfiguredLoginUI(t *testing.T) {
 	dsn := testDatabaseURL(t)
 
@@ -219,11 +174,6 @@ func TestNewAppSendsTheBrowserToTheConfiguredLoginUI(t *testing.T) {
 	}
 	defer a.Close()
 
-	// The interaction's first hop is this service's own endpoint, and an id that
-	// does not exist is a 404 — which is enough to prove the route is mounted and
-	// that the storage is the real one. The redirect to the login UI needs a live
-	// authorization request, and internal/httpapi's suite drives that with a real
-	// flow; a wiring test that seeded one would be a second copy of that suite.
 	rec := serveBody(t, a, http.MethodGet, oidc.PathLogin+"/00000000-0000-4000-8000-000000000000", "", nil)
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("GET the login interaction = %d, want 404; body: %s", rec.Code, rec.Body)

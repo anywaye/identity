@@ -8,24 +8,7 @@ import (
 	"github.com/pquerna/otp/hotp"
 )
 
-// Everything in this file is a decision the library does not make for us, and
-// nothing in it computes an HMAC, encodes a base32 secret, or compares a code.
-//
-// github.com/pquerna/otp owns RFC 6238 end to end: hotp.GenerateCodeCustom turns
-// a secret and a counter into a six-digit string, and hotp.ValidateCustom is
-// that same computation with a constant-time comparison in front of it. This
-// package supplies the counter and asks the question. That is the whole
-// division of labor, and it is the one that keeps this file auditable: there is
-// no truncation, no padding and no comparison here to get wrong.
 
-// hotpOptions is the library's verification options, built from a row's columns.
-//
-// The row is the source of both the digit count and the algorithm rather than
-// the package constants, so a credential provisioned by a future version of this
-// service is verified the way its provisioning URI said it would be. Skew is
-// always zero here on purpose: this package does the window, one step at a time,
-// because the library's own windowed ValidateCustom cannot say WHICH step matched
-// and the replay guard has to know.
 func hotpOptions(digits, algorithm string) (hotp.ValidateOpts, error) {
 	var d otp.Digits
 	switch digits {
@@ -106,9 +89,6 @@ func MatchStep(secret, code string, now time.Time, digits, algorithm string, per
 
 	current := StepAt(now, period)
 	for _, step := range CandidateSteps(current, skew) {
-		// A negative counter is not a time this service can produce — the clock
-		// is UTC and post-epoch — and uint64 would turn one into a counter in the
-		// year 584 billion, which the library would happily compute.
 		if step < 0 {
 			continue
 		}
@@ -132,10 +112,6 @@ func Code(secret string, at time.Time) (string, error) {
 	return totpCode(secret, at, DigitSix, AlgorithmSHA1, Period)
 }
 
-// totpCode is Code with the parameters spelled out, for the paths that read them
-// off a row. digits and algorithm are the row's strings, so a credential
-// provisioned by a future version of this service is exercised the way its
-// provisioning URI promised.
 func totpCode(secret string, at time.Time, digits string, algorithm string, period time.Duration) (string, error) {
 	opts, err := hotpOptions(digits, algorithm)
 	if err != nil {
@@ -151,7 +127,6 @@ func totpCode(secret string, at time.Time, digits string, algorithm string, peri
 	return hotp.GenerateCodeCustom(secret, uint64(step), opts)
 }
 
-// The two parameter values as the strings the row stores them.
 const (
 	DigitSix      = "6"
 	DigitEight    = "8"

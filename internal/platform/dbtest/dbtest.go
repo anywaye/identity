@@ -1,22 +1,3 @@
-// Package dbtest gives integration tests a real Postgres.
-//
-// It is a normal package rather than a _test.go file so that every package's
-// tests can share it. Nothing imports it outside tests, so it contributes
-// nothing to the service binary — `go list -deps ./cmd/identity` does not reach
-// it.
-//
-// # Isolation
-//
-// `go test ./...` runs packages in parallel, and every package in this service
-// shares one TEST_DATABASE_URL. So the tests here must not assume they have the
-// database to themselves, and there is deliberately no TRUNCATE helper called
-// from ordinary tests: a global truncate from internal/users would delete
-// internal/sessions' fixtures mid-run, and the failure looks like a
-// non-deterministic bug in the code under test rather than in the harness.
-//
-// Each test instead claims a unique email address, which makes it independent of
-// every other test in every other package. Reset is available for a deliberate
-// wipe and is not called automatically.
 package dbtest
 
 import (
@@ -49,16 +30,6 @@ import (
 // claims are true at once.
 const EnvVar = "TEST_DATABASE_URL"
 
-// appRoleSuffix is kit's rule for the login role's name, and it is the same rule
-// migrations/00016's `protect_table` defaults to (`current_user || '_app'`).
-//
-// Writing it here as a suffix rather than taking a second variable is the point:
-// a second DSN would be a second thing to configure, and a second thing to get
-// wrong in a way nothing notices — a test DSN left naming the owner is a suite
-// that reports the boundary proven while running as the one role the boundary
-// exempts. Deriving it means there is no configuration in which the pool under
-// test is the owner, and assertAppRole reads the role back off the connection so
-// a derivation that stops deriving is a red build rather than a quiet one.
 const appRoleSuffix = "_app"
 
 // AppDSN returns EnvVar with the user replaced by the app login role, and is the
@@ -76,8 +47,6 @@ func AppDSN(t *testing.T) string {
 	owner := dsn(t)
 	parsed, err := url.Parse(owner)
 	if err != nil {
-		// Pool already validated this DSN, so a parse failure here would be a bug
-		// in this helper rather than bad configuration.
 		panic("dbtest: parsing " + EnvVar + ": " + err.Error())
 	}
 
@@ -117,9 +86,6 @@ func Pool(t *testing.T) *pgxpool.Pool {
 	}
 	t.Cleanup(pool.Close)
 
-	// A pool is lazy, so Open succeeding says nothing about the server being
-	// there. Ping here, where the failure can name the variable that is wrong,
-	// rather than inside an assertion about a users row.
 	if err := pool.Ping(ctx); err != nil {
 		t.Fatalf("%s is set but not reachable (%v). Is the server up, and are the "+
 			"migrations applied? `goose -dir migrations postgres \"$DATABASE_URL\" up`", EnvVar, err)
@@ -130,14 +96,6 @@ func Pool(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
-// assertAppRole fails the test unless the pool is logged in as the app role.
-//
-// It is four lines and it is the only thing standing between this package and a
-// silent regression to the owner: nothing about connecting successfully says which
-// role you are, and a pool that had quietly gone back to the owner would pass
-// every test in the repository while testing nothing about the boundary.
-// `current_user` is the name a policy is evaluated against, so it is the one worth
-// reading back.
 func assertAppRole(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 
@@ -203,8 +161,6 @@ func UniqueEmail(t *testing.T) string {
 		t.Fatalf("generating a unique test email: %v", err)
 	}
 
-	// The local part has to survive the users.email rules, so anything that is not
-	// a lowercase letter or digit becomes a dash.
 	label := strings.Map(func(r rune) rune {
 		switch {
 		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
@@ -217,7 +173,6 @@ func UniqueEmail(t *testing.T) string {
 	}, t.Name())
 	label = strings.Trim(label, "-")
 
-	// 64 is the local-part ceiling; 12 is the hex noise; one is the separator.
 	if len(label) > 64-12-1 {
 		label = label[:64-12-1]
 		label = strings.TrimRight(label, "-")
@@ -254,12 +209,6 @@ func Reset(t *testing.T) {
 	}
 	defer pool.Close()
 
-	// user_audit_log is first, beside account_audit_log, and the position is
-	// load-bearing in the ordinary way this list works: it has NO foreign keys and no
-	// dependency on `users` (00022 — a cascade is a delete), so it could sit anywhere.
-	// It is named anyway, because a table missing from this list is not an error: it
-	// is rows from one package's test run surviving into the next one's, which is the
-	// non-deterministic failure this function's own package comment warns about.
 	if _, err := pool.Exec(ctx, `TRUNCATE TABLE user_audit_log, account_audit_log, api_keys, mfa_challenges, mfa_used_totp_steps, mfa_recovery_codes, mfa_credentials, oidc_access_tokens, oidc_auth_requests, oidc_clients, outbox_events, connected_accounts, sessions, account_invitations, account_users, accounts, users CASCADE`); err != nil {
 		t.Fatalf("truncating: %v", err)
 	}
@@ -331,8 +280,6 @@ func SchemaWithOwner(t *testing.T) (app, owner *pgxpool.Pool) {
 	if err != nil {
 		t.Fatalf("opening an admin pool against %s: %v", EnvVar, err)
 	}
-	// Registered first so that it runs *last*: cleanups are LIFO, and the DROP
-	// SCHEMA below still needs this pool to be open.
 	t.Cleanup(admin.Close)
 	if err := admin.Ping(ctx); err != nil {
 		t.Fatalf("%s is set but not reachable (%v). Is the server up, and are the migrations applied?", EnvVar, err)
@@ -343,20 +290,10 @@ func SchemaWithOwner(t *testing.T) (app, owner *pgxpool.Pool) {
 		`CREATE TABLE ` + schema + `.users (LIKE public.users INCLUDING ALL)`,
 		`CREATE TABLE ` + schema + `.sessions (LIKE public.sessions INCLUDING ALL)`,
 		`CREATE TABLE ` + schema + `.outbox_events (LIKE public.outbox_events INCLUDING ALL)`,
-		// connected_accounts carries an enum-typed column. LIKE copies the column
-		// with its type, which for an enum is a reference to the type in `public` —
-		// so the values still resolve even though search_path is the private
-		// schema. No CREATE TYPE here: the type is shared, not cloned, and a second
-		// one in the private schema would not be the type the column refers to.
 		`CREATE TABLE ` + schema + `.connected_accounts (LIKE public.connected_accounts INCLUDING ALL)`,
 		`CREATE TABLE ` + schema + `.accounts (LIKE public.accounts INCLUDING ALL)`,
 		`CREATE TABLE ` + schema + `.account_users (LIKE public.account_users INCLUDING ALL)`,
 		`CREATE TABLE ` + schema + `.account_invitations (LIKE public.account_invitations INCLUDING ALL)`,
-		// Postgres has no LIKE for a type, so the two enums are declared here
-		// rather than cloned. That is a second copy of the migrations' enum
-		// labels: re-read 00005 and 00007 when either changes, and note that
-		// adding a role to public does NOT add it here — a test would then fail
-		// on an enum value the database accepts and the private schema does not.
 		`CREATE TYPE ` + schema + `.account_role AS ENUM ('owner', 'admin', 'member')`,
 		`CREATE TYPE ` + schema + `.account_invitation_role AS ENUM ('admin', 'member')`,
 		`ALTER TABLE ` + schema + `.sessions ADD CONSTRAINT sessions_user_id_fkey
@@ -371,17 +308,10 @@ func SchemaWithOwner(t *testing.T) (app, owner *pgxpool.Pool) {
 			FOREIGN KEY (account_id) REFERENCES ` + schema + `.accounts (id) ON DELETE CASCADE`,
 		`ALTER TABLE ` + schema + `.account_invitations ADD CONSTRAINT account_invitations_invited_by_fkey
 			FOREIGN KEY (invited_by) REFERENCES ` + schema + `.users (id) ON DELETE SET NULL`,
-		// The enums are schema-local, so the clones below would otherwise resolve
-		// their role columns against public.account_role and account_invitation_role.
-		// Two casts, and the private schema is genuinely private.
 		`ALTER TABLE ` + schema + `.account_users ALTER COLUMN role TYPE ` + schema + `.account_role
 			USING role::text::` + schema + `.account_role`,
 		`ALTER TABLE ` + schema + `.account_invitations ALTER COLUMN role TYPE ` + schema + `.account_invitation_role
 			USING role::text::` + schema + `.account_invitation_role`,
-		// The OIDC tables. No enum types here, which is why the list above stops
-		// at two CREATE TYPE statements: a client registration is text arrays and
-		// timestamps, and a grant type or a scope is validated in Go because the
-		// closed sets are a code fact rather than a schema fact.
 		`CREATE TABLE ` + schema + `.oidc_clients (LIKE public.oidc_clients INCLUDING ALL)`,
 		`CREATE TABLE ` + schema + `.oidc_auth_requests (LIKE public.oidc_auth_requests INCLUDING ALL)`,
 		`CREATE TABLE ` + schema + `.oidc_access_tokens (LIKE public.oidc_access_tokens INCLUDING ALL)`,
@@ -399,28 +329,6 @@ func SchemaWithOwner(t *testing.T) (app, owner *pgxpool.Pool) {
 			FOREIGN KEY (client_row_id) REFERENCES ` + schema + `.oidc_clients (id) ON DELETE CASCADE`,
 		`ALTER TABLE ` + schema + `.oidc_access_tokens ADD CONSTRAINT oidc_access_tokens_subject_fkey
 			FOREIGN KEY (subject) REFERENCES ` + schema + `.users (id) ON DELETE CASCADE`,
-		// The refresh tokens. Cloned for the reason the access tokens are: TG-C2
-		// gives the token endpoint a third credential table, and a private schema
-		// without it fails the whole grant with "relation ... does not exist",
-		// which reads like a migration that was not applied.
-		//
-		// THE SELF-REFERENTIAL FOREIGN KEY IS HERE, and it is the one that was
-		// missing when this list was written. Its absence made the private schema
-		// MORE PERMISSIVE than production on the one constraint that orders two
-		// statements: 00035 declares
-		// `replaced_by ... REFERENCES oidc_refresh_tokens (id)`, so a row may
-		// only name a successor that already exists. Production obeys that —
-		// Storage.CreateRefreshToken inserts the successor and THEN calls
-		// ReplaceRefreshToken — but the refresh-token tests wrote the link first,
-		// and against a schema without the constraint the write is simply
-		// accepted. Statement order was a fact nobody could observe, and the
-		// observable version of it is a 500 on the first rotation a real
-		// deployment performs.
-		//
-		// ON DELETE SET NULL, exactly as the migration has it: a matching action
-		// is what keeps the two schemas' behavior identical rather than merely
-		// similar, and "similar" is the word for a harness that agrees with a
-		// deferred failure.
 		`CREATE TABLE ` + schema + `.oidc_refresh_tokens (LIKE public.oidc_refresh_tokens INCLUDING ALL)`,
 		`ALTER TABLE ` + schema + `.oidc_refresh_tokens ADD CONSTRAINT oidc_refresh_tokens_replaced_by_fkey
 			FOREIGN KEY (replaced_by) REFERENCES ` + schema + `.oidc_refresh_tokens (id) ON DELETE SET NULL`,
@@ -428,10 +336,6 @@ func SchemaWithOwner(t *testing.T) (app, owner *pgxpool.Pool) {
 			FOREIGN KEY (client_row_id) REFERENCES ` + schema + `.oidc_clients (id) ON DELETE CASCADE`,
 		`ALTER TABLE ` + schema + `.oidc_refresh_tokens ADD CONSTRAINT oidc_refresh_tokens_subject_fkey
 			FOREIGN KEY (subject) REFERENCES ` + schema + `.users (id) ON DELETE CASCADE`,
-		// The MFA tables. No enum types, no AAD, nothing the LIKE clause cannot
-		// copy; the three foreign keys below point at the private schema rather
-		// than at public.users, which is the whole reason they are written out
-		// instead of inherited.
 		`CREATE TABLE ` + schema + `.mfa_credentials (LIKE public.mfa_credentials INCLUDING ALL)`,
 		`CREATE TABLE ` + schema + `.mfa_recovery_codes (LIKE public.mfa_recovery_codes INCLUDING ALL)`,
 		`CREATE TABLE ` + schema + `.mfa_used_totp_steps (LIKE public.mfa_used_totp_steps INCLUDING ALL)`,
@@ -444,12 +348,6 @@ func SchemaWithOwner(t *testing.T) (app, owner *pgxpool.Pool) {
 			FOREIGN KEY (credential_id) REFERENCES ` + schema + `.mfa_credentials (id) ON DELETE CASCADE`,
 		`ALTER TABLE ` + schema + `.mfa_challenges ADD CONSTRAINT mfa_challenges_user_id_fkey
 			FOREIGN KEY (user_id) REFERENCES ` + schema + `.users (id) ON DELETE CASCADE`,
-		// The api_keys table. No enum types, so LIKE copies everything — including
-		// the partial unique index on (account_id, lower(name)), which is what
-		// makes the "one live name per account" test mean something here: a schema
-		// without it would accept a duplicate and the test would pass for the
-		// wrong reason. The three foreign keys are written out because LIKE does
-		// not copy them and they would otherwise point at public.
 		`CREATE TABLE ` + schema + `.api_keys (LIKE public.api_keys INCLUDING ALL)`,
 		`ALTER TABLE ` + schema + `.api_keys ADD CONSTRAINT api_keys_user_id_fkey
 			FOREIGN KEY (user_id) REFERENCES ` + schema + `.users (id) ON DELETE CASCADE`,
@@ -457,16 +355,6 @@ func SchemaWithOwner(t *testing.T) (app, owner *pgxpool.Pool) {
 			FOREIGN KEY (account_id) REFERENCES ` + schema + `.accounts (id) ON DELETE CASCADE`,
 		`ALTER TABLE ` + schema + `.api_keys ADD CONSTRAINT api_keys_revoked_by_fkey
 			FOREIGN KEY (revoked_by) REFERENCES ` + schema + `.users (id) ON DELETE RESTRICT`,
-		// The admin audit log. LIKE copies the table and its indexes, and NOT the
-		// trigger — LIKE does not copy triggers, so the append-only guarantee has to
-		// be re-established here or a test in a private schema would run against a
-		// table the production one can never UPDATE. It is created rather than
-		// copied so that the test which forces an audit write to fail can replace
-		// the function body with one that raises, in this schema only.
-		//
-		// The foreign keys are deliberately absent: 00012 declares none on this
-		// table, and adding them here would make the private schema stricter than
-		// production, which is the direction that hides a bug.
 		`CREATE TABLE ` + schema + `.account_audit_log (LIKE public.account_audit_log INCLUDING ALL)`,
 		`CREATE FUNCTION ` + schema + `.account_audit_log_is_append_only() RETURNS trigger AS $$
 			BEGIN
@@ -477,36 +365,9 @@ func SchemaWithOwner(t *testing.T) (app, owner *pgxpool.Pool) {
 		`CREATE TRIGGER account_audit_log_append_only
 			BEFORE UPDATE OR DELETE ON ` + schema + `.account_audit_log
 			FOR EACH ROW EXECUTE FUNCTION ` + schema + `.account_audit_log_is_append_only()`,
-		// 00014 and 00015: the verification column and the recovery token table.
-		//
-		// The COLUMN needs nothing here — the LIKE clause above picks it up, which is
-		// what LIKE does — so a test in a private schema reads the same column the
-		// production table has rather than a copy of it.
-		//
-		// recovery_tokens gets its foreign key written out for the reason every other
-		// table's are: LIKE does not copy it and it would otherwise point at
-		// public.users. Its partial unique index on `target_token_digest` and all of
-		// its CHECK constraints DO come across with INCLUDING ALL, which is what makes
-		// "an email change's second token cannot exist before the first is confirmed"
-		// enforceable in a private schema and not only in production.
 		`CREATE TABLE ` + schema + `.recovery_tokens (LIKE public.recovery_tokens INCLUDING ALL)`,
 		`ALTER TABLE ` + schema + `.recovery_tokens ADD CONSTRAINT recovery_tokens_user_id_fkey
 			FOREIGN KEY (user_id) REFERENCES ` + schema + `.users (id) ON DELETE CASCADE`,
-		// 00022's user_audit_log, and it needs BOTH halves of the treatment
-		// account_audit_log gets above: the table, and the trigger.
-		//
-		// The trigger is the half that is easy to miss and the half that matters. LIKE
-		// does not copy triggers, so a private schema without this statement has a
-		// `user_audit_log` that IS append-only in production and freely editable here —
-		// which means a test asserting the append-only property would PASS against a
-		// table production does not have. The check would be measuring the harness.
-		//
-		// No foreign keys are written out, and this time that is not an omission to be
-		// tidied away: 00022 declares none, deliberately, because a CASCADE from users
-		// is a DELETE and a DELETE is what the trigger refuses. Adding one here would
-		// make the private schema STRICTER than production, which is the direction that
-		// hides a bug rather than the direction that finds one — and it would make
-		// this table cascade the one thing its migration was written to prevent.
 		`CREATE TABLE ` + schema + `.user_audit_log (LIKE public.user_audit_log INCLUDING ALL)`,
 		`CREATE FUNCTION ` + schema + `.user_audit_log_is_append_only() RETURNS trigger AS $$
 			BEGIN
@@ -517,48 +378,12 @@ func SchemaWithOwner(t *testing.T) (app, owner *pgxpool.Pool) {
 		`CREATE TRIGGER user_audit_log_append_only
 			BEFORE UPDATE OR DELETE ON ` + schema + `.user_audit_log
 			FOR EACH ROW EXECUTE FUNCTION ` + schema + `.user_audit_log_is_append_only()`,
-		// 00031: the agent principal, its credentials and its trail. All three get
-		// the treatment, and each for its own reason.
-		//
-		// `agents` carries an enum-typed `status` column, and LIKE copies the
-		// column with its type as a REFERENCE to `public.agent_status` — the same
-		// arrangement connected_accounts has, and the reason no CREATE TYPE appears
-		// here. The private schema's `agents.status` therefore accepts exactly the
-		// three labels production accepts, which is what makes "unclaimed →
-		// disabled is unrepresentable" a statement that holds under test.
-		//
-		// Its `claimed_by_account_id` foreign key is written out because LIKE does
-		// not copy it and it would otherwise point at public.accounts — and a
-		// private schema whose claim bound a PUBLIC account would be a schema in
-		// which two tests could claim the same row.
 		`CREATE TABLE ` + schema + `.agents (LIKE public.agents INCLUDING ALL)`,
 		`ALTER TABLE ` + schema + `.agents ADD CONSTRAINT agents_claimed_by_account_id_fkey
 			FOREIGN KEY (claimed_by_account_id) REFERENCES ` + schema + `.accounts (id) ON DELETE CASCADE`,
-		// agent_tokens' foreign key to agents is written out for the same reason,
-		// and its TWO partial unique indexes come across with INCLUDING ALL — the
-		// one on token_digest and the one on (agent_id, lower(name)) WHERE
-		// revoked_at IS NULL. The second is the load-bearing half: a schema
-		// without it would accept two live credentials of one name and the
-		// "one live token per agent" test would pass for the wrong reason.
 		`CREATE TABLE ` + schema + `.agent_tokens (LIKE public.agent_tokens INCLUDING ALL)`,
 		`ALTER TABLE ` + schema + `.agent_tokens ADD CONSTRAINT agent_tokens_agent_id_fkey
 			FOREIGN KEY (agent_id) REFERENCES ` + schema + `.agents (id) ON DELETE CASCADE`,
-		// agent_events needs BOTH halves of the treatment account_audit_log gets:
-		// the table, and the trigger.
-		//
-		// The trigger is the half that is easy to miss and the half that matters.
-		// LIKE does not copy triggers, so a private schema without this statement
-		// has an `agent_events` that IS append-only in production and freely
-		// editable here — which means a test asserting the append-only property
-		// would PASS against a table production does not have. The check would be
-		// measuring the harness.
-		//
-		// No foreign keys are written out, and that is not an omission to be
-		// tidied away: 00031 declares none, deliberately, because a CASCADE from
-		// agents is a DELETE and a DELETE is what the trigger refuses — the claim
-		// must not be undoable by deleting the account that claimed it. Adding
-		// one here would make the private schema STRICTER than production, which
-		// is the direction that hides a bug.
 		`CREATE TABLE ` + schema + `.agent_events (LIKE public.agent_events INCLUDING ALL)`,
 		`CREATE FUNCTION ` + schema + `.agent_events_is_append_only() RETURNS trigger AS $$
 			BEGIN
@@ -576,24 +401,6 @@ func SchemaWithOwner(t *testing.T) (app, owner *pgxpool.Pool) {
 		}
 	}
 
-	// THE APP ROLE GETS ITS OWN SCHEMA TOO, and this is the only statement in this
-	// function that is about credentials rather than about schema.
-	//
-	// `CREATE SCHEMA` grants nothing. From PostgreSQL 15 the owner of a new schema
-	// holds everything on it and PUBLIC holds nothing, so a private schema built by
-	// the owner is invisible to the pool under test: every unqualified name in the
-	// test's SQL resolves to nothing, and the first statement fails with `permission
-	// denied for schema test_…`. The clones likewise carry no grants, because
-	// `LIKE … INCLUDING ALL` copies columns, indexes and constraints and not
-	// privileges.
-	//
-	// The grant is at SCHEMA scope and covers every clone in one statement rather
-	// than naming the twenty tables above, for the reason 00019 gives: a list that
-	// names its tables is a list somebody has to remember to extend, and a list that
-	// does not name them cannot quietly lose one. These clones carry no row-level
-	// security — LIKE does not copy it, which is exactly why the tests that use them
-	// can read a fixture the production table would refuse — so there is no policy
-	// to grant and nothing here is a second copy of the boundary.
 	for _, grant := range []string{
 		`GRANT USAGE ON SCHEMA ` + schema + ` TO ` + appRoleName(t),
 		`GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA ` + schema + ` TO ` + appRoleName(t),
@@ -611,9 +418,6 @@ func SchemaWithOwner(t *testing.T) (app, owner *pgxpool.Pool) {
 		}
 	})
 
-	// search_path is a plain GUC, so pgx passes it as a connection runtime
-	// parameter. Every unqualified name in the test's SQL then resolves inside the
-	// private schema.
 	pool, err := db.Open(ctx, withSearchPath(AppDSN(t), schema), db.DefaultOptions())
 	if err != nil {
 		t.Fatalf("opening a pool scoped to %s: %v", schema, err)
@@ -622,9 +426,6 @@ func SchemaWithOwner(t *testing.T) (app, owner *pgxpool.Pool) {
 
 	assertAppRole(t, pool)
 
-	// The owner's pool on the same schema, opened after the app role's so that the
-	// two cleanups run in the reverse of this order: the app pool closes first, then
-	// this one, then the schema drop, which still has the admin pool above.
 	ownerPool, err := db.Open(ctx, withSearchPath(base, schema), db.DefaultOptions())
 	if err != nil {
 		t.Fatalf("opening an owner pool scoped to %s: %v", schema, err)
@@ -634,15 +435,6 @@ func SchemaWithOwner(t *testing.T) (app, owner *pgxpool.Pool) {
 	return pool, ownerPool
 }
 
-// appRoleName is the role the grants above name, read off the DSN the pool will
-// actually use rather than spelled out here.
-//
-// The name is derived in one place — AppDSN — and a GRANT is SQL, so it cannot
-// take a parameter the way a DSN can. Writing `identity_app` into a second file
-// is a second answer to a question that already has one, and the way it fails is
-// the quiet way: the grant lands on a role nobody logs in as and the schema is
-// then unreadable by the pool for a reason that names a permission and not a
-// role.
 func appRoleName(t *testing.T) string {
 	t.Helper()
 
@@ -653,7 +445,6 @@ func appRoleName(t *testing.T) string {
 	return parsed.User.Username()
 }
 
-// dsn returns the configured DSN, skipping the test when it is unset.
 func dsn(t *testing.T) string {
 	t.Helper()
 
@@ -664,13 +455,9 @@ func dsn(t *testing.T) string {
 	return value
 }
 
-// withSearchPath appends search_path to the DSN, preserving whatever query
-// parameters it already carries.
 func withSearchPath(dsnValue, schema string) string {
 	parsed, err := url.Parse(dsnValue)
 	if err != nil {
-		// Pool already validated this DSN, so a parse failure here would be a
-		// bug in this helper rather than bad configuration.
 		panic("dbtest: parsing " + EnvVar + ": " + err.Error())
 	}
 

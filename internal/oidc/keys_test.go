@@ -14,11 +14,6 @@ import (
 	"github.com/zitadel/oidc/v3/pkg/op"
 )
 
-// The key is the one piece of configuration this service cannot invent at
-// runtime and cannot have two of. Everything below is about the one key: that it
-// loads from a PEM rather than being generated, that it is big enough, that its
-// identifier is safe to put in a JWT header and a consumer's cache, and that the
-// document served at the JWKS URL is shaped the way gateway's verifier reads it.
 
 func TestLoadSigningKey(t *testing.T) {
 	t.Parallel()
@@ -58,9 +53,6 @@ func TestLoadSigningKey(t *testing.T) {
 	})
 }
 
-// Every rejection is a startup failure, not a fallback. A key that silently
-// degrades to a smaller one, or to a generated one, is a service that verifies
-// tokens nobody else can and rotates its own trust anchor on every restart.
 func TestLoadSigningKeyRejects(t *testing.T) {
 	t.Parallel()
 
@@ -91,11 +83,6 @@ func TestLoadSigningKeyRejects(t *testing.T) {
 	}
 }
 
-// The published document is gateway's entire view of this service's trust,
-// and gateway reads it with three specific expectations: a `keys` array, non-empty,
-// of objects; a `kid` on the key that matches the token header; and an RS256
-// key. The shape is asserted field by field rather than "it is JSON" because
-// every one of these has a different failure on the consumer side.
 func TestJWKSIsTheDocumentGatewayReads(t *testing.T) {
 	t.Parallel()
 
@@ -123,8 +110,6 @@ func TestJWKSIsTheDocumentGatewayReads(t *testing.T) {
 		t.Fatalf("the JWKS is not JSON: %v", err)
 	}
 
-	// gateway's isKeySet: an array, non-empty, every entry an object. An empty
-	// array is a 401 on every request, so it is worth pinning.
 	if len(decoded.Keys) != 1 {
 		t.Fatalf("the key set has %d keys, want exactly 1; this service has one signing key", len(decoded.Keys))
 	}
@@ -141,8 +126,6 @@ func TestJWKSIsTheDocumentGatewayReads(t *testing.T) {
 	if got.Use != "sig" {
 		t.Errorf("use = %q, want sig; the key verifies signatures and encrypts nothing", got.Use)
 	}
-	// The modulus and exponent are what jose actually verifies with. A document
-	// with a kid and no `n` parses and matches, and then fails every token.
 	if !regexp.MustCompile(`^[A-Za-z0-9_-]+$`).MatchString(got.N) || got.N == "" {
 		t.Errorf("n = %q, want base64url of the modulus", got.N)
 	}
@@ -151,9 +134,6 @@ func TestJWKSIsTheDocumentGatewayReads(t *testing.T) {
 	}
 }
 
-// The private half must never reach the document. This is the assertion that
-// says so out loud, because the only thing separating the two is which of the
-// two accessors the handler happens to call.
 func TestJWKSNeverCarriesThePrivateKey(t *testing.T) {
 	t.Parallel()
 
@@ -179,10 +159,6 @@ func TestJWKSNeverCarriesThePrivateKey(t *testing.T) {
 	}
 }
 
-// The key is the library's op.SigningKey and its published half is an op.Key.
-// The assertions name the real interfaces rather than a copy of their method
-// sets, so a signature change upstream fails here with a message that says which
-// interface moved instead of failing in three call sites with no explanation.
 func TestSigningKeySatisfiesTheLibraryInterfaces(t *testing.T) {
 	t.Parallel()
 
@@ -192,9 +168,6 @@ func TestSigningKeySatisfiesTheLibraryInterfaces(t *testing.T) {
 	}
 }
 
-// PEM encodings. Both are accepted because `openssl genrsa` has emitted both for
-// a decade and an operator following the wrong line of a runbook should not be
-// left with a service that will not start.
 type pemEncoding int
 
 const (
@@ -202,11 +175,6 @@ const (
 	pkcs8
 )
 
-// pemFor generates a throwaway key of the given size and encodes it.
-//
-// Generated rather than checked in so no test fixture in this repository holds a
-// private key, even a dead one: a PEM in a test file is a PEM somebody eventually
-// copies into a deployment.
 func pemFor(t *testing.T, bits int, encoding pemEncoding) string {
 	t.Helper()
 

@@ -1,21 +1,5 @@
 package sessions
 
-// THE LISTING AND THE SINGLE REVOCATION, AGAINST A REAL DATABASE.
-//
-// Three properties, and the third is the one the other two are arranged around:
-// a caller cannot end somebody else's session by naming its id.
-//
-// That cannot be proven with a double, and it cannot be proven at the HTTP layer
-// alone either — the HTTP layer's proof is that it passes a credential and not a
-// user id (that is `internal/auth`'s test), and this file's is that the DELETE
-// carries the owner in its predicate. A `WHERE id = $1` with a check above it would
-// pass every test in internal/auth and internal/httpapi and delete a stranger's
-// session in production, which is why the assertion below is on the ROW and not on
-// a return value.
-//
-// The red proof for the ownership case is in REPORT-identity-sessions-01: the
-// owner clause was removed from the statement, this file went red on
-// `TestRevokeOneForUserRefusesAnotherUsersSession`, and the clause came back.
 
 import (
 	"context"
@@ -30,8 +14,6 @@ import (
 	"github.com/anywaye/identity/internal/platform/id"
 )
 
-// mintSession writes one live session and returns the row with its token, so a
-// test can both look the session up by its digest and authenticate with it.
 func mintSession(t *testing.T, pool *pgxpool.Pool, store *Store, userID id.UUID, agent string) (Session, string) {
 	t.Helper()
 
@@ -54,15 +36,6 @@ func mintSession(t *testing.T, pool *pgxpool.Pool, store *Store, userID id.UUID,
 	return created, token
 }
 
-// TestListLiveForUserReturnsOnlyThatUsersSessions is the listing's boundary, and it
-// is asserted on BOTH SIDES: the caller's own session is present AND the stranger's
-// is absent.
-//
-// Asserting only the presence would pass against a query that returned every row in
-// the table, which is the failure this file exists to catch. A shared database and
-// a parallel suite mean "the table has at least two users in it" is not something to
-// assume — but it is not something to rely on either, so the stranger is created
-// here rather than borrowed.
 func TestListLiveForUserReturnsOnlyThatUsersSessions(t *testing.T) {
 	pool := dbtest.Pool(t)
 	store := NewStore(pool)
@@ -92,9 +65,6 @@ func TestListLiveForUserReturnsOnlyThatUsersSessions(t *testing.T) {
 	}
 }
 
-// TestListLiveForUserOmitsAnExpiredSession is why the expiry test is here rather
-// than in the auth layer: "live" is a claim about what the user is shown, and a
-// revoked-by-expiry row is a button that does nothing.
 func TestListLiveForUserOmitsAnExpiredSession(t *testing.T) {
 	pool := dbtest.Pool(t)
 	store := NewStore(pool)
@@ -103,7 +73,6 @@ func TestListLiveForUserOmitsAnExpiredSession(t *testing.T) {
 	ctx := context.Background()
 	live, _ := mintSession(t, pool, store, user.ID, "Live/1.0")
 
-	// A session that expired an hour before `issuedAt`.
 	_, digest, err := NewToken()
 	if err != nil {
 		t.Fatalf("NewToken: %v", err)
@@ -128,14 +97,6 @@ func TestListLiveForUserOmitsAnExpiredSession(t *testing.T) {
 	}
 }
 
-// TestListLiveForUserIsNewestFirstAndTotallyOrdered asserts the ORDER BY rather
-// than describing it.
-//
-// `created_at` alone leaves two sessions minted in the same millisecond in an
-// undefined order, so a client rendering the list twice sees it jitter. The test
-// creates three rows whose created_at values are close enough that the tiebreaker
-// is what decides, and asserts the whole sequence rather than the head — a
-// descending-order test that only looks at row zero passes against a reversed sort.
 func TestListLiveForUserIsNewestFirstAndTotallyOrdered(t *testing.T) {
 	pool := dbtest.Pool(t)
 	store := NewStore(pool)
@@ -170,13 +131,6 @@ func TestListLiveForUserIsNewestFirstAndTotallyOrdered(t *testing.T) {
 	}
 }
 
-// TestRevokeOneForUserRefusesAnotherUsersSession is THE test in this file.
-//
-// It asserts on the ROW, through the digest, and in both directions: the stranger's
-// token still resolves and the caller's own session did not get deleted instead.
-// The second half matters because a `RevokeOneForUser` written as "find the row,
-// then delete whatever id I was given" would delete the caller's session and leave
-// the stranger's, which is the mirror image and just as wrong.
 func TestRevokeOneForUserRefusesAnotherUsersSession(t *testing.T) {
 	pool := dbtest.Pool(t)
 	store := NewStore(pool)
@@ -201,15 +155,11 @@ func TestRevokeOneForUserRefusesAnotherUsersSession(t *testing.T) {
 		t.Errorf("the other user's session no longer authenticates after a revoke aimed at it: %v", err)
 	}
 
-	// And the caller's own session is untouched, which is the half a mirror-image
-	// bug fails.
 	if _, err := store.ByToken(ctx, pool, myToken, issuedAt); err != nil {
 		t.Errorf("the caller's own session was deleted by a revoke that named somebody else's: %v", err)
 	}
 }
 
-// TestRevokeOneForUserRevokesTheCallersOwnSession is the positive case, so the
-// refusal above is a boundary rather than a method that never does anything.
 func TestRevokeOneForUserRevokesTheCallersOwnSession(t *testing.T) {
 	pool := dbtest.Pool(t)
 	store := NewStore(pool)
@@ -235,12 +185,6 @@ func TestRevokeOneForUserRevokesTheCallersOwnSession(t *testing.T) {
 	}
 }
 
-// TestRevokeOneForUserIsFalseForAMissingSession is the idempotence half, and it is
-// a false rather than an error for the reason the store's own comment gives: a
-// client retrying a revoke should not get a 500 for having retried it.
-//
-// It is also the answer that keeps the route from being a uuid oracle — see the
-// comment on Store.RevokeOneForUser.
 func TestRevokeOneForUserIsFalseForAMissingSession(t *testing.T) {
 	pool := dbtest.Pool(t)
 	store := NewStore(pool)
@@ -254,8 +198,6 @@ func TestRevokeOneForUserIsFalseForAMissingSession(t *testing.T) {
 		t.Error("RevokeOneForUser reported true for an id no row has")
 	}
 
-	// And the nil uuid, which is a value no row can hold and which a store that
-	// treated it as a wildcard would delete every session for.
 	revoked, err = store.RevokeOneForUser(context.Background(), pool, user.ID, id.UUID{})
 	if err != nil {
 		t.Fatalf("RevokeOneForUser with the nil id = %v, want no error", err)
@@ -265,9 +207,6 @@ func TestRevokeOneForUserIsFalseForAMissingSession(t *testing.T) {
 	}
 }
 
-// TestSessionsAreRemovedWithTheirUserOnListing is the cascade, restated for the new
-// query: a user deleted underneath a session listing leaves no row that the listing
-// can return, so a stale session id is not something a client holds forever.
 func TestSessionsAreRemovedWithTheirUserOnListing(t *testing.T) {
 	pool := dbtest.Pool(t)
 	store := NewStore(pool)

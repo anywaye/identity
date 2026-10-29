@@ -8,50 +8,6 @@ import (
 	"github.com/anywaye/identity/internal/platform/db"
 )
 
-// The CREDENTIAL seam: the transaction that resolves a presented secret to its row.
-//
-// # WHY THIS IS A SEPARATE FILE AND NOT A SECOND FUNCTION IN scope.go
-//
-// scope.go is the account seam and its whole argument is that there is exactly
-// ONE place that writes `anywaye.account_id`, so a boundary stated in two places
-// is a boundary asserted in zero times. The same argument applies here, and it is
-// why this file exists rather than two more functions in that one: the digest is
-// a second GUC, it is set by a second statement, and a reader looking for the one
-// place that opens a request's identity should not have to decide whether the
-// second statement is part of it.
-//
-// # IT IS NOT THE ACCOUNT SEAM, AND IT MUST NOT BECOME ONE
-//
-// `begin_account` answers "which tenant is this request acting as", and every
-// query that runs under it carries its own `where account_id = ?`. This one
-// answers "which row does this presented secret name", and it exists ONLY because
-// the query that authenticates a caller has no account to predicate on: the
-// account is what that query is FOR. Measured before this seam existed, as the
-// owner, against the real protected table:
-//
-//	no identity at all (the state a token request is in)  ->  0 rows
-//	identity = the credential's own account                ->  1 row
-//	identity = A, reading another tenant's credential      ->  0 rows
-//
-// The first line is the finding: every scoped token was refused as though it had
-// never existed, because `ErrNoRows` becomes `ErrNotFound` and the HTTP layer
-// becomes 401.
-//
-// # CredentialResolver CANNOT SET AN ACCOUNT, AND THAT IS THE POINT
-//
-// It is deliberately NOT `TxRunner` and deliberately not built on top of it. A
-// resolver that also began the request's account would make the resolution
-// session's read set the UNION of two policies — `account_id = …` OR
-// `token_digest = …` — and the union of "the row whose digest you presented"
-// with "every row of the account you are acting as" is not the resolution
-// session's semantics, it is a browsing session with a narrower name. Whether
-// that could happen today depends on CALL ORDER — `requireAccountRole` resolves
-// the credential before it calls `tenancy.WithAccount` — and a security property
-// that holds because of the order of two statements in another package is a
-// property that survives exactly until somebody reorders them.
-//
-// So the narrowing is STRUCTURAL: this type holds a `db.TxRunner` and cannot be
-// given an account, so there is no spelling of it that sets one.
 
 // ErrNoCredential is returned when the credential GUC could not be set.
 //
@@ -61,29 +17,10 @@ import (
 // problem, and the two demand different responses.
 var ErrNoCredential = errors.New("setting the credential digest on the transaction")
 
-// beginCredentialSQL is kit's second seam, called by name rather than written
-// out, for the reason beginAccountSQL is.
-//
-// It is kit's function, not ours: migrations/00016 applies kit's substrate
-// verbatim and this is the second entry point that substrate declares. MD24 is
-// kit's decision — the mechanism and the four answers it rejected are argued in
-// the substrate itself and in kit's DECISIONS.md — and this service adopts it
-// rather than carrying a second opinion about how a credential resolves.
 const beginCredentialSQL = `select anywaye.begin_credential($1)`
 
-// beginCredential sets the presented digest on a transaction that is already
-// open. It is unexported, so the digest is written by CredentialResolver and by
-// nothing else, for the reason every seam in this package is unexported.
 func beginCredential(ctx context.Context, q db.Querier, digest string) error {
 	if digest == "" {
-		// Unreachable from the only caller, and named rather than defaulted.
-		// `apikeys.Digest` is a hex SHA-256 and is 64 characters for every input
-		// including the empty string, so no presented value can produce this. It is
-		// here because the alternative — passing "" — sets the GUC to empty, which
-		// `current_credential_digest()` reads back as NULL, which reads no rows and
-		// looks indistinguishable from an unknown credential. A bug at the call site
-		// should be a loud one; "reads nothing" is the quietest possible answer and
-		// it is the answer this whole packet exists to stop being the default.
 		return fmt.Errorf("%w: refusing to begin with an empty digest", ErrNoCredential)
 	}
 	if _, err := q.Exec(ctx, beginCredentialSQL, digest); err != nil {
@@ -110,12 +47,6 @@ func beginCredential(ctx context.Context, q db.Querier, digest string) error {
 // states.
 func BeginCredential(ctx context.Context, q db.Querier, digest string) error {
 	if digest == "" {
-		// Named rather than defaulted, for the reason beginCredential states:
-		// passing "" would set an empty GUC that reads back as NULL and looks
-		// indistinguishable from an unknown credential. `accounts.Digest` is a
-		// hex SHA-256 and is 64 characters for every input including the empty
-		// string, so no presented token can produce this — a caller reaching
-		// here with one has a bug, and it should be a loud one.
 		return fmt.Errorf("%w: refusing to begin with an empty digest", ErrNoCredential)
 	}
 	return beginCredential(ctx, q, digest)

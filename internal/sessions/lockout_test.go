@@ -5,10 +5,6 @@ import (
 	"time"
 )
 
-// These tests never sleep and never construct a Clock. The lockout policy is a
-// pure function of (state, now), which is the only reason the fifteen-minute
-// window is testable at all: PLAN.md §3 forbids sleeps, and a policy that needs
-// one cannot be tested honestly.
 
 var start = time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
 
@@ -25,8 +21,6 @@ func TestAFreshAccountIsUnlocked(t *testing.T) {
 	}
 }
 
-// The headline requirement: five consecutive failures, then a fifteen-minute
-// lock. The fourth must not lock, or the threshold is four.
 func TestLockTakesEffectOnTheFifthConsecutiveFailure(t *testing.T) {
 	t.Parallel()
 
@@ -48,8 +42,6 @@ func TestLockTakesEffectOnTheFifthConsecutiveFailure(t *testing.T) {
 			t.Parallel()
 
 			l := Lockout{}
-			// Every attempt lands on the same instant, so the assertion is about
-			// the count and nothing about elapsed time.
 			for range tt.failures {
 				l = l.Failed(start)
 			}
@@ -91,15 +83,11 @@ func TestRetryAfterCountsDown(t *testing.T) {
 	if got, want := l.RetryAfter(start.Add(14*time.Minute+59*time.Second)), time.Second; got != want {
 		t.Errorf("RetryAfter one second before expiry = %s, want %s", got, want)
 	}
-	// After the window, a caller asking how long to wait must get zero, not a
-	// negative number that a client would add to its own clock.
 	if got := l.RetryAfter(start.Add(time.Hour)); got != 0 {
 		t.Errorf("RetryAfter after expiry = %s, want 0", got)
 	}
 }
 
-// "Consecutive" is the whole point. A success in the middle resets the run, so
-// an attacker who guesses one password in five still has to start over.
 func TestSuccessResetsTheConsecutiveRun(t *testing.T) {
 	t.Parallel()
 
@@ -140,10 +128,6 @@ func TestSuccessLiftsAnActiveLock(t *testing.T) {
 	}
 }
 
-// Once the window closes, the run starts from scratch. A stale count of five
-// would mean the very next mistake re-locks the account, which is not what
-// "five consecutive failures" says and reads as the service punishing a user
-// forever for one bad afternoon.
 func TestAnExpiredLockStartsAFreshRun(t *testing.T) {
 	t.Parallel()
 
@@ -178,9 +162,6 @@ func TestAFullRunAfterExpiryLocksAgain(t *testing.T) {
 	}
 }
 
-// A locked account must not be able to push its own lock further out. If Failed
-// kept incrementing while locked, every rejected attempt would extend the window
-// and the account would never be reachable again.
 func TestFailureWhileLockedDoesNotExtendTheLock(t *testing.T) {
 	t.Parallel()
 
@@ -198,9 +179,6 @@ func TestFailureWhileLockedDoesNotExtendTheLock(t *testing.T) {
 	}
 }
 
-// The state round-trips through the database, so the JSON tags are the wire
-// contract for whatever serializes it. Getting them wrong silently drops the
-// lockout state on a restart.
 func TestLockoutRoundTripsThroughItsTags(t *testing.T) {
 	t.Parallel()
 
@@ -217,7 +195,6 @@ func TestLockoutRoundTripsThroughItsTags(t *testing.T) {
 	}
 }
 
-// A state loaded from a row with NULL locked_until must come back unlocked.
 func TestLockoutFromAnUnlockedRow(t *testing.T) {
 	t.Parallel()
 
@@ -234,8 +211,6 @@ func TestLockoutFromAnUnlockedRow(t *testing.T) {
 	}
 }
 
-// fiveFailures drives a zero Lockout to its fifth failure, all at the same
-// instant so the assertions are about the count and not about elapsed time.
 func fiveFailures(now time.Time) Lockout {
 	l := Lockout{}
 	for range MaxFailedAttempts {

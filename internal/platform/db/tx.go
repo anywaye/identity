@@ -57,8 +57,6 @@ func (r TxRunner) Do(ctx context.Context, fn func(ctx context.Context, q Querier
 	if fn == nil {
 		return ErrNilTxFunc
 	}
-	// Checked before Begin: opening a transaction for a request that has already
-	// been canceled only ties up a connection until the pool reclaims it.
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -78,19 +76,9 @@ func (r TxRunner) Do(ctx context.Context, fn func(ctx context.Context, q Querier
 	return nil
 }
 
-// runInTx invokes fn and makes sure the transaction is rolled back on any exit
-// other than success.
-//
-// The rollback runs on a context detached from the caller's. That is not
-// incidental: the common case for reaching here is that the caller's context was
-// canceled — a client hung up mid-request — and a rollback issued on a dead
-// context fails, which would leave the transaction open on its connection. The
-// transaction is then discarded, which is the outcome being asked for either way.
 func runInTx(ctx context.Context, tx pgx.Tx, fn func(context.Context, Querier) error) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			// Rolled back below; the panic is converted to an error so the HTTP
-			// layer reports a 500 with a trace id instead of a broken connection.
 			err = fmt.Errorf("panic inside a transaction: %v", r)
 		}
 		if err != nil {
