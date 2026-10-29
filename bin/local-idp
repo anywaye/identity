@@ -1,12 +1,4 @@
 #!/bin/sh
-# THE IDENTITY SIDE OF THE LOCAL LOOP — a thin entrypoint, not a second loop.
-#
-# The loop spans identity, gateway and oauth-stub, and the composition lives in
-# gateway (`local/run.sh`) because the thing it proves is the edge. This shim
-# exists so identity's own profile (`config/local.env`, which names this path)
-# points at something real: it forwards every verb — keygen, build, migrate,
-# up, proofs, down — to the one loop. There is deliberately no logic here to
-# drift from it.
 set -eu
 GATEWAY_DIR="${L7_GATEWAY_DIR:-/Users/kaka/Code/any/work/wt/roll-l7-gateway}"
 exec "$GATEWAY_DIR/local/run.sh" "$@"

@@ -1,20 +1,5 @@
 package useraudit
 
-// THE AUDIT TABLE'S STORE.
-//
-// APPEND AND NOTHING ELSE, and the absence is a decision rather than an omission
-// waiting to be filled. The twin has Append and List because a route reads its trail;
-// nothing reads this one yet, and adding a List here would be a method with no caller
-// — which is the lie AGENTS.md calls "a tested but unwired method": it would be
-// covered by a test that exercises an API no deployment reaches, and the next packet
-// would inherit a function whose only proven use is its own test.
-//
-// There is no Update and no Delete either, for the twin's reason: the table refuses
-// both at the database (migrations/00022), so a method here would be a function whose
-// only possible return is an error. The interface in the consumer is the shape; the
-// BEFORE UPDATE OR DELETE trigger is the guarantee, and it is in the database rather
-// than in this file because a guarantee written in Go does not survive a psql session,
-// a repair script, or a future packet.
 
 import (
 	"context"
@@ -23,11 +8,6 @@ import (
 	"github.com/anywaye/identity/internal/platform/db"
 )
 
-// auditColumns is the table's own column list, in one place.
-//
-// It is a const for the reason the twin's is: there is no alias here, so there is
-// nothing to compute, and a computed list is a list that can fall out of step with a
-// column added to the table.
 const auditColumns = `id, user_id, action, actor_user_id, actor_key_id, trace_id, occurred_at`
 
 // Store is the user_audit_log table.
@@ -64,9 +44,6 @@ func (s *Store) Append(ctx context.Context, q db.Querier, e Entry) (Record, erro
 		return Record{}, err
 	}
 	if q == nil {
-		// A nil querier would panic inside pgx rather than refuse, and a panic in the
-		// middle of a disable transaction is the worst place to discover the wiring is
-		// wrong.
 		return Record{}, fmt.Errorf("appending a user audit record: no querier was supplied")
 	}
 
@@ -83,20 +60,11 @@ func (s *Store) Append(ctx context.Context, q db.Querier, e Entry) (Record, erro
 
 	rec, err := scanRecord(row)
 	if err != nil {
-		// NOT WRAPPED INTO A SENTINEL, for the twin's reason: there is no unique
-		// constraint a caller can provoke on this table, so a mapping would be one
-		// that could only ever be wrong. The error reaches the caller as a 500 and the
-		// transaction rolls back, which is the behavior that matters — the disable
-		// does not happen.
 		return Record{}, fmt.Errorf("inserting a user audit record: %w", err)
 	}
 	return rec, nil
 }
 
-// scanRecord reads one row. It is a function rather than inline so the column list
-// and the scan order are in one place: a column added to auditColumns that is not
-// scanned here is a compile error, and a scan order that drifts from the column list
-// is a runtime one.
 func scanRecord(row interface{ Scan(...any) error }) (Record, error) {
 	var (
 		rec    Record

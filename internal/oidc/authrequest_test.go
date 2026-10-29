@@ -9,12 +9,7 @@ import (
 	"github.com/anywaye/identity/internal/platform/id"
 )
 
-// The authorization request and its code: the two statements the token endpoint
-// depends on, tested against the database because the properties being asserted
-// are properties of the SQL.
 
-// newAuthRequest records a request for a client, ready to be completed by the
-// login UI.
 func (f storeFixture) newAuthRequest(t *testing.T, client Client, expiresAt time.Time) AuthRequest {
 	t.Helper()
 
@@ -73,9 +68,6 @@ func TestStoreAuthRequestRefusesAnExpiredOne(t *testing.T) {
 	f := newStoreFixture(t)
 	client := f.mustCreateClient(t, f.account, f.owner)
 
-	// An hour old, so the row is written already expired. The read below is
-	// against the injected instant rather than the server's, which is what makes
-	// "expired" a fact about this test rather than about what time it is.
 	created, err := f.store.CreateAuthRequest(f.ctx, f.q(), NewAuthRequest{
 		ClientRowID:         client.ID,
 		RedirectURI:         "https://app.example.com/cb",
@@ -92,8 +84,6 @@ func TestStoreAuthRequestRefusesAnExpiredOne(t *testing.T) {
 		t.Fatalf("CreateAuthRequest: %v", err)
 	}
 
-	// The same error as "never existed", and the reason is the message: an id
-	// that arrived in a URL is not something a probe should be able to classify.
 	if _, err := f.store.AuthRequestByID(f.ctx, f.q(), created.ID, storeTestNow); !errors.Is(err, ErrAuthRequestNotFound) {
 		t.Errorf("AuthRequestByID on an expired request = %v, want ErrAuthRequestNotFound", err)
 	}
@@ -125,9 +115,6 @@ func TestStoreCompleteAuthRequestIsOnceOnly(t *testing.T) {
 		t.Errorf("auth_time = %v, want the injected instant", loaded.AuthTime)
 	}
 
-	// A second login submission for the same request must not re-point it at
-	// somebody else: the row the redirect is built from would then name a
-	// different user than the one who authenticated.
 	if err := f.store.CompleteAuthRequest(f.ctx, f.q(), request.ID, other, storeTestNow.Add(time.Minute)); !errors.Is(err, ErrAuthRequestNotFound) {
 		t.Errorf("the second CompleteAuthRequest = %v, want a refusal", err)
 	}
@@ -161,8 +148,6 @@ func TestStoreAuthCodeIsRedeemableExactlyOnce(t *testing.T) {
 	if redeemed.ID != request.ID {
 		t.Errorf("redeemed request %s, want %s", redeemed.ID, request.ID)
 	}
-	// The request has to come back whole: the token endpoint still needs the
-	// scopes, the redirect URI and the code challenge after the code is spent.
 	if redeemed.RedirectURI != request.RedirectURI || redeemed.CodeChallenge != request.CodeChallenge {
 		t.Error("the redeemed request lost the fields the token exchange needs")
 	}
@@ -178,8 +163,6 @@ func TestStoreAuthCodeIsRedeemableExactlyOnce(t *testing.T) {
 	}
 }
 
-// An expired code is not redeemable, and the answer is the same as for a code
-// that was never issued. Both are ErrNoAuthCode on purpose: see that error.
 func TestStoreExpiredAuthCodeIsNotRedeemable(t *testing.T) {
 	t.Parallel()
 
@@ -196,14 +179,6 @@ func TestStoreExpiredAuthCodeIsNotRedeemable(t *testing.T) {
 	}
 }
 
-// The gate is a single conditional UPDATE, and this is the assertion that says
-// so: two redemptions racing on the same code produce exactly one winner, and it
-// is the UPDATE that decides rather than a read that both of them passed.
-//
-// The assertion is on the COUNT of successes, not on which goroutine won, so it
-// holds for every interleaving. There is no sleep and no retry: a barrier puts
-// both goroutines in front of the statement at the same time, and the database
-// serializes them.
 func TestStoreAuthCodeCannotBeRedeemedTwiceConcurrently(t *testing.T) {
 	t.Parallel()
 
@@ -243,8 +218,6 @@ func TestStoreAuthCodeCannotBeRedeemedTwiceConcurrently(t *testing.T) {
 	}
 }
 
-// Two codes on one request is a state the token endpoint could not reason about,
-// so the second SaveAuthCode is refused rather than overwriting the first.
 func TestStoreSaveAuthCodeRefusesASecond(t *testing.T) {
 	t.Parallel()
 
@@ -258,14 +231,11 @@ func TestStoreSaveAuthCodeRefusesASecond(t *testing.T) {
 	if err := f.store.SaveAuthCode(f.ctx, f.q(), request.ID, SecretDigest("second"), storeTestNow.Add(time.Minute)); !errors.Is(err, ErrNoAuthCode) {
 		t.Errorf("the second SaveAuthCode = %v, want ErrNoAuthCode", err)
 	}
-	// The first code is the one that still works.
 	if _, err := f.store.ConsumeAuthCode(f.ctx, f.q(), SecretDigest("first"), storeTestNow); err != nil {
 		t.Errorf("the first code is not redeemable: %v", err)
 	}
 }
 
-// The CHECK on the column is the reason a request with `plain` cannot exist, so
-// this test is about the database rather than about the handler that refuses it.
 func TestStoreRefusesAPlainCodeChallenge(t *testing.T) {
 	t.Parallel()
 
@@ -289,10 +259,6 @@ func TestStoreRefusesAPlainCodeChallenge(t *testing.T) {
 	}
 }
 
-// Deleting a request is idempotent, because ConsumeAuthCode has already taken the
-// code out of circulation and the library tidies up straight afterwards. A
-// DELETE that reported "no rows" as an error would turn every token exchange
-// into a 500.
 func TestStoreDeleteAuthRequestIsIdempotent(t *testing.T) {
 	t.Parallel()
 

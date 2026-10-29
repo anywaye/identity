@@ -1,26 +1,5 @@
 package ci
 
-// A reader for the one block of anywaye.yml this package needs.
-//
-// go.mod has no YAML dependency and adding one would put a parser and its CVEs in
-// this module's dependency list for the sake of one list of strings, so this
-// reads the block by shape — the same trade internal/httpapi/openapi_reader_test.go
-// makes for the OpenAPI documents, and for the same reason.
-//
-// THE RULE THAT MATTERS HERE IS REFUSAL, NOT PARSING. A reader that finds nothing
-// agrees with another reader that finds nothing, and a reader that silently skips
-// a list item it did not understand turns "this service declares no events" into
-// a claim about a document it never read. So every way this can come back with
-// less than it should — no `exposes:`, no `events:` under it, a block that yields
-// nothing, a line inside the block that is not a comment, a blank, or a `- type`
-// entry, an entry with no value — is an error naming the line, and the caller
-// turns that error into a failed test rather than into an empty list.
-//
-// It is a pure function of the document rather than a helper that fails the test
-// itself, because a reader that reports through *testing.T cannot be tested for
-// refusal at all: the proof that it refused is a failed test, and a test that
-// fails cannot also assert. The tests below are the reason the signature is what
-// it is.
 
 import (
 	"fmt"
@@ -30,8 +9,6 @@ import (
 	"testing"
 )
 
-// manifestEventTypes returns the entries of `exposes.events` in anywaye.yml, and
-// fails the test if the block cannot be read whole.
 func manifestEventTypes(t *testing.T) []string {
 	t.Helper()
 	path := filepath.Join(repoRoot(t), "anywaye.yml")
@@ -46,7 +23,6 @@ func manifestEventTypes(t *testing.T) []string {
 	return got
 }
 
-// eventTypesFromManifest reads `exposes.events` out of a manifest document.
 func eventTypesFromManifest(source string) ([]string, error) {
 	lines := strings.Split(source, "\n")
 
@@ -67,17 +43,9 @@ func eventTypesFromManifest(source string) ([]string, error) {
 	for i := exposesAt + 1; i < len(lines); i++ {
 		line := lines[i]
 		trimmed := strings.TrimSpace(line)
-		// Blank lines and comments sit between sibling keys in this
-		// repository's own manifest, so they are stepped over rather than
-		// treated as the end of the block. Treating a blank line as the end
-		// would make the reader refuse the real anywaye.yml, and a reader that
-		// refuses everything is indistinguishable from a correct one.
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 			continue
 		}
-		// `events:` is a key at two-space indentation, a sibling of `api:`.
-		// A line indented less than that has left the block, and so has any
-		// line at zero indentation.
 		if line == "  events:" {
 			eventsAt = i
 			break
@@ -99,7 +67,6 @@ func eventTypesFromManifest(source string) ([]string, error) {
 		}
 		if !strings.HasPrefix(line, "    - ") {
 			if !strings.HasPrefix(line, "    ") {
-				// Shallower than an entry: the list ended.
 				break
 			}
 			return nil, fmt.Errorf("line %d is inside `exposes.events` and is not a list entry, a comment, or blank: %q", i+1, line)
@@ -117,9 +84,6 @@ func eventTypesFromManifest(source string) ([]string, error) {
 	return got, nil
 }
 
-// The tests below are of the READER, not of a document. Each is a shape the
-// reader must refuse, because a reader exercised only against the real
-// anywaye.yml has proven that it reads anywaye.yml and nothing else.
 
 func TestTheManifestReaderReadsTheRealShape(t *testing.T) {
 	const document = `name: identity
@@ -172,8 +136,6 @@ func TestTheManifestReaderRefusesWhatItDidNotRead(t *testing.T) {
 	}
 }
 
-// The control for the table above: the same reader, on a document it must accept.
-// Without it, a reader that refused EVERYTHING would pass every case in the table.
 func TestTheManifestReaderAcceptsWhatItUnderstands(t *testing.T) {
 	const document = `exposes:
   events:

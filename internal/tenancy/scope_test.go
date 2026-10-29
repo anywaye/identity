@@ -9,10 +9,6 @@ import (
 	"github.com/anywaye/identity/internal/platform/id"
 )
 
-// The runtime seam, tested without a database. Every assertion here is about
-// WHICH STATEMENTS were issued and in what order — a database can prove the
-// identity took effect, and only a fake can prove it was set on this transaction
-// and this request rather than somewhere convenient.
 
 func TestAnAccountTravelsOnTheContextAndComesBack(t *testing.T) {
 	t.Parallel()
@@ -29,9 +25,6 @@ func TestAnAccountTravelsOnTheContextAndComesBack(t *testing.T) {
 	}
 }
 
-// A request with no account is a legitimate state — a login, and a
-// registration's pre-account phase — so it has to be REPORTABLE rather than
-// silently reading as a wiring bug or, worse, as an account.
 func TestAContextWithNoAccountSaysSo(t *testing.T) {
 	t.Parallel()
 
@@ -48,8 +41,6 @@ func TestAContextWithNoAccountSaysSo(t *testing.T) {
 	}
 }
 
-// The whole property, in one test: the identity is set on the caller's
-// transaction, BEFORE the use case runs, and only when the request has one.
 func TestTxRunnerSetsTheIdentityBeforeTheUseCaseRuns(t *testing.T) {
 	t.Parallel()
 
@@ -89,10 +80,6 @@ func TestTxRunnerSetsTheIdentityBeforeTheUseCaseRuns(t *testing.T) {
 			ran := false
 			err := runner.Do(ctx, func(ctx context.Context, q db.Querier) error {
 				ran = true
-				// The identity must already be on the transaction by the time the
-				// use case can write anything. A seam that set it afterwards would
-				// leave every account-scoped INSERT inside the use case's first
-				// statements refused with 42501.
 				if sawSet != tc.wantSet {
 					t.Errorf("inside the use case, begin_account had been issued = %v, want %v", sawSet, tc.wantSet)
 				}
@@ -115,10 +102,6 @@ func TestTxRunnerSetsTheIdentityBeforeTheUseCaseRuns(t *testing.T) {
 	}
 }
 
-// The identity must be set on the TRANSACTION, not on the pool. This is the
-// difference between a boundary and a leak: a pool-level set_config with
-// is_local => false goes back to the pool carrying tenant A's identity, tenant B
-// is handed the connection, and tenant B reads tenant A's rows.
 func TestTheIdentityIsSetOnTheTransactionAndNotOnThePool(t *testing.T) {
 	t.Parallel()
 
@@ -141,9 +124,6 @@ func TestTheIdentityIsSetOnTheTransactionAndNotOnThePool(t *testing.T) {
 	}
 }
 
-// A failed begin_account must fail the whole transaction. Continuing would mean
-// running a use case whose every account-scoped write is about to be refused,
-// which surfaces as a 500 with a cause three layers from the mistake.
 func TestAFailedIdentityFailsTheTransactionWithoutRunningTheUseCase(t *testing.T) {
 	t.Parallel()
 
@@ -175,10 +155,6 @@ func TestAFailedIdentityFailsTheTransactionWithoutRunningTheUseCase(t *testing.T
 	}
 }
 
-// A request with no account must not pay for a statement that clears a GUC that
-// is already unset. This is on the authentication hot path — every login and
-// every session lookup — and a round trip to say nothing is a round trip that
-// gets measured and then removed by somebody who does not know why it is there.
 func TestARequestWithNoAccountPaysNoRoundTrip(t *testing.T) {
 	t.Parallel()
 
@@ -197,8 +173,6 @@ func TestARequestWithNoAccountPaysNoRoundTrip(t *testing.T) {
 	}
 }
 
-// An error from the use case is the caller's to keep. The seam wraps only the
-// identity call, so a caller matching on its own store's sentinel still matches.
 func TestTheSeamDoesNotSwallowTheUseCasesError(t *testing.T) {
 	t.Parallel()
 
@@ -218,9 +192,6 @@ func TestTheSeamDoesNotSwallowTheUseCasesError(t *testing.T) {
 	}
 }
 
-// The nil account is a bug in the caller, not a request with no account. It has
-// to be refused where it can be read, rather than left to be discovered as a
-// 42501 from the substrate three layers down.
 func TestBeginAccountRefusesTheNilAccount(t *testing.T) {
 	t.Parallel()
 
@@ -237,9 +208,6 @@ func TestBeginAccountRefusesTheNilAccount(t *testing.T) {
 	}
 }
 
-// BeginAccount is the one exported writer of this GUC, so its call is the one a
-// reader greps for when asking which transaction writes an account-scoped row
-// as an account it just created.
 func TestBeginAccountSetsTheGivenAccountOnTheCallersTransaction(t *testing.T) {
 	t.Parallel()
 
@@ -258,12 +226,6 @@ func TestBeginAccountSetsTheGivenAccountOnTheCallersTransaction(t *testing.T) {
 	}
 }
 
-// mustNewAccount is id.New without the error, which cannot happen.
-//
-// It is a helper rather than an inline pair because a UUID generator failing is
-// not something these tests are about, and an ignored error would be a lie about
-// that. t.Fatalf in a non-test goroutine is the reason it takes *testing.T
-// rather than being a plain function.
 func mustNewAccount(t *testing.T) id.UUID {
 	t.Helper()
 	account, err := id.New()

@@ -1,13 +1,3 @@
-// Package outbox is the transactional outbox: the table an event is written to in
-// the same transaction as the state change it describes, and the loop that moves
-// those rows onto the bus.
-//
-// The point of the table is atomicity. A user row and its `identity.user.created`
-// event either both exist or neither does. Publishing inside the request would
-// mean an event about a user who was never created, or a user nobody downstream
-// ever hears about; publishing from a queue fed after commit would mean the same
-// two failures with a queue in between. The insert commits with the row, and a
-// separate loop moves it.
 package outbox
 
 import (
@@ -20,29 +10,10 @@ import (
 )
 
 const (
-	// SpecVersion pins the envelope dialect. core's schema makes it a const "1.0"
-	// and the description says it increments only for a breaking envelope change.
 	SpecVersion = "1.0"
 
-	// SourceIdentity is the publishing service. core's event-naming.md: it "must
-	// equal `name` in that service's anywaye.yml", and identity's is `identity`.
 	SourceIdentity = "identity"
 
-	// EventUserCreated is emitted when a registration succeeds, before any email
-	// verification.
-	//
-	// This is the three-segment form `identity.user.created`, which the packet for
-	// this service specifies. Note that core's docs/event-naming.md is currently
-	// against it: rule 2 asks for the service prefix only when the bare entity
-	// name is generic (key, token, event, file, job, config, webhook, asset,
-	// secret), `user` is not on that list, and the catalog row plus
-	// examples/valid/go-api.anywaye.yml both spell it `user.created`. The same
-	// document records this as an open decision (D1) with the three-segment form
-	// named as the alternative.
-	//
-	// The two spellings differ in one constant and one line of anywaye.yml, so a
-	// manager ruling the other way is a one-line change. What must not happen is
-	// the drift where the code emits one and the manifest advertises the other.
 	EventUserCreated = "identity.user.created"
 )
 
@@ -66,22 +37,12 @@ type Envelope struct {
 	Data        json.RawMessage `json:"data"`
 }
 
-// eventTypePattern and serviceNamePattern are copied verbatim from core's
-// $defs, so that a value this package accepts is one core's schema accepts.
-//
-// core's tests/test_specs.py asserts the envelope and manifest schemas agree on
-// these two patterns, so they cannot drift apart inside core. Copying them here
-// is the duplication that keeps a malformed type from being written at all.
 var (
 	eventTypePattern   = regexp.MustCompile(`^[a-z][a-z0-9]*(_[a-z0-9]+)*(\.[a-z][a-z0-9]*(_[a-z0-9]+)*){1,2}$`)
 	serviceNamePattern = regexp.MustCompile(`^[a-z][a-z0-9]*(-[a-z0-9]+)*$`)
-	// core's subject pattern. A subject is an identifier interpolated into
-	// consumer logs and routing keys, so the character set is deliberately narrow.
 	subjectPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:@/-]*$`)
 )
 
-// Length bounds copied from core's schema: subject 1-200, source 2-40,
-// type 5-120.
 const (
 	maxSubjectLength = 200
 	minSourceLength  = 2
@@ -141,9 +102,6 @@ func NewUserCreated(now time.Time, userID id.UUID, email string) (Envelope, erro
 		return Envelope{}, fmt.Errorf("outbox: minting an envelope id: %w", err)
 	}
 
-	// json.Marshal of a struct cannot fail on these two string fields, and using
-	// it rather than string concatenation is what keeps a crafted email from
-	// producing a payload that is not a JSON object.
 	payload, err := json.Marshal(struct {
 		UserID string `json:"user_id"`
 		Email  string `json:"email"`

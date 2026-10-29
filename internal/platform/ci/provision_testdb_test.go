@@ -1,20 +1,5 @@
 package ci
 
-// bin/provision-testdb creates the owner and app login roles with a password
-// that travels as a psql variable (:'pw'), never interpolated into SQL.
-//
-// THE DEFECT THIS HOLDS (m151). The role creation passed :'pw' through
-// `psql -c`. psql performs :'var' interpolation on the input it scans
-// (interactive, -f, stdin) and sends `-c` straight to the server, so the
-// server received a literal `:'pw'` and answered
-// `ERROR: syntax error at or near ":"` — a clean test database could not be
-// provisioned and the gate was blocked before tests started.
-//
-// THE FIX. The CREATE ROLE statement reaches psql on standard input (a
-// printf pipe), where its scanner interpolates :'pw' from `-v pw=...`, while
-// role names stay shell-interpolated and therefore stay validated against the
-// safe-identifier pattern. The tests below hold both halves: the corrected
-// form is present, and the old `-c` form is shown to fail.
 
 import (
 	"os"
@@ -24,7 +9,6 @@ import (
 	"testing"
 )
 
-// provisionTestDBSource reads bin/provision-testdb as text.
 func provisionTestDBSource(t *testing.T) string {
 	t.Helper()
 
@@ -38,10 +22,6 @@ func provisionTestDBSource(t *testing.T) string {
 	return string(raw)
 }
 
-// TestProvisionTestDBRoleCreationUsesAStdinVariable holds the fix to the
-// script: no CREATE ROLE carrying :'pw' may travel via `psql -c`, and each
-// role creation must pipe a statement carrying the literal :'pw' into a psql
-// invocation that sets the password with `-v pw=`.
 func TestProvisionTestDBRoleCreationUsesAStdinVariable(t *testing.T) {
 	source := provisionTestDBSource(t)
 
@@ -51,8 +31,6 @@ func TestProvisionTestDBRoleCreationUsesAStdinVariable(t *testing.T) {
 			"`:'pw'` and answers `ERROR: syntax error at or near \":\"`. Feed the statement on stdin instead.")
 	}
 
-	// Both roles are created, and both creations must carry the password as a
-	// psql variable rather than a hand-built SQL literal.
 	for _, role := range []string{"CREATE ROLE $owner", "CREATE ROLE $app_role"} {
 		if !strings.Contains(source, role) {
 			t.Errorf("bin/provision-testdb no longer creates %q; a fix that deletes a role is not a fix", role)
@@ -67,10 +45,6 @@ func TestProvisionTestDBRoleCreationUsesAStdinVariable(t *testing.T) {
 			"The variable has to be set where the statement can consume it.", got)
 	}
 
-	// The statements must reach psql on stdin: a printf pipe into the psql
-	// binary. Either side of the pipe alone proves nothing — a printf whose
-	// output goes nowhere provisions nothing, and a psql reading stdin with
-	// no statement creates nothing.
 	if !strings.Contains(source, "printf '%s\\n'") {
 		t.Error("bin/provision-testdb carries no printf feeding a statement on stdin; the CREATE ROLE text reaches psql no other way")
 	}
@@ -82,9 +56,6 @@ func TestProvisionTestDBRoleCreationUsesAStdinVariable(t *testing.T) {
 		t.Error("no pipe feeds a statement into psql; the CREATE ROLE text reaches psql on stdin or not at all")
 	}
 
-	// The script's promise, kept: the raw password is never interpolated into
-	// SQL or logs. It appears only as `-v pw="$password"` (the variable
-	// binding) and inside the DSN parsing above it.
 	for i, line := range strings.Split(source, "\n") {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "#") {
@@ -100,17 +71,6 @@ func TestProvisionTestDBRoleCreationUsesAStdinVariable(t *testing.T) {
 	}
 }
 
-// TestProvisionTestDBOldFormIsRejectedAndTheNewFormDeliversAVariable is the
-// tripwire's own tripwire: it executes the two CALL SHAPES against a fake
-// psql that models the real one's contract — `-c` bypasses :'var'
-// interpolation (so the server sees a literal `:'pw'` and rejects it), stdin
-// does not — and asserts the old shape fails while the new shape delivers a
-// statement carrying the variable with the secret nowhere in it.
-//
-// The fake models psql's argument handling, not a server: the real server's
-// rejection (`ERROR: syntax error at or near ":"`) is quoted in the failure
-// text the fake prints, and the assertion is on the exit code and on what the
-// fake received, not on the wording.
 func TestProvisionTestDBOldFormIsRejectedAndTheNewFormDeliversAVariable(t *testing.T) {
 	dir := t.TempDir()
 
@@ -158,8 +118,6 @@ func TestProvisionTestDBOldFormIsRejectedAndTheNewFormDeliversAVariable(t *testi
 		t.Fatalf("writing the fake psql: %v", err)
 	}
 
-	// The OLD shape: the defect. psql receives the variable reference in -c,
-	// interpolation does not apply, and the server rejects it.
 	old := exec.CommandContext(t.Context(), "bash", "-c", `"$0" "$1" -X -q -w --set ON_ERROR_STOP=1 -v pw="$2" -c "CREATE ROLE $3 LOGIN PASSWORD :'pw'"`,
 		fake, "postgres://x/x", "p@ss", "identity")
 	if out, err := old.CombinedOutput(); err == nil {
@@ -169,8 +127,6 @@ func TestProvisionTestDBOldFormIsRejectedAndTheNewFormDeliversAVariable(t *testi
 		t.Errorf("the old shape failed, but not with the server's rejection; the fake models the wrong fault.\noutput: %s", out)
 	}
 
-	// The NEW shape, quoted exactly as bin/provision-testdb now writes it: a
-	// printf pipe into psql with `-v pw=` bound and :'pw' literal in SQL.
 	outFile := filepath.Join(dir, "stdin.sql")
 	runNew := func(role string) (string, error) {
 		cmd := exec.CommandContext(t.Context(), "bash", "-c", `printf '%s\n' "CREATE ROLE $0 LOGIN PASSWORD :'pw'" | "$1" "$2" -X -q -w --set ON_ERROR_STOP=1 -v pw="$3"`,
@@ -202,19 +158,9 @@ func TestProvisionTestDBOldFormIsRejectedAndTheNewFormDeliversAVariable(t *testi
 	}
 }
 
-// TestProvisionTestDBUnsafeRoleRefusalIsBeforeAnySideEffect holds the m158
-// ordering: a superuser/BYPASSRLS owner or app role must be refused before
-// any side effect — CREATE ROLE, CREATE DATABASE, migrations, or GRANT — not
-// after them. Running the refusal after provisioning mints a disposable DB and
-// runs migrations before failing, which is the defect this test prevents. The
-// check must therefore sit after the admin connection is resolved/verified and
-// before the first mutation, preserving the actionable error text m156 added.
 func TestProvisionTestDBUnsafeRoleRefusalIsBeforeAnySideEffect(t *testing.T) {
 	source := provisionTestDBSource(t)
 
-	// The refusal queries: the two SELECTs that decide the unsafe-role failure.
-	// The admin verification also mentions rolsuper/rolbypassrls; only the
-	// per-role refusal SELECTs count here.
 	ownerRefusal := "select rolsuper from pg_roles where rolname = '$owner'"
 	appRefusal := "select rolsuper from pg_roles where rolname = '$app_role'"
 
@@ -235,7 +181,6 @@ func TestProvisionTestDBUnsafeRoleRefusalIsBeforeAnySideEffect(t *testing.T) {
 		lastRefusal = appIdx
 	}
 
-	// Side effects that must NOT have happened before the refusal.
 	sideEffects := []string{
 		"CREATE ROLE $owner",
 		"CREATE ROLE $app_role",
@@ -263,16 +208,11 @@ func TestProvisionTestDBUnsafeRoleRefusalIsBeforeAnySideEffect(t *testing.T) {
 			firstRefusal, ownerRefusal, ownerIdx, appRefusal, appIdx, firstSideEffectName, firstSideEffect)
 	}
 
-	// Both refusals must be before ANY side effect, not just the first one.
-	// Otherwise one of the two roles could still be refused after mutations.
 	if lastRefusal > firstSideEffect {
 		t.Errorf("one unsafe-role refusal appears after the first side effect (last refusal at %d, first side effect %q at %d).\n"+
 			"Both owner and app-role checks must precede every mutation.", lastRefusal, firstSideEffectName, firstSideEffect)
 	}
 
-	// No refusal may remain after the GRANT — that would be the late position
-	// m156 left and m158 moves. A duplicate (early + late) would still satisfy
-	// the first-refusal test while keeping the post-mutation cost.
 	grantNeedle := "GRANT $app_role TO $owner"
 	grantIdx := strings.Index(source, grantNeedle)
 	if grantIdx == -1 {
@@ -284,8 +224,6 @@ func TestProvisionTestDBUnsafeRoleRefusalIsBeforeAnySideEffect(t *testing.T) {
 			"The refusal was moved to before any side effect; a trailing check is the post-mutation cost m158 removes.")
 	}
 
-	// Preserve the actionable error text m156 added. Moving the check early
-	// must not lose the remediation the operator reads.
 	for _, want := range []string{
 		"is superuser or BYPASSRLS, which bypasses row-level security even with FORCE",
 		"Recreate the cluster without POSTGRES_USER=",
@@ -298,9 +236,6 @@ func TestProvisionTestDBUnsafeRoleRefusalIsBeforeAnySideEffect(t *testing.T) {
 		}
 	}
 
-	// The refusal must sit after the admin connection is resolved/verified, not
-	// at the top of the file. The verification is the `select rolsuper or
-	// (rolcreaterole and rolcreatedb)` probe.
 	verifiedProbe := "rolsuper or (rolcreaterole and rolcreatedb)"
 	verifiedIdx := strings.Index(source, verifiedProbe)
 	if verifiedIdx == -1 {
@@ -311,8 +246,6 @@ func TestProvisionTestDBUnsafeRoleRefusalIsBeforeAnySideEffect(t *testing.T) {
 	}
 }
 
-// TestProvisionTestDBIsValidBash parses the script without executing it, so a
-// quoting slip in the corrected pipe fails here rather than at 3am in the gate.
 func TestProvisionTestDBIsValidBash(t *testing.T) {
 	bash, err := exec.LookPath("bash")
 	if err != nil {

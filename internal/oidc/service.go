@@ -12,21 +12,6 @@ import (
 	"github.com/anywaye/identity/internal/platform/id"
 )
 
-// The client registration use cases: register a relying party, list them, read
-// one, revoke one.
-//
-// Two writes and one fact. Registering writes a row and an event; revoking
-// writes a row, an event, and a bulk revocation of every access token issued
-// against that registration. All of it in one transaction, and the last one is
-// the reason: a revoked client whose access tokens keep working for another
-// fifteen minutes is a revoked client that is not revoked, and a consumer of
-// `identity.oidc_client.revoked` would have no way to know that.
-//
-// The rules that are NOT here: who may call. That is RequireAccountRole's job in
-// the HTTP layer, and it is the one place in this service where a minimum role
-// is decided. What IS here is the scoping — every method takes the account id,
-// and every statement is scoped by it, so a use case reached any other way is
-// still scoped.
 
 // UnitOfWork runs a function inside a transaction. db.TxRunner implements it;
 // the interface is the seam that lets these rules be tested without Postgres.
@@ -210,8 +195,6 @@ func (s *Service) Get(ctx context.Context, accountID, rowID id.UUID) (Client, er
 		return Client{}, err
 	}
 	if client.AccountID != accountID {
-		// The same answer as a row that does not exist. core's conventions are
-		// explicit: "404 is correct there, 403 is not allowed to leak existence".
 		return Client{}, fmt.Errorf("%w: no client with that id in this account", ErrNotFound)
 	}
 	return client, nil
@@ -222,8 +205,6 @@ type RevokeInput struct {
 	AccountID id.UUID
 	ClientID  id.UUID
 	RevokedBy id.UUID
-	// Reason is recorded on the row and is NOT in the event. See
-	// outbox.NewOIDCClientRevoked.
 	Reason string
 }
 
@@ -243,8 +224,6 @@ func (s *Service) Revoke(ctx context.Context, in RevokeInput) (Client, error) {
 	var out Client
 
 	err := s.uow.Do(ctx, func(ctx context.Context, q db.Querier) error {
-		// Read first so the event can name the account, and so a revocation of
-		// something that is not there says so rather than announcing nothing.
 		existing, err := s.store.ClientByRowID(ctx, q, in.ClientID)
 		if err != nil {
 			return err
@@ -262,10 +241,6 @@ func (s *Service) Revoke(ctx context.Context, in RevokeInput) (Client, error) {
 			return err
 		}
 
-		// The refresh tokens go in the same transaction, and after the access
-		// tokens rather than in parallel: a client that is mid-refresh at this
-		// instant must not be able to mint a new access token from a token the
-		// access sweep did not touch because it had not been issued yet.
 		if err := s.tokens.RevokeRefreshTokensForClient(ctx, q, revoked.ID, now); err != nil {
 			return err
 		}
@@ -287,12 +262,6 @@ func (s *Service) Revoke(ctx context.Context, in RevokeInput) (Client, error) {
 	return out, nil
 }
 
-// validateName bounds and requires a registration's display name.
-//
-// Required because the login page renders it, and a login page that cannot name
-// the application asking for a password is the setup for a credential-phishing
-// page on this service's own domain. That is a security property, which is why
-// it is a rule here and not a nicety in the OpenAPI document.
 func validateName(name string) error {
 	switch {
 	case name == "":

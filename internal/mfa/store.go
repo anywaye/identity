@@ -14,31 +14,8 @@ import (
 	"github.com/anywaye/identity/internal/sessions"
 )
 
-// errNoRows is pgx's "the query matched nothing", aliased so the intent reads at
-// the call site.
 var errNoRows = pgx.ErrNoRows
 
-// The four tables, and one idea that shapes every method here.
-//
-// THE CLAIMS ARE CONDITIONAL UPDATES.
-//
-// Nothing in this file reads a row, decides something in Go, and writes it back.
-// Every state change that has to be safe against a concurrent request is a
-// single UPDATE whose WHERE clause IS the check:
-//
-//	ClaimStep        INSERT ... ON CONFLICT DO NOTHING   a step is spent
-//	ConsumeRecovery  UPDATE ... WHERE used_at IS NULL    a code is spent
-//	ConsumeChallenge UPDATE ... WHERE consumed_at IS NULL a challenge is spent
-//	ConfirmCredential UPDATE ... WHERE confirmed_at IS NULL an enrollment lands
-//
-// A read-then-write in front of any of those has a window between the two
-// statements, two requests walk through it, and both believe they won. That is
-// not a theoretical concern for a login: a replayed TOTP code and the legitimate
-// user pasting it at the same moment is the exact scenario the replay guard
-// exists for, and the moment is the scenario an attacker picks.
-//
-// Each of those methods returns a bool, and the bool is the answer. A caller that
-// gets false has lost a race it should have expected to lose, and refuses.
 
 // Store is the four tables this package owns.
 type Store struct {
@@ -469,8 +446,6 @@ func (s *Store) ConsumeChallenge(ctx context.Context, q db.Querier, challengeID 
 	return tag.RowsAffected() == 1, nil
 }
 
-// scanCredentialRow turns "no rows" into ErrNotFound and wraps everything else,
-// so callers match one sentinel.
 func scanCredentialRow(row pgx.Row, what string) (Credential, error) {
 	var out Credential
 	err := scanCredential(row, &out)
@@ -491,8 +466,6 @@ func scanCredential(row pgx.Row, out *Credential) error {
 	)
 }
 
-// nullString turns an empty user agent into SQL NULL. An empty string and "not
-// recorded" are the same answer here, and NULL is the one that says so.
 func nullString(s string) any {
 	if s == "" {
 		return nil

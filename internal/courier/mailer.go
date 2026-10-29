@@ -13,19 +13,6 @@ import (
 	"github.com/anywaye/identity/internal/recovery"
 )
 
-// # WHY A `recovery.Mailer` LIVES IN THE COURIER CLIENT RATHER THAN THE OTHER WAY
-//
-// ROUND
-//
-// It is not a preference. The `Mailer` interface is DECLARED IN `internal/recovery`,
-// at the consumer, and every other rule in this repository is a consequence of that
-// choice: `recovery` names what a message is (a recipient and some rendered text)
-// and never names what delivers it. A `recovery.Mailer` implemented here rather
-// than there is that rule applied to the mail path — `recovery` gains no import of
-// courier, no knowledge of a `type` enum, and no field on `Message` for a URL.
-//
-// The whole adapter is below `NewRecoveryMailer` and it is small, which is the
-// point: a translation table, a refusal, and a log line.
 
 // ErrUnsupportedMessage means identity rendered a message courier has no type for.
 //
@@ -54,20 +41,6 @@ import (
 // this adapter now uses them.
 var ErrUnsupportedMessage = errors.New("courier: courier cannot send this message")
 
-// recoveryKinds are the four messages `internal/recovery` renders, spelled the way
-// this package needs to name them.
-//
-// THEY ARE DECLARED HERE RATHER THAN READ FROM `recovery` because
-// `recovery.messageKind` is unexported, and un-exporting it is a decision
-// `internal/recovery` makes for a good reason: a delivery adapter must not be able
-// to switch on it and become a second place that knows what a message is. So
-// `RecoveryMailer` matches on a field `recovery` does not have, and the mapping
-// below is the ONLY place in the repository that knows both vocabularies.
-//
-// The test that holds the two in agreement is
-// `TestEveryMessageRecoveryRendersIsAccountedFor`, and it reads
-// `internal/recovery/message.go` and fails when the four bodies there are not the
-// four subjects here.
 const (
 	kindPasswordReset = "Reset your anywaye password"
 	kindVerifyEmail   = "Confirm your anywaye email address"
@@ -75,16 +48,6 @@ const (
 	kindChangeNew     = "Confirm your new anywaye email address"
 )
 
-// knownSubjects is every message `internal/recovery` renders, and the set is
-// declared HERE rather than derived from `courierTypeFor` because the two answer
-// different questions. `courierTypeFor` is "which of these can courier send"; this
-// is "which of these exist", and the difference between the two is two refused
-// messages that a reader needs to see enumerated rather than infer from an absent
-// map entry.
-//
-// `TestEveryMessageRecoveryRendersIsAccountedFor` walks this set against
-// `internal/recovery/message.go` in both directions, so a fifth message cannot be
-// added to that package and left invisible here.
 var knownSubjects = map[string]struct{}{
 	kindPasswordReset: {},
 	kindVerifyEmail:   {},
@@ -92,98 +55,6 @@ var knownSubjects = map[string]struct{}{
 	kindChangeNew:     {},
 }
 
-// courierTypeFor is the whole of the translation: `recovery`'s message → courier's
-// `NotificationType`.
-//
-// IT IS A MAP AND NOT A SWITCH, and the reason is that a switch would need a
-// default branch and the default is the dangerous direction. A message kind that
-// is not in this table is REFUSED, and a new body in `internal/recovery` — somebody
-// adding a fifth message for a two-factor enrolment, say — cannot be delivered by
-// accident through a fallback that guessed. `RecoveryMailer.Send` returns
-// `ErrUnsupportedMessage` for it and the flow answers 503.
-//
-// # AND WHY EACH MESSAGE IS THE COURIER TYPE IT IS
-//
-// courier's `NotificationType` is
-// `[welcome, password_reset, team_invitation, account_security, email_change_current, email_change_new]`.
-// There is no `email_verification`, and inventing one is a 422, so the question
-// this table answers is which of courier's SIX messages each of `recovery`'s
-// four is. The line is not drawn at "which words are close enough" — it is drawn
-// at "would courier's own template say the true thing to the person reading it".
-//
-// **`verify_email` → `welcome` IS TRUE.** courier's template reads, in full:
-//
-//	<%= @greeting %>
-//
-//	Welcome aboard. Confirm your address and you are in.
-//	<%= if @url do %>
-//	Confirm your email address: <%= @url %>
-//	<% end %>
-//
-// That is a registration's address confirmation, and it renders `@url` — which
-// is where the token goes. The message's own words ("Welcome aboard") describe an
-// address that has not been proved, and identity sends it to the account's own
-// address whether or not one has been: `recovery.RequestVerification` asks the same
-// question for every address and answers it the same way, because a route that
-// refused for a proved address was an account-existence oracle on an anonymous
-// route. A person who asked for a second confirmation link and gets one is not
-// misled by it — the link confirms a fact that already holds. It is courier's own
-// copy about courier's own event, not identity's prose forced through courier's
-// mouth.
-//
-// **THE DOCUMENT IS WRONG ABOUT ONE THING, AND THE CODE IS RIGHT.** courier's
-// `openapi.yaml` says `url` is "unused by `welcome`", and its
-// `welcome.text.eex` renders `@url` when it is present. The document
-// under-describes its own template; `Courier.Mailers.required/1` requires only
-// `email` for a `welcome`, so sending one WITH a url is legal and the link
-// appears. `TestAVerificationLinkReachesCouriersWelcomeTemplate` pins the
-// request shape that relies on it, so a courier that changed the template would
-// be a test failure here rather than a mail with no link in it.
-//
-// THE COST, STATED BECAUSE IT IS REAL: `welcome` is a shared notification type, so
-// courier keys a user's PREFERENCE for it — a user who turned `welcome` off would
-// also stop being able to confirm an address. `ErrDeclined` is the refusal that
-// answers for it, and identity conceals it from an anonymous caller, so the
-// observable effect is that address verification silently stops working for that
-// one user. That is courier's vocabulary being narrower than identity's, and the
-// fix is a fourth type in courier rather than a workaround here.
-//
-// **THE TWO `email_change` MESSAGES MAP ONTO THE TWO TYPES COURIER BUILT FOR
-// THEM.** courier has carried both since `20373bf` (packet m70), and this table
-// now uses both:
-//
-//	email_change (current)  -> email_change_current  the warning to the address
-//	                          an account uses today that somebody asked to move
-//	                          it. It carries the confirmation link, so the
-//	                          request has `url` and the link is rendered from
-//	                          the `email_change` purpose's template.
-//	email_change (new)      -> email_change_new      the notice to the address
-//	                          an account is moving to, telling it where the
-//	                          account lived before. It carries `previous_email`
-//	                          and NO url — courier's template for it names the
-//	                          previous address and nothing else.
-//
-// The mapping was REFUSED until this packet, and the refusal was right: the two
-// nearest courier templates both said something false about an address change —
-// `password_reset` told the owner somebody asked to reset their password, and
-// `welcome` said "Welcome aboard" to an account owner being told that a hijacked
-// session is moving their address. The current-address half is the ONLY warning
-// the owner of an account has that somebody is moving its address — a
-// wrong-but-delivered security notice is worse than a loud failure. So the
-// vocabulary was built (m70) rather than remapped, and the argument above is the
-// reason the two types exist rather than a reuse.
-//
-// # AND WHY THE NEW-ADDRESS HALF CARRIES NO LINK
-//
-// `email_change_new` is the one message of the four with no `url`, and that is
-// courier's contract rather than an omission: its fields are `[:email,
-// `previous_email]`, and its template renders the previous address and nothing
-// else. The token in `recovery`'s rendered body is still read — it is what the
-// `Idempotency-Key` is derived from — but it is not a field courier's
-// vocabulary has, and inventing one would be a 422. So `Send` renders a link for
-// a message with a link purpose and renders none for one without, and the
-// property that keeps that honest is `linkPurposeFor` below: a message with no
-// entry there is a message courier's template has no link to render.
 var courierTypeFor = map[string]string{
 	kindPasswordReset: TypePasswordReset,
 	kindVerifyEmail:   TypeWelcome,
@@ -191,58 +62,6 @@ var courierTypeFor = map[string]string{
 	kindChangeNew:     TypeEmailChangeNew,
 }
 
-// linkPurposeFor is the subject → purpose mapping, and it exists because THE LINK
-// IS CONFIGURED PER PURPOSE RATHER THAN ONCE FOR EVERY MESSAGE.
-//
-// # THE SINGLE TEMPLATE WAS DEFENDED AT LENGTH AND WAS WRONG FOR HALF ITS USES
-//
-// `RecoveryMailer` held ONE `LinkTemplate` for all four of its messages, and the
-// argument for it is sound FOR A RECOVERY LINK: a template with `{token}` beats a
-// base URL plus a platform-chosen convention, and `ValidateLinkTemplate` refuses a
-// template that cannot render a working link. That argument was then applied to a
-// VERIFICATION link, which is not a recovery link.
-//
-// The result was a `welcome` mail whose button said
-// `https://app.example.com/reset?token=…`, so a user who clicked "Confirm your
-// email address" landed on the password-reset screen, where a verification token
-// answers **404**. The token was fine — it redeemed at
-// `POST /v1/email-verifications/confirm`, and identity-24 proved that end to end
-// against a real courier. The mail was well-formed, passed every assertion in the
-// repository, and sent the user somewhere useless, which is why it survived: every
-// test was about the BYTES and the bytes were correct.
-//
-// So one template for two purposes is a template that must be wrong for one of them,
-// and the wrongness survives review because a link template looks like a link
-// template whatever it points at. The purpose is what says which screen it should
-// be, and the purpose is what the configuration is keyed by now.
-//
-// # IT IS A SECOND TABLE AND NOT A COLUMN OF `courierTypeFor`, and the two are HELD
-// IN STEP
-//
-// `courierTypeFor` answers "which of courier's six messages can express this" and
-// `linkPurposeFor` answers "what is the token in it for". They are different
-// questions with different answers over time — a courier type is courier's
-// vocabulary, a purpose is `recovery`'s, and the two diverge the moment courier
-// grows an `email_verification` type of its own — so merging them into one struct
-// would make a change to either a change to both, and would have this package
-// holding a vocabulary it does not own.
-//
-// Nothing in the type system joins them, which is why
-// `TestEveryPurposeThisAdapterCanDeliverHasAVariableToConfigureItsLink` walks both
-// sets against `internal/config`'s in both directions.
-//
-// # AND WHY THE NEW-ADDRESS HALF IS NOT IN IT
-//
-// `kindChangeNew` has no entry here, and that is the whole of why its request
-// carries no `url`: courier's `email_change_new` template has no link to render,
-// so there is no template to consult and no purpose to consult it with. The two
-// halves of an email change share `recovery.PurposeEmailChange` — a row's purpose
-// says what redeeming the token DOES, and both tokens do the same thing — but
-// only the current-address half has a link, so only it is in this table. A
-// message with no entry here is not an error; `Send` renders no link for it. The
-// test that holds the two tables in step is
-// `TestEveryRecoverableMessageHasALinkPurposeAndOneDoesNot`, and the one that
-// does not is this row's absence.
 var linkPurposeFor = map[string]recovery.Purpose{
 	kindPasswordReset: recovery.PurposePasswordReset,
 	kindVerifyEmail:   recovery.PurposeVerifyEmail,
@@ -257,29 +76,10 @@ var linkPurposeFor = map[string]recovery.Purpose{
 type RecoveryMailer struct {
 	client *Client
 
-	// linkTemplates renders the URL each message's purpose carries.
-	//
-	// IT IS CONFIGURED RATHER THAN DERIVED, and that is a real decision. courier's
-	// `password_reset` template renders a link and its document REQUIRES `url` for
-	// that type, so a reset mail has to have one — but this service does not know
-	// where a product puts its reset screen, and inventing a path here would put
-	// identity's guess into every reset link on the platform. So a deployment says
-	// what its links look like and this renders them, one per purpose.
-	//
-	// IT IS A MAP AND NOT A FIELD, so a purpose cannot be handed a template written
-	// for a different one. A single field is what let a verification mail inherit a
-	// reset link in the first place, and no individual assignment in it was wrong —
-	// the shape simply had nowhere to say otherwise.
 	linkTemplates LinkTemplates
 
-	// logger takes the refusals. IT MAY BE NIL, and a nil logger is a refusal
-	// logged nowhere rather than a panic: `main` always passes one, and a test does
-	// not have to.
 	logger *slog.Logger
 
-	// now is read for nothing but the log line's duration field, and it is a func
-	// so a test can pin it. It is not a clock the adapter depends on for any
-	// decision.
 	now func() time.Time
 }
 
@@ -338,10 +138,6 @@ func ValidateLinkTemplate(raw string) (LinkTemplate, error) {
 		return "", fmt.Errorf("courier: the link template has no %s in it, "+
 			"so the link a user follows would carry no token", TokenPlaceholder)
 	}
-	// The placeholder is replaced by a uuid before courier sees the URL, so
-	// validation is done against a stand-in that is the right SHAPE: a real uuid
-	// rather than the literal `{token}`, which is not a valid character in a URI
-	// and would make this check pass for a template courier rejects.
 	probe := strings.ReplaceAll(trimmed, TokenPlaceholder,
 		"6f5d4c3b-2a19-4e8f-9c07-1b2d3e4f5061")
 	if err := checkAbsoluteHTTPURL(probe); err != nil {
@@ -350,23 +146,13 @@ func ValidateLinkTemplate(raw string) (LinkTemplate, error) {
 	return LinkTemplate(trimmed), nil
 }
 
-// errNoToken means a link was asked for with no credential in it.
-//
-// IT IS A SENTINEL rather than a formatted string so `recovery`'s side of the
-// boundary can match it with `errors.Is` rather than reading a message, and it is
-// wrapped in `ErrInvalidRequest` at every call site because that is the class the
-// HTTP layer and the flows treat as "this is our bug, not the deployment's".
 var errNoToken = errors.New("courier: refusing to render a link with no token")
 
-// render substitutes a token into the template.
 func (l LinkTemplate) render(token string) (string, error) {
 	if token == "" {
 		return "", errNoToken
 	}
 	if !strings.Contains(string(l), TokenPlaceholder) {
-		// Unreachable through `NewRecoveryMailer`, which validates. Checked anyway
-		// because the consequence of being wrong is a mail whose link does not
-		// work, and the user has just been told it does.
 		return "", errors.New("courier: the link template has no placeholder in it")
 	}
 	return strings.ReplaceAll(string(l), TokenPlaceholder, token), nil
@@ -374,25 +160,10 @@ func (l LinkTemplate) render(token string) (string, error) {
 
 // RecoveryMailerConfig is what NewRecoveryMailer needs.
 type RecoveryMailerConfig struct {
-	// Client is the courier client, and its credential comes with it. Required.
 	Client *Client
 
-	// LinkTemplates is what each purpose's link looks like.
-	//
-	// EVERY PURPOSE THIS ADAPTER CAN DELIVER MUST BE IN IT. There is no default and
-	// no fallback, and the reason is the defect this shape replaced: a template for
-	// one purpose serving another is a well-formed mail whose button leads to a 404,
-	// and every test about the request still passes. So a purpose with no template
-	// is a REFUSAL at construction, naming the purpose.
-	//
-	// The DEFAULT lives one layer up, in `internal/config`, because that is where
-	// the backwards-compatibility question is: a deployment configured before the
-	// per-purpose variables existed has one template, and `config` is what knows how
-	// to apply it to every purpose without this package inventing a second answer to
-	// "where does this link point".
 	LinkTemplates map[recovery.Purpose]string
 
-	// Logger takes the refusals. May be nil.
 	Logger *slog.Logger
 }
 
@@ -424,38 +195,8 @@ func NewRecoveryMailer(cfg RecoveryMailerConfig) (*RecoveryMailer, error) {
 	}, nil
 }
 
-// resolveLinkTemplates validates one template per deliverable purpose, and refuses
-// a configuration that names a purpose this adapter cannot deliver.
-//
-// # THREE REFUSALS, AND THE THIRD IS THE ONE THAT COULD HAVE BEEN A NO-OP
-//
-//	a purpose with no template   the deployment cannot say where that kind of link
-//	                             goes. Substituting another purpose's template is
-//	                             the defect, so there is no substitution.
-//	a template that will not     delegated to `ValidateLinkTemplate`, once per
-//	                             purpose, with the purpose named around it.
-//	a purpose with no message    a template is a setting an operator changes and
-//	                             nothing honors. It is refused rather than ignored
-//	                             because a variable that is read by nothing is a
-//	                             promise this service does not keep — the same rule
-//	                             as a scope documented on a route that does not gate
-//	                             it. `internal/config` must not be taught which
-//	                             purposes are deliverable, so the check belongs
-//	                             here, where that knowledge is.
 func resolveLinkTemplates(raw map[recovery.Purpose]string) (LinkTemplates, error) {
 	out := make(LinkTemplates, len(linkPurposeFor))
-	// THE ORDER IS FIXED AND THAT IS NOT TIDINESS. `linkPurposeFor` is a map, so
-	// ranging it visits its two entries in a RANDOM order, and this function returns
-	// on the FIRST purpose with no template. A deployment that had configured neither
-	// was therefore told to set a different variable on each boot — and
-	// `TestTheConstructorRefusesAPurposeWithNoLinkTemplate`'s "no template for either"
-	// row, which asserts which purpose gets named, failed about half the time.
-	//
-	// Both halves of that are defects and the smaller one is the operator's: the
-	// refusal exists to name the variable to set, and a message that names a
-	// different one per attempt is a worse instruction than one that names the first
-	// missing thing every time. Ranging a map where the answer depends on the order is
-	// the whole of it.
 	for _, deliverable := range linkPurposesInOrder() {
 		value, present := raw[deliverable.purpose]
 		if !present {
@@ -470,9 +211,6 @@ func resolveLinkTemplates(raw map[recovery.Purpose]string) (LinkTemplates, error
 		}
 		out[deliverable.purpose] = template
 	}
-	// And the same rule on the way out: a configuration naming more than one
-	// undeliverable purpose is refused naming the same one every time, so a reader
-	// comparing two boot logs is comparing the logs.
 	for _, purpose := range purposesInOrder(raw) {
 		if _, deliverable := out[purpose]; deliverable {
 			continue
@@ -484,25 +222,11 @@ func resolveLinkTemplates(raw map[recovery.Purpose]string) (LinkTemplates, error
 	return out, nil
 }
 
-// deliverableLink is one row of `linkPurposeFor` with the subject its refusal names.
 type deliverableLink struct {
 	subject string
 	purpose recovery.Purpose
 }
 
-// linkPurposesInOrder is every purpose this adapter can deliver, SORTED BY PURPOSE,
-// so the walk above visits the same one first on every boot.
-//
-// SORTED BY PURPOSE AND NOT BY SUBJECT, and that is the whole of the choice: the
-// refusal is about a configuration VARIABLE, so the order that decides which variable
-// gets named should be the order of the variables. Sorting by the mail subject would
-// be deterministic too and would name `verify_email` first, because "Confirm your
-// anywaye email address" precedes "Reset your anywaye password" — an answer that depends
-// on courier's prose rather than on anything identity can state.
-//
-// SORTED rather than a hand-written list, because a second list is a second thing to
-// forget when a purpose is added, and forgetting it is exactly the shape of bug this
-// package keeps spending paragraphs on.
 func linkPurposesInOrder() []deliverableLink {
 	out := make([]deliverableLink, 0, len(linkPurposeFor))
 	for subject, purpose := range linkPurposeFor {
@@ -512,7 +236,6 @@ func linkPurposesInOrder() []deliverableLink {
 	return out
 }
 
-// purposesInOrder is a purpose set's members, sorted, for the same reason.
 func purposesInOrder(set map[recovery.Purpose]string) []recovery.Purpose {
 	purposes := make([]recovery.Purpose, 0, len(set))
 	for purpose := range set {
@@ -572,34 +295,17 @@ func (m *RecoveryMailer) Send(ctx context.Context, message recovery.Message) err
 		return fmt.Errorf("%w: %q", ErrUnsupportedMessage, message.Subject)
 	}
 
-	// The purpose, resolved alongside the courier type. The lookup is OPTIONAL
-	// now, and the option is the point: `email_change_new` is courier's one
-	// message with no link, so there is no template to consult and no purpose to
-	// consult it with. A message with no entry here is delivered without a url,
-	// not refused — see `linkPurposeFor`'s comment for which message that is and
-	// why the absence is courier's contract rather than an omission.
 	purpose, hasPurpose := linkPurposeFor[message.Subject]
 
 	if message.To == "" {
-		// `recovery` refuses this itself; checked here because the alternative is a
-		// request courier answers 422 for, and a message with no recipient is a
-		// bug in the caller above rather than anything courier said.
 		return errors.New("courier: refusing to send a message with no recipient")
 	}
 
 	token := tokenFromBody(message.Body)
 	if token == "" {
-		// Unreachable through `recovery`, which refuses to render a message with no
-		// credential in it. Checked because the alternative is a link reaching a
-		// real inbox with nothing in it — and because `idempotencyKeyFor` refuses
-		// an empty token, so a message with no credential in it has no key to be
-		// sent under either.
 		return fmt.Errorf("%w: %s has no token in it", ErrInvalidRequest, message.Subject)
 	}
 
-	// The account, and courier REQUIRES it — the request has no optional form,
-	// because courier keys the recipient's preferences by it and attributes the
-	// `courier.email.delivered` event to it.
 	userID, err := userIDFrom(message)
 	if err != nil {
 		m.log("refusing a message identity cannot address",
@@ -609,11 +315,6 @@ func (m *RecoveryMailer) Send(ctx context.Context, message recovery.Message) err
 		return fmt.Errorf("%w: %s: %w", ErrUnsupportedMessage, message.Subject, err)
 	}
 
-	// The link, for a message whose courier template renders one. Rendered from
-	// the template configured for this message's PURPOSE — see `linkPurposeFor`
-	// for why the key is a purpose and not a courier type. A message with no link
-	// purpose renders none, and `URL`'s `omitempty` keeps the field off the wire
-	// rather than sending an empty one.
 	var link string
 	if hasPurpose {
 		link, err = m.linkTemplates[purpose].render(token)
@@ -622,14 +323,6 @@ func (m *RecoveryMailer) Send(ctx context.Context, message recovery.Message) err
 		}
 	}
 
-	// The previous address, for the new-address half of an email change. courier's
-	// `email_change_new` requires it and its template branches on it, so a message
-	// that cannot name the address the account is moving from is refused here
-	// rather than answered 422. It is read out of the rendered body — the only
-	// place `recovery` puts it — by `previousEmailFromBody`, and the extraction is
-	// the same class of risk as `tokenFromBody`: a named function with a test,
-	// because the body is the only source and a parse that drifts is a mail that
-	// names the wrong address.
 	var previousEmail string
 	if courierType == TypeEmailChangeNew {
 		previousEmail = previousEmailFromBody(message.Body)
@@ -643,12 +336,6 @@ func (m *RecoveryMailer) Send(ctx context.Context, message recovery.Message) err
 		}
 	}
 
-	// The key is DERIVED from the send rather than minted per attempt, and the
-	// three inputs are the ones that identify it: what is being sent, which account
-	// it is about, and the credential it carries. A random key per call would be
-	// the same header with none of the effect — a user who asks twice for one
-	// reset link would be sent two, which is the thing courier's idempotency exists
-	// to stop. See `idempotencyKeyFor`.
 	key, err := idempotencyKeyFor(courierType, userID, token)
 	if err != nil {
 		return err
@@ -668,11 +355,6 @@ func (m *RecoveryMailer) Send(ctx context.Context, message recovery.Message) err
 		return err
 	}
 
-	// The one thing worth saying out loud on a success. A 200 is courier accepting
-	// the message for delivery, and the `message_id` is what a bounce or a
-	// complaint will quote, so it is the one field an operator ever needs from a
-	// send. It is logged and nothing else: the token is not, the recipient is not,
-	// and the body is not.
 	m.log("courier accepted a message for delivery",
 		"type", courierType,
 		"message_id", result.MessageID,
@@ -703,14 +385,6 @@ func (m *RecoveryMailer) String() string {
 	return "courier.RecoveryMailer{" + m.client.String() + "}"
 }
 
-// logSendFailure writes one line per refused send.
-//
-// WHAT IS IN IT is the point: courier's status, courier's `code`, whether another
-// attempt can help, and courier's trace id. What is NOT in it is the recipient, the
-// body, the token, and the credential — and the absence is deliberate rather than
-// incidental, because the temptation on a send failure is exactly to log "failed
-// to send to kaka@example.com", and a log aggregator is the last place a reset
-// recipient's address and the deployment's mail credential should meet.
 func (m *RecoveryMailer) logSendFailure(message recovery.Message, courierType string, started time.Time, err error) {
 	attrs := []any{
 		"type", courierType,
@@ -728,9 +402,6 @@ func (m *RecoveryMailer) logSendFailure(message recovery.Message, courierType st
 			attrs = append(attrs, "fields", fieldsString(refused.Fields))
 		}
 	}
-	// The subject is a constant with nothing variable in it, so it is safe and it
-	// is the one thing that says WHICH flow failed, which is what somebody reading
-	// a log at 3am needs.
 	attrs = append(attrs, "subject", message.Subject, "error", err)
 	m.log("courier did not accept a message", attrs...)
 }
@@ -742,28 +413,9 @@ func (m *RecoveryMailer) log(msg string, attrs ...any) {
 	m.logger.Warn(msg, attrs...)
 }
 
-// # THE THREE EXTRACTIONS
-//
-// A `recovery.Message` is prose, and courier wants facts, so something has to read
-// the prose. These three functions are where that happens, and they are the whole
-// of the risk in this adapter — which is why they are the ONLY place a value is
-// taken out of a rendered body, and why each is a named function with a test
-// rather than an inline `strings.Index`.
 
-// bodyMarker is the line `internal/recovery`'s bodies put the credential on.
-//
-// IT IS A MARKER AND NOT A REGEX BECAUSE THE BODY IS A CONSTANT TEMPLATE with one
-// named substitution, and a pattern that could match more than one thing in a
-// document that also contains an address and a date is a pattern that eventually
-// extracts a date. `recovery`'s four bodies all indent the code by four spaces on
-// its own line, which is the shape this reads.
-//
-// IF A BODY EVER STOPS MATCHING, the extraction returns "" and `render` refuses, so
-// the failure is a 503 naming a missing token rather than a reset link with an
-// empty query parameter reaching a real inbox.
 const bodyMarker = "\n\n    "
 
-// tokenFromBody reads the credential out of a rendered body.
 func tokenFromBody(body string) string {
 	_, after, found := strings.Cut(body, bodyMarker)
 	if !found {
@@ -773,28 +425,11 @@ func tokenFromBody(body string) string {
 	return strings.TrimSpace(token)
 }
 
-// previousEmailPrefix and previousEmailSuffix are the words around the address in
-// the new-address body's first line, which is the only place `recovery` puts the
-// address an account is moving from.
-//
-// THEY ARE CONSTANTS OF THE BODY'S SHAPE, like `bodyMarker` above: the body is a
-// constant template with named substitutions, so its first line is fixed except
-// for the address itself. An address cannot contain a space, so the suffix —
-// which has three — cannot occur inside the value being read.
 const (
 	previousEmailPrefix = "account on "
 	previousEmailSuffix = " to this address."
 )
 
-// previousEmailFromBody reads the address an account is moving FROM out of the
-// new-address half's rendered body.
-//
-// IT IS THE SAME CLASS OF EXTRACTION AS `tokenFromBody`, for the same reason: the
-// body is the only place `recovery` puts the value, and the alternative — a field
-// on `Message` — is the four-field rule that package holds. The first line names
-// the address between two fixed phrases, and the cut is on those phrases rather
-// than on a position, so a body that stops matching returns "" and `Send` refuses
-// rather than mailing a change that names no previous address.
 func previousEmailFromBody(body string) string {
 	firstLine, _, _ := strings.Cut(body, "\n")
 	_, after, found := strings.Cut(firstLine, previousEmailPrefix)
@@ -805,19 +440,6 @@ func previousEmailFromBody(body string) string {
 	return strings.TrimSpace(email)
 }
 
-// userIDFrom reads the account a message concerns.
-//
-// IT IS A FIELD READ AND NOT A PARSE, which is the whole reason the field is
-// there: courier's `POST /v1/messages` REQUIRES `user_id` — there is no optional
-// form — and it uses it for two things, keying the recipient's notification
-// preferences and attributing the `courier.email.delivered` event. Reading it out
-// of the body was the alternative and it is not available: none of `recovery`'s
-// four templates has a slot for a uuid, and `strings.Index` over prose to find a
-// credential-sized value is exactly the kind of parse that eventually finds a date.
-//
-// A ZERO VALUE IS REFUSED rather than defaulted. Attributing a message containing
-// a live credential to an account nobody chose is worse than not sending it, and a
-// `nil` there would become somebody's `user_id` in somebody else's outbox.
 func userIDFrom(message recovery.Message) (string, error) {
 	if message.UserID.IsZero() {
 		return "", errors.New("recovery.Message carried no user id")
@@ -825,14 +447,6 @@ func userIDFrom(message recovery.Message) (string, error) {
 	return message.UserID.String(), nil
 }
 
-// checkAbsoluteHTTPURL refuses a link courier's schema would not accept.
-//
-// IT IS NOT `normaliseBaseURL`, and the difference is the point: a BASE URL must
-// have no query, because this package concatenates a path onto it. A LINK may have
-// one — `https://app.example.com/reset?token=…` is the ordinary shape — and its
-// query is where the credential goes. Reusing the base-URL check here refused every
-// real reset link, which is the failure `TestTheLinkTemplateIsRefusedWhenItCannot
-// MakeAWorkingLink` caught and why this function exists separately.
 func checkAbsoluteHTTPURL(raw string) error {
 	parsed, err := url.Parse(raw)
 	if err != nil {
@@ -844,23 +458,14 @@ func checkAbsoluteHTTPURL(raw string) error {
 	if parsed.Host == "" {
 		return fmt.Errorf("%w: %q has no host", ErrNoBaseURL, raw)
 	}
-	// A FRAGMENT is refused and a query is not, and the asymmetry is the rule rather
-	// than an oversight. A fragment is not sent to a server, so a token in one
-	// reaches a browser and never the screen that redeems it. A query is what
-	// `?token=` is FOR.
 	if parsed.Fragment != "" {
 		return fmt.Errorf("%w: %q has a fragment; a mail client does not send one to a server",
 			ErrNoBaseURL, raw)
 	}
 	if parsed.User != nil {
-		// A userinfo section is a credential in a URL, and a link is a string that
-		// gets quoted, logged and pasted.
 		return fmt.Errorf("%w: %q has a userinfo section", ErrNoBaseURL, raw)
 	}
 	return nil
 }
 
-// compile-time proof that the seam `internal/recovery` declares is the one this
-// package satisfies. A build-time assertion rather than a test, because a change to
-// either signature should stop the build rather than a test run.
 var _ recovery.Mailer = (*RecoveryMailer)(nil)

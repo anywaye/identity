@@ -12,21 +12,9 @@ import (
 	"github.com/anywaye/identity/internal/platform/id"
 )
 
-// The access token row.
-//
-// There is a row because the access token is a JWT, and a JWT is verifiable by
-// anybody holding the published JWKS — which is the point, and is also why a
-// stateless token needs a way to stop working before it expires. The row is that
-// way: userinfo reads it, and so does anything that has to honor a revocation
-// faster than the signature's `exp` would allow.
-//
-// The id IS the `jti`. There is no surrogate key, because the library hands this
-// value to the signer as the claim and reads the claim back to find the row, and
-// a second identifier would mean a join on the hot path of every userinfo call.
 
 // AccessToken is one issued access token.
 type AccessToken struct {
-	// ID is the JWT's `jti`.
 	ID          id.UUID
 	ClientRowID id.UUID
 	Subject     id.UUID

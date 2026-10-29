@@ -1,65 +1,3 @@
-// Package telemetry is identity's side of the fleet's redaction boundary.
-//
-// WHAT THIS IS
-//
-//	Two things, and the second is the reason the file has the shape it does.
-//
-//	1. The W3C trace context: read an inbound `traceparent`, continue it, and
-//	   write one on every outbound call. A malformed header starts a new trace
-//	   and is never a 400 — correlation metadata is an observability affordance,
-//	   and an affordance that can take a customer's login down is a
-//	   denial-of-service vector aimed at our own auth surface.
-//
-//	2. The allowlist that decides what a span may carry. `Record` is the only
-//	   path from a value to a span, and anything it does not recognize does not
-//	   land.
-//
-// THE SECOND HALF IS THE POINT, and it looks like over-caution until you picture
-// the alternative. A tracing backend is a searchable, retained, widely-readable
-// store. identity is the service that mints credentials and reads passwords, so
-// the values most likely to reach telemetry are the ones this repository can
-// least afford to publish: a password on a login request, an email on a
-// registration, a TOTP enrolment secret, a signed JWT in a header.
-//
-// The realistic way that leaks is not an attacker. It is a well-meaning engineer
-// in six months adding `span.SetAttributes(attribute.String("email", in.Email))`
-// because it would be useful for debugging. So the control is an allowlist at
-// ONE choke point rather than discipline at each call site, and the list is
-// asserted on directly in telemetry_test.go — including a test that no name in
-// it contains `prompt`, `content`, `message`, `body`, `header` or `query`.
-//
-// Everything here is a projection of anywaye/core's schemas, and the projection
-// is checked rather than trusted:
-//
-//	schemas/telemetry/traces.schema.json     the attribute allowlist below
-//	schemas/telemetry/span-naming.schema.json the name grammar in SpanName
-//	schemas/telemetry/metrics.schema.json    why no measurement carries an id
-//	schemas/telemetry/otel-endpoint.schema.json the endpoint contract below
-//
-// THE COLLECTOR IS A BACKSTOP, NOT A DESIGN. kit's collector drops every
-// attribute that is not on its allowlist, and that is the second of two
-// independent controls. The first is here: an attribute that never leaves this
-// process cannot leak even if the collector is misconfigured, and the collector
-// cannot be relied upon to save a service from an attribute the service chose to
-// export. canary_test.go drives a real request through the real router with a
-// canary in every field that could carry content, and asserts the canary reaches
-// neither the rendered span payload nor the process's own log records.
-//
-// WHAT IS DELIBERATELY NOT HERE
-//
-//   - `error.message`. A message is unbounded, and it is a cardinality bomb on
-//     any metric derived from it. core's redaction schema prohibits the
-//     attribute by name. `RecordFailure` sets the span's STATUS and the bounded
-//     error CLASS, and never the message.
-//   - `url.path`, `url.full`, `url.query`. The route TEMPLATE is recorded
-//     instead, and the difference is the whole of the cardinality argument: a
-//     template has one value per endpoint, a concrete path has one per request.
-//   - A meter. The fleet derives its request rate, error rate and latency from
-//     the `spanmetrics` connector in kit's collector, which runs AFTER the
-//     redaction processor — so a dimension this package fails to allowlist
-//     cannot become a metric label either. See SpanName's caller in
-//     internal/httpapi for the dimensions the connector reads, and the test that
-//     holds them together.
 package telemetry
 
 import (
@@ -98,11 +36,6 @@ const Namespace = "anywaye"
 // prefix, so a span aggregates fleet-wide without a join.
 const SpanNamePrefix = ServiceName
 
-// defaultEndpoint is the collector that ships with the local stack. A DEFAULT
-// VALUE, not a constant, and that is the whole of "observability is on by
-// default": a developer with no configuration exports into a collector on their
-// own machine, and a self-hoster who already runs a backend sets the variable
-// and this address goes quiet.
 const defaultEndpoint = "http://otel-collector:4318"
 
 // DefaultEndpoint is the address used when `<SERVICE>_OTEL_ENDPOINT` is unset.
@@ -157,27 +90,14 @@ const MaxRouteLength = 200
 //     is one of them: `Authorization` and `Cookie` are the whole of what a
 //     caller authenticates with.
 var AllowedSpanAttributes = []string{
-	// The method and the ROUTE TEMPLATE. `http.route` is bounded by the router's
-	// own route table, which is finite and which openapi_drift_test.go already
-	// holds against the published document — so the cardinality of this attribute
-	// is a number a reviewer can read off the router rather than a hope.
 	"http.request.method",
 	"http.response.status_code",
 	"http.route",
-	// The error CLASS. Closed vocabulary, never a message: see RecordFailure.
 	"error.type",
-	// The status, mirrored as an attribute so a log-indexed query can filter on
-	// it. The span's own status is the field of record and the two may not
-	// disagree.
 	"otel.status_code",
-	// The database product, on a span that failed because of the database. Four
-	// values, and it is what makes "is it us or postgres" one filter.
 	"db.system",
 }
 
-// allowedSpanAttributes is the same set as a map, built once at init. The slice
-// is exported so a test can read the list itself; the lookup is a map because
-// Record runs on every request and this is the request path.
 var allowedSpanAttributes = func() map[string]struct{} {
 	set := make(map[string]struct{}, len(AllowedSpanAttributes))
 	for _, name := range AllowedSpanAttributes {
@@ -232,77 +152,21 @@ var errorTypes = func() map[string]struct{} {
 	return set
 }()
 
-// spanNameSegment is core's span-naming grammar, reimplemented rather than
-// trusted: the schema is a document in another repository and this service
-// compiles without it.
-//
-// The property the grammar exists to guarantee is that no segment is longer than
-// fifteen characters, so no segment CAN hold an identifier, a trace id, a ULID, a
-// URL or a path. `identity.user.usr_01J9Z8QK5M4N7P2R3T6V8W9X0A` is not
-// rejected because this package knows about anywaye id formats; it is rejected
-// because no legal segment is 26 characters long. That is why the route and the
-// identity are ATTRIBUTES and the name carries only the operation.
-//
-// DELIBERATELY UNANCHORED, and that is a bug this file already had. Anchored, it
-// composes into `identity(?:\.^…$)$` — an anchor in the middle of a pattern,
-// which matches nothing at all, so every span name in this service failed to
-// validate. There are two patterns for one reason: this one is for composition,
-// spanNameSegmentAnchored is for judging a single segment. Neither is derived
-// from the other by string surgery, because that is how the anchors came to be
-// in the wrong place in the first place.
 var spanNameSegment = `[a-z][a-z0-9]{0,14}(?:_[a-z0-9]{0,14}){0,2}`
 
-// spanNameSegmentAnchored judges ONE segment, and the anchors are load-bearing:
-// without them `MatchString` would accept a legal prefix of an illegal segment,
-// so `identity.request!!` would pass a test that exists to refuse it.
 var spanNameSegmentAnchored = regexp.MustCompile(`^` + spanNameSegment + `$`)
 
-// spanName is the whole pattern: the service, then one to three operation
-// segments, dot-separated.
 var spanName = regexp.MustCompile(`^` + SpanNamePrefix + `(?:\.` + spanNameSegment + `){1,3}$`)
 
-// routeTemplate is core's shape for `http.route`: a slash-led path of bounded
-// characters.
-//
-// The character class is the second half of the rule and it is not cosmetic.
-// There is no `@`, no `?`, no `=` and no space in it, so a template cannot hold
-// an email, a query string or a percent-encoded anything — the three shapes a
-// caller most easily gets into a path. The length is the first half, and it is
-// what stops a handler that interpolated something into the template from
-// shipping it.
-//
-// WHAT THIS DOES NOT DO, and it would be easy to read past it: a pattern cannot
-// tell a route TEMPLATE from a concrete path. `/v1/accounts/acc_01J9Z8QK…`
-// matches this exactly as `/v1/accounts/{accountID}` does, and no regex over a
-// path can separate them without the router's route table.
-//
-// The cardinality property — one value per endpoint, not one per request — is
-// therefore enforced STRUCTURALLY. The only producer of this attribute in this
-// service is `routeTemplate` in internal/httpapi, which reads chi's
-// `RouteContext.RoutePattern()`: a value the router built from its own table,
-// where a path parameter is the literal `{accountID}` and a concrete path is not
-// available to the call site at all. TestTheRoutePatternCannotTellATemplateFrom
-// AConcretePath asserts the limit explicitly so nobody later reads this pattern
-// as the guarantee it is not.
-//
-// The bound is built from MaxRouteLength rather than typed as a literal, so the
-// constant and the pattern cannot disagree — a pattern with 199 in it and a
-// constant saying 200 is a disagreement nobody would notice until a test failed
-// for the wrong reason.
 var routeTemplate = regexp.MustCompile(
 	fmt.Sprintf(`^/[A-Za-z0-9/_{}.:-]{0,%d}$`, MaxRouteLength-1),
 )
 
-// httpMethods is core's enum for `http.request.method`. A method outside it is
-// dropped rather than recorded, for the same reason a class outside ErrorTypes
-// is: the allowlist exists to keep the dimension space finite, and a custom verb
-// in a test is not a dimension an operator will ever query.
 var httpMethods = map[string]struct{}{
 	"GET": {}, "POST": {}, "PUT": {}, "PATCH": {},
 	"DELETE": {}, "HEAD": {}, "OPTIONS": {}, "TRACE": {},
 }
 
-// databases is core's enum for `db.system`. Four values.
 var databases = map[string]struct{}{
 	"postgresql": {}, "redis": {}, "sqlite": {}, "other": {},
 }
@@ -435,10 +299,6 @@ func RecordFailure(span trace.Span, class string, description string) error {
 	return nil
 }
 
-// attributeValue converts one recorded value, or reports that it may not be
-// recorded. The name and the value are checked together, because the allowlist
-// is a list of (name, shape) pairs and a shape check that ignored the name would
-// accept a 10MB string under a route template.
 func attributeValue(name string, value any) (attribute.KeyValue, bool) {
 	switch v := value.(type) {
 	case string:
@@ -463,10 +323,6 @@ func attributeValue(name string, value any) (attribute.KeyValue, bool) {
 				return attribute.KeyValue{}, false
 			}
 		}
-		// No length ceiling here, and the reason is written at MaxRouteLength:
-		// every allowlisted string is bounded by an enum or by routeTemplate, so
-		// a general truncation branch could never fire. A branch nothing can
-		// reach is not a control.
 		return attribute.String(name, v), true
 	case bool:
 		return attribute.Bool(name, v), true
@@ -489,27 +345,10 @@ func attributeValue(name string, value any) (attribute.KeyValue, bool) {
 	case uint:
 		return attribute.Int64(name, int64(v)), true
 	default:
-		// Everything else, including float64, nil, and any type with a String
-		// method. An object with a String() can be a list of a caller's emails.
 		return attribute.KeyValue{}, false
 	}
 }
 
-// statusAwareInt64 is the ONE place a numeric attribute's range is checked, and
-// it is a function rather than a line inside the `case` for `int` because a Go
-// type switch dispatches on the CONCRETE type and `999` written in a call site is
-// an `int` while the status a handler passes is very often an `int64` (or the
-// reverse, through a `ResponseWriter.Status()` cast).
-//
-// The first version of this check lived in the `int64` case only, and a test
-// caught it immediately: the same 999 was accepted as an `int` and refused as an
-// `int64`. A value filter that depends on the width of the type that carried it
-// is not a filter, it is a coin toss — and it was green in the one call site that
-// happened to pass an `int`.
-//
-// A status outside 100..599 is not a fact about an HTTP response, it is a value a
-// handler invented, and `attribute.Int64` would carry it into an exporter with no
-// way to object.
 func statusAwareInt64(name string, value int64) (attribute.KeyValue, bool) {
 	if name == "http.response.status_code" && (value < 100 || value > 599) {
 		return attribute.KeyValue{}, false
@@ -527,11 +366,6 @@ func statusAwareInt64(name string, value int64) (attribute.KeyValue, bool) {
 // because the dashboard still renders and looks fine.
 func Resource(lookup func(string) string) *resource.Resource {
 	attrs := []attribute.KeyValue{semconv.ServiceName(SpanNamePrefix)}
-	// Appended only when set. `service.version=""` is not a tidier version than
-	// no version: a collector that groups by it gets a second service row
-	// distinguished by an empty string, and an operator looking at a service
-	// list sees the same service twice with one of them reporting no builds.
-	// Absent is the honest shape for a value nobody configured.
 	if version := lookup("OTEL_SERVICE_VERSION"); version != "" {
 		attrs = append(attrs, semconv.ServiceVersion(version))
 	}
@@ -544,8 +378,6 @@ func Resource(lookup func(string) string) *resource.Resource {
 	if tenant := lookup(TenantVariable); tenant != "" {
 		attrs = append(attrs, attribute.String("tenant_id", tenant))
 	}
-	// Detected rather than defaulted, so a process with no configured version
-	// still says which build it is.
 	return resource.NewWithAttributes(semconv.SchemaURL, attrs...)
 }
 
@@ -571,9 +403,6 @@ func Endpoint(lookup func(string) string) string {
 	return defaultEndpoint
 }
 
-// perSignal is the finer-grained half of the kill switch. A no-op that only
-// covers traces is a service that still phones home for the other signals, which
-// is the failure discovered by a customer's invoice rather than by a test.
 var perSignal = []string{"OTEL_TRACES_EXPORTER", "OTEL_METRICS_EXPORTER", "OTEL_LOGS_EXPORTER"}
 
 // Enabled reports whether there is anywhere to export to.
@@ -670,8 +499,8 @@ type Shutdown func(context.Context) error
 // changes it.
 func Install(ctx context.Context, opts Options) (Shutdown, error) {
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
-		propagation.TraceContext{}, // W3C traceparent + tracestate
-		propagation.Baggage{},      // W3C baggage; a separate header, same spec
+		propagation.TraceContext{},
+		propagation.Baggage{},
 	))
 
 	if opts.ServiceName == "" {
@@ -705,7 +534,6 @@ func Install(ctx context.Context, opts Options) (Shutdown, error) {
 	)
 	otel.SetTracerProvider(provider)
 
-	// Metrics
 	metricExporter, err := OTLPMetricExporter(ctx, opts.Endpoint)
 	if err != nil {
 		return nil, fmt.Errorf("building the otlp metric exporter for %s: %w", opts.Endpoint, err)
@@ -771,12 +599,6 @@ func SpanID(ctx context.Context) string {
 	return sc.SpanID().String()
 }
 
-// sortedKeys iterates attributes in a stable order.
-//
-// Deterministic attribute order is not cosmetic: it is what makes a test's
-// "the exported span carries exactly these attributes" assertion a list of facts
-// rather than a comparison against Go's map iteration order, which a redaction
-// test that flakes once in nine is a redaction test nobody believes.
 func sortedKeys(attributes map[string]any) []string {
 	keys := make([]string, 0, len(attributes))
 	for name := range attributes {

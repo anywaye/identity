@@ -17,16 +17,10 @@ import (
 	"github.com/anywaye/identity/internal/users"
 )
 
-// slogLogger wraps the existing recordingHandler from httpapi_test.go so a test
-// can assert on what the service logged rather than on stderr.
 func slogLogger(h slog.Handler) *slog.Logger { return slog.New(h) }
 
-// decodeJSON is a small alias so the tests do not each import encoding/json
-// error handling.
 func decodeJSON(data []byte, v any) error { return json.Unmarshal(data, v) }
 
-// parseUUIDish is deliberately loose: the trace tests care that a generated trace
-// id looks like an identifier, not that it is a valid UUID version.
 func parseUUIDish(s string) (string, error) {
 	if len(s) != 36 {
 		return "", errors.New("not 36 characters")
@@ -45,10 +39,6 @@ func parseUUIDish(s string) (string, error) {
 	return s, nil
 }
 
-// fakeAuth is a programmable stand-in for auth.Service, so the handlers can be
-// exercised for status codes, headers and cookie attributes without a database.
-// The end-to-end suite (auth_routes_integration_test.go) runs the same requests
-// through the real service and a real Postgres.
 
 type fakeAuth struct {
 	mu sync.Mutex
@@ -61,76 +51,33 @@ type fakeAuth struct {
 	loginErr    error
 	authErr     error
 	logoutErr   error
-	// secondFactorErr is returned by CompleteSecondFactor.
 	secondFactorErr error
-	// secondFactor is the result CompleteSecondFactor returns.
 	secondFactor auth.LoginResult
-	// disableErr and enableErr are what the operator surface's two use cases
-	// return, and they are separate fields because a test mapping one direction's
-	// refusals has no reason to set the other's.
 	disableErr error
 	enableErr  error
-	// updateNameErr is what UpdateDisplayName returns, and updatedDisplayName /
-	// updatedDisplayNameFor record what it was asked for — the pair of which is
-	// the whole of what this route has to get right: the caller's own id from
-	// the credential, and the name from the body.
 	updateNameErr error
 
-	// recorded inputs
 	registered []auth.RegisterInput
 	loggedIn   []auth.LoginInput
 	loggedOut  []string
-	// updatedDisplayNameFor and updatedDisplayName are the WHOLE input the
-	// profile route passed down, in order — the caller's id beside the name
-	// from the body, so a test asserting one call's subject and name wants them
-	// as one fact rather than as two parallel slices.
 	updatedDisplayNameFor []id.UUID
 	updatedDisplayName    *string
-	// updateThemeErr is what UpdateTheme returns, and updatedThemeFor /
-	// updatedTheme record what it was asked for, on the same terms as the name
-	// pair above: the caller's own id from the credential, and the theme from
-	// the body — nil being the clearing case, and an omitted theme never
-	// arriving here at all.
 	updateThemeErr  error
 	updatedThemeFor []id.UUID
 	updatedTheme    *string
-	// disableInputs and enableInputs are the WHOLE input the operator surface passed
-	// down, in order.
-	//
-	// THE WHOLE INPUT AND NOT THE SUBJECT ID, and disabled-04 is why: the use case
-	// writes an audit row naming the operator, so a test asserting only that "the
-	// right user was disabled" would pass against a handler that sent the actor's
-	// ids as zeroes, or swapped them with the subject's. The fields are kept together
-	// for the same reason disabledAt was kept beside disabled — a test asserting one
-	// call's actor and subject wants them as one fact, not as two parallel slices
-	// that could disagree about which entry they belong to.
 	disableInputs []auth.DisableInput
 	enableInputs  []auth.EnableInput
-	// searched records the staff directory queries, searchResults is what they
-	// return, and searchErr is the refusal. Separate from the operator surface's
-	// disable/enable pair because the directory is a read, not a mutation, and
-	// a test mapping its bounds has no reason to set the other's.
 	searched      []searchCall
 	searchResults []users.DirectoryEntry
 	searchErr     error
-	// counts is what UserCounts returns, and countsErr is its refusal.
 	counts    users.UserCounts
 	countsErr error
-	// disabled and enabled are the user ids the operator surface asked about, in
-	// order, kept because most existing assertions are about the subject and reading
-	// a subject out of a struct is a worse way to say it.
 	disabled   []id.UUID
 	disabledAt []time.Time
 	enabled    []id.UUID
-	// completed records the challenges CompleteSecondFactor was handed, so a test
-	// can prove which token the handler read and from where.
 	completed []auth.CompleteSecondFactorInput
-	// lastAuthToken is the credential Authenticate was handed, so a test can
-	// prove which surface the handler read it from.
 	lastAuthToken string
 
-	// sessions is what ListSessions returns, listErr and revokeSessionErr are the
-	// two refusals, and the two slices record what each was asked with.
 	sessions         []auth.Session
 	listErr          error
 	revokeSessionErr error
@@ -204,13 +151,6 @@ func (f *fakeAuth) Logout(_ context.Context, token string) error {
 	return f.logoutErr
 }
 
-// ListSessions and RevokeSession are "sign out of one of these".
-//
-// The recorded inputs keep the WHOLE pair a call carried, in order, and that is the
-// assertion this double exists to support: a handler that resolved the user
-// correctly and then handed the wrong user id to the use case passes every
-// status-code assertion and fails only here. The credential is recorded too, so a
-// test can prove the handler read the cookie rather than the Authorization header.
 func (f *fakeAuth) ListSessions(_ context.Context, token string) ([]auth.Session, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -228,19 +168,11 @@ func (f *fakeAuth) RevokeSession(_ context.Context, token string, sessionID id.U
 	return f.revokeSessionErr
 }
 
-// revokeSessionCall is one recorded RevokeSession: the credential the handler
-// resolved and the id it took from the path.
 type revokeSessionCall struct {
 	token     string
 	sessionID id.UUID
 }
 
-// Disable and Enable are the operator surface's two use cases.
-//
-// They record what they were asked for and return a programmable error, on the same
-// terms as every other method on this double: what is under test at the router is
-// the credential gate and the mapping, and the transaction `auth.Service.Disable`
-// runs is internal/auth's to hold against a real database.
 func (f *fakeAuth) Disable(_ context.Context, in auth.DisableInput) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -258,11 +190,6 @@ func (f *fakeAuth) Enable(_ context.Context, in auth.EnableInput) error {
 	return f.enableErr
 }
 
-// UpdateDisplayName records what it was asked for and returns a programmable
-// error, on the same terms as every other method on this double: what is under
-// test at the router is the credential gate, the validation mapping and the
-// response shape, and the write itself is internal/auth's to hold against a
-// real database.
 func (f *fakeAuth) UpdateDisplayName(_ context.Context, userID id.UUID, name *string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -271,11 +198,6 @@ func (f *fakeAuth) UpdateDisplayName(_ context.Context, userID id.UUID, name *st
 	return f.updateNameErr
 }
 
-// UpdateTheme records what it was asked for and returns a programmable error,
-// on the same terms as every other method on this double: what is under test
-// at the router is the credential gate, the validation mapping and the
-// response shape, and the write itself is internal/auth's to hold against a
-// real database.
 func (f *fakeAuth) UpdateTheme(_ context.Context, userID id.UUID, theme *string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -284,11 +206,6 @@ func (f *fakeAuth) UpdateTheme(_ context.Context, userID id.UUID, theme *string)
 	return f.updateThemeErr
 }
 
-// SearchUsers records what the staff directory was asked for and returns a
-// programmable result, on the same terms as every other method on this
-// double: what is under test at the router is the staff gate, the query
-// validation and the response projection, and the query itself is
-// internal/auth's (and internal/users') to hold against a real database.
 func (f *fakeAuth) SearchUsers(_ context.Context, query string, limit int) ([]users.DirectoryEntry, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -309,15 +226,11 @@ func (f *fakeAuth) UserCounts(_ context.Context) (users.UserCounts, error) {
 	return f.counts, nil
 }
 
-// searchCall is one recorded SearchUsers: the term beside the bound, so a test
-// asserting one call's query and limit wants them as one fact rather than as
-// two parallel slices.
 type searchCall struct {
 	query string
 	limit int
 }
 
-// post sends a JSON body and returns the recorder.
 func post(t *testing.T, h http.Handler, target, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	return send(t, h, http.MethodPost, target, body)
@@ -355,9 +268,6 @@ func decodeProblem(t *testing.T, rec *httptest.ResponseRecorder) Problem {
 	return p
 }
 
-// ---------------------------------------------------------------------------
-// POST /v1/users
-// ---------------------------------------------------------------------------
 
 func TestRegisterHappyPath(t *testing.T) {
 	t.Parallel()
@@ -386,10 +296,6 @@ func TestRegisterHappyPath(t *testing.T) {
 		t.Errorf("id = %q, want %q", body.ID, f.user.ID)
 	}
 
-	// The response is a projection, and the projection has exactly two fields. A
-	// digest reaching a registration response would be the worst leak in this
-	// service; a row count here is what makes that a test failure rather than a
-	// code review's memory.
 	var raw map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
 		t.Fatalf("the body is not a JSON object: %v", err)
@@ -404,9 +310,6 @@ func TestRegisterHappyPath(t *testing.T) {
 	}
 }
 
-// Registration is the one endpoint that may reveal that an address is taken: the
-// caller supplied it, and the alternative is letting them pick a password against
-// an account they cannot have.
 func TestRegisterDuplicateEmailIs409(t *testing.T) {
 	t.Parallel()
 
@@ -433,11 +336,6 @@ func TestRegisterDuplicateEmailIs409(t *testing.T) {
 	}
 }
 
-// The 422 mapping is the *handler's* job: turning a domain FieldError into core's
-// errors[] array. Deciding that a password is too short belongs to the service,
-// and TestRegisterValidationEndToEnd in the integration suite proves that with the
-// real one. What is asserted here is that a FieldError crosses the boundary
-// faithfully, because that is what this layer can get wrong.
 func TestRegisterFieldErrorBecomes422WithErrorsArray(t *testing.T) {
 	t.Parallel()
 
@@ -488,7 +386,6 @@ func TestRegisterFieldErrorBecomes422WithErrorsArray(t *testing.T) {
 				t.Errorf("errors[0] = %+v, want %s/%s", p.Errors[0], tt.wantField, tt.wantCode)
 			}
 
-			// The submitted password must not be echoed back in the detail.
 			if strings.Contains(rec.Body.String(), "correct horse") {
 				t.Errorf("the 422 echoes the submitted password: %s", rec.Body)
 			}
@@ -496,8 +393,6 @@ func TestRegisterFieldErrorBecomes422WithErrorsArray(t *testing.T) {
 	}
 }
 
-// A body that is not JSON at all is 400, not 422. core: "400 only for malformed
-// syntax the client could not have known; anything semantically wrong is 422."
 func TestRegisterMalformedJSONIs400(t *testing.T) {
 	t.Parallel()
 
@@ -533,8 +428,6 @@ func TestRegisterMalformedJSONIs400(t *testing.T) {
 	}
 }
 
-// An unauthenticated caller must not be able to make the service hash a
-// gigabyte.
 func TestRegisterRejectsAnOversizedBody(t *testing.T) {
 	t.Parallel()
 
@@ -558,9 +451,6 @@ func TestRegisterRejectsAnOversizedBody(t *testing.T) {
 func TestRegisterUnknownFieldsAreRejected(t *testing.T) {
 	t.Parallel()
 
-	// A typo in a client ("emial") that is silently ignored produces an account
-	// with an address the caller did not choose, and an error message that points
-	// at nothing.
 	f := newFakeAuth()
 	rec := post(t, New(nil, WithAuth(f)), "/v1/users", `{"emial":"kaka@example.com","password":"correct horse battery"}`)
 
@@ -573,19 +463,7 @@ func TestRegisterUnknownFieldsAreRejected(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// The honeypot
-// ---------------------------------------------------------------------------
 
-// A submission that carries a populated honeypot field did not come from the form.
-// The form renders the field hidden (DECISIONS.md D10: the page belongs to parlor),
-// so a person never sees it and never fills it; a bot fills every field it finds.
-//
-// THE CHECK RUNS BEFORE THE USE CASE. A bot that gets a row in the database has won,
-// even if the row is later deleted: the address is now taken, and the 409 of
-// DECISIONS.md D9 is a disclosure a stranger can read. So the refusal is here, at
-// the handler, before auth.Register is called — not inside the use case, where a
-// future caller could bypass it.
 func TestRegisterHoneypotFieldIsRefusedBeforeTheServiceIsCalled(t *testing.T) {
 	t.Parallel()
 
@@ -613,12 +491,9 @@ func TestRegisterHoneypotFieldIsRefusedBeforeTheServiceIsCalled(t *testing.T) {
 			if p.Code != CodeValidationFailed {
 				t.Errorf("code = %q, want %q", p.Code, CodeValidationFailed)
 			}
-			// The refusal must not name the field: a bot that learns which field is
-			// the trap learns to skip it.
 			if strings.Contains(rec.Body.String(), "website") {
 				t.Errorf("the 422 names the honeypot field: %s", rec.Body)
 			}
-			// And the service was never called, so no row exists.
 			if f.hasRegistered() {
 				t.Error("a populated honeypot reached the registration service")
 			}
@@ -626,9 +501,6 @@ func TestRegisterHoneypotFieldIsRefusedBeforeTheServiceIsCalled(t *testing.T) {
 	}
 }
 
-// An empty honeypot is what the form sends for every legitimate submission: the
-// field is present (so the API accepts the form's shape) and empty (because nobody
-// typed into a field they could not see). It must not refuse a real registration.
 func TestRegisterEmptyHoneypotIsAccepted(t *testing.T) {
 	t.Parallel()
 
@@ -644,9 +516,6 @@ func TestRegisterEmptyHoneypotIsAccepted(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// POST /v1/session
-// ---------------------------------------------------------------------------
 
 func TestLoginHappyPathSetsTheHostCookieAndReturnsTheToken(t *testing.T) {
 	t.Parallel()
@@ -658,7 +527,6 @@ func TestLoginHappyPathSetsTheHostCookieAndReturnsTheToken(t *testing.T) {
 		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body)
 	}
 
-	// The API surface: the token in the body.
 	var body struct {
 		Token     string    `json:"token"`
 		ExpiresAt time.Time `json:"expires_at"`
@@ -673,17 +541,12 @@ func TestLoginHappyPathSetsTheHostCookieAndReturnsTheToken(t *testing.T) {
 		t.Errorf("expires_at = %s, want %s", body.ExpiresAt, f.login.ExpiresAt)
 	}
 
-	// The browser surface: the same value in a hardened cookie.
 	cookies := rec.Result().Cookies()
 	if len(cookies) != 1 {
 		t.Fatalf("got %d cookies, want exactly 1: %+v", len(cookies), cookies)
 	}
 	c := cookies[0]
 
-	// The __Host- prefix is a browser-enforced contract: a cookie carrying it is
-	// accepted only when Secure is set, Path is /, and there is no Domain. Getting
-	// any of those wrong means the browser silently drops the cookie, and the
-	// symptom is a user who logs in and is not logged in.
 	if c.Name != SessionCookieName {
 		t.Errorf("cookie name = %q, want %q", c.Name, SessionCookieName)
 	}
@@ -713,8 +576,6 @@ func TestLoginHappyPathSetsTheHostCookieAndReturnsTheToken(t *testing.T) {
 	}
 }
 
-// A wrong password and an unknown address are one answer. The body, the status
-// and the wording are all identical, and neither mentions which.
 func TestLoginRefusalIsGeneric(t *testing.T) {
 	t.Parallel()
 
@@ -742,13 +603,11 @@ func TestLoginRefusalIsGeneric(t *testing.T) {
 			if p.Code != CodeUnauthorized {
 				t.Errorf("code = %q, want %q", p.Code, CodeUnauthorized)
 			}
-			// The detail must not distinguish the two cases.
 			if strings.Contains(strings.ToLower(p.Detail), "no such") ||
 				strings.Contains(strings.ToLower(p.Detail), "unknown") ||
 				strings.Contains(strings.ToLower(p.Detail), "not found") {
 				t.Errorf("detail %q reveals whether the account exists", p.Detail)
 			}
-			// And no cookie is set on a refusal.
 			if cookies := rec.Result().Cookies(); len(cookies) != 0 {
 				t.Errorf("a refused login set %d cookies", len(cookies))
 			}
@@ -756,8 +615,6 @@ func TestLoginRefusalIsGeneric(t *testing.T) {
 	}
 }
 
-// A locked account gets 423 and the remaining window, in the body and in a header
-// a client can read without parsing JSON.
 func TestLoginLockedIs423WithRetryAfter(t *testing.T) {
 	t.Parallel()
 
@@ -777,27 +634,20 @@ func TestLoginLockedIs423WithRetryAfter(t *testing.T) {
 		t.Errorf("body status = %d, want 423", p.Status)
 	}
 
-	// The window is in the header, in the unit RFC 9110 defines Retry-After in.
 	if got, want := rec.Header().Get(RetryAfterHeader), "420"; got != want {
 		t.Errorf("%s = %q, want %q seconds", RetryAfterHeader, got, want)
 	}
-	// And in the detail, so a human reading the response can act on it.
 	if !strings.Contains(p.Detail, "420") {
 		t.Errorf("detail %q does not say how long to wait", p.Detail)
 	}
-	// It must NOT be an errors[] entry: core scopes that array to 422 and to
-	// per-field request failures, and "retry_after" is not a field anyone typed.
 	if p.Errors != nil {
 		t.Errorf("errors = %v on a 423, want none; core scopes errors[] to 422", p.Errors)
 	}
-	// A locked account gets no session.
 	if cookies := rec.Result().Cookies(); len(cookies) != 0 {
 		t.Errorf("a locked login set %d cookies", len(cookies))
 	}
 }
 
-// Retry-After is rounded up: telling a client to wait 419.7 seconds when 420
-// remain is a rounding error in the client's disfavor for no reason.
 func TestRetryAfterSecondsRoundsUp(t *testing.T) {
 	t.Parallel()
 
@@ -855,8 +705,6 @@ func TestLoginRecordsRequestMetadata(t *testing.T) {
 	}
 }
 
-// A RemoteAddr that is not an IP (some proxies set arbitrary values) must not
-// fail the login.
 func TestLoginToleratesAnUnparseableRemoteAddr(t *testing.T) {
 	t.Parallel()
 
@@ -876,9 +724,6 @@ func TestLoginToleratesAnUnparseableRemoteAddr(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// GET /v1/me
-// ---------------------------------------------------------------------------
 
 func TestMeAcceptsTheCookie(t *testing.T) {
 	t.Parallel()
@@ -993,9 +838,6 @@ func TestMeRejectsEveryMissingOrBrokenCredential(t *testing.T) {
 	}
 }
 
-// An explicit Authorization header wins over a cookie. A client holding both —
-// a browser session plus an API token it pasted in — has said which one it means,
-// and guessing would make the answer depend on invisible state.
 func TestMePrefersTheAuthorizationHeaderOverTheCookie(t *testing.T) {
 	t.Parallel()
 
@@ -1015,9 +857,6 @@ func TestMePrefersTheAuthorizationHeaderOverTheCookie(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// PATCH /v1/me
-// ---------------------------------------------------------------------------
 
 func TestUpdateMeSetsTheDisplayName(t *testing.T) {
 	t.Parallel()
@@ -1045,7 +884,6 @@ func TestUpdateMeSetsTheDisplayName(t *testing.T) {
 		t.Errorf("email = %v, want kaka@example.com", body["email"])
 	}
 
-	// The write went to the caller's own id with the name from the body.
 	if len(f.updatedDisplayNameFor) != 1 || f.updatedDisplayNameFor[0] != f.user.ID {
 		t.Errorf("UpdateDisplayName was called for %v, want the caller's id %s", f.updatedDisplayNameFor, f.user.ID)
 	}
@@ -1069,7 +907,6 @@ func TestUpdateMeClearsTheDisplayNameWithAnEmptyString(t *testing.T) {
 		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body)
 	}
 
-	// The response omits display_name when the name is cleared.
 	var body map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("the body is not JSON: %v", err)
@@ -1078,7 +915,6 @@ func TestUpdateMeClearsTheDisplayNameWithAnEmptyString(t *testing.T) {
 		t.Errorf("display_name is present in the response (%v), want it omitted when cleared", body["display_name"])
 	}
 
-	// The write was a nil pointer — the clearing case.
 	if len(f.updatedDisplayNameFor) != 1 {
 		t.Fatalf("UpdateDisplayName was called %d times, want 1", len(f.updatedDisplayNameFor))
 	}
@@ -1087,11 +923,6 @@ func TestUpdateMeClearsTheDisplayNameWithAnEmptyString(t *testing.T) {
 	}
 }
 
-// An omitted field decodes as the empty string, which clears — the same
-// clearing the empty string asks for, and the behavior the OpenAPI document
-// describes. This route has exactly one field, so there is no "leave it
-// unchanged" to express: a caller here is always saying "this is my name now",
-// and the two things they can mean are "this" and "nothing".
 func TestUpdateMeClearsTheDisplayNameWhenTheFieldIsOmitted(t *testing.T) {
 	t.Parallel()
 
@@ -1143,8 +974,6 @@ func TestUpdateMeTrimsTheDisplayName(t *testing.T) {
 	}
 }
 
-// The theme is set the way the name is: the value from the body, written for the
-// caller's own id, and echoed in the response. Both values in the closed set.
 func TestUpdateMeSetsTheTheme(t *testing.T) {
 	t.Parallel()
 
@@ -1172,7 +1001,6 @@ func TestUpdateMeSetsTheTheme(t *testing.T) {
 				t.Errorf("theme = %v, want %s", body["theme"], want)
 			}
 
-			// The write went to the caller's own id with the theme from the body.
 			if len(f.updatedThemeFor) != 1 || f.updatedThemeFor[0] != f.user.ID {
 				t.Errorf("UpdateTheme was called for %v, want the caller's id %s", f.updatedThemeFor, f.user.ID)
 			}
@@ -1183,13 +1011,6 @@ func TestUpdateMeSetsTheTheme(t *testing.T) {
 	}
 }
 
-// A theme outside the closed set is the same 422 field error an over-long name
-// gets — one document for "understood and not acceptable", so the two fields
-// on this route cannot drift apart. And NOTHING IS WRITTEN: the refusal
-// happens before either store call, so a rejected theme cannot take the name
-// down with it. The empty string is in the table because the system theme is
-// an ABSENCE, not a value: the way to reach it is to omit the field, and "" is
-// refused like any other non-theme.
 func TestUpdateMeRejectsAnInvalidTheme(t *testing.T) {
 	t.Parallel()
 
@@ -1226,9 +1047,6 @@ func TestUpdateMeRejectsAnInvalidTheme(t *testing.T) {
 	}
 }
 
-// A number is not a theme and never reaches the validation: the JSON decoder
-// refuses a value of the wrong type first, as a 400 rather than a 422 — the
-// request was not understood, rather than understood and unacceptable.
 func TestUpdateMeRejectsANonStringTheme(t *testing.T) {
 	t.Parallel()
 
@@ -1249,12 +1067,6 @@ func TestUpdateMeRejectsANonStringTheme(t *testing.T) {
 	}
 }
 
-// AN OMITTED THEME CLEARS, the same semantics display_name has — the route's
-// one omission rule, and the decision this packet makes: the two fields cannot
-// have two rules, and the sibling's is the frozen one. A caller who renames
-// themselves and does not mention the theme is saying "the system theme", which
-// is the reference's theme.blank? — an absence, reached by omission because an
-// absence is what blank means in a JSON document.
 func TestUpdateMeClearsTheThemeWhenTheFieldIsOmitted(t *testing.T) {
 	t.Parallel()
 
@@ -1273,8 +1085,6 @@ func TestUpdateMeClearsTheThemeWhenTheFieldIsOmitted(t *testing.T) {
 		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body)
 	}
 
-	// The response omits the theme: the field the caller did not send returned
-	// to its zero state, and the zero state has no representation.
 	var body map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("the body is not JSON: %v", err)
@@ -1283,7 +1093,6 @@ func TestUpdateMeClearsTheThemeWhenTheFieldIsOmitted(t *testing.T) {
 		t.Errorf("theme is present in the response (%v), want it omitted when cleared", body["theme"])
 	}
 
-	// The write happened, as a nil pointer — the clearing case.
 	if len(f.updatedThemeFor) != 1 {
 		t.Fatalf("UpdateTheme was called %d times, want 1", len(f.updatedThemeFor))
 	}
@@ -1365,7 +1174,6 @@ func TestMeOmitsTheDisplayNameWhenUnset(t *testing.T) {
 	t.Parallel()
 
 	f := newFakeAuth()
-	// f.user.DisplayName is nil — the default.
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/me", nil)
 	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: "a-session-token"})
@@ -1389,11 +1197,6 @@ func TestMeOmitsTheDisplayNameWhenUnset(t *testing.T) {
 	}
 }
 
-// The theme is projected the way the name is: present when the user has
-// chosen one, omitted when they have not. An absent theme means the system
-// theme — the reference's theme.blank? — so "no theme" and "the system
-// theme" are one state with one representation, and a null would be a second
-// representation of it.
 func TestMeReturnsTheThemeWhenSet(t *testing.T) {
 	t.Parallel()
 
@@ -1424,7 +1227,6 @@ func TestMeOmitsTheThemeWhenUnset(t *testing.T) {
 	t.Parallel()
 
 	f := newFakeAuth()
-	// f.user.Preferences.Theme is nil — the default.
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/me", nil)
 	req.AddCookie(&http.Cookie{Name: SessionCookieName, Value: "a-session-token"})
@@ -1448,9 +1250,6 @@ func TestMeOmitsTheThemeWhenUnset(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// DELETE /v1/session
-// ---------------------------------------------------------------------------
 
 func TestLogoutClearsTheCookieAndRevokes(t *testing.T) {
 	t.Parallel()
@@ -1472,8 +1271,6 @@ func TestLogoutClearsTheCookieAndRevokes(t *testing.T) {
 		t.Errorf("a 204 declares Content-Type %q, want none", ct)
 	}
 
-	// The cookie is expired with the same attributes that set it, or the browser
-	// keeps the old one.
 	cookies := rec.Result().Cookies()
 	if len(cookies) != 1 {
 		t.Fatalf("got %d cookies, want 1 clearing the session", len(cookies))
@@ -1511,9 +1308,6 @@ func TestLogoutWorksForABearerClient(t *testing.T) {
 	}
 }
 
-// Logging out with nothing is a 401, not a 204. There is no session to revoke,
-// and answering 204 would tell a client its request succeeded when nothing
-// happened — which is how a client ends up believing it is still signed in.
 func TestLogoutWithoutACredentialIs401(t *testing.T) {
 	t.Parallel()
 
@@ -1529,10 +1323,6 @@ func TestLogoutWithoutACredentialIs401(t *testing.T) {
 	}
 }
 
-// A logout whose token the service cannot resolve still clears the client's
-// cookie. A stale cookie is the common case — the session expired hours ago and
-// the browser kept it — and leaving it in place means the user clicks sign out
-// again and nothing appears to happen.
 func TestLogoutWithAStaleTokenStillClearsTheCookie(t *testing.T) {
 	t.Parallel()
 
@@ -1554,12 +1344,7 @@ func TestLogoutWithAStaleTokenStillClearsTheCookie(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// error handling
-// ---------------------------------------------------------------------------
 
-// An infrastructure failure is a 500 with a trace id, and the internal cause goes
-// to the log rather than the body.
 func TestUnexpectedErrorsAre500WithTheCauseInTheLog(t *testing.T) {
 	t.Parallel()
 
@@ -1582,14 +1367,12 @@ func TestUnexpectedErrorsAre500WithTheCauseInTheLog(t *testing.T) {
 		t.Error("trace_id is empty; support could not correlate this")
 	}
 
-	// Nothing internal leaks.
 	for _, secret := range []string{"10.0.0.5", "password", "refused", "dial tcp", "identity"} {
 		if strings.Contains(strings.ToLower(rec.Body.String()), secret) {
 			t.Errorf("the body leaks %q: %s", secret, rec.Body)
 		}
 	}
 
-	// But the operator gets it.
 	entry := logs.find("request failed")
 	if entry == "" {
 		t.Fatalf("nothing was logged; got %d entries", logs.count())
@@ -1602,7 +1385,6 @@ func TestUnexpectedErrorsAre500WithTheCauseInTheLog(t *testing.T) {
 	}
 }
 
-// A panic in a handler must not take the process down or leak a stack trace.
 func TestPanicInAHandlerIs500(t *testing.T) {
 	t.Parallel()
 
@@ -1622,9 +1404,6 @@ func TestPanicInAHandlerIs500(t *testing.T) {
 	}
 }
 
-// A store failure during registration is a 500, not a 409. Only a real duplicate
-// is a conflict, and conflating them would tell a caller their address is taken
-// when the database is simply down.
 func TestRegistrationStoreFailureIs500Not409(t *testing.T) {
 	t.Parallel()
 
@@ -1642,8 +1421,6 @@ func TestRegistrationStoreFailureIs500Not409(t *testing.T) {
 	}
 }
 
-// The v1 routes are not mounted when no auth service is configured, so a
-// misconfigured process fails at startup rather than serving 500s.
 func TestAuthRoutesAreAbsentWithoutAnAuthService(t *testing.T) {
 	t.Parallel()
 
@@ -1670,7 +1447,6 @@ func TestAuthRoutesAreAbsentWithoutAnAuthService(t *testing.T) {
 	}
 }
 
-// Every route rejects the methods it does not implement, as a problem document.
 func TestWrongMethodsAreProblemJSON(t *testing.T) {
 	t.Parallel()
 
@@ -1702,8 +1478,6 @@ func TestWrongMethodsAreProblemJSON(t *testing.T) {
 	}
 }
 
-// An unknown route is a problem document too. core's rule is about *every*
-// non-2xx response, and a bespoke 404 body is how two error shapes start.
 func TestUnknownRouteIsProblemJSON(t *testing.T) {
 	t.Parallel()
 
@@ -1721,8 +1495,6 @@ func TestUnknownRouteIsProblemJSON(t *testing.T) {
 	}
 }
 
-// Health endpoints must stay reachable and keep their 2xx shape. They are not
-// part of the v1 contract and a client for them is a load balancer.
 func TestProbesAreUnaffectedByTheV1Surface(t *testing.T) {
 	t.Parallel()
 
@@ -1739,9 +1511,6 @@ func TestProbesAreUnaffectedByTheV1Surface(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// helpers on the fake
-// ---------------------------------------------------------------------------
 
 func (f *fakeAuth) hasRegistered() bool {
 	f.mu.Lock()
@@ -1770,7 +1539,6 @@ func (f *fakeAuth) lastAuthenticatedToken() string {
 	return f.lastAuthToken
 }
 
-// panickingAuth blows up in every method, to prove the handlers recover.
 type panickingAuth struct{}
 
 func (panickingAuth) Register(context.Context, auth.RegisterInput) (auth.RegisteredUser, error) {
@@ -1795,10 +1563,6 @@ func (panickingAuth) RevokeSession(context.Context, string, id.UUID) error {
 	panic("handler exploded")
 }
 
-// The operator surface's two use cases, on the same terms as every method above.
-// They are here rather than inherited from fakeAuth because this double's whole
-// claim is that EVERY method blows up, and a missing one would make that claim a
-// narrower statement than it reads as.
 func (panickingAuth) Disable(context.Context, auth.DisableInput) error {
 	panic("handler exploded")
 }
@@ -1812,8 +1576,6 @@ func (panickingAuth) UpdateTheme(context.Context, id.UUID, *string) error {
 	panic("handler exploded")
 }
 
-// The staff directory read, on the same terms: EVERY method blows up, so a
-// missing one would narrow the claim this double makes.
 func (panickingAuth) SearchUsers(context.Context, string, int) ([]users.DirectoryEntry, error) {
 	panic("handler exploded")
 }

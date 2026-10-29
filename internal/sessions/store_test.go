@@ -70,8 +70,6 @@ func TestStoreCreateAndFindByToken(t *testing.T) {
 		t.Errorf("IP = %v, want %v", created.IP, ip)
 	}
 
-	// The lookup is by the token the client presents, not by the digest the
-	// client never sees.
 	found, err := store.ByToken(ctx, pool, token, issuedAt)
 	if err != nil {
 		t.Fatalf("ByToken: %v", err)
@@ -81,8 +79,6 @@ func TestStoreCreateAndFindByToken(t *testing.T) {
 	}
 }
 
-// The raw token must not be in the table. This is the assertion that catches the
-// worst plausible bug in this file: storing token instead of token_digest.
 func TestStoreNeverWritesTheRawToken(t *testing.T) {
 	pool := dbtest.Pool(t)
 	store := NewStore(pool)
@@ -103,9 +99,6 @@ func TestStoreNeverWritesTheRawToken(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	// Scoped to this session: every package in the service shares one test
-	// database, so `LIMIT 1` would read whichever row another package's test
-	// wrote last.
 	var stored string
 	if err := pool.QueryRow(ctx, `SELECT token_digest FROM sessions WHERE id = $1`, created.ID).Scan(&stored); err != nil {
 		t.Fatalf("reading the stored digest: %v", err)
@@ -118,8 +111,6 @@ func TestStoreNeverWritesTheRawToken(t *testing.T) {
 	}
 }
 
-// An expired session is not a session. This is the single most important read in
-// the package: it is what makes expires_at mean something.
 func TestStoreByTokenIgnoresAnExpiredSession(t *testing.T) {
 	pool := dbtest.Pool(t)
 	store := NewStore(pool)
@@ -144,8 +135,6 @@ func TestStoreByTokenIgnoresAnExpiredSession(t *testing.T) {
 		now     time.Time
 		wantErr bool
 	}{
-		// expires_at is exclusive: the session is live right up to the instant
-		// and dead at it.
 		{name: "well before expiry", now: issuedAt.Add(-time.Hour)},
 		{name: "one nanosecond before expiry", now: issuedAt.Add(-time.Nanosecond)},
 		{name: "at expiry", now: issuedAt, wantErr: true},
@@ -188,8 +177,6 @@ func TestStoreByTokenMissesCleanly(t *testing.T) {
 		{name: "empty", token: ""},
 		{name: "well-formed but never issued", token: other},
 		{name: "not a token at all", token: "nonsense"},
-		// A digest is not a token. Handing back the stored value must not
-		// authenticate, or the digest stops being a secret.
 		{name: "a digest rather than a token", token: Digest(other)},
 	}
 
@@ -225,12 +212,9 @@ func TestStoreRevoke(t *testing.T) {
 		t.Fatalf("Revoke: %v", err)
 	}
 
-	// Revocation has to invalidate the credential, not just the row id.
 	if _, err := store.ByToken(ctx, pool, token, issuedAt); !errors.Is(err, ErrNotFound) {
 		t.Errorf("ByToken after Revoke = %v, want errors.Is(_, ErrNotFound)", err)
 	}
-	// The row itself is gone too, not merely unusable. Scoped to this session's
-	// id: another package's tests are using the same database.
 	var remaining int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM sessions WHERE id = $1`, created.ID).Scan(&remaining); err != nil {
 		t.Fatalf("counting the revoked session: %v", err)
@@ -244,16 +228,11 @@ func TestStoreRevokeIsIdempotent(t *testing.T) {
 	pool := dbtest.Pool(t)
 	store := NewStore(pool)
 
-	// Revoking something already gone is not an error. Logout is a request a
-	// client retries, and a 500 on the second attempt is a worse answer than a
-	// 204.
 	if err := store.Revoke(context.Background(), pool, id.MustNew()); err != nil {
 		t.Errorf("Revoke of a missing session = %v, want nil", err)
 	}
 }
 
-// Two sessions for one user are independent: revoking one leaves the other
-// working. "Sign out everywhere" is a different operation and a later packet.
 func TestStoreSessionsAreIndependentPerToken(t *testing.T) {
 	pool := dbtest.Pool(t)
 	store := NewStore(pool)
@@ -289,16 +268,11 @@ func TestStoreSessionsAreIndependentPerToken(t *testing.T) {
 	}
 }
 
-// The user_agent and ip columns are optional: an API client has no user agent and
-// may sit behind a proxy that gives no address.
 func TestStoreCreateAcceptsAbsentRequestMetadata(t *testing.T) {
 	pool := dbtest.Pool(t)
 	store := NewStore(pool)
 	user := newTestUser(t, pool)
 
-	// A real minted digest, not a fixed one: a hard-coded digest survives the
-	// rollback of this test's transaction nowhere, so it collides with the row
-	// the previous run left behind.
 	_, digest, err := NewToken()
 	if err != nil {
 		t.Fatalf("NewToken: %v", err)
@@ -320,8 +294,6 @@ func TestStoreCreateAcceptsAbsentRequestMetadata(t *testing.T) {
 	}
 }
 
-// Deleting a user takes their sessions with them, so a deleted account cannot
-// keep serving authenticated requests off a token issued a moment earlier.
 func TestSessionsAreRemovedWithTheirUser(t *testing.T) {
 	pool := dbtest.Pool(t)
 	store := NewStore(pool)
@@ -349,9 +321,6 @@ func TestStoreCreateRejectsAnUnknownUser(t *testing.T) {
 	pool := dbtest.Pool(t)
 	store := NewStore(pool)
 
-	// The foreign key is what stops a session existing without an owner. The
-	// error is the constraint, not a wrapped ErrNotFound: the caller asked for
-	// something impossible, and saying "no such user" would be a guess.
 	_, err := store.Create(context.Background(), pool, NewSession{
 		UserID:      id.MustNew(),
 		TokenDigest: Digest("orphan"),

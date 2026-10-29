@@ -11,13 +11,6 @@ import (
 
 var eventAt = time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
 
-// Fixed ids rather than generated ones, so a payload can be asserted on its exact
-// contents. An event's ids are a function of its arguments like anything else.
-//
-// They are parsed in init rather than through a helper because a fixture that
-// cannot parse should stop the test binary immediately, and a panic from init says
-// so in one line. A silently-zero id would make every payload assertion below pass
-// for the wrong reason.
 var (
 	userA = fixtureID("6f1a3f2e-0000-4000-8000-00000000000a")
 	credA = fixtureID("6f1a3f2e-0000-4000-8000-0000000000c1")
@@ -32,10 +25,6 @@ func fixtureID(raw string) id.UUID {
 	return parsed
 }
 
-// The two MFA event names are core's, fixed before this packet wrote any code.
-// TestTheEventNamesAreCoreCatalogSpelling is the assertion that a rename cannot
-// happen here by accident: a consumer subscribed to one spelling and a publisher
-// emitting another is a silent, permanent integration failure.
 func TestTheEventNamesAreCoreCatalogSpelling(t *testing.T) {
 	cases := []struct{ got, want string }{
 		{EventMFAEnabled, "identity.mfa.enabled"},
@@ -48,8 +37,6 @@ func TestTheEventNamesAreCoreCatalogSpelling(t *testing.T) {
 	}
 }
 
-// Both are three-segment and both carry the user as the subject, which is what
-// core's event-naming.md specifies for both rows of its catalog.
 func TestMFAEventsAreThreeSegmentAndCarryTheUser(t *testing.T) {
 	enabled, err := NewMFAEnabled(eventAt, userA, credA, "totp")
 	if err != nil {
@@ -79,19 +66,12 @@ func TestMFAEventsAreThreeSegmentAndCarryTheUser(t *testing.T) {
 	}
 }
 
-// The payload is the narrowest thing that is still useful, and the OMISSIONS are
-// the part worth testing: no secret, no digest of one, no code, and no key beyond
-// the three core's schema can be written against.
-//
-// Every event on the platform reaches every subscriber, which is exactly the wrong
-// place for a credential. The same reasoning is in NewOIDCClientCreated.
 func TestMFAEventPayloadsCarryNoCredential(t *testing.T) {
-	// Values that would be secrets if any of them reached a payload.
 	canaries := []string{
-		"JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",                         // a TOTP secret
-		"7KQF-4W2X-5DTR-M3HN",                                      // a recovery code
-		"a4b1c0f3e2d5a6b7c8d9e0f1a2b3c4d5",                         // a SHA-256 digest
-		"otpauth://totp/anywaye%20identity?secret=JBSWY3DPEHPK3PXP", // a provisioning URI
+		"JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",
+		"7KQF-4W2X-5DTR-M3HN",
+		"a4b1c0f3e2d5a6b7c8d9e0f1a2b3c4d5",
+		"otpauth://totp/anywaye%20identity?secret=JBSWY3DPEHPK3PXP",
 	}
 
 	enabled, err := NewMFAEnabled(eventAt, userA, credA, "totp")
@@ -122,8 +102,6 @@ func TestMFAEventPayloadsCarryNoCredential(t *testing.T) {
 		}
 	}
 
-	// The enabled payload names the credential, which is what lets a consumer tell
-	// a rotation from a first enrollment without having to remember one.
 	var enabledPayload struct {
 		UserID       string `json:"user_id"`
 		CredentialID string `json:"credential_id"`
@@ -140,10 +118,6 @@ func TestMFAEventPayloadsCarryNoCredential(t *testing.T) {
 	}
 }
 
-// The disabled payload has no credential id, because the row is gone by the time
-// the event is written and a consumer that needed it would be correlating on
-// nothing. It names the method and the user, and that is all core's catalog row
-// promises.
 func TestTheDisabledPayloadNamesWhatStillExists(t *testing.T) {
 	disabled, err := NewMFADisabled(eventAt, userA, "totp")
 	if err != nil {
@@ -161,9 +135,6 @@ func TestTheDisabledPayloadNamesWhatStillExists(t *testing.T) {
 	}
 }
 
-// Two events about the same fact are two events, with two ids. A consumer that
-// dedupes on the envelope id is relying on this, and a shared id would silently
-// drop one.
 func TestMFAEventsHaveDistinctEnvelopeIDs(t *testing.T) {
 	first, err := NewMFAEnabled(eventAt, userA, credA, "totp")
 	if err != nil {

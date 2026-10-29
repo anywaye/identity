@@ -11,24 +11,11 @@ import (
 	"github.com/anywaye/identity/internal/tenancy"
 )
 
-// The service: the use cases that sit between a route and the store.
-//
-// WHAT IS HERE AND WHAT IS NOT. The registration and the claim-link refresh
-// (register.go), the bearer-token lifecycle (tokens.go) and the claim, which
-// since W2-P2 also mints the credential the claim hands back. The use cases the
-// store's methods would serve but no route mounts are deliberately absent: a
-// tested method nobody calls is an invitation to wire it without reading why it
-// was not wired, and the honest state for "we decided not to do this" is a
-// paragraph and no code.
 
 // Service is the agent principal's use cases.
 type Service struct {
 	store *Store
 	pool  db.Pool
-	// claimUI is the absolute base the claim screen lives at, configured per
-	// deployment (AGENT_CLAIM_UI_URL) and never a default. Registration and the
-	// refresh both need it to render a claim URL; empty means both refuse rather
-	// than mint an unclaimable agent. See WithClaimUI.
 	claimUI string
 }
 
@@ -44,21 +31,10 @@ func NewService(pool db.Pool, opts ...ServiceOpt) *Service {
 // ClaimInput is what a claim needs, and every field is a decision about who
 // supplied it.
 type ClaimInput struct {
-	// Token is the claim link as presented. NEVER a row id: a route that accepted
-	// an agent id would be a route where a stranger names the principal they are
-	// binding to themselves, which is the whole thing the link exists to prevent.
 	Token string
-	// Account is the claiming account, resolved from the session by the route.
 	Account id.UUID
-	// User is the human whose session did it, for the event row. It is the actor
-	// and not the owner: an account may have several humans in it, and "who
-	// claimed this" is a question about a person.
 	User id.UUID
-	// TraceID joins the event row to the request's log line.
 	TraceID string
-	// Now is the service's clock, passed in rather than read, so the row, the
-	// event announcing it and the response agreeing about the instant are one
-	// fact under test control.
 	Now time.Time
 }
 
@@ -76,20 +52,10 @@ type ClaimInput struct {
 // holds, and the plaintext travels into one response and is dropped.
 type Claimed struct {
 	Agent Agent
-	// Token is the credential the claim minted, as the row holds it.
 	Token Token
-	// TokenPlaintext is that credential's bearer value, rendered exactly once.
 	TokenPlaintext string
 }
 
-// claimTokenName is what the credential a claim mints is called.
-//
-// NOT `defaultTokenName`, and not a second "bootstrap": the registration's
-// credential is named after the state it was minted in, and a partial unique
-// index (one live token per name per agent) would refuse the claim outright if
-// the two shared a name. The names read as a history in a management list —
-// `bootstrap` minted while the agent was nobody's, `claimed` minted by the human
-// who made it somebody's.
 const claimTokenName = "claimed"
 
 // Claim binds an unclaimed agent to the caller's account, and mints the
@@ -131,24 +97,14 @@ const claimTokenName = "claimed"
 // deployment has a bug and should say so loudly.
 func (s *Service) Claim(ctx context.Context, in ClaimInput) (Claimed, error) {
 	if in.Account.IsZero() || in.User.IsZero() {
-		// A caller with no resolved session has no business here, and the route
-		// resolves both before it calls this. Refusing rather than writing a row
-		// that names nobody is the fail-closed direction.
 		return Claimed{}, fmt.Errorf("agents: a claim must name the account and the human claiming it")
 	}
 
-	// The link is digested here and the plaintext goes no further. There is no
-	// field it could be stored in and no log line it reaches.
 	digest := Digest(in.Token)
 	if digest == "" {
 		return Claimed{}, ErrNotFound
 	}
 
-	// The credential, minted BEFORE the transaction so a failure of crypto/rand
-	// aborts before a row exists rather than rolling a claim back. The digest goes
-	// into `agent_tokens`; the plaintext goes into this function's return value
-	// and from there into one HTTP response, and nowhere else — there is no column
-	// and no field on the store's types that could hold it again.
 	tokenValue, tokenDigest, err := NewToken()
 	if err != nil {
 		return Claimed{}, err
@@ -160,16 +116,6 @@ func (s *Service) Claim(ctx context.Context, in ClaimInput) (Claimed, error) {
 		minted Token
 	)
 	err = db.TxRunner{Pool: s.pool}.Do(ctx, func(ctx context.Context, tx db.Querier) error {
-		// THE ACCOUNT BOUNDARY, SET ON THIS TRANSACTION.
-		//
-		// `requireAccountRole` put the account on the request context, and
-		// `anywaye.begin_account/1` is `set_config(..., is_local => true)` — which
-		// outside an explicit transaction expires at the end of the STATEMENT that
-		// set it, so a caller reaching the database in autocommit reads zero rows.
-		//
-		// It is here and not in the route because the transaction is opened here:
-		// one function opens the transaction and sets its identity, and a caller
-		// that had to remember to do it from outside would be a caller who forgets.
 		if err := tenancy.BeginAccount(ctx, tx, in.Account); err != nil {
 			return fmt.Errorf("agents: setting the claim's account boundary: %w", err)
 		}
@@ -194,11 +140,6 @@ func (s *Service) Claim(ctx context.Context, in ClaimInput) (Claimed, error) {
 			return err
 		}
 
-		// STEP 4. The credential the agent presents from here on, in the same
-		// transaction as the binding that gives it any meaning. Rolling them
-		// apart would leave the two failure modes the transaction exists to
-		// refuse: a bound agent with no credential, or a credential for a
-		// principal nobody owns.
 		minted, err = s.store.CreateToken(ctx, tx, NewAgentToken{
 			AgentID:   claimed.ID,
 			Name:      claimTokenName,
@@ -210,12 +151,6 @@ func (s *Service) Claim(ctx context.Context, in ClaimInput) (Claimed, error) {
 			return err
 		}
 
-		// STEP 5, second event. Its actor is USERID and not the credential that
-		// was just minted, and that is not a default: `agent.token_minted` on the
-		// rotation path names the token that asked, but this mint was caused by a
-		// human clicking Approve. Recording the credential as its own actor would
-		// say the agent issued itself a token by being claimed, which is the
-		// story D4 exists to refuse.
 		if _, err := s.store.AppendEvent(ctx, tx, Event{
 			AgentID:    claimed.ID,
 			Action:     ActionTokenMinted,
@@ -231,14 +166,6 @@ func (s *Service) Claim(ctx context.Context, in ClaimInput) (Claimed, error) {
 	})
 	if err != nil {
 		if errors.Is(err, ErrNotFound) || errors.Is(err, ErrAlreadyClaimed) {
-			// ONE ANSWER, and it is the same one a stranger guessing gets. The four
-			// ways this fails — wrong token, expired link, already claimed, never
-			// existed — are not told apart anywhere, and a use case that logged
-			// which one it was would be a log line an attacker can read.
-			//
-			// AlreadyClaimed is mapped onto the same value: it is distinct in the
-			// store for the benefit of a caller holding the row, and the route is
-			// not that caller.
 			return Claimed{}, ErrNotFound
 		}
 		return Claimed{}, err

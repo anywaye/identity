@@ -25,9 +25,6 @@ import (
 	"github.com/anywaye/identity/internal/users"
 )
 
-// These are the packet's httptest round-trips: the real router, the real use
-// cases, the real SQL, over a private schema. Everything they assert is a
-// property a client or an operator depends on.
 
 func newTestServer(t *testing.T) (http.Handler, *pgxpool.Pool, *clock.Fake) {
 	t.Helper()
@@ -38,19 +35,10 @@ func newTestServer(t *testing.T) (http.Handler, *pgxpool.Pool, *clock.Fake) {
 	return New(nil, WithAuth(authServiceFor(pool, clk)), WithTenancy(realTenancy(pool, clk))), pool, clk
 }
 
-// authServiceFor is the production auth wiring over a pool, with the cheap
-// argon2id parameters a test wants. It is one function so that the test server
-// and the authorization matrix cannot build different services.
 func authServiceFor(pool *pgxpool.Pool, clk clock.Clock) *auth.Service {
 	return authServiceWithSessionTTL(pool, clk, 24*time.Hour)
 }
 
-// authServiceWithSessionTTL is authServiceFor with the session lifetime spelled
-// out, for the tests that move the clock further than a day.
-//
-// It is a separate function rather than a parameter on authServiceFor because
-// almost no test should be thinking about session lifetime, and a defaulted
-// parameter on the common path invites exactly that.
 func authServiceWithSessionTTL(pool *pgxpool.Pool, clk clock.Clock, sessionTTL time.Duration) *auth.Service {
 	return auth.NewService(
 		db.TxRunner{Pool: pool},
@@ -59,14 +47,7 @@ func authServiceWithSessionTTL(pool *pgxpool.Pool, clk clock.Clock, sessionTTL t
 		sessions.NewStore(pool),
 		outbox.NewStore(pool),
 		realTenancy(pool, clk),
-		// The REAL second-factor use cases, over the same pool. A double here would
-		// make every test in this file pass with a login that skips the challenge,
-		// which is the one bug this packet exists to prevent.
 		testMFAService(pool, clk),
-		// The real OIDC store, for the same reason main wires the real one: a
-		// disable's access-token sweep is one UPDATE over `oidc_access_tokens` and
-		// the operator routes in this package must be exercised against the table
-		// they revoke in. See TestADisableRevokesTheAccessTokensAtThisLayer.
 		oidc.NewStore(pool),
 		useraudit.NewStore(pool),
 		users.NewHasherWithParams(&argon2id.Params{
@@ -80,7 +61,6 @@ func authServiceWithSessionTTL(pool *pgxpool.Pool, clk clock.Clock, sessionTTL t
 
 const validPassword = "correct horse battery staple"
 
-// registerThrough performs a real registration and returns the decoded body.
 func registerThrough(t *testing.T, h http.Handler, email string) userResponse {
 	t.Helper()
 
@@ -100,17 +80,13 @@ func TestEndToEndRegisterLoginMeLogout(t *testing.T) {
 	h, pool, _ := newTestServer(t)
 	email := dbtest.UniqueEmail(t)
 
-	// Register.
 	registered := registerThrough(t, h, email)
 	if registered.Email != email {
 		t.Errorf("registered email = %q, want %q", registered.Email, email)
 	}
 
-	// The event was written, in the same transaction, and is the one that will be
-	// published.
 	assertUserCreatedEvent(t, pool, registered.ID, email, false)
 
-	// Log in.
 	loginRec := post(t, h, "/v1/session", `{"email":"`+email+`","password":"`+validPassword+`"}`)
 	if loginRec.Code != http.StatusOK {
 		t.Fatalf("POST /v1/session = %d, want 200; body: %s", loginRec.Code, loginRec.Body)
@@ -127,7 +103,6 @@ func TestEndToEndRegisterLoginMeLogout(t *testing.T) {
 		t.Errorf("expires_at = %s, want %s — 24h after the injected clock", login.ExpiresAt, want)
 	}
 
-	// The cookie carries the same token, hardened.
 	cookies := loginRec.Result().Cookies()
 	if len(cookies) != 1 {
 		t.Fatalf("got %d cookies, want 1", len(cookies))
@@ -140,7 +115,6 @@ func TestEndToEndRegisterLoginMeLogout(t *testing.T) {
 		t.Errorf("the session cookie is not hardened: %+v", c)
 	}
 
-	// /v1/me with the cookie.
 	meRec := httptest.NewRecorder()
 	meReq := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/me", nil)
 	meReq.AddCookie(c)
@@ -157,7 +131,6 @@ func TestEndToEndRegisterLoginMeLogout(t *testing.T) {
 		t.Errorf("GET /v1/me = %+v, want the registered user %s/%s", me, registered.ID, email)
 	}
 
-	// /v1/me with the bearer token.
 	bearerRec := httptest.NewRecorder()
 	bearerReq := httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/v1/me", nil)
 	bearerReq.Header.Set("Authorization", "Bearer "+login.Token)
@@ -167,7 +140,6 @@ func TestEndToEndRegisterLoginMeLogout(t *testing.T) {
 		t.Errorf("GET /v1/me with a bearer token = %d, want 200; body: %s", bearerRec.Code, bearerRec.Body)
 	}
 
-	// Log out.
 	logoutRec := httptest.NewRecorder()
 	logoutReq := httptest.NewRequestWithContext(context.Background(), http.MethodDelete, "/v1/session", nil)
 	logoutReq.AddCookie(c)
@@ -177,8 +149,6 @@ func TestEndToEndRegisterLoginMeLogout(t *testing.T) {
 		t.Fatalf("DELETE /v1/session = %d, want 204; body: %s", logoutRec.Code, logoutRec.Body)
 	}
 
-	// Token reuse after logout fails, on both surfaces. This is the requirement
-	// that makes DELETE meaningful.
 	for _, surface := range []string{"cookie", "bearer"} {
 		t.Run("the revoked token no longer works via "+surface, func(t *testing.T) {
 			rec := httptest.NewRecorder()
@@ -196,7 +166,6 @@ func TestEndToEndRegisterLoginMeLogout(t *testing.T) {
 		})
 	}
 
-	// And the row is gone, not merely unusable.
 	var sessions int
 	if err := pool.QueryRow(t.Context(), `SELECT count(*) FROM sessions`).Scan(&sessions); err != nil {
 		t.Fatalf("counting sessions: %v", err)
@@ -206,7 +175,6 @@ func TestEndToEndRegisterLoginMeLogout(t *testing.T) {
 	}
 }
 
-// A duplicate registration is a 409, and it writes no second event.
 func TestEndToEndDuplicateRegistrationIs409AndWritesNoEvent(t *testing.T) {
 	h, pool, _ := newTestServer(t)
 	email := dbtest.UniqueEmail(t)
@@ -226,7 +194,6 @@ func TestEndToEndDuplicateRegistrationIs409AndWritesNoEvent(t *testing.T) {
 	if after := countEvents(t, pool); after != before {
 		t.Errorf("outbox_events went from %d to %d; a rejected registration wrote an event", before, after)
 	}
-	// Only one user exists.
 	var users int
 	if err := pool.QueryRow(t.Context(), `SELECT count(*) FROM users`).Scan(&users); err != nil {
 		t.Fatalf("counting users: %v", err)
@@ -237,8 +204,6 @@ func TestEndToEndDuplicateRegistrationIs409AndWritesNoEvent(t *testing.T) {
 	_ = first
 }
 
-// Validation is answered by the real service, so this is the end-to-end version
-// of the 422 contract: which field, which code, and no password in the response.
 func TestEndToEndRegisterValidation(t *testing.T) {
 	h, _, _ := newTestServer(t)
 
@@ -283,14 +248,11 @@ func TestEndToEndRegisterValidation(t *testing.T) {
 	}
 }
 
-// The whole brute-force matrix, over HTTP, against a real database, with the clock
-// moved rather than slept through.
 func TestEndToEndLockoutMatrix(t *testing.T) {
 	h, pool, clk := newTestServer(t)
 	email := dbtest.UniqueEmail(t)
 	registerThrough(t, h, email)
 
-	// Attempts one to four: refused, not locked, no cookie.
 	for attempt := 1; attempt < sessions.MaxFailedAttempts; attempt++ {
 		rec := post(t, h, "/v1/session", `{"email":"`+email+`","password":"wrong"}`)
 		if rec.Code != http.StatusUnauthorized {
@@ -301,15 +263,11 @@ func TestEndToEndLockoutMatrix(t *testing.T) {
 		}
 	}
 
-	// The fifth trips the lock, but the fifth attempt itself is still a 401: the
-	// password was wrong, and saying otherwise would tell an attacker which guess
-	// was the one that mattered.
 	fifth := post(t, h, "/v1/session", `{"email":"`+email+`","password":"wrong"}`)
 	if fifth.Code != http.StatusUnauthorized {
 		t.Fatalf("the fifth attempt = %d, want 401", fifth.Code)
 	}
 
-	// The sixth — with the *correct* password — is 423 with the window.
 	locked := post(t, h, "/v1/session", `{"email":"`+email+`","password":"`+validPassword+`"}`)
 	if locked.Code != http.StatusLocked {
 		t.Fatalf("the sixth attempt = %d, want 423; body: %s", locked.Code, locked.Body)
@@ -328,7 +286,6 @@ func TestEndToEndLockoutMatrix(t *testing.T) {
 		t.Error("a locked login set a cookie")
 	}
 
-	// The lock is in the database, stamped from the injected clock.
 	var lockedUntil time.Time
 	if err := pool.QueryRow(t.Context(), `SELECT locked_until FROM users WHERE email = $1`, email).Scan(&lockedUntil); err != nil {
 		t.Fatalf("reading the lock: %v", err)
@@ -337,7 +294,6 @@ func TestEndToEndLockoutMatrix(t *testing.T) {
 		t.Errorf("locked_until = %s, want %s", lockedUntil, want)
 	}
 
-	// One second before the window closes: still locked, one second left.
 	clk.Advance(sessions.LockoutDuration - time.Second)
 	stillLocked := post(t, h, "/v1/session", `{"email":"`+email+`","password":"`+validPassword+`"}`)
 	if stillLocked.Code != http.StatusLocked {
@@ -347,14 +303,12 @@ func TestEndToEndLockoutMatrix(t *testing.T) {
 		t.Errorf("%s = %q, want %q", RetryAfterHeader, stillLocked.Header().Get(RetryAfterHeader), want)
 	}
 
-	// The window closes: the correct password works. No sleep anywhere.
 	clk.Advance(time.Second)
 	unlocked := post(t, h, "/v1/session", `{"email":"`+email+`","password":"`+validPassword+`"}`)
 	if unlocked.Code != http.StatusOK {
 		t.Fatalf("after the window closed = %d, want 200; body: %s", unlocked.Code, unlocked.Body)
 	}
 
-	// And the success cleared the run, so it takes five more to lock again.
 	var failures int
 	if err := pool.QueryRow(t.Context(), `SELECT failed_login_attempts FROM users WHERE email = $1`, email).Scan(&failures); err != nil {
 		t.Fatalf("reading the counter: %v", err)
@@ -364,8 +318,6 @@ func TestEndToEndLockoutMatrix(t *testing.T) {
 	}
 }
 
-// A wrong password and an unknown address are byte-identical responses. If they
-// ever differ, the endpoint enumerates accounts.
 func TestEndToEndLoginDoesNotEnumerate(t *testing.T) {
 	h, _, _ := newTestServer(t)
 	email := dbtest.UniqueEmail(t)
@@ -378,8 +330,6 @@ func TestEndToEndLoginDoesNotEnumerate(t *testing.T) {
 		t.Fatalf("statuses = %d and %d, want both 401", wrongPassword.Code, unknownAddress.Code)
 	}
 
-	// The bodies differ only in instance, and instance is the path — which is the
-	// same for both. So they must be byte-identical apart from the trace id.
 	stripTrace := func(rec *httptest.ResponseRecorder) string {
 		var p Problem
 		if err := json.Unmarshal(rec.Body.Bytes(), &p); err != nil {
@@ -401,7 +351,6 @@ func TestEndToEndLoginDoesNotEnumerate(t *testing.T) {
 	}
 }
 
-// A login never leaks the digest, and neither does any other response.
 func TestEndToEndNoResponseCarriesTheDigest(t *testing.T) {
 	h, pool, _ := newTestServer(t)
 	email := dbtest.UniqueEmail(t)
@@ -443,8 +392,6 @@ func TestEndToEndNoResponseCarriesTheDigest(t *testing.T) {
 	_ = registered
 }
 
-// The outbox row exists, is well-formed, and has not been published — because
-// nothing in this packet publishes.
 func TestEndToEndOutboxRowIsClaimableAndUnpublished(t *testing.T) {
 	h, pool, _ := newTestServer(t)
 	email := dbtest.UniqueEmail(t)
@@ -452,8 +399,6 @@ func TestEndToEndOutboxRowIsClaimableAndUnpublished(t *testing.T) {
 
 	assertUserCreatedEvent(t, pool, registered.ID, email, false)
 
-	// The publisher can claim it: the claim query, the ordering and the envelope
-	// all work against a row this service actually wrote.
 	store := outbox.NewStore(pool)
 	batch, err := store.Claim(t.Context(), 10)
 	if err != nil {
@@ -487,8 +432,6 @@ func TestEndToEndOutboxRowIsClaimableAndUnpublished(t *testing.T) {
 	}
 }
 
-// A session whose user has been deleted stops working. The cascade is the
-// mechanism, and this proves the consequence.
 func TestEndToEndDeletedUserCannotAuthenticate(t *testing.T) {
 	h, pool, _ := newTestServer(t)
 	email := dbtest.UniqueEmail(t)
@@ -514,7 +457,6 @@ func TestEndToEndDeletedUserCannotAuthenticate(t *testing.T) {
 	}
 }
 
-// An expired session stops working, judged against the injected clock.
 func TestEndToEndExpiredSessionIs401(t *testing.T) {
 	h, _, clk := newTestServer(t)
 	email := dbtest.UniqueEmail(t)
@@ -526,22 +468,17 @@ func TestEndToEndExpiredSessionIs401(t *testing.T) {
 		t.Fatalf("the login body is not JSON: %v", err)
 	}
 
-	// One nanosecond before expiry it still works.
 	clk.Advance(24*time.Hour - time.Nanosecond)
 	if rec := meWithToken(t, h, login.Token); rec.Code != http.StatusOK {
 		t.Fatalf("just before expiry = %d, want 200; body: %s", rec.Code, rec.Body)
 	}
 
-	// At expiry it does not.
 	clk.Advance(time.Nanosecond)
 	if rec := meWithToken(t, h, login.Token); rec.Code != http.StatusUnauthorized {
 		t.Errorf("at expiry = %d, want 401; body: %s", rec.Code, rec.Body)
 	}
 }
 
-// A transaction that cannot commit is a 500 with a trace id, and the cause is in
-// the log. Simulated by dropping the outbox table, which makes registration's
-// second write fail.
 func TestEndToEndWriteFailureIs500AndLeaksNothing(t *testing.T) {
 	logs := &recordingHandler{}
 	pool, owner := dbtest.SchemaWithOwner(t)
@@ -555,8 +492,6 @@ func TestEndToEndWriteFailureIs500AndLeaksNothing(t *testing.T) {
 		outbox.NewStore(pool),
 		realTenancy(pool, clk),
 		testMFAService(pool, clk),
-		// The real sweep, as main wires it: `Disable` refuses to run without one,
-		// so this service has the same set of capabilities the production one does.
 		oidc.NewStore(pool),
 		useraudit.NewStore(pool),
 		users.NewHasherWithParams(&argon2id.Params{
@@ -568,10 +503,6 @@ func TestEndToEndWriteFailureIs500AndLeaksNothing(t *testing.T) {
 	)
 	h := New(nil, WithAuth(svc), WithTenancy(realTenancy(pool, clk)), WithLogger(slogLogger(logs)))
 
-	// The DROP is on the OWNER's pool: dropping a table is an ownership privilege,
-	// and the role the request actually runs as — `identity_app`, which is what
-	// dbtest hands `pool` — is precisely the one that must not have it. A role that
-	// can drop a table can drop the row-level-security policies on it.
 	if _, err := owner.Exec(t.Context(), `DROP TABLE outbox_events`); err != nil {
 		t.Fatalf("dropping outbox_events: %v", err)
 	}
@@ -597,7 +528,6 @@ func TestEndToEndWriteFailureIs500AndLeaksNothing(t *testing.T) {
 		t.Error("nothing was logged")
 	}
 
-	// The transaction rolled back: no user survived.
 	var users int
 	if err := pool.QueryRow(t.Context(), `SELECT count(*) FROM users`).Scan(&users); err != nil {
 		t.Fatalf("counting users: %v", err)
@@ -607,28 +537,17 @@ func TestEndToEndWriteFailureIs500AndLeaksNothing(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// PATCH /v1/me — theme
-// ---------------------------------------------------------------------------
 
-// The theme's whole lifecycle through the HTTP surface: absent for a new user,
-// set, read back, switched, cleared. Every read is GET /v1/me, so the
-// assertion is about what the caller sees rather than about the row — and the
-// column is reached only because the migration this suite's own path applied
-// (dbtest clones the migrated `public.users`) put it there.
 func TestEndToEndThemeSetGetSwitchAndClear(t *testing.T) {
 	h, _, _ := newTestServer(t)
 	email := dbtest.UniqueEmail(t)
 	registerThrough(t, h, email)
 	token := loginToken(t, h, email)
 
-	// A new user has no theme: the key is absent from the response, which is
-	// the system theme — the reference's theme.blank?.
 	if theme := themeOf(t, meWithToken(t, h, token)); theme != nil {
 		t.Errorf("a new user's theme = %q, want the key absent (the system theme)", *theme)
 	}
 
-	// Set dark: the PATCH response echoes it, and a subsequent GET agrees.
 	rec := patchMeWithToken(t, h, token, `{"theme":"dark"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("PATCH theme=dark = %d, want 200; body: %s", rec.Code, rec.Body)
@@ -640,7 +559,6 @@ func TestEndToEndThemeSetGetSwitchAndClear(t *testing.T) {
 		t.Errorf("GET after the write = %v, want dark", theme)
 	}
 
-	// Switch to light.
 	rec = patchMeWithToken(t, h, token, `{"theme":"light"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("PATCH theme=light = %d, want 200; body: %s", rec.Code, rec.Body)
@@ -649,10 +567,6 @@ func TestEndToEndThemeSetGetSwitchAndClear(t *testing.T) {
 		t.Errorf("GET after switching = %v, want light", theme)
 	}
 
-	// The field goes back to absent by being OMITTED, which is the same
-	// omission rule display_name has: a field the caller does not send returns
-	// to its zero state, and the system theme — the reference's theme.blank? —
-	// is that zero state. The empty string is not a theme and is refused.
 	rec = patchMeWithToken(t, h, token, `{"display_name":"Kaka"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("PATCH without a theme = %d, want 200; body: %s", rec.Code, rec.Body)
@@ -665,10 +579,6 @@ func TestEndToEndThemeSetGetSwitchAndClear(t *testing.T) {
 	}
 }
 
-// THE THEME IS PER-USER: the row the handler reads is the caller's own, so one
-// user's choice is invisible to another's. This is the tenancy-adjacent
-// behavior of the profile surface — two accounts, two credentials, and a
-// preference that does not cross the boundary either way.
 func TestEndToEndThemeIsPerUser(t *testing.T) {
 	h, _, _ := newTestServer(t)
 
@@ -679,7 +589,6 @@ func TestEndToEndThemeIsPerUser(t *testing.T) {
 	first := loginToken(t, h, firstEmail)
 	second := loginToken(t, h, secondEmail)
 
-	// Neither has a theme.
 	if theme := themeOf(t, meWithToken(t, h, first)); theme != nil {
 		t.Errorf("the first user's theme = %q, want absent", *theme)
 	}
@@ -687,9 +596,6 @@ func TestEndToEndThemeIsPerUser(t *testing.T) {
 		t.Errorf("the second user's theme = %q, want absent", *theme)
 	}
 
-	// The first user chooses dark. The second user's profile does not change:
-	// the write went to the first user's row and the second user's GET reads
-	// the second user's row.
 	if rec := patchMeWithToken(t, h, first, `{"theme":"dark"}`); rec.Code != http.StatusOK {
 		t.Fatalf("the first user's PATCH = %d, want 200; body: %s", rec.Code, rec.Body)
 	}
@@ -700,7 +606,6 @@ func TestEndToEndThemeIsPerUser(t *testing.T) {
 		t.Errorf("the second user's GET = %v, want absent — the first user's theme crossed into it", *theme)
 	}
 
-	// The second user chooses light, and the first user's dark survives it.
 	if rec := patchMeWithToken(t, h, second, `{"theme":"light"}`); rec.Code != http.StatusOK {
 		t.Fatalf("the second user's PATCH = %d, want 200; body: %s", rec.Code, rec.Body)
 	}
@@ -712,10 +617,6 @@ func TestEndToEndThemeIsPerUser(t *testing.T) {
 	}
 }
 
-// An invalid theme is refused with the 422 field error, and the stored
-// preference is UNCHANGED — the refusal happens before any write, so a rejected
-// value cannot overwrite the one the user already had. A number is refused
-// earlier still, by the decoder, as a 400.
 func TestEndToEndInvalidThemeLeavesTheStoredPreferenceUnchanged(t *testing.T) {
 	h, _, _ := newTestServer(t)
 	email := dbtest.UniqueEmail(t)
@@ -726,10 +627,6 @@ func TestEndToEndInvalidThemeLeavesTheStoredPreferenceUnchanged(t *testing.T) {
 		t.Fatalf("PATCH theme=dark = %d, want 200; body: %s", rec.Code, rec.Body)
 	}
 
-	// "blue" is not a theme: 422, one field error naming theme, and the dark
-	// the user already had is still there. So is the empty string — the system
-	// theme is an absence, not a value, and "" is refused like any other
-	// non-theme.
 	for _, give := range []string{"blue", ""} {
 		rec := patchMeWithToken(t, h, token, `{"theme":"`+give+`"}`)
 		if rec.Code != http.StatusUnprocessableEntity {
@@ -747,8 +644,6 @@ func TestEndToEndInvalidThemeLeavesTheStoredPreferenceUnchanged(t *testing.T) {
 		}
 	}
 
-	// A number never reaches the validation: the decoder refuses the wrong JSON
-	// type first, as a 400 rather than a 422.
 	rec := patchMeWithToken(t, h, token, `{"theme":42}`)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("PATCH theme=42 = %d, want 400; body: %s", rec.Code, rec.Body)
@@ -761,11 +656,7 @@ func TestEndToEndInvalidThemeLeavesTheStoredPreferenceUnchanged(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// helpers
-// ---------------------------------------------------------------------------
 
-// assertUserCreatedEvent checks the outbox row for a registration.
 func assertUserCreatedEvent(t *testing.T, pool *pgxpool.Pool, userID, email string, published bool) {
 	t.Helper()
 
@@ -820,8 +711,6 @@ func meWithToken(t *testing.T, h http.Handler, token string) *httptest.ResponseR
 	return rec
 }
 
-// patchMeWithToken is meWithToken's write half: PATCH /v1/me with a bearer
-// token, for the tests that change the caller's own profile.
 func patchMeWithToken(t *testing.T, h http.Handler, token, body string) *httptest.ResponseRecorder {
 	t.Helper()
 
@@ -833,8 +722,6 @@ func patchMeWithToken(t *testing.T, h http.Handler, token, body string) *httptes
 	return rec
 }
 
-// loginToken registers nothing — it logs in a user that is already there and
-// returns the session token, the way a browser would hold it.
 func loginToken(t *testing.T, h http.Handler, email string) string {
 	t.Helper()
 
@@ -852,8 +739,6 @@ func loginToken(t *testing.T, h http.Handler, email string) string {
 	return login.Token
 }
 
-// themeOf decodes a /v1/me response and returns the caller's theme, or nil
-// when the key is absent — which is the system theme, not a value.
 func themeOf(t *testing.T, rec *httptest.ResponseRecorder) *string {
 	t.Helper()
 
@@ -874,9 +759,6 @@ func cookieValue(t *testing.T, rec *httptest.ResponseRecorder) string {
 	return cookies[0].Value
 }
 
-// realTenancy is the production accounts.Service over the real store. It lives in
-// a _test.go file so the wiring here and the wiring in cmd/identity are the same
-// five lines and cannot drift.
 func realTenancy(pool *pgxpool.Pool, clk clock.Clock) *accounts.Service {
 	return accounts.NewService(
 		db.TxRunner{Pool: pool},
@@ -886,6 +768,6 @@ func realTenancy(pool *pgxpool.Pool, clk clock.Clock) *accounts.Service {
 		apikeys.NewStore(pool),
 		clk,
 		db.Direct{Pool: pool},
-		nil, // no mailer: these tests are about the auth routes, not the email
+		nil,
 	)
 }

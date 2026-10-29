@@ -1,49 +1,5 @@
 package ci
 
-// The cross-file contract between config/kamal-backup.yml and config/deploy.yml.
-//
-// # WHY THIS FILE IS HERE AT ALL
-//
-// Two committed files are one contract, and the failure mode is that BOTH files
-// are valid and the PAIR is wrong. `config/kamal-backup.yml` names its
-// credentials with `{ secret: NAME }`; `config/deploy.yml`'s `backup` accessory
-// carries an `env.secret` list, and kamal-backup builds that accessory's
-// environment from that list and from nothing else. So a secret named in the
-// backup config and missing from the accessory is a pair that parses, reads
-// correctly in review, and fails at deploy time.
-//
-// `kamal-backup validate` is what actually catches it — it is the right tool and
-// the runbook quotes the real message — but that tool is not in this repository's
-// gate. `bin/prime` is Go, and a check that only runs on a machine with kamal and
-// the gem installed is a check that runs for whoever happens to have them and for
-// nobody else. So the contract is asserted here, on every commit, by reading the
-// two files.
-//
-// WHAT THIS IS NOT. This is not a replacement for the real binaries. It cannot
-// know whether Kamal accepts the rendered config, whether the ERB resolves, or
-// whether the image exists. It asserts ONE property — the two files name the same
-// secrets — and it asserts it in the direction that fails loudly.
-//
-// # NO YAML DEPENDENCY, AND THE READER REFUSES RATHER THAN UNDER-READS
-//
-// go.mod has no YAML parser and adding one would put a library and its CVEs in
-// this module's dependency list for the sake of two lists of strings. So this
-// reads by indentation, the same trade `manifest_reader_test.go` and
-// `internal/httpapi/openapi_reader_test.go` make.
-//
-// The rule that matters is refusal. A reader that finds nothing agrees with
-// another reader that finds nothing, and this check's failure mode is a silent
-// pass: an empty secret set on one side makes "every secret is declared"
-// vacuously true. So every way this can come back with less than it should — no
-// `app:`, an `accessory:` naming something absent from `accessories:`, a `secret:`
-// with no value, a `backup:` block that yields no `env.secret` list, a line inside
-// a list that is not a list item — is an error naming the line, and the caller
-// turns that into a failed test rather than an empty set.
-//
-// The readers are pure functions of the document rather than helpers that fail
-// the test themselves: a reader reporting through *testing.T cannot be tested
-// for refusal at all, because the proof that it refused is a failed test, and a
-// test that fails cannot also assert.
 
 import (
 	"fmt"
@@ -53,14 +9,12 @@ import (
 	"testing"
 )
 
-// backupConfig is what `config/kamal-backup.yml` asserts about itself.
 type backupConfig struct {
 	app       string
 	accessory string
 	secrets   []string
 }
 
-// accessoryConfig is what one accessory in `config/deploy.yml` carries.
 type accessoryConfig struct {
 	name    string
 	secrets []string
@@ -93,13 +47,6 @@ func readAccessoryConfig(t *testing.T, name string) accessoryConfig {
 	return got
 }
 
-// parseBackupConfig reads `app:`, `accessory:` and every `{ secret: NAME }`.
-//
-// The secret entries are read wherever they appear rather than under a known
-// parent key, because the whole point is that the parent is not what matters:
-// `restic.repository.secret` and `databases[].url.secret` are different parents
-// with the same obligation, and a reader that understood only one of them would
-// report the other's secrets as undeclared.
 func parseBackupConfig(source string) (backupConfig, error) {
 	var cfg backupConfig
 
@@ -145,14 +92,6 @@ func parseBackupConfig(source string) (backupConfig, error) {
 	return cfg, nil
 }
 
-// parseAccessory reads one named block out of `accessories:` and returns the
-// entries of its `env.secret` list.
-//
-// The list is located by indentation rather than by a regexp over the whole
-// document, because the deploy config has TWO accessories and a whole-document
-// match would read the postgres accessory's `POSTGRES_PASSWORD` as the backup
-// accessory's and report the backup's own secrets as undeclared — a false red
-// that teaches a reviewer to ignore this file.
 func parseAccessory(source, name string) (accessoryConfig, error) {
 	lines := strings.Split(source, "\n")
 
@@ -176,8 +115,6 @@ func parseAccessory(source, name string) (accessoryConfig, error) {
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 			continue
 		}
-		// An accessory is a key at two-space indentation. Shallower than that
-		// has left the block, which is how the block's end is found at all.
 		if !strings.HasPrefix(line, "  ") {
 			end = i
 			break
@@ -247,13 +184,6 @@ func parseAccessory(source, name string) (accessoryConfig, error) {
 	return cfg, nil
 }
 
-// TestEverySecretTheBackupConfigNamesIsDeclaredByItsAccessory is the contract.
-//
-// The direction matters. The backup config naming a secret the accessory does
-// not declare is the deployment failure — `kamal-backup validate` reports
-// "RESTIC_REPOSITORY or RESTIC_REPOSITORY_FILE is required" on a pair in which
-// both files are internally consistent. The other direction is not a failure: an
-// accessory may declare a secret the backup config does not use.
 func TestEverySecretTheBackupConfigNamesIsDeclaredByItsAccessory(t *testing.T) {
 	backup := readBackupConfig(t)
 	accessory := readAccessoryConfig(t, backup.accessory)
@@ -272,12 +202,6 @@ func TestEverySecretTheBackupConfigNamesIsDeclaredByItsAccessory(t *testing.T) {
 	}
 }
 
-// TestTheBackupAccessoryMountsTheBackupConfig is the other half of "reachable".
-//
-// A backup config nothing mounts is a specification. This asserts the `files:`
-// entry by source path rather than by the accessory merely existing, because an
-// accessory with no `files:` boots and schedules and never sees the file it is
-// meant to be running.
 func TestTheBackupAccessoryMountsTheBackupConfig(t *testing.T) {
 	backup := readBackupConfig(t)
 	if backup.accessory != "backup" {
@@ -289,14 +213,6 @@ func TestTheBackupAccessoryMountsTheBackupConfig(t *testing.T) {
 	}
 }
 
-// TestTheBackupConfigNamesThisService is the identity between the two files.
-//
-// `app:` is the label under databases/<app>/<name>/ and the restic tag, and
-// restic tracks by path, so a mismatch does not fail loudly: snapshots are
-// written under one name and looked for under another, which reads as "the
-// backup is missing". Both files are rendered from the same KIT_SERVICE by the
-// operator, and `app:` here is the one value this repository writes down
-// literally, so it is the one place they can come to disagree.
 func TestTheBackupConfigNamesThisService(t *testing.T) {
 	backup := readBackupConfig(t)
 	if want := "identity"; backup.app != want {
@@ -306,15 +222,6 @@ func TestTheBackupConfigNamesThisService(t *testing.T) {
 	}
 }
 
-// TestTheScheduleIsStatedAndTheWindowInTheReadmeMatchesIt holds the number the
-// README promises to the number the tool will use.
-//
-// The README says "up to 24 hours", and that sentence is only true while the
-// schedule is `1d`. Someone shortening the schedule to catch up with a policy
-// change leaves the README claiming a day of transactions are lost when it is
-// an hour, which is a promise made to a customer in the wrong direction. The
-// window is read out of the schedule rather than restated, so there is one
-// number.
 func TestTheScheduleIsStatedAndTheWindowInTheReadmeMatchesIt(t *testing.T) {
 	const source = "config/kamal-backup.yml"
 	raw := readRepoFile(t, source)
@@ -336,9 +243,6 @@ func TestTheScheduleIsStatedAndTheWindowInTheReadmeMatchesIt(t *testing.T) {
 		t.Fatalf("%s carries no `schedule:` key, so the accessory takes no snapshots on its own", source)
 	}
 
-	// kamal-backup 0.5.2 reads the schedule as a number of SECONDS and the
-	// template's `1d` is 86400 of them. Every spelling below is what a reader of
-	// the README would have to translate, so the translation lives here once.
 	wantWindow := map[string]string{
 		"1d":  "24 hours",
 		"12h": "12 hours",
@@ -356,18 +260,11 @@ func TestTheScheduleIsStatedAndTheWindowInTheReadmeMatchesIt(t *testing.T) {
 			"A README that states a window the configured schedule does not produce is a promise made to a customer in the wrong direction.",
 			schedule, wantWindow, wantWindow)
 	}
-	// The stale-number case in the other direction: a shortened schedule that
-	// leaves the old window in place is the failure worth catching, so the
-	// window that is NO LONGER true must be gone.
 	if schedule != "1d" && strings.Contains(readme, "up to 24 hours of committed transactions") {
 		t.Errorf("the schedule is `%s`, so the data-loss window is no longer 24 hours, and README.md still says it is.", schedule)
 	}
 }
 
-// The tests below are of the READERS, not of the two documents. Each is a shape
-// a reader must refuse, because a reader exercised only against the real files
-// has proven that it reads those files and nothing else — and a reader that
-// under-reads turns every check above into a check that passes on nothing.
 
 func TestTheBackupConfigReaderReadsTheRealShape(t *testing.T) {
 	const document = `---
@@ -492,10 +389,6 @@ func TestTheAccessoryReaderRefusesWhatItDidNotRead(t *testing.T) {
 	}
 }
 
-// TestTheReadersAcceptWhatTheyUnderstand is the control for the two tables
-// above. Without it, a reader that refused EVERYTHING would pass every case in
-// them — which is why each table is paired with a positive case rather than
-// trusted because the real files parse.
 func TestTheReadersAcceptWhatTheyUnderstand(t *testing.T) {
 	t.Run("the real backup config is not refused", func(t *testing.T) {
 		readBackupConfig(t)
@@ -505,13 +398,6 @@ func TestTheReadersAcceptWhatTheyUnderstand(t *testing.T) {
 	})
 }
 
-// TestTheContractCheckFailsOnAnInjectedPair is the tripwire's own tripwire.
-//
-// The comparison above can be shown to hold on the committed files, and a
-// comparison that has never fired is indistinguishable from one that cannot. So
-// this removes one secret from the accessory's list — leaving both files valid
-// and each internally consistent, which is the exact shape of the real defect —
-// and asserts the reader finds the disagreement rather than reporting agreement.
 func TestTheContractCheckFailsOnAnInjectedPair(t *testing.T) {
 	const intact = "accessories:\n  backup:\n    env:\n      secret:\n        - DATABASE_URL\n        - RESTIC_REPOSITORY\n"
 
@@ -525,7 +411,7 @@ func TestTheContractCheckFailsOnAnInjectedPair(t *testing.T) {
 	}
 	got, err := parseAccessory(broken, "backup")
 	if err != nil {
-		return // refusing the shorter list outright is also a correct outcome
+		return
 	}
 	declared := map[string]bool{}
 	for _, name := range got.secrets {

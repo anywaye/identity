@@ -13,9 +13,6 @@ import (
 	"github.com/anywaye/identity/internal/platform/id"
 )
 
-// errNoRows is pgx's "the query matched nothing", aliased so the intent reads
-// at the call site. A caller that has to distinguish this from other errors is a
-// caller that will get it wrong eventually.
 var errNoRows = pgx.ErrNoRows
 
 // ErrNotFound means no live session matches. It covers four situations that must
@@ -29,9 +26,6 @@ type Session struct {
 	ID        id.UUID
 	UserID    id.UUID
 	ExpiresAt time.Time
-	// UserAgent and IP record what presented the token. They are evidence for an
-	// incident, not identity: nothing in this service trusts either of them, and
-	// both are absent for a plain API client.
 	UserAgent string
 	IP        *netip.Addr
 	CreatedAt time.Time
@@ -139,10 +133,6 @@ func (s *Store) ListLiveForUser(ctx context.Context, q db.Querier, userID id.UUI
 	}
 	defer rows.Close()
 
-	// NON-NIL AND EMPTY, so a caller that renders the result renders `[]` rather
-	// than `null`. The same rule the account list follows for the same reason: a
-	// JSON null here is a client having to carry a null check for a case that is
-	// ordinary — everybody who has signed in exactly once.
 	out := make([]Session, 0, 4)
 	for rows.Next() {
 		var one Session
@@ -236,8 +226,6 @@ func (s *Store) RevokeAllForUser(ctx context.Context, q db.Querier, userID id.UU
 	return nil
 }
 
-// nullString turns an empty user agent into SQL NULL. An empty string and "not
-// recorded" are the same answer here, and NULL is the one that says so.
 func nullString(s string) any {
 	if s == "" {
 		return nil
@@ -245,14 +233,6 @@ func nullString(s string) any {
 	return s
 }
 
-// scanSession reads one session row.
-//
-// user_agent is nullable and is scanned through a pointer: pgx refuses to put a
-// NULL into a string, and the alternative — making the column NOT NULL and
-// storing ” — would assert that "the client sent no user agent" and "we never
-// learned one" are the same fact. A request through a proxy that strips the
-// header is genuinely the second, and the domain's zero value already renders
-// both as "nothing to show".
 func scanSession(row pgx.Row, out *Session) error {
 	var userAgent *string
 

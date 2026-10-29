@@ -16,34 +16,12 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
-// The test-only half of the observability layer's seams.
-//
-// A NON-test file on purpose, for the same reason internal/telemetry has one: Go
-// excludes `_test.go` from the package's own build, so helpers here are invisible
-// to the production binary, and a test that needs to observe the tracer this
-// package installed has to be able to reach them.
 
-// The recorder the observability tests read.
-//
-// A package variable rather than a return value threaded through every helper,
-// and the reason is that the tracer provider is a PROCESS-WIDE singleton by
-// OpenTelemetry's own design — the middleware resolves it through
-// `otel.Tracer`, not through a parameter. Threading a recorder alongside would
-// imply the tests can install one provider while the code under test uses
-// another, and they cannot; that gap is exactly what makes these tests worth
-// having.
 var (
 	recorderMu sync.Mutex
 	recorder   *tracetest.SpanRecorder
 )
 
-// installProviderForTest points the global tracer provider at a recorder and
-// returns the restore.
-//
-// The restore is registered with t.Cleanup rather than returned-and-deferred,
-// because a provider left behind by one test is a provider the next test exports
-// into — and these tests are not parallel, so they share one process and one
-// global.
 func installProviderForTest(t *testing.T, provider *sdktrace.TracerProvider) func() {
 	t.Helper()
 	previous := otel.GetTracerProvider()
@@ -52,16 +30,6 @@ func installProviderForTest(t *testing.T, provider *sdktrace.TracerProvider) fun
 	return func() { otel.SetTracerProvider(previous) }
 }
 
-// installPropagationForTest sets the W3C propagator, and the reason it exists
-// separately from the provider is that they are two different globals.
-//
-// telemetry.Install sets both, and it is the production path. A test that only
-// installed a provider would leave the propagator at the SDK's no-op default, and
-// every traceparent test in this file would then pass for the wrong reason: the
-// span would have a fresh root context because nothing was extracting, not because
-// the propagation worked. A test suite that is green because the thing it tests was
-// never wired up is worse than a red one, because it reports a property that does
-// not exist.
 func installPropagationForTest() func() {
 	previous := otel.GetTextMapPropagator()
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
@@ -71,16 +39,12 @@ func installPropagationForTest() func() {
 	return func() { otel.SetTextMapPropagator(previous) }
 }
 
-// setRecorder publishes the recorder the helpers read.
 func setRecorder(r *tracetest.SpanRecorder) {
 	recorderMu.Lock()
 	defer recorderMu.Unlock()
 	recorder = r
 }
 
-// currentRecorder returns the recorder, failing the test if there is none —
-// because a helper that returned nil would turn every downstream assertion into
-// a panic rather than a named failure.
 func currentRecorder(t *testing.T) *tracetest.SpanRecorder {
 	t.Helper()
 	recorderMu.Lock()
@@ -91,11 +55,6 @@ func currentRecorder(t *testing.T) *tracetest.SpanRecorder {
 	return recorder
 }
 
-// discardLogger is a logger that throws everything away.
-//
-// The observability tests are about spans, and a logger writing to stderr makes
-// the suite's output unreadable without adding a single assertion. The logging
-// boundary is proved separately, in mfa_logging_canary_test.go.
 func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
@@ -138,11 +97,6 @@ func WithParameterizedRouteForTest(pattern string) Option {
 	}
 }
 
-// spanAttributes flattens one span's attributes into strings.
-//
-// Sorted by key and rendered as text, so an assertion reads as a list of facts
-// rather than as iteration over a Go map — and so `assertNoCanary`-style
-// assertions can be written against a single string.
 func spanAttributes(span sdktrace.ReadOnlySpan) map[string]string {
 	attributes := make(map[string]string, len(span.Attributes()))
 	for _, kv := range span.Attributes() {
@@ -185,7 +139,6 @@ func renderSpans(r *tracetest.SpanRecorder) string {
 	return rendered.String()
 }
 
-// hasAttribute reports whether any finished span carries a name with a value.
 func hasAttribute(r *tracetest.SpanRecorder, name, value string) bool {
 	for _, span := range r.Ended() {
 		for _, kv := range span.Attributes() {
@@ -197,5 +150,4 @@ func hasAttribute(r *tracetest.SpanRecorder, name, value string) bool {
 	return false
 }
 
-// itoa is strconv.Itoa under a name that reads better in an assertion table.
 func itoa(v int) string { return strconv.Itoa(v) }

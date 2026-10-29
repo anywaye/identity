@@ -1,11 +1,5 @@
 package main
 
-// THE DATABASE HALF: grant, revoke and status against a real table.
-//
-// The suite is red on a machine with no Postgres by design (see AGENTS.md,
-// "Tests that need infrastructure"): every test here is a database test, so
-// without one the file would prove nothing and a green suite would report
-// something false.
 
 import (
 	"context"
@@ -23,9 +17,6 @@ func testStore(t *testing.T) (*users.Store, db.Querier) {
 	return users.NewStore(pool), pool
 }
 
-// Grant marks the row, revoke clears it, and status reports without writing —
-// each asserted through a re-read rather than through the returned struct, so
-// the test proves the column moved and not just the response.
 func TestGrantRevokeAndStatusMoveTheColumn(t *testing.T) {
 	store, q := testStore(t)
 	ctx := context.Background()
@@ -52,8 +43,6 @@ func TestGrantRevokeAndStatusMoveTheColumn(t *testing.T) {
 		t.Error("is_staff is false after grant, want true")
 	}
 
-	// Granting twice is a success: an operator re-applying a state from a
-	// runbook is not making a mistake.
 	if _, err := apply(ctx, store, q, actionGrant, created.Email); err != nil {
 		t.Errorf("a second grant = %v, want success", err)
 	}
@@ -78,8 +67,6 @@ func TestGrantRevokeAndStatusMoveTheColumn(t *testing.T) {
 	}
 }
 
-// An unknown address is ErrNotFound, which run renders as "no user with
-// address" rather than as a stack trace.
 func TestApplyReportsAnUnknownAddress(t *testing.T) {
 	store, q := testStore(t)
 
@@ -88,8 +75,6 @@ func TestApplyReportsAnUnknownAddress(t *testing.T) {
 	}
 }
 
-// The search this packet adds sees the grant: a staff user is findable by the
-// console, which is the whole point of granting them.
 func TestAGrantedUserIsSearchable(t *testing.T) {
 	store, q := testStore(t)
 	ctx := context.Background()
@@ -117,9 +102,6 @@ func TestAGrantedUserIsSearchable(t *testing.T) {
 			if e.DisplayName != nil {
 				t.Errorf("the entry's display name = %q, want nil", *e.DisplayName)
 			}
-			// Nullable and present: a fresh account was never disabled and
-			// never proved its address, and both keys arrive as null rather
-			// than omitted.
 			if e.DisabledAt != nil {
 				t.Errorf("the entry's disabled_at = %v, want nil for a fresh account", *e.DisabledAt)
 			}
@@ -136,9 +118,6 @@ func TestAGrantedUserIsSearchable(t *testing.T) {
 	}
 }
 
-// A LIKE metacharacter matches itself rather than becoming a wildcard: without
-// the escape the search box is a wildcard box, and "%" is the shortest path to
-// everybody.
 func TestSearchEscapesLikeMetacharacters(t *testing.T) {
 	store, q := testStore(t)
 	ctx := context.Background()
@@ -151,16 +130,11 @@ func TestSearchEscapesLikeMetacharacters(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
-	// "%" is one character, which the handler refuses — but the STORE takes
-	// what it is given, and the escape means it matches a literal percent
-	// rather than the whole table.
 	if len(entries) != 0 {
 		t.Errorf("a search for %% returned %d rows, want 0: the wildcard was not escaped", len(entries))
 	}
 }
 
-// The store clamps rather than trusting: a caller that forgot the bound gets a
-// page, not the table.
 func TestSearchClampsAnOutOfRangeLimit(t *testing.T) {
 	store, q := testStore(t)
 	ctx := context.Background()

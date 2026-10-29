@@ -17,19 +17,6 @@ import (
 	"github.com/anywaye/identity/internal/sessions"
 )
 
-// The use cases, and the rule that runs through all of them.
-//
-// ADDING A FACTOR IS AUTHORIZED BY A SESSION. REMOVING OR REPLACING ONE IS NOT.
-//
-// An enrollment makes the account safer and there is nothing to prove about it
-// beyond "you are signed in", because a user with a stolen session adding a
-// second factor locks the thief out of the account they are in. Every route that
-// makes the account LESS safe — disabling, replacing the secret, regenerating the
-// recovery codes — requires a second factor first, because every one of them is
-// something an attacker who has a session and wants to hide behind would like to
-// do. That is the whole of re-authentication for a destructive security action,
-// and it is why VerifyFactor exists as a separate call from the destructive write:
-// the factor is checked, and only then does the write happen.
 
 // UnitOfWork runs a function inside a transaction. db.TxRunner implements it; the
 // interface is what lets the ordering rules be tested without Postgres.
@@ -90,13 +77,6 @@ type Service struct {
 	vault    Vault
 	clk      clock.Clock
 	issuer   string
-	// pendingRotations says whether replacing a live secret is allowed at all.
-	//
-	// It is a field rather than a behavior so the decision has one place: the
-	// route that starts an enrollment reads it to decide whether to require a
-	// factor, and the confirmation reads it to decide whether the old credential
-	// is still there. Two places asking "is this a first enrollment or a
-	// rotation" is two places for the answer to be different.
 	pendingRotations bool
 }
 
@@ -130,9 +110,6 @@ func NewService(
 	}
 }
 
-// ---------------------------------------------------------------------------
-// status
-// ---------------------------------------------------------------------------
 
 // Status is what GET /v1/mfa returns.
 //
@@ -148,17 +125,10 @@ type Status struct {
 	RecoveryCodesRemaining int
 }
 
-// ---------------------------------------------------------------------------
-// enrollment
-// ---------------------------------------------------------------------------
 
 // StartEnrollmentInput is a request to begin enrolling a second factor.
 type StartEnrollmentInput struct {
 	UserID id.UUID
-	// Factor is the code presented to authorize a ROTATION. It is required when
-	// the user already has a credential and ignored when they do not, and the
-	// caller does not have to know which case it is: the use case resolves that
-	// from the rows and says so.
 	Factor string
 }
 
@@ -176,9 +146,6 @@ type StartedEnrollment struct {
 	Credential      Credential
 	Secret          string
 	ProvisioningURI string
-	// Replaced says whether a live credential is still in force behind this
-	// pending one. It is what lets a client say "your old authenticator keeps
-	// working until you confirm" rather than leaving the user to find out.
 	Replaced bool
 }
 
@@ -206,24 +173,14 @@ func (s *Service) StartEnrollment(ctx context.Context, in StartEnrollmentInput) 
 	replacing := err == nil
 	switch {
 	case replacing:
-		// A rotation reduces nothing and weakens a lot, so it is gated on a factor
-		// exactly like disabling is. The factor is verified through the same
-		// VerifyFactor the login uses, so there is one implementation of what a
-		// valid second factor is.
 		if _, err := s.VerifyFactor(ctx, in.UserID, in.Factor, now); err != nil {
 			return StartedEnrollment{}, err
 		}
 	case errors.Is(err, ErrNotEnabled):
-		// The first enrollment. A session is the whole of the authorization: the
-		// caller is making the account harder to get into.
 	default:
 		return StartedEnrollment{}, fmt.Errorf("looking up the user's mfa credential: %w", err)
 	}
 
-	// pquerna/otp owns the generation, the base32 and the provisioning URI. The
-	// issuer and account name it is handed are the two strings an authenticator
-	// app displays, and the account name is the email because that is what a user
-	// recognizes when they are looking at a list of accounts inside the app.
 	key, err := totp.Generate(totp.GenerateOpts{
 		Issuer:      s.issuer,
 		AccountName: s.issuer,
@@ -280,9 +237,6 @@ func (s *Service) StartEnrollment(ctx context.Context, in StartEnrollmentInput) 
 type ConfirmInput struct {
 	UserID       id.UUID
 	EnrollmentID id.UUID
-	// Factor is the code produced from the pending secret. Required always: an
-	// unconfirmed enrollment is not a second factor yet, so this is the only
-	// thing that makes it one.
 	Factor string
 }
 
@@ -295,9 +249,6 @@ type ConfirmInput struct {
 type ConfirmedEnrollment struct {
 	Credential    Credential
 	RecoveryCodes []string
-	// ReplacedCredentialID is the live credential this confirmation superseded,
-	// zero when there was none. It is not rendered; it is here so a caller that
-	// wants to log what happened has the fact without a second query.
 	ReplacedCredentialID id.UUID
 }
 
@@ -346,26 +297,16 @@ func (s *Service) Confirm(ctx context.Context, in ConfirmInput) (ConfirmedEnroll
 		return ConfirmedEnrollment{}, ErrEnrollmentNotFound
 	}
 
-	// The code is checked against the PENDING secret, before anything is
-	// confirmed. A wrong code changes nothing, and the pending row stays so the
-	// user can try again with the same authenticator they just set up.
 	if _, err := s.matchPendingFactor(ctx, pending, in.Factor, now); err != nil {
 		return ConfirmedEnrollment{}, err
 	}
 
-	// The live credential this replaces, read before the transaction so that step
-	// 2 knows what to delete and so a user with no live credential is not treated
-	// as a rotation.
 	previous, previousErr := s.store.ConfirmedCredential(ctx, q, in.UserID)
 	isRotation := previousErr == nil
 	if previousErr != nil && !errors.Is(previousErr, ErrNotEnabled) {
 		return ConfirmedEnrollment{}, fmt.Errorf("looking up the credential being replaced: %w", previousErr)
 	}
 
-	// The recovery codes are minted OUTSIDE the transaction. They are 80 bits of
-	// crypto/rand per code and there are ten of them; holding a connection and a
-	// transaction open for that is the same mistake auth.Register avoids by
-	// hashing the password before it opens one.
 	codes, err := NewRecoveryCodes()
 	if err != nil {
 		return ConfirmedEnrollment{}, err
@@ -373,14 +314,6 @@ func (s *Service) Confirm(ctx context.Context, in ConfirmInput) (ConfirmedEnroll
 
 	var out ConfirmedEnrollment
 	err = s.uow.Do(ctx, func(ctx context.Context, q db.Querier) error {
-		// THE OLD CREDENTIAL GOES FIRST, and the order is not cosmetic. The unique
-		// index mfa_credentials_one_live_per_user refuses a second confirmed row
-		// for a user, so confirming the replacement before deleting the original
-		// would trip the very constraint that makes "at most one live credential"
-		// true. Deleting first is safe precisely because both statements share this
-		// transaction: a confirm that then loses its race returns an error, and the
-		// deletion rolls back with it, so the user is left with the factor they had
-		// rather than with none.
 		if isRotation {
 			if err := s.store.DeleteCredential(ctx, q, previous.ID); err != nil {
 				return err
@@ -393,10 +326,6 @@ func (s *Service) Confirm(ctx context.Context, in ConfirmInput) (ConfirmedEnroll
 			return err
 		}
 		if !won {
-			// Somebody confirmed it between the read and here. Refusing is the
-			// honest answer: this caller cannot produce a second set of recovery
-			// codes for a credential that is already live, because it does not
-			// know the first set. The rollback above restores whatever was deleted.
 			return ErrEnrollmentNotFound
 		}
 
@@ -404,7 +333,6 @@ func (s *Service) Confirm(ctx context.Context, in ConfirmInput) (ConfirmedEnroll
 			return err
 		}
 
-		// Every session minted before this moment was minted on a password alone.
 		if err := s.sessions.RevokeAllForUser(ctx, q, in.UserID); err != nil {
 			return err
 		}
@@ -427,13 +355,6 @@ func (s *Service) Confirm(ctx context.Context, in ConfirmInput) (ConfirmedEnroll
 	return out, nil
 }
 
-// matchPendingFactor checks a code against a pending credential's secret.
-//
-// It is the same match the login does — same library, same window, same
-// comparison — against a different row. A pending credential has no spent-step
-// table to consult, and does not need one: it is not a credential, and the code
-// it is checked against is about to be thrown away with the secret if the check
-// fails.
 func (s *Service) matchPendingFactor(ctx context.Context, pending Credential, code string, now time.Time) (int64, error) {
 	secret, err := s.vault.Open(pending.UserID, pending.SecretCiphertext)
 	if err != nil {
@@ -448,9 +369,6 @@ func (s *Service) matchPendingFactor(ctx context.Context, pending Credential, co
 	return matched, nil
 }
 
-// ---------------------------------------------------------------------------
-// the challenge
-// ---------------------------------------------------------------------------
 
 // CreateChallengeInput is a request to record a login waiting on a factor.
 type CreateChallengeInput struct {
@@ -483,10 +401,6 @@ func (s *Service) CreateChallenge(ctx context.Context, in CreateChallengeInput) 
 	now := s.clk.Now()
 	expiresAt := now.Add(ChallengeTTL)
 
-	// sessions.NewToken rather than a new minting routine: the same 256 bits from
-	// the same CSPRNG, the same base64url, and the same digest the store will
-	// look up. A second token format in this service is a second thing to
-	// recognize in a log and a second thing to get wrong.
 	token, digest, err := sessions.NewToken()
 	if err != nil {
 		return NewChallenge{}, fmt.Errorf("minting an mfa challenge token: %w", err)
@@ -505,8 +419,6 @@ func (s *Service) CreateChallenge(ctx context.Context, in CreateChallengeInput) 
 		if err != nil {
 			return err
 		}
-		// One live challenge per user. A second sign-in supersedes the first,
-		// which bounds the table at a row per user with no sweeper.
 		if err := s.store.DeleteSupersededChallenges(ctx, q, in.UserID, row.ID); err != nil {
 			return err
 		}
@@ -536,15 +448,9 @@ type Claim struct {
 	userID       id.UUID
 	credentialID id.UUID
 	method       string
-	// step is the TOTP counter this claim spends. Zero for a recovery code.
 	step int64
-	// recoveryCodeID is the row this claim spends. Zero for a TOTP code.
 	recoveryCodeID id.UUID
-	// challengeID is the challenge this claim closes, or zero when the factor was
-	// presented directly — disabling, rotating and regenerating all do that.
 	challengeID id.UUID
-	// recoveryCodesRemaining is read BEFORE the consumption, so a caller that
-	// spends the last one can say so.
 	recoveryCodesRemaining int
 }
 
@@ -639,13 +545,8 @@ func (s *Service) VerifyFactor(ctx context.Context, userID id.UUID, code string,
 
 	claim, err := s.matchFactor(ctx, credential, code, now)
 	if err != nil {
-		// The failure is counted even though the factor is refused, and the count
-		// is written outside any transaction the caller might roll back.
 		next := lock.Failed(now)
 		if recordErr := s.store.RecordFactorFailure(ctx, q, credential.ID, next.FailedAttempts, next.LockedUntil); recordErr != nil {
-			// Surfaced, not reported as an invalid factor. A store failure that
-			// looks like a wrong code stops the counter climbing, and the
-			// brute-force protection silently stops existing.
 			return Claim{}, fmt.Errorf("recording a failed second factor: %w", recordErr)
 		}
 		return Claim{}, err
@@ -687,8 +588,6 @@ func (s *Service) VerifyChallenge(ctx context.Context, token, code string, now t
 	return claim, nil
 }
 
-// matchFactor is the body of a verification: the shape test, the TOTP match, the
-// recovery lookup, and the claim for whichever one it was.
 func (s *Service) matchFactor(ctx context.Context, credential Credential, code string, now time.Time) (Claim, error) {
 	trimmed := trimCode(code)
 	if trimmed == "" {
@@ -714,11 +613,6 @@ func (s *Service) matchFactor(ctx context.Context, credential Credential, code s
 			return Claim{}, err
 		}
 		if !spent {
-			// The replay. A code that is still inside its window and has already
-			// been accepted. ErrInvalidFactor and not something of its own, because
-			// the one legitimate cause — a user who pasted the same code twice — is
-			// not something to confirm and an attacker who could tell a replay from
-			// a wrong guess knows to stop guessing.
 			return Claim{}, ErrInvalidFactor
 		}
 		remaining, err := s.store.CountUnusedRecoveryCodes(ctx, q, credential.ID)
@@ -758,8 +652,6 @@ func (s *Service) matchFactor(ctx context.Context, credential Credential, code s
 		}, nil
 
 	default:
-		// Neither shape. One query, no round trip, and the same answer as a wrong
-		// code of a recognized shape.
 		return Claim{}, ErrInvalidFactor
 	}
 }
@@ -781,9 +673,6 @@ func (s *Service) matchFactor(ctx context.Context, credential Credential, code s
 // mirror of what auth does for the password on the same transaction.
 func (s *Service) Commit(ctx context.Context, q db.Querier, claim Claim, now time.Time) error {
 	if claim.step > 0 {
-		// Bounded by construction: everything below the oldest step still inside
-		// the window can no longer be presented, so it goes now. This is the whole
-		// of the table's housekeeping, and it needs no sweeper.
 		oldest := StepAt(now, Period) - int64(SkewSteps+1)
 		if err := s.store.PruneSteps(ctx, q, claim.credentialID, oldest); err != nil {
 			return err
@@ -803,17 +692,10 @@ func (s *Service) Commit(ctx context.Context, q db.Querier, claim Claim, now tim
 	return s.store.ClearFactorFailures(ctx, q, claim.credentialID)
 }
 
-// ---------------------------------------------------------------------------
-// the destructive routes
-// ---------------------------------------------------------------------------
 
 // RegenerateRecoveryCodesInput is a request for a new set of recovery codes.
 type RegenerateRecoveryCodesInput struct {
 	UserID id.UUID
-	// Factor authorizes the regeneration. It is not optional and there is no
-	// route that reaches this use case without one: handing out ten fresh codes is
-	// equivalent to handing out ten fresh ways into the account, so it takes the
-	// same proof that disabling does.
 	Factor string
 }
 
@@ -861,11 +743,6 @@ func (s *Service) RegenerateRecoveryCodes(ctx context.Context, in RegenerateReco
 // DisableInput is a request to turn the second factor off.
 type DisableInput struct {
 	UserID id.UUID
-	// Factor authorizes the change. A password is NOT accepted here and there is no
-	// path through this service that would let one be: re-authentication for a
-	// destructive security action is the entire reason it exists, and a user who
-	// has MFA enabled but whose phone is at home cannot disable it with the
-	// password they already proved at login.
 	Factor string
 }
 
@@ -910,9 +787,6 @@ func (s *Service) Disable(ctx context.Context, in DisableInput) error {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// helpers
-// ---------------------------------------------------------------------------
 
 // StatusFor is what GET /v1/mfa reads.
 //
@@ -958,7 +832,6 @@ func (s *Service) Enabled(ctx context.Context, q db.Querier, userID id.UUID) (bo
 	}
 }
 
-// replaceRecoveryCodes empties a credential's set and writes a new one.
 func (s *Service) replaceRecoveryCodes(ctx context.Context, q db.Querier, credentialID id.UUID, codes []string, now time.Time) error {
 	if err := s.store.DeleteRecoveryCodesFor(ctx, q, credentialID); err != nil {
 		return err
@@ -970,13 +843,6 @@ func (s *Service) replaceRecoveryCodes(ctx context.Context, q db.Querier, creden
 	return s.store.InsertRecoveryCodes(ctx, q, credentialID, digests, now)
 }
 
-// clockNow is the one place a use case reads time, so the whole package is
-// testable with a parked clock.
 func (s *Service) clockNow() time.Time { return s.clk.Now() }
 
-// label is what an authenticator app displays next to the entry. The account name
-// is the issuer rather than the email because the provisioning URI is built before
-// the use case knows anything else about the user, and an app that shows a
-// service name plus an account name is legible when a user has two accounts in
-// two authenticators.
 func (s *Service) label(id.UUID) string { return s.issuer }

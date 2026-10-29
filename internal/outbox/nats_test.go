@@ -1,11 +1,5 @@
 package outbox
 
-// The NATS publisher's tests run against an in-process NATS server with
-// JetStream enabled and a real outbox table, because the behavior under test
-// IS the wire: the subject a row is published on, the envelope that arrives,
-// and the row's columns after the broker acks or refuses. A mock would prove
-// the loop calls something; this proves what a consumer on the fleet's bus
-// receives.
 
 import (
 	"context"
@@ -21,13 +15,6 @@ import (
 	"github.com/anywaye/identity/internal/platform/id"
 )
 
-// startNATS starts an in-process NATS server with JetStream enabled and returns
-// a client connected to it.
-//
-// Port -1 is a random free port and StoreDir is the test's own directory, so
-// parallel tests share nothing. The server is the fleet's broker in miniature:
-// it acks what it stores, refuses what no stream matches, and delivers to
-// subscribers — which is every property these tests assert on.
 func startNATS(t *testing.T) *nats.Conn {
 	t.Helper()
 
@@ -56,9 +43,6 @@ func startNATS(t *testing.T) *nats.Conn {
 	return nc
 }
 
-// addStream creates a JetStream stream covering subjects, the way the fleet's
-// stack must. A publish to a subject no stream matches is refused by the
-// broker — that refusal is a test case below, not an error in these helpers.
 func addStream(t *testing.T, nc *nats.Conn, subjects ...string) {
 	t.Helper()
 
@@ -71,20 +55,6 @@ func addStream(t *testing.T, nc *nats.Conn, subjects ...string) {
 	}
 }
 
-// subscribe collects everything published on subject. A core subscription
-// receives JetStream-published messages: the stream is a subscriber itself and
-// the broker fans out to both, so this is what a consumer on the real bus sees.
-//
-// THE FLUSH IS NOT DECORATION. Subscribe returns once the SUB is in this
-// connection's write buffer; it does NOT wait for the server to process it
-// (nats.go's subscribeLocked appends the protocol and kicks the flusher). The
-// publishes these tests wait on come from the PUBLISHER's connection, and two
-// connections have no ordering between them — so a publish that reaches the
-// server before the SUB does is not delivered to this subscription, and it is
-// lost for good. Measured with a throwaway probe against a loopback server:
-// 65 of 300 messages lost without the flush, 0 of 300 with it. Flush
-// round-trips a PING/PONG, which returns only after the server has processed
-// every command sent before it — the SUB among them.
 func subscribe(t *testing.T, nc *nats.Conn, subject string) chan *nats.Msg {
 	t.Helper()
 
@@ -101,9 +71,6 @@ func subscribe(t *testing.T, nc *nats.Conn, subject string) chan *nats.Msg {
 	return msgs
 }
 
-// receive waits for the next message on a subscription and fails the test if
-// none arrives: a silent hang and a silent pass look the same from the outside,
-// and the difference is the whole of the publisher's contract.
 func receive(t *testing.T, msgs chan *nats.Msg) *nats.Msg {
 	t.Helper()
 
@@ -116,11 +83,6 @@ func receive(t *testing.T, msgs chan *nats.Msg) *nats.Msg {
 	}
 }
 
-// assertSameEnvelope decodes a received document and compares it field by
-// field with the envelope that was appended. The comparison is on the decoded
-// document rather than the bytes because the store round-trips the envelope
-// through Postgres' json type, which reflows whitespace — the fields are the
-// contract, and a consumer decodes too.
 func assertSameEnvelope(t *testing.T, raw []byte, want Envelope) {
 	t.Helper()
 
@@ -151,7 +113,6 @@ func assertSameEnvelope(t *testing.T, raw []byte, want Envelope) {
 	}
 }
 
-// rowState is the publisher's side of the contract, read back off the row.
 type rowState struct {
 	attempts  int
 	lastError *string
@@ -170,9 +131,6 @@ func rowStateOf(t *testing.T, pool *pgxpool.Pool, eventID id.UUID) rowState {
 	return state
 }
 
-// The whole packet in one test: a committed outbox row leaves the table on the
-// subject named by its type — no mapping, no rewriting — carrying core's
-// envelope, and the row is marked published only once the broker has acked.
 func TestNATSPublisherPublishesTheEnvelopeOnTheSubjectOfTheType(t *testing.T) {
 	t.Parallel()
 
@@ -189,8 +147,6 @@ func TestNATSPublisherPublishesTheEnvelopeOnTheSubjectOfTheType(t *testing.T) {
 		t.Fatalf("Append: %v", err)
 	}
 
-	// Unpublished before the pass. The row is the promise; the promise is not
-	// kept until the broker acks, so published_at is NULL right up to the mark.
 	if state := rowStateOf(t, pool, e.ID); state.published != nil {
 		t.Fatalf("published_at = %v before the pass, want NULL", *state.published)
 	}
@@ -210,29 +166,17 @@ func TestNATSPublisherPublishesTheEnvelopeOnTheSubjectOfTheType(t *testing.T) {
 		t.Errorf("RunOnce published %d events, want 1", n)
 	}
 
-	// The broker stored it: a subscriber on the subject received the envelope,
-	// on the subject equal to the event's type — the contract's "no mapping
-	// table, no prefix rewriting", asserted as the subject the bytes arrived on.
 	m := receive(t, msgs)
 	if m.Subject != e.Type {
 		t.Errorf("the message arrived on subject %q, want the event's type %q", m.Subject, e.Type)
 	}
 	assertSameEnvelope(t, m.Data, e)
 
-	// And only now is the row marked published. The mark is downstream of the
-	// ack — PublishMsg blocks until the broker answers, and MarkPublished runs
-	// only after it returns nil — so a set published_at here is a set published
-	// the broker has seen.
 	if state := rowStateOf(t, pool, e.ID); state.published == nil {
 		t.Error("published_at is still NULL after an acknowledged publish")
 	}
 }
 
-// assertFailedPublishLeftTheRowClaimable asserts the row state a failed
-// publish leaves: attempts incremented, published_at NULL, the reason
-// recorded, and the row still claimable. Both failure modes — a silent broker
-// and a refusing one — leave the row in exactly this state, which is the
-// contract.
 func assertFailedPublishLeftTheRowClaimable(ctx context.Context, t *testing.T, pool *pgxpool.Pool, store *Store, e Envelope) {
 	t.Helper()
 
@@ -247,7 +191,6 @@ func assertFailedPublishLeftTheRowClaimable(ctx context.Context, t *testing.T, p
 		t.Error("last_error is empty; an operator watching attempts climb has nothing to act on")
 	}
 
-	// And the row is still claimable, so the retry is real.
 	batch, err := store.Claim(ctx, 10)
 	if err != nil {
 		t.Fatalf("Claim: %v", err)
@@ -265,25 +208,10 @@ func assertFailedPublishLeftTheRowClaimable(ctx context.Context, t *testing.T, p
 	}
 }
 
-// A publish the broker never answers must leave the row exactly as the
-// contract says: attempts incremented, published_at NULL, the reason recorded,
-// the row still claimable. The next pass republishes it — same id, so a
-// consumer that already saw it dedupes.
-//
-// The broker here is SILENT, not refusing, and the distinction is the whole of
-// this test. There is no stream covering the subject, so JetStream never acks;
-// and there IS a core subscriber on the subject, which suppresses the broker's
-// no-responders error. The publish is delivered to core interest and then waits
-// for an ack that will not come — with an unbounded context it waits forever,
-// which is the production hang this packet fixes. DefaultPublishTimeout is
-// what turns that silence into the failure the contract requires: Publish
-// returns an error, the loop records it, and the row stays claimable.
 func TestNATSPublisherFailureLeavesTheRowClaimable(t *testing.T) {
 	t.Parallel()
 
 	nc := startNATS(t)
-	// Deliberately no stream, and deliberately a core subscriber: the
-	// subscriber is what makes the broker go silent rather than refuse.
 	msgs := subscribe(t, nc, EventUserCreated)
 
 	pool := dbtest.Schema(t)
@@ -312,12 +240,6 @@ func TestNATSPublisherFailureLeavesTheRowClaimable(t *testing.T) {
 
 	assertFailedPublishLeftTheRowClaimable(ctx, t, pool, store, e)
 
-	// The message DID reach the core subscriber — that is the mechanism of the
-	// silence, and asserting it is what proves the hang was real rather than a
-	// broker that refused. A core subscriber suppresses the no-responders
-	// error; with no stream, JetStream never acks. The publish was delivered to
-	// core interest and then waited for an ack that the budget turned into a
-	// failure.
 	select {
 	case m := <-msgs:
 		if m.Subject != e.Type {
@@ -328,19 +250,10 @@ func TestNATSPublisherFailureLeavesTheRowClaimable(t *testing.T) {
 	}
 }
 
-// The other way a publish fails: the broker REFUSES. No stream and no core
-// subscriber, so nothing answers the request and the broker returns
-// no-responders, which nats.go retries and then reports as
-// ErrNoStreamResponse. This is the case production actually hits when the
-// stack defines no stream (see "THE STREAM IS THE STACK'S" above): the
-// refusal is fast and loud, and the row is left claimable exactly as the
-// silence case leaves it.
 func TestNATSPublisherRefusalLeavesTheRowClaimable(t *testing.T) {
 	t.Parallel()
 
 	nc := startNATS(t)
-	// Deliberately no stream and deliberately no subscriber: with nothing to
-	// answer the request, the broker refuses it rather than going silent.
 
 	pool := dbtest.Schema(t)
 	store := NewStore(pool)
@@ -369,15 +282,6 @@ func TestNATSPublisherRefusalLeavesTheRowClaimable(t *testing.T) {
 	assertFailedPublishLeftTheRowClaimable(ctx, t, pool, store, e)
 }
 
-// At-least-once means a duplicate is survivable, and it is survivable only
-// because the envelope id is a function of the row rather than of the publish:
-// a re-claimed row republishes the same id, and the consumer's dedupe key
-// actually dedupes.
-//
-// The duplicate here is the one production produces: the broker acked, the
-// process died before the mark committed, and the next pass re-claims the same
-// row. Releasing the batch without committing is that crash, simulated at the
-// batch boundary.
 func TestNATSPublisherADuplicateCarriesTheSameEnvelopeID(t *testing.T) {
 	t.Parallel()
 
@@ -400,8 +304,6 @@ func TestNATSPublisherADuplicateCarriesTheSameEnvelopeID(t *testing.T) {
 	}
 	defer pub.Close()
 
-	// First pass: the publish acks, then the batch is released uncommitted —
-	// the crash between the ack and the mark.
 	first, err := store.Claim(ctx, 10)
 	if err != nil {
 		t.Fatalf("Claim: %v", err)
@@ -417,7 +319,6 @@ func TestNATSPublisherADuplicateCarriesTheSameEnvelopeID(t *testing.T) {
 		t.Fatalf("Release: %v", err)
 	}
 
-	// The next pass claims the same row and republishes it.
 	second, err := store.Claim(ctx, 10)
 	if err != nil {
 		t.Fatalf("Claim: %v", err)
@@ -431,8 +332,6 @@ func TestNATSPublisherADuplicateCarriesTheSameEnvelopeID(t *testing.T) {
 		}
 	}
 
-	// Two deliveries, one envelope id — the property the consumer's dedupe
-	// depends on.
 	firstMsg := receive(t, msgs)
 	secondMsg := receive(t, msgs)
 
@@ -451,16 +350,9 @@ func TestNATSPublisherADuplicateCarriesTheSameEnvelopeID(t *testing.T) {
 	}
 }
 
-// A NATS_URL that does not parse is a boot failure, not a silent no-op: a
-// deployment that believes it has a bus and does not is the worse of the two
-// states, and the refusal belongs at construction, where an operator reads it,
-// rather than at the first event, where nobody does.
 func TestNewNATSPublisherRefusesAnUnparseableURL(t *testing.T) {
 	t.Parallel()
 
-	// The control character is what makes url.Parse fail; an unknown scheme
-	// would be dialed and refused at the TCP layer, which RetryOnFailedConnect
-	// deliberately swallows.
 	if _, err := NewNATSPublisher("nats://\x7finvalid", discardLogger()); err == nil {
 		t.Error("NewNATSPublisher accepted an unparseable URL, want a refusal")
 	}

@@ -17,29 +17,7 @@ import (
 	"github.com/anywaye/identity/internal/platform/id"
 )
 
-// The OIDC doubles, and one real builder.
-//
-// The authorization matrix runs the REAL registration use case over real SQL,
-// because the interesting columns are "may a member add a client to this account"
-// and "may the owner of another account add one to this one" — and a double
-// would agree with whatever the handler did, which is the bug the matrix exists
-// to find. What a double IS good for is the parts the matrix never drives: the
-// login interaction, the discovery document and the key set, which exist only so
-// the router can be walked.
 
-// matrixOIDCClients builds the real registration use case over a pool, with the
-// real storage adapter behind it.
-//
-// The adapter matters: the matrix's revoke row goes all the way through
-// RevokeAccessTokensForClient, and a stub there would leave the most interesting
-// half of a revocation untested by the very suite that says revocation is
-// owner-only.
-//
-// It shares the pool with the rest of the fixture rather than opening a second
-// one, and takes the same clock, so a registration written here is a
-// registration the service could have written. The FAKE clock is fine here,
-// unlike in the flow tests: nothing in the registration path compares a row's
-// timestamp against the system clock.
 func matrixOIDCClients(t *testing.T, pool *pgxpool.Pool, clk clock.Clock) *oidc.Service {
 	t.Helper()
 
@@ -56,11 +34,6 @@ func matrixOIDCClients(t *testing.T, pool *pgxpool.Pool, clk clock.Clock) *oidc.
 	)
 }
 
-// fakeOIDCClients is the programmable stand-in, for the route-coverage walk.
-//
-// The walk builds a router with doubles for everything and reads the routes out
-// of chi. It needs a non-nil OIDCClients so registerOIDCClientRoutes mounts the
-// four routes at all, and it never calls them.
 type fakeOIDCClients struct {
 	registered  oidc.RegisteredClient
 	registerErr error
@@ -85,29 +58,14 @@ func (f *fakeOIDCClients) Revoke(context.Context, oidc.RevokeInput) (oidc.Client
 	return oidc.Client{}, f.revokeErr
 }
 
-// fakeOIDC is the provider, as a double.
-//
-// It exists for two reasons and neither of them is convenience: the route walk
-// needs a non-nil provider so the well-known routes mount, and the OIDC
-// handlers' error mapping is worth testing against a provider that can fail in
-// the specific ways a real one can.
 type fakeOIDC struct {
 	banner      oidc.LoginBanner
 	bannerErr   error
 	completeErr error
 	jwksErr     error
-	// loginRedirect is the address the double redirects to, and it is a real
-	// `internal/oidc` URL rather than a made-up string so a test asserting on a
-	// Location header is asserting on the shape the real provider produces.
 	loginRedirect string
-	// redirects records the parameters every redirect was asked for, so a test can
-	// prove the request id in the path is the one that reached the redirect.
 	redirects []oidc.LoginRedirectParams
-	// requested records the request ids the login interaction was asked about, so a
-	// test can prove the id in the path is the one that reached the use case.
 	requested []string
-	// minted records every session-token exchange's arguments, for the tests that
-	// assert who was signed for and for which account.
 	minted  []mintRequest
 	mintErr error
 }
@@ -139,14 +97,10 @@ func (f *fakeOIDC) LoginBanner(_ context.Context, requestID string) (oidc.LoginB
 	return banner, nil
 }
 
-// LoginRedirect builds a real `internal/oidc` redirect from the double's address,
-// so the double and the provider cannot disagree about the shape of the answer.
 func (f *fakeOIDC) LoginRedirect(params oidc.LoginRedirectParams) string {
 	f.redirects = append(f.redirects, params)
 	parsed, err := url.Parse(f.loginRedirect)
 	if err != nil {
-		// Unreachable for a constant in a test double; a panic in a double is the
-		// right failure because it can only be a typo in the double itself.
 		panic("fakeOIDC: the login redirect address does not parse: " + err.Error())
 	}
 	parsed.RawQuery = params.Values().Encode()
@@ -155,9 +109,6 @@ func (f *fakeOIDC) LoginRedirect(params oidc.LoginRedirectParams) string {
 
 func (f *fakeOIDC) CompleteLogin(context.Context, string, id.UUID) error { return f.completeErr }
 
-// mintRequest is one call to MintAccountToken, recorded so a handler test can
-// assert WHO was signed for and for which account — which is the whole of the
-// authorization decision the exchange makes.
 type mintRequest struct {
 	subject   id.UUID
 	accountID id.UUID

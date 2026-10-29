@@ -1,37 +1,5 @@
 package httpapi
 
-// THE REDEMPTION OVER A REAL DATABASE, AND THE BYTE AGREEMENT WITH THE LOGIN.
-//
-// # WHY THIS FILE EXISTS AND WHAT A DOUBLE CANNOT REPLACE
-//
-// `sessionlinks_redeem_test.go` drives a double, which is the right instrument for
-// "does the route translate". This one drives the real router, the real recovery use
-// case, the real sessions store and the real MFA store over a private schema, and it
-// exists for the claims a double cannot make at all:
-//
-//   - a redemption produces a session that RESOLVES, which means asking the store a
-//     client would be served by rather than reading the redemption's return value;
-//   - the refusals are indistinguishable over real ROWS — an expired link, a spent
-//     one, a disabled subject, a subject who enrolled and a wrong-purpose token are
-//     five different facts about the DATABASE, and only real rows can be five
-//     different facts;
-//   - the MFA race is proven LIVE, against a confirmed `mfa_credentials` row written
-//     by the real enrollment flow, rather than against a flag;
-//   - and the byte agreement with `POST /v1/session`, which is the claim the whole
-//     route's contract rests on.
-//
-// # THE FIXTURE'S ONE DELIBERATE DEPARTURE
-//
-// The auth service here is built with `recovery.RedeemedSessionTTL` rather than
-// `authServiceFor`'s 24 hours. That is not tidiness — it is what lets the byte walk
-// compare `expires_at` as well as the shape, because with the same clock and the
-// same TTL the two instants are the same instant. Otherwise the walk would have to
-// normalise the timestamp away, and a route that minted a session lasting a
-// different length from a password login's would pass it.
-//
-// `TestTheRedeemedSessionLastsExactlyAsLongAsAPasswordLoginMints` states the
-// relationship separately, against the two constants, so the fixture's choice and
-// the claim it is enabling are two things a reader can check independently.
 
 import (
 	"context"
@@ -60,15 +28,6 @@ import (
 	"github.com/anywaye/identity/internal/users"
 )
 
-// redeemFixture is the whole redemption surface over ONE private schema: the real
-// auth service, the real recovery service, and the REAL mfa service as the
-// second-factor seam.
-//
-// The mfa service is the real one and not `noEnrolledSecondFactor{}` for one reason,
-// and it is the reason the race test below is worth anything: a seam answering from a
-// boolean can only prove that the REDEMPTION reads its answer, while the real lookup
-// proves the answer is true of a `mfa_credentials` row somebody enrolled through the
-// real flow, milliseconds earlier.
 type redeemFixture struct {
 	handler http.Handler
 	pool    *pgxpool.Pool
@@ -97,9 +56,6 @@ func newRedeemFixture(t *testing.T) *redeemFixture {
 		outbox.NewStore(pool),
 		realTenancy(pool, clk),
 		secondFactor,
-		// The real sweep over the real table, as main wires it. A disable in this
-		// package must behave the way the deployed service does, and a nil here
-		// would make it refuse rather than revoke.
 		oidc.NewStore(pool),
 		useraudit.NewStore(pool),
 		cheap,
@@ -136,15 +92,12 @@ func newRedeemFixture(t *testing.T) *redeemFixture {
 	}
 }
 
-// linkSubject is one registered account: its row id, its address and its password.
 type linkSubject struct {
 	id       id.UUID
 	email    string
 	password string
 }
 
-// register creates an account through the real route, so the fixture's rows are ones
-// the service wrote rather than ones a test inserted.
 func (f *redeemFixture) register(t *testing.T) linkSubject {
 	t.Helper()
 
@@ -164,13 +117,6 @@ func (f *redeemFixture) register(t *testing.T) linkSubject {
 	return linkSubject{id: who, email: email, password: validPassword}
 }
 
-// mint links one token to this subject, through the real use case.
-//
-// THROUGH THE SERVICE RATHER THAN THE ROUTE, and the reason is that the mint route is
-// behind a scoped api key whose minting needs tenancy, an account and a key — a great
-// deal of fixture for a value this file is about the OTHER half of. The token it
-// produces is the one the route hands a caller, because it is the same insert;
-// `TestAMintReturnsTheTokenAndTheInstantItDies` is where the route's own half is held.
 func (f *redeemFixture) mint(t *testing.T, who linkSubject) string {
 	t.Helper()
 
@@ -181,16 +127,11 @@ func (f *redeemFixture) mint(t *testing.T, who linkSubject) string {
 	return link.Token
 }
 
-// redeem presents a token to the public route with no credential at all, which is how
-// a browser following the caller's link arrives.
 func (f *redeemFixture) redeem(t *testing.T, token string) *httptest.ResponseRecorder {
 	t.Helper()
 	return post(t, f.handler, "/v1/session-links/redeem", `{"token":"`+token+`"}`)
 }
 
-// spent reads the link row's `token_consumed_at` for one subject, which is the claim
-// "a refused redemption spends nothing" read back out of the TABLE rather than out
-// of the response.
 func (f *redeemFixture) spent(t *testing.T, who linkSubject) *time.Time {
 	t.Helper()
 
@@ -203,13 +144,6 @@ func (f *redeemFixture) spent(t *testing.T, who linkSubject) *time.Time {
 	return consumed
 }
 
-// setDisabled writes or clears `disabled_at` directly.
-//
-// THROUGH SQL RATHER THAN `users.Store.Disable` because this file is about the
-// redemption and the column is a given: the instant a person wrote and the NULL they
-// left behind are `identity-disabled-01`'s semantics and are tested there. Using the
-// store here would add a second subject to this file's assertions for no extra
-// coverage of the code under test.
 func (f *redeemFixture) setDisabled(t *testing.T, who linkSubject, disabled bool) {
 	t.Helper()
 
@@ -223,32 +157,11 @@ func (f *redeemFixture) setDisabled(t *testing.T, who linkSubject, disabled bool
 	}
 }
 
-// ---------------------------------------------------------------------------
-// the byte agreement
-// ---------------------------------------------------------------------------
 
-// TestTheRedeemedSessionIsByteForByteTheSessionAPasswordLoginMints is the walk.
-//
-// IT COMPARES THE RAW BYTES, with one substitution: the credential itself. Both
-// responses carry a different token — they cannot carry the same one, that is what a
-// session is — so every other byte is compared exactly, including the `expires_at`
-// timestamp and the whole `Set-Cookie` line down to its attribute order and its
-// `Expires=` rendering.
-//
-// A FIELD-BY-FIELD comparison of decoded maps would pass against a cookie that
-// differed in `SameSite` or in `MaxAge`, because the cookie is not in the body. A
-// comparison of the two functions' NAMES would pass against a handler that called
-// them in the wrong ORDER, and the order is load-bearing: the cookie is written
-// before the body so a client which crashes mid-write is left signed out rather than
-// holding a token it never saw.
-//
-// The walk is logged, because "they agree" is a claim and a claim with no output is a
-// comment.
 func TestTheRedeemedSessionIsByteForByteTheSessionAPasswordLoginMints(t *testing.T) {
 	f := newRedeemFixture(t)
 	who := f.register(t)
 
-	// THE LOGIN. A real password, through the real route.
 	login := post(t, f.handler, "/v1/session",
 		`{"email":"`+who.email+`","password":"`+who.password+`"}`)
 	if login.Code != http.StatusOK {
@@ -259,7 +172,6 @@ func TestTheRedeemedSessionIsByteForByteTheSessionAPasswordLoginMints(t *testing
 		t.Fatalf("the login body is not JSON: %v", err)
 	}
 
-	// THE REDEMPTION. A real link, through the real route, with no credential.
 	redeemed := f.redeem(t, f.mint(t, who))
 	if redeemed.Code != http.StatusOK {
 		t.Fatalf("POST /v1/session-links/redeem = %d, want 200; body: %s", redeemed.Code, redeemed.Body)
@@ -269,9 +181,6 @@ func TestTheRedeemedSessionIsByteForByteTheSessionAPasswordLoginMints(t *testing
 		t.Fatalf("the redemption body is not JSON: %v", err)
 	}
 
-	// NEGATIVE CONTROL FIRST. If the two tokens were equal, every comparison below
-	// would be a tautology about one value — and the route would have minted a second
-	// session carrying somebody else's credential, so this has to be able to fail.
 	if loginSession.Token == linkSession.Token {
 		t.Fatal("the login and the redemption produced the SAME session token, so every " +
 			"comparison below would be about one value rather than about two responses")
@@ -291,9 +200,6 @@ func TestTheRedeemedSessionIsByteForByteTheSessionAPasswordLoginMints(t *testing
 			loginWalk, redeemWalk)
 	}
 
-	// AND THE WALK ACTUALLY SAW SOMETHING, which is the failure this package has already
-	// paid for once: a comparison of two empty strings is how a check over nothing goes
-	// green.
 	for _, field := range []string{
 		"status:", "content-type:", "set-cookie:", "body:", "expires_at:", "other headers:",
 	} {
@@ -304,15 +210,6 @@ func TestTheRedeemedSessionIsByteForByteTheSessionAPasswordLoginMints(t *testing
 	}
 }
 
-// TestTheRedeemedSessionLastsExactlyAsLongAsAPasswordLoginMints states the TTL
-// relationship on its own, against the two constants.
-//
-// THE TWO CONSTANTS ARE IN TWO PACKAGES ON PURPOSE: `recovery.RedeemedSessionTTL` and
-// `auth.DefaultSessionTTL`, because neither package has a reason to import the other
-// for a duration. That is a real cost — two numbers that can drift — and this is what
-// pays it. Without it, a session redeemed through a link would quietly last a
-// different length from one made with a password, which is the kind of difference
-// nobody reports and every incident review notices.
 func TestTheRedeemedSessionLastsExactlyAsLongAsAPasswordLoginMints(t *testing.T) {
 	if recovery.RedeemedSessionTTL != auth.DefaultSessionTTL {
 		t.Errorf("recovery.RedeemedSessionTTL is %s and auth.DefaultSessionTTL is %s. A link "+
@@ -322,26 +219,6 @@ func TestTheRedeemedSessionLastsExactlyAsLongAsAPasswordLoginMints(t *testing.T)
 	}
 }
 
-// walkOfSession renders the parts of a response that make it a session, with the
-// credential replaced by a placeholder so two of them can be compared.
-//
-// THE COOKIE LINE IS TAKEN FROM THE RAW HEADER rather than from a parsed
-// `http.Cookie`, and that is the load-bearing choice in this helper: a parsed cookie
-// normalises attribute order, drops what it does not recognize and re-renders
-// `Expires` in its own format, so a difference in any of those would have been erased
-// before the comparison ran. What the browser is asked to store is the bytes.
-//
-// TWO HEADERS ARE EXCLUDED, AND THEY ARE EXCLUDED FOR DIFFERENT REASONS:
-//
-//	Content-Length  it is arithmetic about a value that differs by construction. Two
-//	                tokens of the same shape have the same length today; nothing about
-//	                this walk would notice if they stopped.
-//	X-Trace-Id      it is a property of the REQUEST, not of the route: every request
-//	                gets a fresh trace, so two responses from two routes can never
-//	                agree on it. It is not dropped silently — the helper asserts one is
-//	                present and renders it as present — because a route that answered
-//	                without one would be an operational finding, and a walk that
-//	                excluded the header outright could not see that.
 func walkOfSession(t *testing.T, rec *httptest.ResponseRecorder, token string) string {
 	t.Helper()
 
@@ -384,23 +261,7 @@ func walkOfSession(t *testing.T, rec *httptest.ResponseRecorder, token string) s
 	}, "\n")
 }
 
-// ---------------------------------------------------------------------------
-// the ways of being wrong, over real rows
-// ---------------------------------------------------------------------------
 
-// TestTheRedemptionCannotBeToldApartFromALinkThatNeverExisted is the wire-level
-// indistinguishability, over REAL ROWS.
-//
-// Each case below is a different fact about the DATABASE and not about a string: an
-// `expires_at` in the past, a set `token_consumed_at`, a `disabled_at`, a confirmed
-// `mfa_credentials` row, a `purpose` of `password_reset`. A table of garbage strings
-// would pass against an implementation that refused everything, which is why the
-// comparison is over the RENDERED PROBLEM DOCUMENT and why the first case is a
-// reference rather than a special case.
-//
-// It is compared over the document rather than over the status because a status and a
-// body are two different things to get wrong, and this route's refusals have to be
-// indistinguishable in both or in neither.
 func TestTheRedemptionCannotBeToldApartFromALinkThatNeverExisted(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -450,9 +311,6 @@ func TestTheRedemptionCannotBeToldApartFromALinkThatNeverExisted(t *testing.T) {
 			},
 		},
 		{
-			// A REAL password_reset row for a real subject, so the only thing refusing
-			// it is the purpose. A random string would be refused by the digest miss
-			// instead and would prove nothing about the closed set.
 			name: "a password reset token presented here",
 			present: func(t *testing.T, f *redeemFixture) string {
 				who := f.register(t)
@@ -473,8 +331,6 @@ func TestTheRedemptionCannotBeToldApartFromALinkThatNeverExisted(t *testing.T) {
 			if rec.Code != http.StatusNotFound {
 				t.Fatalf("a %s = %d, want 404; body: %s", tc.name, rec.Code, rec.Body)
 			}
-			// No session. A refusal that handed one over is not a refusal, and the
-			// status code cannot say so.
 			if cookies := rec.Result().Cookies(); len(cookies) != 0 {
 				t.Errorf("the 404 set %d cookie(s)", len(cookies))
 			}
@@ -498,13 +354,7 @@ func TestTheRedemptionCannotBeToldApartFromALinkThatNeverExisted(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// the redemption, over real rows
-// ---------------------------------------------------------------------------
 
-// TestARedeemedSessionSignsTheBrowserIn is the end-to-end claim: the value the
-// redemption returned is a session `GET /v1/me` accepts, which is the only assertion
-// that says "a link is a password you can click" rather than "a link wrote a row".
 func TestARedeemedSessionSignsTheBrowserIn(t *testing.T) {
 	f := newRedeemFixture(t)
 	who := f.register(t)
@@ -514,7 +364,6 @@ func TestARedeemedSessionSignsTheBrowserIn(t *testing.T) {
 		t.Fatalf("redeeming = %d, want 200; body: %s", rec.Code, rec.Body)
 	}
 
-	// The COOKIE, because that is what a browser following a link carries.
 	cookies := rec.Result().Cookies()
 	if len(cookies) != 1 {
 		t.Fatalf("the redemption set %d cookies, want 1", len(cookies))
@@ -536,9 +385,6 @@ func TestARedeemedSessionSignsTheBrowserIn(t *testing.T) {
 	}
 }
 
-// TestASecondPresentationOfOneLinkIsRefusedOverHTTP is the single-use property at the
-// wire, which is where a client discovers it: the first click works and the second
-// answers the same 404 a link that never existed gets.
 func TestASecondPresentationOfOneLinkIsRefusedOverHTTP(t *testing.T) {
 	f := newRedeemFixture(t)
 	token := f.mint(t, f.register(t))
@@ -556,12 +402,6 @@ func TestASecondPresentationOfOneLinkIsRefusedOverHTTP(t *testing.T) {
 	}
 }
 
-// TestARefusedRedemptionSpendsNothingOverHTTP is identity-disabled-01's argument
-// applied to this route, read back out of the TABLE rather than out of the response.
-//
-// The claim has two halves and the second is the one that makes it worth anything:
-// un-disabling restores the flow the operator interrupted. Without it, a link that
-// stayed live would be indistinguishable from one quietly invalidated by a refusal.
 func TestARefusedRedemptionSpendsNothingOverHTTP(t *testing.T) {
 	f := newRedeemFixture(t)
 	who := f.register(t)
@@ -583,19 +423,6 @@ func TestARefusedRedemptionSpendsNothingOverHTTP(t *testing.T) {
 	}
 }
 
-// TestALinkMintedBeforeAnEnrollmentRedeemsNothing is the race at the wire, with the
-// enrollment done through the REAL flow.
-//
-// THERE IS NO SEAM HERE AND NO BOOLEAN: the subject really has a confirmed
-// `mfa_credentials` row, written by `mfa.Service.Confirm`, moments after the link was
-// minted. The login assertion above it is the negative control that makes the test
-// mean what it says — if `POST /v1/session` answered 200 for this subject, the second
-// factor would not be the one the redemption is racing and the whole test would be
-// about nothing.
-//
-// If this passes against a redemption that trusts the mint, then the mint is the only
-// thing standing between a delegated link and a login that skips MFA — and the mint
-// was asked minutes before the second factor existed.
 func TestALinkMintedBeforeAnEnrollmentRedeemsNothing(t *testing.T) {
 	f := newRedeemFixture(t)
 	who := f.register(t)
@@ -603,8 +430,6 @@ func TestALinkMintedBeforeAnEnrollmentRedeemsNothing(t *testing.T) {
 	token := f.mint(t, who)
 	enrollMFA(t, f.mfa, who.id, f.clk.Now())
 
-	// THE NEGATIVE CONTROL. The subject's second factor is real, and this service says
-	// so to anybody who brings the password.
 	login := post(t, f.handler, "/v1/session",
 		`{"email":"`+who.email+`","password":"`+who.password+`"}`)
 	if login.Code != http.StatusAccepted {

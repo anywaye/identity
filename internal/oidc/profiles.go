@@ -11,49 +11,13 @@ import (
 	"github.com/anywaye/identity/internal/platform/id"
 )
 
-// What identity knows about a user, in the shape a token carries it.
-//
-// It is a projection assembled from rows this service already owns — users,
-// accounts and account_users — and nothing is fetched from anywhere else. The
-// rule the brief states is the rule this type exists to hold: no claim reaches a
-// token that is not already in the database, and no internal id reaches a token
-// unless it is the id a consumer needs to make its next authorized call.
 
 // Profile is one user's claims, before scopes have been applied.
 type Profile struct {
 	UserID id.UUID
 	Email  string
-	// Name is the personal account's name.
-	//
-	// THIS IS NOT A USER-CHOSEN NAME, and it is a stand-in rather than a
-	// feature. identity has no first_name / last_name pair, and the one
-	// human-legible name it holds about a person is the personal account it
-	// created for them, which is derived from their email local part. It is
-	// rendered on the `profile` scope so a product has something to put on its
-	// account screen, and a product that needs a real name needs the profile
-	// packet this service does not have yet.
 	Name string
-	// EmailVerified says whether somebody has proved they can read this address.
-	//
-	// IT IS A READ OF users.email_verified_at AND NOTHING ELSE, which is what the
-	// comment this replaces promised when the column did not exist: the
-	// verification flow added a column, a request, a redemption, and a rule that
-	// clears the column whenever the address moves — and this claim needed no change
-	// beyond reading it.
-	//
-	// `false` here is still the answer for every account that has not followed a
-	// verification link, and it is the answer a relying party should act on
-	// hardest: `true` tells a product it may skip sending its own verification
-	// mail, so a claim of `true` on an address nobody has proved is how an account
-	// takeover becomes a matter of registering somebody else's inbox.
-	//
-	// It is emitted EXPLICITLY rather than through oidc.UserInfo.EmailVerified,
-	// because that field carries `omitempty` and a false bool would otherwise
-	// vanish from the token and leave a relying party unable to tell "not
-	// verified" from "this provider does not have the concept".
 	EmailVerified bool
-	// Accounts is every membership the user holds, each with the role they hold
-	// it under.
 	Accounts []Membership
 }
 
@@ -73,18 +37,12 @@ type Membership struct {
 // how this service stores a user's claims is not the adapter's business. The
 // implementation is NewProfileReader below.
 type ProfileReader interface {
-	// Profile returns the user's claims, or an error if there is no such user.
-	//
-	// q is a db.Querier because the token endpoint reads a profile inside the
-	// transaction that records the access token, and a profile that came from a
-	// different transaction is a profile that could be revoked between the two.
 	Profile(ctx context.Context, q db.Querier, userID id.UUID) (Profile, error)
 }
 
 // ErrNoProfile means the subject on a token is not a user this service has.
 var ErrNoProfile = errors.New("no such user")
 
-// pgProfileReader reads a Profile out of users, account_users and accounts.
 type pgProfileReader struct{}
 
 // NewProfileReader returns the ProfileReader over this service's tables.
@@ -99,15 +57,6 @@ func NewProfileReader() ProfileReader { return pgProfileReader{} }
 func (pgProfileReader) Profile(ctx context.Context, q db.Querier, userID id.UUID) (Profile, error) {
 	p := Profile{UserID: userID, Accounts: []Membership{}}
 
-	// One statement for the address and its verification together, rather than two:
-	// a profile is assembled inside the transaction that records the access token,
-	// and two statements would open a window in which the address is read and the
-	// verification is read from a different version of the row. A claim pair that
-	// disagrees about which address is verified is a claim about nobody's account.
-	//
-	// `email_verified_at IS NOT NULL` in the SELECT list rather than a nullable
-	// timestamp on the struct: this type carries the ANSWER, and a nullable instant
-	// would invite a caller to decide for itself what NULL means.
 	const userQuery = `SELECT email, email_verified_at IS NOT NULL FROM users WHERE id = $1`
 	if err := q.QueryRow(ctx, userQuery, userID).Scan(&p.Email, &p.EmailVerified); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -116,9 +65,6 @@ func (pgProfileReader) Profile(ctx context.Context, q db.Querier, userID id.UUID
 		return Profile{}, fmt.Errorf("oidc: reading a user for a token: %w", err)
 	}
 
-	// The personal account is the name. There is at most one, and the ORDER BY is
-	// there so a data accident that produced two does not make the claim flap
-	// between two values depending on the planner.
 	const nameQuery = `
 		SELECT a.name
 		FROM accounts a
@@ -156,13 +102,6 @@ func (pgProfileReader) Profile(ctx context.Context, q db.Querier, userID id.UUID
 	return p, nil
 }
 
-// claimAccount is the wire shape of one membership.
-//
-// It carries the account id, the slug, the name, the role and whether the
-// account is the user's personal one — and nothing else. There is no invitation
-// id, no created_at and no internal row id, because a product's next request is
-// "act in this account" and a claim it cannot use is a claim that has made the
-// token bigger for nothing.
 type claimAccount struct {
 	AccountID string `json:"account_id"`
 	Name      string `json:"name"`
@@ -171,15 +110,6 @@ type claimAccount struct {
 	Personal  bool   `json:"personal"`
 }
 
-// claimAccounts projects memberships onto the wire, as an array and never null.
-//
-// An array is a different answer from a single id, and it is the right one: a
-// user of a anywaye product is a member of a personal account and usually of
-// several team accounts, so there is no single `account_id` to put in a token.
-// core's conventions ask for `account_id` on authenticated service traffic; this
-// is the multi-account form of that fact, and the disagreement is recorded in
-// README.md rather than papered over with a field that would be wrong whenever
-// the answer was not one account.
 func accountsClaim(memberships []Membership) []claimAccount {
 	out := make([]claimAccount, 0, len(memberships))
 	for _, m := range memberships {

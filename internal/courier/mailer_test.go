@@ -17,29 +17,11 @@ import (
 	"github.com/anywaye/identity/internal/recovery"
 )
 
-// # THE SHAPE OF THIS FILE
-//
-// Three groups, in the order a reader should care about them:
-//
-//  1. What the adapter REFUSES, because that is the decision with a security
-//     consequence: a message `internal/recovery` renders that courier has no
-//     type for must be refused before the wire, and the wrong translation is a
-//     security notice that lies. The table is empty today — courier has carried
-//     both email-change types since `20373bf` and this adapter uses them — so
-//     the group is the safety net that keeps a fifth message from being delivered
-//     by accident through a fallback that guessed.
-//  2. What it SENDS, asserted against courier's request vocabulary.
-//  3. What it NEVER PRINTS, which is the credential and the token and the
-//     recipient.
 
-// recoveryMessage is a `recovery.Message` shaped the way the real one is, built
-// from the constants `internal/recovery` actually renders.
 func recoveryMessage(subject, to, body string) recovery.Message {
 	return recovery.Message{To: to, Subject: subject, Body: body}
 }
 
-// resetMessageFor is a `recovery.Message` a courier-backed adapter CAN send: the
-// password-reset subject, an account, and a body with a token in it.
 func resetMessageFor(email, token string) recovery.Message {
 	message := recoveryMessage(kindPasswordReset, email,
 		resetBody(token, email, time.Date(2026, 10, 1, 12, 30, 0, 0, time.UTC)))
@@ -47,17 +29,6 @@ func resetMessageFor(email, token string) recovery.Message {
 	return message
 }
 
-// verificationMessage, changeCurrentMessage and changeNewMessage are the other
-// three messages `internal/recovery` renders, built from its own bodies.
-//
-// They exist as builders because the end-to-end file needs to present them to a
-// courier, and because a test that hand-wrote a subject would be testing a string
-// the adapter and `internal/recovery` agree on by accident rather than by
-// contract. All four of `internal/recovery`'s messages are deliverable, and the
-// two email-change halves are built with the bodies `internal/recovery` actually
-// renders: the new-address half carries a token in its body because that is what
-// the real body has — the token is what the `Idempotency-Key` is derived from —
-// even though courier's `email_change_new` template does not render one.
 func verificationMessage(token string) recovery.Message {
 	message := recoveryMessage(kindVerifyEmail, "kaka@example.com",
 		"Confirm the address kaka@example.com for your anywaye account.\n\n"+
@@ -83,13 +54,8 @@ func changeNewMessage(token string) recovery.Message {
 	return message
 }
 
-// testUserID is a real uuid, because courier checks the shape and this constant
-// exercises that check rather than a fixture that happens to be a string.
 var testUserID = id.MustNew()
 
-// resetBody is what `internal/recovery`'s `passwordResetBody` renders for a token
-// and an expiry. The indentation and the blank lines are the real ones, because
-// the extraction in mailer.go reads the shape rather than the words.
 func resetBody(token, email string, expiry time.Time) string {
 	return "Somebody asked to reset the password for the account registered to " + email + ".\n" +
 		"\nYour reset code is:\n" +
@@ -102,18 +68,7 @@ func resetBody(token, email string, expiry time.Time) string {
 
 const testToken = "K7dQm2xR9vTb4nLpZcHs1JfWy6AeUi0O"
 
-// # 1. THE REFUSALS
 
-// TestEveryRecoverableMessageReachesCourier is the positive counterpart to the
-// refusal table, and it is what stops the whole package from passing by sending
-// nothing.
-//
-// The claim is about MESSAGES, not about the request: every message of
-// `internal/recovery`'s that courier can express must produce a real courier send,
-// and the refusals must not quietly reappear. It reads `knownSubjects` —
-// the same set the refusal table's drift check holds against
-// `internal/recovery/message.go` — so a fifth message added there fails HERE rather
-// than being absent from both tables.
 func TestEveryRecoverableMessageReachesCourier(t *testing.T) {
 	deliverable := make([]string, 0, len(courierTypeFor))
 	for subject := range courierTypeFor {
@@ -121,8 +76,6 @@ func TestEveryRecoverableMessageReachesCourier(t *testing.T) {
 	}
 	sort.Strings(deliverable)
 
-	// Both halves of the claim, stated as numbers so a change in either direction is
-	// a visible edit to this test rather than a silent drift.
 	if len(deliverable) != 4 {
 		t.Errorf("%d messages are deliverable, want 4: %v. identity's address "+
 			"verification maps onto courier's `welcome`, its password reset onto "+
@@ -170,24 +123,6 @@ func TestEveryRecoverableMessageReachesCourier(t *testing.T) {
 	}
 }
 
-// TestAMessageCourierHasNoTypeForIsRefused is the safety net under the whole
-// mapping, and it is stated as a table over a message `internal/recovery` does
-// not render rather than over one of its four.
-//
-// THE TABLE IS EMPTY TODAY, and that is the state this packet exists to leave:
-// courier has carried both email-change types since `20373bf`, and this adapter
-// maps all four of `recovery`'s messages onto them. So the refusal this test
-// guards is the one that keeps a FIFTH message from being delivered by accident —
-// somebody adding a two-factor enrolment notice, say, and this adapter guessing a
-// type for it. The drift check `TestEveryMessageRecoveryRendersIsAccountedFor`
-// fails loudly when such a message appears in `internal/recovery`; this test
-// fails loudly if the adapter would have SENT it rather than refused it.
-//
-// The four real messages are NOT here, and their absence is the other half of the
-// claim: `TestEveryRecoverableMessageReachesCourier` holds that ALL FOUR are
-// delivered, so this table cannot pass by refusing everything. A refusal test
-// with no positive counterpart is satisfied by a package that cannot send mail
-// at all.
 func TestAMessageCourierHasNoTypeForIsRefused(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -214,8 +149,6 @@ func TestAMessageCourierHasNoTypeForIsRefused(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			// A courier that would ACCEPT anything, so a pass cannot come from the
-			// server refusing. Every row has to be refused by the adapter.
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				t.Errorf("courier was called for a message it should never have been "+
 					"sent: %s %s", r.Method, r.URL.Path)
@@ -238,8 +171,6 @@ func TestAMessageCourierHasNoTypeForIsRefused(t *testing.T) {
 			if !isError(err, ErrUnsupportedMessage) {
 				t.Errorf("error = %v, want one matching ErrUnsupportedMessage", err)
 			}
-			// Not retryable: the same request will be refused the same way in five
-			// minutes, and a caller that thought otherwise would loop.
 			if Retryable(err) {
 				t.Error("a message courier cannot render was reported as retryable")
 			}
@@ -247,15 +178,6 @@ func TestAMessageCourierHasNoTypeForIsRefused(t *testing.T) {
 	}
 }
 
-// TestAMessageWithNoAccountIsRefusedRatherThanGuessedAt is the assertion that the
-// one field this packet added to `recovery.Message` is actually load-bearing, and
-// that a message without one fails LOUDLY.
-//
-// A zero `UserID` is a state `recovery` can produce — nothing in that package
-// requires one — and the two wrong answers are both bad. Guessing an id attributes
-// a message carrying a live credential to an account nobody chose; sending without
-// one is a request courier answers 422 for, after a token has been minted and a
-// user told a link is on its way.
 func TestAMessageWithNoAccountIsRefusedRatherThanGuessedAt(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -284,16 +206,12 @@ func TestAMessageWithNoAccountIsRefusedRatherThanGuessedAt(t *testing.T) {
 	if !strings.Contains(log.String(), "no account") {
 		t.Errorf("the refusal was not logged:\n%s", log.String())
 	}
-	// And the log still must not carry the token it refused to send.
 	if strings.Contains(log.String(), testToken) {
 		t.Error("the log carries the live token of a message that was not sent")
 	}
 }
 
-// # 2. WHAT IT SENDS
 
-// TestTheRequestCarriesExactlyWhatCouriersVocabularyHas is the positive counterpart
-// to the refusals: when this adapter does send, the bytes are courier's bytes.
 func TestTheRequestCarriesExactlyWhatCouriersVocabularyHas(t *testing.T) {
 	var body map[string]any
 	var header http.Header
@@ -310,9 +228,6 @@ func TestTheRequestCarriesExactlyWhatCouriersVocabularyHas(t *testing.T) {
 
 	mailer := testMailer(t, server.URL, nil)
 
-	// A body with no extractable token, and a `user_id` the client cannot supply,
-	// so the send is refused — which is what the rows above assert. This test is
-	// about the REQUEST SHAPE, so it drives the client directly with a valid one.
 	client, err := New(Config{BaseURL: server.URL, Token: "service-token-value"})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -343,7 +258,6 @@ func TestTheRequestCarriesExactlyWhatCouriersVocabularyHas(t *testing.T) {
 	if got := stringOf(body["url"]); !strings.Contains(got, testToken) {
 		t.Errorf("url = %q, want the token in it", got)
 	}
-	// The Idempotency-Key is a uuid courier accepts, derived from the token.
 	key := header.Get("Idempotency-Key")
 	if !isUUID(key) {
 		t.Errorf("Idempotency-Key = %q, which is not a uuid; courier answers 422", key)
@@ -351,7 +265,6 @@ func TestTheRequestCarriesExactlyWhatCouriersVocabularyHas(t *testing.T) {
 	if strings.Contains(key, testToken) {
 		t.Error("the idempotency key carries the token")
 	}
-	// The token travels in the URL courier renders and NOWHERE ELSE.
 	if got := stringOf(body["url"]); got != "https://app.example.com/reset?token="+testToken {
 		t.Errorf("url = %q, want the configured template rendered with the token", got)
 	}
@@ -359,10 +272,6 @@ func TestTheRequestCarriesExactlyWhatCouriersVocabularyHas(t *testing.T) {
 	_ = mailer
 }
 
-// TestTheLinkTemplateIsRefusedWhenItCannotMakeAWorkingLink is the constructor
-// validation, and every row is a link that does not work rather than a style
-// opinion. A deployment that gets this wrong must find out at boot, not at a user's
-// first password reset.
 func TestTheLinkTemplateIsRefusedWhenItCannotMakeAWorkingLink(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -420,7 +329,6 @@ func TestTheLinkTemplateIsRefusedWhenItCannotMakeAWorkingLink(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ValidateLinkTemplate(%q): %v", tc.template, err)
 			}
-			// And the template must actually render.
 			rendered, err := got.render(testToken)
 			if err != nil {
 				t.Fatalf("render: %v", err)
@@ -435,8 +343,6 @@ func TestTheLinkTemplateIsRefusedWhenItCannotMakeAWorkingLink(t *testing.T) {
 	}
 }
 
-// TestRenderRefusesATokenlessLink is the one check `ValidateLinkTemplate` cannot do
-// at construction, because the token only exists at send time.
 func TestRenderRefusesATokenlessLink(t *testing.T) {
 	template, err := ValidateLinkTemplate("https://app.example.com/reset?token={token}")
 	if err != nil {
@@ -447,19 +353,12 @@ func TestRenderRefusesATokenlessLink(t *testing.T) {
 	}
 }
 
-// TestReadyAnswersTheDeploymentQuestionAndNotCouriersOwn is the assertion that
-// `recovery`'s `Mailer.Ready` contract is honored: cheap, sends nothing, and
-// answers with `recovery`'s own sentinel so the HTTP layer needs no new case.
 func TestReadyAnswersTheDeploymentQuestionAndNotCouriersOwn(t *testing.T) {
 	t.Run("an up courier is ready", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path != readyzPath {
 				t.Errorf("Ready probed %s, want %s", r.URL.Path, readyzPath)
 			}
-			// courier's /readyz is outside every pipeline, so it ignores the
-			// credential — and the client sends it anyway, deliberately. See
-			// `Client.do`'s comment: the alternative is a second code path that
-			// forgets to authenticate the day courier's probe moves.
 			if r.Header.Get("Authorization") == "" {
 				t.Error("Ready sent no credential; the path courier may later need one has none")
 			}
@@ -486,25 +385,16 @@ func TestReadyAnswersTheDeploymentQuestionAndNotCouriersOwn(t *testing.T) {
 		if !isError(err, recovery.ErrNoMailer) {
 			t.Fatalf("Ready = %v, want one matching recovery.ErrNoMailer", err)
 		}
-		// And the courier reason survives, so an operator can see the status.
 		if !isError(err, ErrUnavailable) {
 			t.Errorf("the courier reason is gone from the chain: %v", err)
 		}
 	})
 }
 
-// # 3. WHAT IT NEVER PRINTS
 
-// TestTheMailerNeverPrintsACredentialOrAToken is the leak sweep, and it is the
-// reason this package's `Client` has no credential field in the first place.
-//
-// The server ECHOES the credential back — in the body and in three headers — which
-// is what a misconfigured proxy or a debug-echo gateway does, and it is the only
-// way to prove the scrubber works rather than asserting that it does.
 func TestTheMailerNeverPrintsACredentialOrAToken(t *testing.T) {
 	const credential = "svc-7f3a9c1e4b8d2056-the-credential"
 
-	// A courier that echoes everything it was sent, then fails.
 	leaky := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var raw map[string]any
 		body, _ := readAllString(r)
@@ -532,7 +422,6 @@ func TestTheMailerNeverPrintsACredentialOrAToken(t *testing.T) {
 
 	clientErr := courierSend(t, leaky.URL, credential)
 
-	// Everything this package can produce, swept.
 	things := map[string]any{
 		"error string":     clientErr.Error(),
 		"error %v":         clientErr,
@@ -554,22 +443,11 @@ func TestTheMailerNeverPrintsACredentialOrAToken(t *testing.T) {
 			t.Errorf("%s carries the service credential:\n%s", what, rendered)
 		}
 	}
-	// And the refusal itself must not have been softened into uselessness.
 	if !isError(clientErr, ErrUnauthenticated) {
 		t.Errorf("the echoed 401 is not an authentication refusal: %v", clientErr)
 	}
 }
 
-// TestTheLogNeverCarriesTheTokenOrTheRecipient is the second half of the same
-// property, and it is separate because it is about a DIFFERENT failure: the
-// credential above is a service-to-service secret, whereas the token and the
-// recipient are PII and a live credential for a user, and they reach logs on paths
-// where nothing was misconfigured.
-//
-// IT DRIVES THE ADAPTER, because the logging is the adapter's and a test that
-// called the client directly would be asserting that the client logs — which it
-// does not, and should not: a library that writes to a logger is a library whose
-// output nobody configured.
 func TestTheLogNeverCarriesTheTokenOrTheRecipient(t *testing.T) {
 	const email = "kaka-privacy@example.com"
 	const token = "K7dQm2xR9vTb4nLpZcHs1JfWy6AeUi0O"
@@ -578,15 +456,12 @@ func TestTheLogNeverCarriesTheTokenOrTheRecipient(t *testing.T) {
 		name   string
 		status int
 		body   string
-		// wantLog is what the line must contain to be worth having.
 		wantLog string
 	}{
 		{
 			name:   "courier refused the credential",
 			status: http.StatusUnauthorized,
 			body:   `{"code":"unauthorized","detail":"no","trace_id":"t1"}`,
-			// Nothing to tie back to: courier refused before doing anything, so
-			// there is no handle on its logs to offer.
 			wantLog: "",
 		},
 		{
@@ -594,10 +469,6 @@ func TestTheLogNeverCarriesTheTokenOrTheRecipient(t *testing.T) {
 			status: http.StatusConflict,
 			body: `{"code":"conflict","detail":"That mailbox does not exist: it ` +
 				`hard-bounced a previous message.","trace_id":"t2"}`,
-			// The two states courier describes in prose — a hard bounce and a spam
-			// complaint — are told apart by its `detail`, and this client does not
-			// carry `detail`. So the trace id is the handle, and an operator's only
-			// route to knowing which of the two it was.
 			wantLog: "t2",
 		},
 		{
@@ -631,8 +502,6 @@ func TestTheLogNeverCarriesTheTokenOrTheRecipient(t *testing.T) {
 			if strings.Contains(written, email) {
 				t.Errorf("the log carries the recipient:\n%s", written)
 			}
-			// And it must say SOMETHING, or the line is decoration: courier's status,
-			// its code, and whether another attempt can help.
 			for _, want := range []string{"status=", "code=", "retryable="} {
 				if !strings.Contains(written, want) {
 					t.Errorf("the log line has no %s:\n%s", want, written)
@@ -645,9 +514,6 @@ func TestTheLogNeverCarriesTheTokenOrTheRecipient(t *testing.T) {
 	}
 }
 
-// TestASuccessfulSendLogsCouriersIdentifiersAndNothingElse is the positive half:
-// the one line worth writing, and it must carry the `message_id` because a bounce
-// or a complaint quotes it and nothing else ties the two together.
 func TestASuccessfulSendLogsCouriersIdentifiersAndNothingElse(t *testing.T) {
 	const email = "kaka-privacy@example.com"
 	const token = "K7dQm2xR9vTb4nLpZcHs1JfWy6AeUi0O"
@@ -677,26 +543,8 @@ func TestASuccessfulSendLogsCouriersIdentifiersAndNothingElse(t *testing.T) {
 	}
 }
 
-// # 4. THE BOUNDARIES
 
-// TestTheOnlyPlaceBothVocabulariesMeet is the assertion that identity has not taken
-// courier's rendering decisions, and it is the counterpart to the refusals above.
-//
-// The rule `internal/recovery` states is: "The moment this type grows a `Template`
-// field, identity has taken courier's rendering decisions, and the two will
-// disagree." This holds that from the other side — `recovery.Message` has no type
-// field, and no package under `recovery/` mentions courier.
 func TestTheOnlyPlaceBothVocabulariesMeet(t *testing.T) {
-	// EXACTLY FOUR FIELDS, and the list is the assertion rather than a spot check:
-	// it fails on a fifth field of any kind, which is the shape a `Template` or a
-	// `Type` would take.
-	//
-	// `UserID` is on the list and is not a violation. The rule `internal/recovery`
-	// states is about a TEMPLATE — a rendering decision about how a mail looks — and
-	// `UserID` is a fact about which account the message concerns, which every
-	// flow in that package already held before this field existed. `recovery` does
-	// not know courier has a type enum, does not know courier attributes an event
-	// to a user id, and imports nothing from here.
 	if got := reflectMessageFields(); got != "To Subject Body UserID" {
 		t.Errorf("recovery.Message carries %q, want exactly To, Subject, Body and "+
 			"UserID. A fifth field is a courier decision leaking into identity unless "+
@@ -704,31 +552,12 @@ func TestTheOnlyPlaceBothVocabulariesMeet(t *testing.T) {
 			got)
 	}
 
-	// The fields this adapter does NOT need from `recovery`: it must not be reading
-	// a body as a source of a credential, a kind as a string match on prose, or
-	// anything else that would make prose load-bearing. `tokenFromBody` is the one
-	// parse left and it reads the credential, which is the credential's own home;
-	// what it must not do is decide WHICH template to use, and that is the subject
-	// map's job.
 	if tokenFromBody("no marker here") != "" {
 		t.Error("tokenFromBody found a token in a body with no marker in it")
 	}
 
-	// And nothing under internal/recovery may name courier. A grep is a crude check
-	// and a compile-time import check is a better one, so this asserts the weaker
-	// property explicitly rather than pretending to be strong: `recovery` cannot
-	// import `internal/courier` because `courier` imports `recovery`.
-	// `var _ recovery.Mailer = (*RecoveryMailer)(nil)` in mailer.go is the proof
-	// that the dependency runs courier -> recovery and not the other way.
 }
 
-// TestEveryMessageRecoveryRendersIsAccountedFor is the drift check for the subject
-// table, and it reads `internal/recovery/message.go` rather than trusting this
-// file's copy of it.
-//
-// The failure it prevents: somebody adds a fifth message to `internal/recovery` and
-// this adapter keeps refusing it, and the refusal looks like a courier gap rather
-// than a mapping nobody updated.
 func TestEveryMessageRecoveryRendersIsAccountedFor(t *testing.T) {
 	// recovery's own subjects, read from its source. The set is small and the
 	// alternative — importing an unexported constant — is not possible, and adding
@@ -748,12 +577,6 @@ func TestEveryMessageRecoveryRendersIsAccountedFor(t *testing.T) {
 	}
 }
 
-// TestNoRecoverySubjectCarriesAToken is the assumption the whole subject-as-key
-// design rests on, asserted rather than assumed.
-//
-// If a subject could contain a variable, it would not be a stable key AND it would
-// be a credential in the most widely logged part of a message. Both are the reason
-// this design is safe, so the test holds the property rather than the comment.
 func TestNoRecoverySubjectCarriesAToken(t *testing.T) {
 	for subject := range knownSubjects {
 		lowered := strings.ToLower(subject)
@@ -766,9 +589,7 @@ func TestNoRecoverySubjectCarriesAToken(t *testing.T) {
 	}
 }
 
-// # helpers
 
-// testMailer builds a RecoveryMailer over a test server.
 func testMailer(t *testing.T, baseURL string, logger *slog.Logger) *RecoveryMailer {
 	t.Helper()
 	client, err := New(Config{BaseURL: baseURL, Token: "service-token-value"})
@@ -786,8 +607,6 @@ func testMailer(t *testing.T, baseURL string, logger *slog.Logger) *RecoveryMail
 	return mailer
 }
 
-// courierSend drives the client against a server that answers, and returns the error
-// it produced.
 func courierSend(t *testing.T, baseURL, credential string) error {
 	t.Helper()
 	client, err := New(Config{BaseURL: baseURL, Token: credential})
@@ -803,14 +622,12 @@ func courierSend(t *testing.T, baseURL, credential string) error {
 	return err
 }
 
-// readAllString reads a request body, so the leaky server can echo it.
 func readAllString(r *http.Request) (string, error) {
 	var buf bytes.Buffer
 	_, err := buf.ReadFrom(r.Body)
 	return buf.String(), err
 }
 
-// renderAll puts a value through every formatting verb that could reach a log.
 func renderAll(t *testing.T, thing any) string {
 	t.Helper()
 	var out strings.Builder
@@ -822,8 +639,6 @@ func renderAll(t *testing.T, thing any) string {
 	return out.String()
 }
 
-// serialize renders an error as JSON, which is what a structured logger does with
-// anything it is handed.
 func serialize(t *testing.T, err error) string {
 	t.Helper()
 	encoded, marshalErr := json.Marshal(map[string]any{"error": err.Error()})
@@ -833,5 +648,4 @@ func serialize(t *testing.T, err error) string {
 	return string(encoded)
 }
 
-// errorsIsUnused keeps the errors import honest.
 var _ = errors.Is

@@ -14,20 +14,7 @@ import (
 	"github.com/anywaye/identity/internal/platform/id"
 )
 
-// The authorization code + PKCE round trip, and every refusal the security
-// checklist for this packet asks about.
-//
-// Each test names the attack it is standing in front of. A test that only
-// asserted "400" would pass if the service were refusing for the wrong reason, so
-// the body is checked as well as the status wherever the body carries the
-// diagnosis.
 
-// THE ROUND TRIP.
-//
-// authorize -> login -> code -> token -> userinfo, over the real router and the
-// real SQL, asserting the ID token's claims against the PUBLISHED key set rather
-// than against the private one. A signature check against the key that signed it
-// proves nothing about whether a verifier on the edge could check it.
 func TestOIDCAuthorizationCodeRoundTrip(t *testing.T) {
 	t.Parallel()
 
@@ -54,18 +41,11 @@ func TestOIDCAuthorizationCodeRoundTrip(t *testing.T) {
 		t.Errorf("expires_in = %v, want a positive number at or under core's fifteen-minute cap", expires)
 	}
 
-	// The ID token's claims. iss, aud, sub, exp, iat, jti and nonce are the
-	// protocol's; email, email_verified, name and accounts are the four the brief
-	// names.
 	idClaims := f.verify(t, idToken)
 
 	if idClaims["iss"] != oidcTestIssuer {
 		t.Errorf("id_token iss = %v, want %q; every verifier compares this for equality", idClaims["iss"], oidcTestIssuer)
 	}
-	// `aud` is an array here: RFC 7519 allows a string or an array of them, and
-	// the library always emits the array form. A verifier that compares it to a
-	// string is a verifier that has to handle both, and this test is where that is
-	// pinned.
 	if !audienceContains(idClaims["aud"], client.ClientID) {
 		t.Errorf("id_token aud = %v, want it to contain the client %q", idClaims["aud"], client.ClientID)
 	}
@@ -79,10 +59,6 @@ func TestOIDCAuthorizationCodeRoundTrip(t *testing.T) {
 	if idClaims["email"] != f.email {
 		t.Errorf("id_token email = %v, want %q", idClaims["email"], f.email)
 	}
-	// Present AND false. The claim is written explicitly because
-	// oidc.UserInfo.EmailVerified carries `omitempty` and a false bool would
-	// otherwise vanish — leaving a relying party to assume the provider does not
-	// support verification and treat the address as good.
 	verified, present := idClaims["email_verified"]
 	if !present {
 		t.Error("id_token has no email_verified claim; a relying party that cannot see it has to assume it is verified")
@@ -116,7 +92,6 @@ func TestOIDCAuthorizationCodeRoundTrip(t *testing.T) {
 		t.Errorf("accounts[0].personal = %v, want true", first["personal"])
 	}
 
-	// The access token. RS256, the same key, and the claims gateway reads.
 	accessClaims := f.verify(t, accessToken)
 	if accessClaims["iss"] != oidcTestIssuer {
 		t.Errorf("access_token iss = %v, want %q", accessClaims["iss"], oidcTestIssuer)
@@ -135,13 +110,10 @@ func TestOIDCAuthorizationCodeRoundTrip(t *testing.T) {
 		t.Error("access_token has no accounts claim; core asks for the account claims on service traffic")
 	}
 
-	// The at_hash binds the ID token to the access token, which is what stops one
-	// being paired with a different one.
 	if _, present := idClaims["at_hash"]; !present {
 		t.Error("id_token has no at_hash; it is what binds it to this access token")
 	}
 
-	// userinfo, with the access token.
 	info := f.do(t, http.MethodGet, oidc.PathUserinfo, "", nil)
 	if info.Code != http.StatusUnauthorized {
 		t.Fatalf("GET userinfo with no token = %d, want 401", info.Code)
@@ -169,9 +141,6 @@ func TestOIDCAuthorizationCodeRoundTrip(t *testing.T) {
 	if list, _ := claims["accounts"].([]any); len(list) == 0 {
 		t.Error("userinfo has no accounts; the brief asks for the account/role claims from account_users")
 	}
-	// Nothing internal. The brief says never leak an internal id that is not
-	// already in the token, and the row ids of accounts, memberships and the
-	// client itself are not.
 	for _, forbidden := range []string{"password_digest", "secret", "digest", "client_id", "row_id"} {
 		if _, present := claims[forbidden]; present {
 			t.Errorf("userinfo carries %q", forbidden)
@@ -179,9 +148,6 @@ func TestOIDCAuthorizationCodeRoundTrip(t *testing.T) {
 	}
 }
 
-// An authorization code is a bearer credential for sixty seconds, and a second
-// use of it is either an attacker replaying a captured code or a product retrying
-// a request it already had answered. Both get the same answer.
 func TestOIDCReplayedCodeIsRefused(t *testing.T) {
 	t.Parallel()
 
@@ -211,9 +177,6 @@ func TestOIDCReplayedCodeIsRefused(t *testing.T) {
 	}
 }
 
-// The single-use gate is one conditional UPDATE rather than a read followed by a
-// delete, and this is what proves the two are different: the storage layer's own
-// test races eight goroutines on one code. Here the point is the HTTP answer.
 func TestOIDCReplayedCodeWithAFreshVerifierIsStillRefused(t *testing.T) {
 	t.Parallel()
 
@@ -229,7 +192,6 @@ func TestOIDCReplayedCodeWithAFreshVerifierIsStillRefused(t *testing.T) {
 		t.Fatalf("the first exchange = %d, want 200", got)
 	}
 
-	// A different verifier, so nothing about the replay can be blamed on PKCE.
 	other, _ := codeVerifier(t)
 	again := f.exchange(t, client, code, other, oidcTestRedirect)
 	if again.Code != http.StatusBadRequest {
@@ -237,16 +199,11 @@ func TestOIDCReplayedCodeWithAFreshVerifierIsStillRefused(t *testing.T) {
 	}
 }
 
-// PKCE is not optional here, and the three ways to be without it are three
-// separate tests because a table that asserted only "400" would pass for a
-// service that refused all of them for the same unrelated reason.
 func TestOIDCPKCERefusals(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name string
-		// challenge and method are the two parameters as sent, so a case can send
-		// neither, one, or the other and the table stays readable.
 		challenge  string
 		method     string
 		wantDetail string
@@ -295,15 +252,6 @@ func TestOIDCPKCERefusals(t *testing.T) {
 	}
 }
 
-// THE OPEN-REDIRECT TEST.
-//
-// `https://app.example.com.evil.com/cb` shares a prefix with the registered
-// origin and belongs to an attacker. A redirect check that used HasPrefix, or a
-// glob, or "starts with the registered host", would send a user there with a
-// valid authorization code attached.
-//
-// Every variant below is the same attack in a different costume, and each is a
-// separate case because each is a separate way to write a broken comparison.
 func TestOIDCRedirectURINotOnTheAllowList(t *testing.T) {
 	t.Parallel()
 
@@ -348,8 +296,6 @@ func TestOIDCRedirectURINotOnTheAllowList(t *testing.T) {
 				t.Fatalf("GET /oidc/authorize with redirect_uri %q = %d, want 400; body: %s",
 					tt.target, rec.Code, rec.Body)
 			}
-			// The refusal must never itself be a redirect: an error page at the
-			// attacker's origin would be the same attack with better manners.
 			if location := rec.Header().Get("Location"); location != "" {
 				t.Errorf("the refusal carried Location %q; a redirect to an unregistered origin is the bug", location)
 			}
@@ -360,10 +306,6 @@ func TestOIDCRedirectURINotOnTheAllowList(t *testing.T) {
 	}
 }
 
-// The same check runs at the TOKEN endpoint, because the redirect_uri in the
-// token request is attacker-controlled too: a client that registered two origins
-// and then swapped the one in the token request is asking for a code to be
-// delivered somewhere its own registration did not sanction for this flow.
 func TestOIDCTokenRedirectURIMustMatchTheAuthorizationRequest(t *testing.T) {
 	t.Parallel()
 
@@ -383,20 +325,12 @@ func TestOIDCTokenRedirectURIMustMatchTheAuthorizationRequest(t *testing.T) {
 		t.Errorf("error = %q, want invalid_grant", err)
 	}
 
-	// The registered one still works, so the refusal above is about the mismatch
-	// and not about the code having been spent by the failed attempt.
-	// (The code was already consumed by the swapped attempt, so this asserts the
-	// 400 rather than a 200: a single-use gate that a rejected request could
-	// bypass would let an attacker burn nothing and learn nothing.)
 	again := f.exchange(t, client, code, verifier, oidcTestRedirect)
 	if again.Code != http.StatusBadRequest {
 		t.Errorf("the code survived a rejected exchange: %d, want 400", again.Code)
 	}
 }
 
-// A wrong client secret and a revoked client get one indistinguishable answer.
-// Anything more is an oracle: a caller who can tell "no such client" from "wrong
-// secret" learns which products are registered here.
 func TestOIDCRevokedClientAndWrongSecret(t *testing.T) {
 	t.Parallel()
 
@@ -472,10 +406,6 @@ func TestOIDCRevokedClientAndWrongSecret(t *testing.T) {
 	})
 }
 
-// A revocation has to actually stop the tokens it already issued. A JWT is
-// verifiable by anybody with the published key set, so revoking the registration
-// is not enough on its own and the service knows it: the revocation and the bulk
-// token revocation are one transaction.
 func TestOIDCRevocationStopsIssuedTokens(t *testing.T) {
 	t.Parallel()
 
@@ -498,24 +428,12 @@ func TestOIDCRevocationStopsIssuedTokens(t *testing.T) {
 	}
 }
 
-// The login form's state is the CSRF defense on the one interaction where a user
-// types a password for a third party. A cross-site POST would complete an
-// authorization request the user never chose.
-//
-// THE REFUSAL IS A REDIRECT AND NOT A 400, and the assertion that used to be
-// "no Location header" is now "no Location header carrying a code" — which is
-// the property that was actually being protected. See the interaction section
-// header in oidc.go for why a state mismatch re-shows the step with a fresh state
-// instead of answering a problem document.
 func TestOIDCLoginStateMustMatch(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name string
-		// presented is what the form posts back.
 		presented string
-		// dropCookie removes the sealed value entirely, which is what a cross-site
-		// request looks like: the attacker's origin cannot write a __Host- cookie.
 		dropCookie bool
 	}{
 		{name: "a state from a different flow", presented: "oidc.not-the-one-that-was-issued"},
@@ -537,10 +455,6 @@ func TestOIDCLoginStateMustMatch(t *testing.T) {
 			f.signOut()
 			form := f.do(t, http.MethodGet, loginURL, "", nil)
 			mustRedirectToLoginUI(t, form)
-			// Read for its side effect: interactionState fails the test when the
-			// redirect carries no state, which is the precondition for every case
-			// here — a case whose form was never sealed would pass for the wrong
-			// reason.
 			interactionState(t, form)
 
 			presented := tt.presented
@@ -573,7 +487,6 @@ func TestOIDCLoginStateMustMatch(t *testing.T) {
 				t.Errorf("the refusal pointed at the client (%q); a completed request is "+
 					"exactly what the attack wanted", got)
 			}
-			// The refusal says so, in the shape the login UI reads.
 			query := interactionParams(t, rec)
 			if got := query.Get(oidc.LoginParamError); got != oidc.LoginErrorInteractionExpired {
 				t.Errorf("%s = %q, want %q", oidc.LoginParamError, got, oidc.LoginErrorInteractionExpired)
@@ -582,9 +495,6 @@ func TestOIDCLoginStateMustMatch(t *testing.T) {
 				t.Error("the refusal carried no sentence; a login UI that cannot say why " +
 					"shows the user a form that will fail the same way")
 			}
-			// And a FRESH state, which is the reason it is a redirect: the value the
-			// attacker chose is not a value the login UI can render, so a new one has
-			// to be minted for the form it is about to be sent back to.
 			if fresh := query.Get(oidc.LoginParamState); fresh == "" || fresh == presented {
 				t.Errorf("%s = %q, want a freshly minted one", oidc.LoginParamState, fresh)
 			}
@@ -592,18 +502,8 @@ func TestOIDCLoginStateMustMatch(t *testing.T) {
 	}
 }
 
-// passwordFor is the password a registered client was registered with, which is
-// every password the login interaction tests need and none of the tests above
-// should be able to get wrong by accident.
 func passwordFor(registered) string { return oidcTestPassword }
 
-// The state this service verifies is internal/oauth's, reused rather than
-// reimplemented. The test is that the value in the cookie is one that
-// oauth.VerifyState accepts, which is the whole contract between the two.
-//
-// IT IS THE SAME ASSERTION IT WAS, on a value that now travels in a query
-// string instead of a hidden field. That the value is the one internal/oauth
-// mints is the property; where it is written down on the wire is not.
 func TestOIDCLoginStateIsOauthPackageState(t *testing.T) {
 	t.Parallel()
 
@@ -618,8 +518,6 @@ func TestOIDCLoginStateIsOauthPackageState(t *testing.T) {
 	mustRedirectToLoginUI(t, form)
 	sealed := interactionState(t, form)
 
-	// And the sealed copy really is in the cookie the login UI's origin cannot
-	// write, which is what makes the value a binding rather than a hint.
 	cookies := form.Result().Cookies()
 	var found *http.Cookie
 	for _, c := range cookies {
@@ -653,7 +551,6 @@ func TestOIDCLoginStateIsOauthPackageState(t *testing.T) {
 	}
 }
 
-// cookieNames is the names on a Set-Cookie batch, for a failure message.
 func cookieNames(cookies []*http.Cookie) []string {
 	names := make([]string, 0, len(cookies))
 	for _, c := range cookies {
@@ -663,18 +560,6 @@ func cookieNames(cookies []*http.Cookie) []string {
 	return names
 }
 
-// An interaction error code that means the same thing as one of this package's
-// problem codes is THE SAME STRING, and this is the comparison `loginui_test.go`
-// cannot make: it does not import this package, and this one does.
-//
-// The overlap is `account_locked`, and it is not a coincidence worth having twice
-// in two vocabularies. A login UI that already switches on `account_locked` for a
-// `423` on `POST /v1/session` must not have to learn a second spelling of it to
-// render the same lockout three characters later in the same flow.
-//
-// WALKED IN BOTH DIRECTIONS, because a check that only asserts the one pair that
-// happens to match today would be a check that a second, wrong pair could not
-// join.
 func TestAnInteractionCodeThatHasAProblemCodeTwinIsTheSameString(t *testing.T) {
 	t.Parallel()
 
@@ -683,9 +568,6 @@ func TestAnInteractionCodeThatHasAProblemCodeTwinIsTheSameString(t *testing.T) {
 			"one lockout has one name", oidc.LoginErrorAccountLocked, CodeAccountLocked)
 	}
 
-	// The other direction: every interaction code is checked by hand against the
-	// problem codes, and the ones with no twin must SAY so, because "this is a new
-	// word" is a decision somebody made and a reader cannot infer it.
 	problemCodes := map[string]bool{
 		CodeUnauthorized:     true,
 		CodeForbidden:        true,
@@ -707,9 +589,6 @@ func TestAnInteractionCodeThatHasAProblemCodeTwinIsTheSameString(t *testing.T) {
 			t.Error("an interaction code in this list is empty")
 		}
 	}
-	// …and the three new ones really are new: none of them collides with a problem
-	// code that means something ELSE, because a collision that means something else
-	// is worse than a new word — a UI would render the wrong message.
 	for _, code := range []string{
 		oidc.LoginErrorInteractionExpired,
 		oidc.LoginErrorMissingCredentials,
@@ -724,18 +603,6 @@ func TestAnInteractionCodeThatHasAProblemCodeTwinIsTheSameString(t *testing.T) {
 	}
 }
 
-// THE REDIRECT, ASSERTED AS A THING WITH NO BODY.
-//
-// The owner's rule is that identity renders no HTML, and a claim that is only in
-// a commit message is a claim nobody checks. So this asserts the whole shape of
-// the response a browser is sent: the status, the destination, an empty body, no
-// content type, and the two headers that earned their place.
-//
-// IT IS WORTH BEING EXPLICIT ABOUT WHAT WOULD MAKE IT RED. Restoring the login
-// page fails the "no body" and the "no content type" halves. Calling
-// http.Redirect instead of oidcRedirect fails them too, because net/http writes
-// the anchor body — which is the failure this repository is most likely to make
-// by accident, from a well-meaning "just use the standard helper".
 func TestTheLoginRedirectCarriesNoBodyAndTheTwoHeadersThatEarnedTheirPlace(t *testing.T) {
 	t.Parallel()
 
@@ -749,9 +616,6 @@ func TestTheLoginRedirectCarriesNoBodyAndTheTwoHeadersThatEarnedTheirPlace(t *te
 	rec := f.do(t, http.MethodGet, loginURL, "", nil)
 	redirect := mustRedirectToLoginUI(t, rec)
 
-	// The authorization request id is the one thing the login UI cannot lose, and
-	// it must be the id of THIS request and not a value the browser could have
-	// chosen.
 	query := redirect.Query()
 	if got := query.Get(oidc.LoginParamRequestID); got == "" {
 		t.Fatalf("the redirect carried no %s: %s", oidc.LoginParamRequestID, redirect)
@@ -771,8 +635,6 @@ func TestTheLoginRedirectCarriesNoBodyAndTheTwoHeadersThatEarnedTheirPlace(t *te
 			"not both read as success", oidc.LoginParamError, query.Get(oidc.LoginParamError))
 	}
 
-	// NO HTML. A body, and a content type that names a document, are the two ways
-	// this claim fails and both are asserted.
 	if body := rec.Body.String(); body != "" {
 		t.Errorf("the redirect carried a %d-byte body; identity renders nothing:\n%s", len(body), body)
 	}
@@ -788,8 +650,6 @@ func TestTheLoginRedirectCarriesNoBodyAndTheTwoHeadersThatEarnedTheirPlace(t *te
 			t.Errorf("%s = %q, want %q", header, got, want)
 		}
 	}
-	// …and the two that protected a page, asserted as ABSENT. A header nobody can
-	// explain is worse than a missing one, so their absence is a claim too.
 	for _, header := range []string{"X-Frame-Options", "X-Content-Type-Options"} {
 		if got := rec.Header().Get(header); got != "" {
 			t.Errorf("%s = %q; it protected a document, and there is no document", header, got)
@@ -797,15 +657,6 @@ func TestTheLoginRedirectCarriesNoBodyAndTheTwoHeadersThatEarnedTheirPlace(t *te
 	}
 }
 
-// The library's own redirect to this service's login endpoint must not carry
-// net/http's fallback anchor body either, and this is the one that is easiest to
-// miss: it is written by code in another module, on a path this service mounts.
-//
-// `http.Redirect` writes `<a href="…">Found</a>.` with `Content-Type:
-// text/html; charset=utf-8` unless the caller has already set a content type. A
-// reviewer running `curl -i` on /oidc/authorize and reading that header has been
-// told the packet did not land, and the fix has to live in this service because
-// the library is not going to be changed for it.
 func TestTheAuthorizeRedirectCarriesNoBody(t *testing.T) {
 	t.Parallel()
 
@@ -839,9 +690,6 @@ func TestTheAuthorizeRedirectCarriesNoBody(t *testing.T) {
 	}
 }
 
-// requestIDOf reads the authorization request id out of the login URL the library
-// redirected the browser to, which is the one place in a test that the id is
-// known to be this service's own rather than anything a caller supplied.
 func requestIDOf(t *testing.T, loginURL string) string {
 	t.Helper()
 
@@ -853,29 +701,8 @@ func requestIDOf(t *testing.T, loginURL string) string {
 	return trimmed
 }
 
-// octxTime is a fixed instant, so a cookie written by a constructor rather than by
-// a response is comparable and the assertion is about the POLICY and not about the
-// clock.
 func octxTime() time.Time { return time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC) }
 
-// The state and the challenge cookie are `SameSite=None` and the flow and session
-// cookies are not. See `oidcInteractionSameSite` for the argument; this is the
-// check that the argument keeps holding.
-//
-// FOUR COOKIES, AND THE POINT IS THE TWO THAT DID NOT MOVE. Widening the flow
-// cookie would let it ride a cross-site POST for no reason, and would put the
-// cookie the login-CSRF defense rests on into a position the defense was not argued
-// for. Widening the session cookie would attach a credential to every cross-site
-// request to this origin. Both are the change somebody makes by "the interaction
-// cookies are None, let us be consistent", and consistency is the wrong word here.
-//
-// **THE POLICY IS ASSERTED RATHER THAN INFERRED BECAUSE NO TEST CAN REPRODUCE THE
-// FAILURE.** A test's cookie jar is a map of strings and does not implement
-// SameSite at all: every flow in this file completes with the interaction cookies
-// set to `Lax`, and a suite that only drove flows would be green on a login form
-// no browser can submit. The red proof is that `Lax` makes these two assertions
-// fail and leaves every other test in the package green. That is the whole reason
-// this test exists and it is why it is four assertions rather than none.
 func TestTheInteractionCookiesAreNoneAndTheFlowAndSessionCookiesAreNot(t *testing.T) {
 	t.Parallel()
 
@@ -885,8 +712,6 @@ func TestTheInteractionCookiesAreNoneAndTheFlowAndSessionCookiesAreNot(t *testin
 	_, challenge := codeVerifier(t)
 	loginURL := f.authorize(t, client, challenge, "state-cookies", "nonce-cookies", nil)
 
-	// The flow cookie is written by the redirect off /oidc/authorize, which
-	// f.authorize already drove; re-drive it so the recorder under test is ours.
 	authorize := f.do(t, http.MethodGet, oidc.PathAuthorize+"?"+url.Values{
 		"client_id":             []string{client.ClientID},
 		"redirect_uri":          []string{oidcTestRedirect},
@@ -915,9 +740,6 @@ func TestTheInteractionCookiesAreNoneAndTheFlowAndSessionCookiesAreNot(t *testin
 		t.Errorf("the flow cookie is Secure=%t HttpOnly=%t, want both true", flow.Secure, flow.HttpOnly)
 	}
 
-	// The session cookie, read off a REAL login rather than off a copy the fixture
-	// kept: the writer is where the policy lives, and a parsed value three
-	// refactors ago is not the thing being asserted about.
 	login := f.do(t, http.MethodPost, "/v1/session",
 		`{"email":"`+f.email+`","password":"`+oidcTestPassword+`"}`, nil)
 	if login.Code != http.StatusOK {
@@ -934,7 +756,6 @@ func TestTheInteractionCookiesAreNoneAndTheFlowAndSessionCookiesAreNot(t *testin
 			"survive a cross-site POST.", session.SameSite)
 	}
 
-	// The two that DO need to survive one.
 	f.signOut()
 	form := f.do(t, http.MethodGet, loginURL, "", nil)
 	mustRedirectToLoginUI(t, form)
@@ -962,19 +783,12 @@ func TestTheInteractionCookiesAreNoneAndTheFlowAndSessionCookiesAreNot(t *testin
 	}
 }
 
-// The scope set is closed, and a product asking for something identity cannot
-// produce gets a 400 naming it rather than a token with the field quietly
-// missing. The library's own validator deletes an unrecognized scope and carries
-// on, which is the failure this pre-check exists to stop.
 func TestOIDCUnknownScope(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name  string
 		scope string
-		// want is matched against the DECODED detail. The raw body JSON-escapes
-		// the quotes around the offending scope, so a substring check against it
-		// would be asserting on the encoder.
 		want string
 	}{
 		{name: "a standard scope identity does not implement", scope: "openid phone", want: `unknown scope "phone"`},
@@ -1013,7 +827,6 @@ func TestOIDCUnknownScope(t *testing.T) {
 			if rec.Header().Get("Content-Type") != "application/problem+json" {
 				t.Errorf("Content-Type = %q, want application/problem+json", rec.Header().Get("Content-Type"))
 			}
-			// The problem envelope's own shape, not just a 400.
 			p := decodeProblem(t, rec.ResponseRecorder)
 			if !strings.Contains(p.Detail, tt.want) {
 				t.Errorf("detail = %q, want it to mention %q", p.Detail, tt.want)
@@ -1034,16 +847,11 @@ func TestOIDCUnknownScope(t *testing.T) {
 	}
 }
 
-// A scope the CLIENT registered is granted; one it did not is not, even if the
-// authorization request asks for it. Otherwise a client could widen its own
-// permissions at the authorize endpoint, and the registration would be
-// decorative.
 func TestOIDCAcceptedScopeIsClippedToTheRegistration(t *testing.T) {
 	t.Parallel()
 
 	f := newOIDCFixture(t)
 
-	// Register with email only.
 	body := fmt.Sprintf(`{"name":"Anytalk","redirect_uris":[%q],"grant_types":["authorization_code"],`+
 		`"scopes":["openid","email"]}`, oidcTestRedirect)
 	rec := f.do(t, http.MethodPost, "/v1/accounts/"+f.account.String()+"/oidc-clients", body, nil)
@@ -1066,8 +874,6 @@ func TestOIDCAcceptedScopeIsClippedToTheRegistration(t *testing.T) {
 
 	var body2 map[string]any
 	mustJSON(t, tokens.Body.Bytes(), &body2)
-	// The authorization request asked for accounts; the registration does not
-	// have it, so the token must not carry the claim.
 	idToken, _ := body2["id_token"].(string)
 	claims := f.verify(t, idToken)
 	if _, present := claims[oidc.ClaimAccounts]; present {
@@ -1078,9 +884,6 @@ func TestOIDCAcceptedScopeIsClippedToTheRegistration(t *testing.T) {
 	}
 }
 
-// The protocol parameters this provider does not implement are refused rather
-// than ignored. A product that asked for prompt=login and got a silent sign-in
-// has been told the session was re-established when it was not.
 func TestOIDCUnimplementedParametersAreRefused(t *testing.T) {
 	t.Parallel()
 
@@ -1139,12 +942,6 @@ func TestOIDCUnimplementedParametersAreRefused(t *testing.T) {
 	}
 }
 
-// prompt=none is the one interactive-free flow this provider gets right, and the
-// answer is the specified one: an error REDIRECTED to the client's registered
-// redirect_uri, because RFC 6749 §4.1.2.1 says an authorization failure after a
-// valid redirect_uri is reported to the client and not rendered here. Rendering
-// it would put a anywaye error page on a URL the client owns, and the client
-// would never learn why.
 func TestOIDCPromptNoneIsLoginRequired(t *testing.T) {
 	t.Parallel()
 
@@ -1184,8 +981,6 @@ func TestOIDCPromptNoneIsLoginRequired(t *testing.T) {
 	}
 }
 
-// The two well-known documents and the key set, fetched by a client before it has
-// authenticated anything.
 func TestOIDCWellKnownDocuments(t *testing.T) {
 	t.Parallel()
 
@@ -1244,9 +1039,6 @@ func TestOIDCWellKnownDocuments(t *testing.T) {
 	})
 }
 
-// The endpoints this service does not serve are absent from the document, and a
-// request to one is a 404 with this service's own problem envelope rather than a
-// hang or a bare text response.
 func TestOIDCUnmountedEndpointsAre404(t *testing.T) {
 	t.Parallel()
 
@@ -1264,9 +1056,6 @@ func TestOIDCUnmountedEndpointsAre404(t *testing.T) {
 	}
 }
 
-// A user who already has a session skips the form. That is what makes signing in
-// to a second product not require typing the same password again, and it is why
-// the login page reads the session rather than demanding credentials.
 func TestOIDCLoginSkipsTheFormForASignedInUser(t *testing.T) {
 	t.Parallel()
 
@@ -1276,8 +1065,6 @@ func TestOIDCLoginSkipsTheFormForASignedInUser(t *testing.T) {
 	verifier, challenge := codeVerifier(t)
 	loginURL := f.authorize(t, client, challenge, "state-silent", "nonce-silent", nil)
 
-	// The fixture's jar already holds the owner's session, so this GET is a
-	// signed-in user arriving at the login page.
 	rec := f.do(t, http.MethodGet, loginURL, "", nil)
 	if rec.Code != http.StatusFound {
 		t.Fatalf("GET the login page while signed in = %d, want 302 straight to the client; body: %s", rec.Code, rec.Body)
@@ -1295,9 +1082,6 @@ func TestOIDCLoginSkipsTheFormForASignedInUser(t *testing.T) {
 	}
 }
 
-// The nonce is the client's own replay defense and the provider's obligation to
-// echo it. A token without it, or with somebody else's, is a token a client
-// cannot safely accept.
 func TestOIDCNonceIsEchoedUnchanged(t *testing.T) {
 	t.Parallel()
 
@@ -1323,9 +1107,6 @@ func TestOIDCNonceIsEchoedUnchanged(t *testing.T) {
 	}
 }
 
-// The authorization code is single-use AND bound to the verifier that asked for
-// it. A captured code with the wrong verifier is the other half of PKCE and it
-// has to fail.
 func TestOIDCWrongCodeVerifierIsRefused(t *testing.T) {
 	t.Parallel()
 
@@ -1347,10 +1128,6 @@ func TestOIDCWrongCodeVerifierIsRefused(t *testing.T) {
 	}
 }
 
-// A login form submitted with no credentials is a 422 naming the fields, and it
-// does not run an argon2id verification: there is nothing to check, and a
-// memory-hard hash on an empty password would cost a real attacker's nothing and
-// a legitimate user's page load.
 func TestOIDCLoginWithNoCredentials(t *testing.T) {
 	t.Parallel()
 
@@ -1376,34 +1153,16 @@ func TestOIDCLoginWithNoCredentials(t *testing.T) {
 	req.Header.Set("Cookie", jar.header())
 
 	rec := newResponse(serveRecorder(f.handler, req))
-	// A refusal the login UI can render, not a 422 the user sees as a raw JSON
-	// document on an origin nobody styled. The 422 was never the point: it was the
-	// answer to a form submission, and the form now lives somewhere that reads
-	// `error` rather than `errors[]`.
 	mustRedirectToLoginUI(t, rec)
 	query := interactionParams(t, rec)
 	if got := query.Get(oidc.LoginParamError); got != oidc.LoginErrorMissingCredentials {
 		t.Errorf("%s = %q, want %q", oidc.LoginParamError, got, oidc.LoginErrorMissingCredentials)
 	}
-	// AND the property the 422 was actually protecting: an empty password is not
-	// verified. A refusal that hashed "" would cost a memory-hard hash to learn
-	// that a form was submitted blank, and would be observable as a slow response.
 	if cookie := cookieNamed(rec.ResponseRecorder, SessionCookieName); cookie != nil && cookie.Value != "" {
 		t.Error("an empty form produced a session")
 	}
 }
 
-// A wrong password on the login interaction is the same answer as an unknown
-// address, and one sentence. The sign-in form is the most attractive enumeration
-// oracle on the platform: it is unauthenticated, it takes an email, and it is the
-// first thing an attacker types somebody else's address into.
-//
-// THE TRANSPORT CHANGED AND THE PROPERTY DID NOT. This used to compare two 401
-// problem documents' `detail`; it now compares two redirects' `error` and
-// `error_detail`, plus the STATUS, because a status that differed between the two
-// would be an oracle in the response line where neither body nor Location is
-// looked at. The status is compared because the old test compared it too, and a
-// status is a difference a caller can see without reading anything.
 func TestOIDCLoginDoesNotEnumerateAccounts(t *testing.T) {
 	t.Parallel()
 
@@ -1476,9 +1235,6 @@ func TestOIDCLoginDoesNotEnumerateAccounts(t *testing.T) {
 	}
 }
 
-// An authorization request id that never existed, and one that has expired, are
-// the same 404. The id arrives in a URL, so distinguishing them would make it a
-// probe for which authorizations are in flight.
 func TestOIDCLoginWithAnUnknownRequestIs404(t *testing.T) {
 	t.Parallel()
 
@@ -1495,9 +1251,6 @@ func TestOIDCLoginWithAnUnknownRequestIs404(t *testing.T) {
 	}
 }
 
-// The discovery document, over the wire, from the handler the process serves. The
-// provider package's tests assert the same fields on the object; this one proves
-// the route is mounted and the bytes are JSON.
 func TestOIDCDiscoveryOverHTTP(t *testing.T) {
 	t.Parallel()
 
@@ -1519,9 +1272,6 @@ func TestOIDCDiscoveryOverHTTP(t *testing.T) {
 	}
 }
 
-// A request for a route that does not exist is this service's problem document,
-// not the library's. The library's router is mounted path by path precisely so
-// that this stays true, and this is the test that holds the line.
 func TestOIDCUnknownPathIsTheAnywayeProblemEnvelope(t *testing.T) {
 	t.Parallel()
 
@@ -1539,26 +1289,13 @@ func TestOIDCUnknownPathIsTheAnywayeProblemEnvelope(t *testing.T) {
 	}
 }
 
-// The login interaction must not leak the session, and the refusal must carry
-// its reason to the page rather than dropping it.
-//
-// This is the case the brief names, so it is worth being precise about what the
-// old test covered and what this one does. The old one asserted four headers on a
-// rendered page; three of them are gone with the page, and the fourth — plus the
-// refusal's own shape — is what is left to assert. The headers it really needed to
-// protect are asserted on the redirect in
-// TestTheLoginRedirectCarriesNoBodyAndTheTwoHeadersThatEarnedTheirPlace.
 func TestTheLoginRefusalCarriesItsReasonToTheLoginUI(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name string
-		// form is what the login UI posts back on a second attempt.
 		form url.Values
-		// wantCode is the interaction code the login UI must be able to switch on.
 		wantCode string
-		// wantStep is the step the browser must land back on, because a refusal that
-		// sends a code stepper back to the password box is a lost sign-in.
 		wantStep string
 	}{
 		{
@@ -1608,13 +1345,9 @@ func TestTheLoginRefusalCarriesItsReasonToTheLoginUI(t *testing.T) {
 			if detail := query.Get(oidc.LoginParamErrorDetail); detail == "" {
 				t.Error("the refusal carried no sentence to show a person")
 			}
-			// A fresh state, because the one that was posted has been spent, and a
-			// form rendered with a spent state is a form that cannot be submitted
-			// again.
 			if got, sealed := query.Get(oidc.LoginParamState), post.Get("state"); got == "" || got == sealed {
 				t.Errorf("%s = %q, want a fresh one (%q was just spent)", oidc.LoginParamState, got, sealed)
 			}
-			// And the two things a refusal must NEVER carry.
 			if got := mustCodeIfPresent(rec.Header().Get("Location")); got != "" {
 				t.Errorf("the refusal minted an authorization code: %s", got)
 			}
@@ -1625,15 +1358,8 @@ func TestTheLoginRefusalCarriesItsReasonToTheLoginUI(t *testing.T) {
 	}
 }
 
-// f0Email is a syntactically valid address that belongs to nobody in any
-// database, for a table built before the fixture exists. It cannot be a
-// registered account, so the "a wrong password" case is testing the password and
-// not the address.
 const f0Email = "nobody-at-all@example.com"
 
-// A registration is announced in the same transaction as the row, and a
-// revocation in the same transaction as the bulk token revocation. An outbox row
-// that outlives its transaction would announce a credential that does not exist.
 func TestOIDCRegistrationEvents(t *testing.T) {
 	t.Parallel()
 
@@ -1658,7 +1384,6 @@ func TestOIDCRegistrationEvents(t *testing.T) {
 		t.Fatalf("a registration wrote %d created events, want 1", after)
 	}
 
-	// The payload carries what a consumer auditing trust needs, and no credential.
 	var envelope []byte
 	if err := f.pool.QueryRow(t.Context(),
 		`SELECT envelope FROM outbox_events WHERE type = $1`, "identity.oidc_client.created").Scan(&envelope); err != nil {
@@ -1682,9 +1407,6 @@ func TestOIDCRegistrationEvents(t *testing.T) {
 	}
 }
 
-// A second revocation is a 409 and not a 204. An operator who clicks twice should
-// be told the credential is already dead rather than believing they had just
-// destroyed a second one.
 func TestOIDCRevokingTwiceIs409(t *testing.T) {
 	t.Parallel()
 
@@ -1705,9 +1427,6 @@ func TestOIDCRevokingTwiceIs409(t *testing.T) {
 	}
 }
 
-// The registration response is the only place the secret exists. It is not
-// stored, it is not in the list, and it is not in the detail view — a client that
-// loses it registers again, which is the same rule a session token follows.
 func TestOIDCClientSecretIsReturnedOnce(t *testing.T) {
 	t.Parallel()
 
@@ -1735,7 +1454,6 @@ func TestOIDCClientSecretIsReturnedOnce(t *testing.T) {
 		}
 	}
 
-	// And it is in the row only as a digest.
 	var digest string
 	if err := f.pool.QueryRow(t.Context(),
 		`SELECT secret_digest FROM oidc_clients WHERE id = $1`, mustParseID(t, client.ID)).Scan(&digest); err != nil {
@@ -1749,8 +1467,6 @@ func TestOIDCClientSecretIsReturnedOnce(t *testing.T) {
 	}
 }
 
-// A registration an operator cannot see is a 404, not a 403, and it is the same
-// 404 as one that does not exist.
 func TestOIDCClientIsScopedToItsAccount(t *testing.T) {
 	t.Parallel()
 
@@ -1773,9 +1489,6 @@ func TestOIDCClientIsScopedToItsAccount(t *testing.T) {
 	}
 }
 
-// The registration rules, through the route. A product that configures one of
-// these wrong finds out at registration time with a field name, not at 3am from a
-// user whose sign-in silently does not work.
 func TestOIDCClientRegistrationValidation(t *testing.T) {
 	t.Parallel()
 
@@ -1793,8 +1506,6 @@ func TestOIDCClientRegistrationValidation(t *testing.T) {
 		{
 			name: "no redirect URIs",
 			body: `{"name":"Anytalk","redirect_uris":[],"grant_types":["authorization_code"],"scopes":["openid"]}`,
-			// An empty allow-list is not a client with no origins; it is a client
-			// that can be sent anywhere, and the difference matters.
 			wantField: "redirect_uris",
 		},
 		{
@@ -1810,17 +1521,6 @@ func TestOIDCClientRegistrationValidation(t *testing.T) {
 			wantField: "redirect_uris",
 		},
 		{
-			// TG-C2 changed the payload here and the reason is on the record:
-			// this row was `refresh_token`, refused at 422 because there was
-			// no refresh token store. That store now exists and the grant is
-			// mounted, so a registration asking for it is a 201 — and the
-			// row's PURPOSE, which was to prove an unimplemented grant is
-			// refused at the field rather than at the token endpoint, is
-			// unchanged. `client_credentials` is the grant that is still
-			// refused, and it is refused for the reason it always was: there
-			// is no service identity on this platform to authenticate as.
-			// internal/oidc/refreshtoken_test.go and the token-endpoint rows
-			// are what prove the grant itself now works.
 			name: "a grant this service does not implement",
 			body: fmt.Sprintf(`{"name":"Anytalk","redirect_uris":[%q],"grant_types":["client_credentials"],`+
 				`"scopes":["openid"]}`, oidcTestRedirect),
@@ -1865,8 +1565,6 @@ func TestOIDCClientRegistrationValidation(t *testing.T) {
 	}
 }
 
-// The registration response's shape, asserted field by field. A response that
-// returns 201 with the wrong body is a failure, not a pass.
 func TestOIDCClientRegistrationResponse(t *testing.T) {
 	t.Parallel()
 
@@ -1901,7 +1599,6 @@ func TestOIDCClientRegistrationResponse(t *testing.T) {
 	}
 }
 
-// An empty list is [] and not null, for the same reason the account list is.
 func TestOIDCClientListIsAnArrayNotNull(t *testing.T) {
 	t.Parallel()
 
@@ -1916,11 +1613,7 @@ func TestOIDCClientListIsAnArrayNotNull(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// helpers the cases above share
-// ---------------------------------------------------------------------------
 
-// revoke revokes a registration through the real route, as the owner.
 func (f *oidcFixture) revoke(t *testing.T, client registered) {
 	t.Helper()
 
@@ -1930,8 +1623,6 @@ func (f *oidcFixture) revoke(t *testing.T, client registered) {
 	}
 }
 
-// otherAccount creates a second account owned by a second user, and returns the
-// account and that user's session token.
 func (f *oidcFixture) otherAccount(t *testing.T) (id.UUID, string) {
 	t.Helper()
 
@@ -1958,8 +1649,6 @@ func (f *oidcFixture) otherAccount(t *testing.T) (id.UUID, string) {
 	return created2, session.Token
 }
 
-// doAs issues a request as a specific bearer token, ignoring the jar. Used for
-// the cross-account cases, where using the owner's session would be the point.
 func (f *oidcFixture) doAs(t *testing.T, token, method, target, body string) *oidcResponse {
 	t.Helper()
 

@@ -16,37 +16,12 @@ import (
 	"github.com/anywaye/identity/internal/platform/id"
 )
 
-// THE LOGIC OF ONE DELETION, WITH NO POSTGRES AND NO POLICIES.
-//
-// The properties asserted here are service logic — the refusal, the order, the
-// event — and none of them is a property of the schema. The schema's half, which
-// is the half that actually decides whether a user row CAN go, is in
-// deletion_rls_test.go against the real policies; the HTTP half is in
-// internal/httpapi. Three files because a test that runs against
-// `dbtest.Schema` can prove none of the other two: those clones carry no row-level
-// security and no foreign key to `users` survives in the shape production has
-// (dbtest.go says so in its own words), so a deletion tested here would pass
-// against tables that permit what production refuses.
 
-// # THE HARNESS
-//
-// A Service is four collaborators and a clock, and three of the four are
-// recorded rather than real. That is the same shape accounts' harness uses and
-// for the same reason: the questions in this file are about WHICH writes happen
-// and IN WHAT ORDER, and a real database cannot answer a question about a
-// transaction that rolled back — which is the answer half of them needs.
 
 type fakeAccounts struct {
-	// personal is what the user owns that dies with them.
 	personal []accounts.Account
-	// solelyOwned is what refuses the deletion. It is the field the refusal
-	// test programs and every other test leaves empty.
 	solelyOwned []accounts.Account
-	// deletedAccounts records every account the service removed, IN ORDER, so a
-	// test can assert the personal account went and nobody else's did.
 	deletedAccounts []id.UUID
-	// deleteErr fails the account removal, to prove the user row is not removed
-	// after it.
 	deleteErr error
 }
 
@@ -68,8 +43,6 @@ func (s *fakeAccounts) Delete(_ context.Context, _ db.Querier, accountID id.UUID
 
 type fakeUsers struct {
 	deleted []id.UUID
-	// byAccount is the deletion keyed by account, so a test can assert the
-	// personal account's row went inside the transaction and no other did.
 	byAccount map[id.UUID]id.UUID
 	err       error
 }
@@ -134,19 +107,6 @@ func newHarness(t *testing.T) *harness {
 	return h
 }
 
-// discardQuerier is a db.Querier that answers nothing.
-//
-// IT EXISTS BECAUSE `tenancy.BeginUser` EXECUTES, so a harness that passed a nil
-// Querier panicked on the first statement rather than failing a test. That panic
-// was a useful accident: it says the service really does open the transaction
-// with `anywaye.begin_user`, which is the premise `deletion_rls_test.go` checks
-// against the real policies — and a harness that answered `begin_user` with an
-// error instead would have passed that same test for the wrong reason.
-//
-// Absorbing the statement is deliberate rather than asserting on it. What
-// `begin_user` does is tenancy's business and is tested there; what this package
-// needs to know is that it is CALLED, and the boundary file is where that is
-// asked against policies that actually enforce it.
 type discardQuerier struct{}
 
 func (discardQuerier) Exec(context.Context, string, ...any) (pgconn.CommandTag, error) {
@@ -161,9 +121,6 @@ func (h *harness) personalAccount() accounts.Account {
 	return accounts.Account{ID: id.MustNew(), Name: "kaka"}
 }
 
-// TestTheHappyPathIsFourWritesInOneTransaction is the whole packet in one test:
-// the credentials go, the personal account goes, the user row goes, and the event
-// is written — and the event is written by the same call, not after it.
 func TestTheHappyPathIsFourWritesInOneTransaction(t *testing.T) {
 	t.Parallel()
 
@@ -196,13 +153,6 @@ func TestTheHappyPathIsFourWritesInOneTransaction(t *testing.T) {
 	}
 }
 
-// TestARefusalNamesEveryAccountTheUserSolelyOwns is the decision this packet
-// makes, and it is a refusal rather than a cascade for the reason in the report:
-// deleting a team account takes the api keys, the OIDC registrations and the
-// memberships of OTHER people with it.
-//
-// It asserts the accounts are NAMED rather than counted, because a count is what
-// a caller reads when they cannot find the thing that is blocking them.
 func TestARefusalNamesEveryAccountTheUserSolelyOwns(t *testing.T) {
 	t.Parallel()
 
@@ -240,13 +190,6 @@ func TestARefusalNamesEveryAccountTheUserSolelyOwns(t *testing.T) {
 	}
 }
 
-// TestATeamAccountTheUserOnlyBelongsToIsNeverQueriedForOwnership is a property of
-// the ORDER rather than of the refusal: the refusal reads solely-owned accounts
-// BEFORE anything is removed, so a team account with other members cannot become
-// one this transaction emptied.
-//
-// The fake returns an error from any query after the first, so a service that
-// asked again would see a failure rather than a convenient empty answer.
 func TestATeamAccountTheUserOnlyBelongsToIsNeverQueriedForOwnership(t *testing.T) {
 	t.Parallel()
 
@@ -256,7 +199,6 @@ func TestATeamAccountTheUserOnlyBelongsToIsNeverQueriedForOwnership(t *testing.T
 	h.acct = &fakeAccounts{
 		deleteErr: nil,
 	}
-	// Wrap the ownership read so a SECOND call is an error, not an empty list.
 	h.svc = NewService(
 		uowFunc(func(ctx context.Context, fn func(context.Context, db.Querier) error) error {
 			return fn(ctx, discardQuerier{})
@@ -276,8 +218,6 @@ func TestATeamAccountTheUserOnlyBelongsToIsNeverQueriedForOwnership(t *testing.T
 	}
 }
 
-// onceThenFail answers the ownership read once and then refuses, so a service
-// that re-asks cannot pass by being handed an empty list.
 type onceThenFail struct {
 	inner *fakeAccounts
 	asked *int
@@ -299,10 +239,6 @@ func (s *onceThenFail) Delete(ctx context.Context, q db.Querier, accountID id.UU
 	return s.inner.Delete(ctx, q, accountID)
 }
 
-// TestAFailedAccountRemovalLeavesTheUserRow is the transaction being a
-// transaction. A deletion that removed the credentials, then failed on the
-// account, then removed the user anyway would be the half-applied state this
-// packet exists to prevent — and the one the route would still answer 204 for.
 func TestAFailedAccountRemovalLeavesTheUserRow(t *testing.T) {
 	t.Parallel()
 
@@ -318,7 +254,6 @@ func TestAFailedAccountRemovalLeavesTheUserRow(t *testing.T) {
 	}
 }
 
-// uowFunc adapts a closure to the UnitOfWork interface.
 type uowFunc func(context.Context, func(context.Context, db.Querier) error) error
 
 func (f uowFunc) Do(ctx context.Context, fn func(context.Context, db.Querier) error) error {

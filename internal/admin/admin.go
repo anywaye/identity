@@ -1,55 +1,3 @@
-// Package admin is the admin surface: the operations an account administrator
-// may perform on their own account, and the immutable audit trail every one of
-// them writes.
-//
-// # THE PRIVILEGE BOUNDARY, IN ONE SENTENCE
-//
-// An account admin may revoke pending invitations to their own account and read
-// that account's admin audit log — authority over other people's pending access,
-// and nothing else. A member's only self-service is their own session and their
-// own credentials, and the rest of this service's authorization is unchanged by
-// anything in this package.
-//
-// It is one sentence and the code says exactly it. There are two admin
-// operations and one admin read, and this package adds no third: a capability
-// that is not in that sentence has no route, so the sentence cannot drift from
-// the surface without a test failing rather than a reader noticing.
-//
-// # WHY THE OPERATIONS AND THE AUDIT TRAIL ARE ONE PACKAGE
-//
-// Because they cannot be separated. A mutation that commits and an audit row
-// that does not is a mutation nobody can account for, and the only way that is
-// impossible rather than merely unlikely is for there to be no way to run one
-// without the other. Every operation on this Service goes through Audited, which
-// takes the mutation as a callback and runs it inside the transaction that also
-// writes the record. There is no exported method that mutates without recording,
-// so "somebody added an admin action and forgot the audit row" is not a mistake
-// this package's shape permits — it is a mistake that needs a new exported
-// method to make, which a review sees.
-//
-// # WHY THE RECORD CANNOT BE EDITED, INCLUDING BY THE ADMIN WHO WROTE IT
-//
-// Three things, in the order they would otherwise be questioned:
-//
-//  1. No route mutates it. GET is the only method the router mounts on the audit
-//     path, and a test walks the router to hold that.
-//  2. No method on this Service updates or deletes it. AuditStore has Append and
-//     List and nothing else, so there is no function to call.
-//  3. The DATABASE refuses UPDATE and DELETE, with a BEFORE UPDATE OR DELETE
-//     trigger (migrations/00012). This is the one that actually settles it,
-//     because the first two only describe this codebase: a repair script, an
-//     operator with psql, or a future packet all bypass Go entirely, and the
-//     requirement is that the record survives the admin whose action is in it.
-//
-// # WHAT THIS PACKAGE CANNOT HOLD
-//
-// A credential value. Actor carries the api key's row id and its owner's user
-// id, and there is no field anywhere in this package that a token could be
-// written into. That is deliberate and structural rather than a convention:
-// apikeys.Key has a TokenDigest field, a handler holds one, and an audit log is
-// exactly the place a `%+v` of it would end up. TestNothingOnThisSurfaceCanRecordAToken
-// walks the types that reach the table and fails if any of them grows a field
-// that could hold a value.
 package admin
 
 import (
@@ -76,17 +24,8 @@ import (
 type Action string
 
 const (
-	// ActionInvitationRevoked is one pending invitation, revoked by id.
 	ActionInvitationRevoked Action = "invitation.revoked"
 
-	// ActionInvitationsRevoked is the bulk route: many pending invitations, in
-	// one request, in one transaction, in one row.
-	//
-	// A SEPARATE ACTION AND NOT A REPEATED ONE, because the two are different
-	// events. One invitation revoked is a decision about a person; a hundred at
-	// once is a decision about the account, it needs a higher minimum role, and
-	// an operator reading the trail afterwards is asking "was that one, or was
-	// that all of them". Collapsing them into one name would lose the answer.
 	ActionInvitationsRevoked Action = "invitations.revoked"
 )
 
@@ -110,108 +49,31 @@ func validateAction(action string) error {
 	return fmt.Errorf("%w: %q", ErrUnknownAction, action)
 }
 
-// Errors the operations return.
 var (
-	// ErrInvitationNotRevocable is an invitation that cannot be revoked: it is
-	// gone, it belongs to another account, it has already been redeemed, or it
-	// has already been revoked.
-	//
-	// ONE ERROR FOR ALL FOUR, and the reason is the same one accountIDFrom's is:
-	// this is 404, and 404 is the answer for every one of them. A caller who
-	// could tell "already redeemed" from "belongs to somebody else" would be
-	// able to probe which invitation ids exist in accounts they are not a member
-	// of, which is the same tenant-enumeration oracle the account routes refuse
-	// to build.
 	ErrInvitationNotRevocable = errors.New("no revocable invitation with that id in this account")
 
-	// ErrNoInvitations is a bulk request naming nothing. It is refused rather
-	// than treated as a no-op, because a request that revoked nothing and
-	// reported success is indistinguishable from one that revoked everything and
-	// under-reported.
 	ErrNoInvitations = errors.New("a bulk revocation must name at least one invitation")
 
-	// ErrTooManyInvitations is a bulk request above MaxBulkInvitationIDs. Refused
-	// and not clamped: a caller that asked for a thousand and was given fifty has
-	// been told a lie about what happened, and the audit row would record the lie.
 	ErrTooManyInvitations = errors.New("too many invitation ids in one bulk revocation")
 
-	// ErrBadCursor is a page token this build did not issue — truncated,
-	// hand-typed, or from a different encoding.
-	//
-	// IT IS REFUSED AND NOT IGNORED. A cursor that cannot be decoded could be
-	// answered with the first page, and to an operator paging through a trail
-	// that looks exactly like a gap: they would conclude the records are missing
-	// rather than that their token was wrong. On an audit trail those are very
-	// different conclusions, and only one of them is usually true.
 	ErrBadCursor = errors.New("the page cursor is not one this service issued")
 
-	// ErrBadLimit is a page size that is not usable: negative, or above the
-	// ceiling.
-	//
-	// ZERO IS NOT THIS ERROR. Zero is how a request says "no limit named", and it
-	// becomes DefaultAuditLogLimit — the same answer a client gets by omitting the
-	// parameter, which is what a generated client does. Refusing zero would make
-	// the zero value of a Go struct's field un-sendable, and a bound that rejects
-	// the default is a bound that a client works around by sending 1.
 	ErrBadLimit = errors.New("page size is outside the range the audit trail accepts")
 )
 
-// The bounds. Every list is bounded and every bulk request is bounded, and both
-// are enforced rather than documented — an admin surface is the last place a
-// denial of service with a clean audit trail belongs.
 const (
-	// DefaultAuditLogLimit is a page of the trail with no limit named.
 	DefaultAuditLogLimit = 25
 
-	// MaxAuditLogLimit is the most rows one page may return.
-	//
-	// A hundred, and not "unbounded": the trail is read by an operator during an
-	// incident and a page larger than a screenful helps nobody, while a caller who
-	// can ask for a million rows at a time is a caller who can hold a connection
-	// open on this service. The cursor is the way to read more, and a cursor
-	// cannot be expensive.
 	MaxAuditLogLimit = 100
 
-	// MaxBulkInvitationIDs is the most invitations one bulk revocation may name.
-	//
-	// Fifty. A bulk revocation that names more than this is not an incident
-	// response, it is a migration, and a migration is several requests with a
-	// person watching — which is the entire reason the bulk route exists a
-	// different shape from the single one.
 	MaxBulkInvitationIDs = 50
 
-	// maxTargetLength bounds Entry.Target, and matches the CHECK on the column.
-	// Two places rather than one because the column's constraint is the database
-	// and this is the request, and a value that passes the request check but
-	// fails the column CHECK is a 500 on a well-formed request.
 	maxTargetLength = 64
 )
 
 // Page is one page of the audit trail, as the route's query string spells it.
 type Page struct {
-	// Limit is the page size. Zero means DefaultAuditLogLimit; a value outside
-	// 1..MaxAuditLogLimit is refused rather than clamped.
 	Limit int
-	// Before is an OPAQUE keyset cursor naming the last row of the previous page.
-	// Empty means "from the newest".
-	//
-	// It is opaque and it carries BOTH the instant and the row's id, and the
-	// second half is not decoration. The first version of this query paged on
-	// `occurred_at < $before` alone, and the test for it failed: two records
-	// sharing an instant — which the service's clock makes entirely ordinary,
-	// since it is a timestamp and not a sequence — put one of them on each side
-	// of the boundary and it was never returned at all. A cursor that is a
-	// timestamp is a cursor that drops rows.
-	//
-	// It is opaque rather than two query parameters because a client handed
-	// `?occurred_at=…&id=…` will eventually send one without the other, and each
-	// half alone is the bug above. A single value the client passes back verbatim
-	// is the only shape where that cannot happen.
-	//
-	// And it is a keyset and not an OFFSET, which is the reason this surface
-	// needs one at all: an offset is wrong the moment a row is appended between
-	// two requests, and on this surface a row is appended by somebody performing
-	// an admin action while somebody else pages through the record of them.
 	Before string
 }
 
@@ -270,12 +132,6 @@ func (p Page) Cursor() (time.Time, id.UUID, error) {
 	return parsed, uuid, nil
 }
 
-// encodeCursor renders the keyset pair as the opaque token a client passes back.
-//
-// RawURLEncoding and not StdEncoding: the token goes in a query string, and the
-// padded form contains `=` and `+` that a client would helpfully re-encode on
-// the way out, so the round trip would fail for reasons that look like a
-// corrupted token.
 func encodeCursor(occurredAt time.Time, rowID id.UUID) string {
 	return base64.RawURLEncoding.EncodeToString(
 		[]byte(occurredAt.UTC().Format(time.RFC3339Nano) + "|" + rowID.String()))
@@ -288,25 +144,13 @@ func encodeCursor(occurredAt time.Time, rowID id.UUID) string {
 // table an operator reads during an incident; its row id is what an operator
 // needs anyway, because that is the id they revoke by.
 type Actor struct {
-	// UserID is the human the token was minted for.
 	UserID id.UUID
-	// KeyID is WHICH token. "Somebody in the account" is not an answer an
-	// incident review can use.
-	//
-	// REQUIRED, and the reason is that this surface is token-only: a session is a
-	// browser credential and the HTTP layer refuses one before it gets here, so
-	// every action on this surface was performed by a machine credential. An
-	// action with no key id is an action nobody can attribute to a credential.
 	KeyID id.UUID
-	// TraceID joins the audit row to the request's log line. Never a token, and
-	// the reason is the same one: a trace id is safe to print in both places.
 	TraceID string
 }
 
 func (a Actor) validate() error {
 	if a.UserID.IsZero() || a.KeyID.IsZero() {
-		// A zero actor means the row would name nobody, and a record that names
-		// nobody is a record of an action with no responsible party.
 		return errors.New("an admin action must name both the user and the api key that performed it")
 	}
 	return nil
@@ -318,22 +162,8 @@ type Entry struct {
 	AccountID id.UUID
 	Action    Action
 	Actor     Actor
-	// Target is a short label for what was acted on: an invitation id for the
-	// single operation, the collection's own name for the bulk one. It is a
-	// label and not a list, so one row stays one row however large the request
-	// was.
 	Target string
-	// Affected is how many rows the action changed, and it is set by Audited from
-	// the mutation's own return rather than by the caller who builds the Entry.
-	//
-	// IT IS A FIELD RATHER THAN AN ARGUMENT TO Append because the number is not
-	// knowable until after the mutation has run, and the alternative — passing it
-	// to Append separately — would let a caller write a record claiming a count
-	// the mutation never reported. There is one way to set it and it is the
-	// truthful one.
 	Affected int
-	// OccurredAt is the service's clock, passed in so the row and the request that
-	// made it agree and only one of the two is under test control.
 	OccurredAt time.Time
 }
 
@@ -348,13 +178,6 @@ type Record struct {
 	Affected    int
 	TraceID     string
 	OccurredAt  time.Time
-	// Next is the opaque cursor for the page AFTER this one, empty on the last
-	// page of the trail.
-	//
-	// IT IS A FIELD AND NOT SOMETHING THE CALLER BUILDS, because a caller that
-	// forgot to thread it back would hand an operator a first page and no way to
-	// ask for a second — which reads as "there is nothing after this", the one
-	// answer an operator must never be given about a trail.
 	Next string
 }
 
@@ -406,13 +229,7 @@ type AuditStore interface {
 // failure at the exact statement that matters — the mutation failing is how the
 // "no audit record for an action that did not happen" test is written.
 type InvitationRevoker interface {
-	// RevokePendingInvitation revokes one, and reports how many rows it changed.
-	// Zero is not an error: an invitation that is already revoked changes no rows
-	// and the operation still succeeded.
 	RevokePendingInvitation(ctx context.Context, q db.Querier, accountID, invitationID id.UUID) (int, error)
-	// RevokePendingInvitations revokes many, scoped to the account, and reports
-	// how many rows it changed — which is the number the audit row records, and
-	// the two differ whenever a request names an id that was already revoked.
 	RevokePendingInvitations(ctx context.Context, q db.Querier, accountID id.UUID, ids []id.UUID) (int, error)
 }
 
@@ -422,10 +239,6 @@ type Service struct {
 	store   AuditStore
 	revoker InvitationRevoker
 	clock   clock.Clock
-	// reads is where a page of the trail comes from, and it is a separate querier
-	// from the transaction one. A list is a single statement with no atomicity
-	// requirement, and routing it through a transaction would mean a BEGIN and a
-	// COMMIT for an operator's first request after an incident.
 	reads db.QuerierSource
 }
 
@@ -465,8 +278,6 @@ type Mutation func(ctx context.Context, q db.Querier) (int, error)
 // without the other.
 func (s *Service) Audited(ctx context.Context, e Entry, mutate Mutation) (int, error) {
 	if err := e.validate(); err != nil {
-		// Before the transaction, not inside it. A malformed request should not
-		// open one.
 		return 0, err
 	}
 	if mutate == nil {
@@ -481,23 +292,13 @@ func (s *Service) Audited(ctx context.Context, e Entry, mutate Mutation) (int, e
 		}
 		affected = count
 
-		// The count and the instant are set HERE, after the mutation, rather than
-		// by the caller. Both are facts about what happened rather than about what
-		// was asked for, and setting either before the mutation ran is how a trail
-		// ends up claiming a number nobody measured.
 		e.Affected = count
 		e.OccurredAt = s.clock.Now()
 		rec, err := s.store.Append(ctx, q, e)
 		if err != nil {
-			// Wrapped, and returned, so the transaction rolls back with the audit
-			// failure as its reason. The caller reports a 500 with this trace id and
-			// the mutation is gone.
 			return fmt.Errorf("appending the audit record: %w", err)
 		}
 		if rec.ID.IsZero() {
-			// A store that reports success and hands back no id has written a row
-			// this service cannot name. Treated as a failure, because a record that
-			// cannot be pointed at is not a record anybody will find again.
 			return errors.New("appending the audit record reported success and returned no id")
 		}
 		return nil
@@ -544,8 +345,6 @@ func (s *Service) RevokeInvitation(ctx context.Context, in RevokeInvitationInput
 // RevokeInvitationsInput is many invitations and the admin revoking them.
 type RevokeInvitationsInput struct {
 	AccountID id.UUID
-	// InvitationIDs is the array, and it is bounded on the way in. See
-	// MaxBulkInvitationIDs.
 	InvitationIDs []id.UUID
 	Actor         Actor
 }
@@ -571,10 +370,6 @@ func (s *Service) RevokeInvitations(ctx context.Context, in RevokeInvitationsInp
 		AccountID: in.AccountID,
 		Action:    ActionInvitationsRevoked,
 		Actor:     in.Actor,
-		// The collection's own name rather than the ids, because the ids are
-		// already gone by the time anybody reads this and a list of fifty uuids in
-		// a column bounded to 64 characters would have to be truncated into
-		// something that reads like a different set.
 		Target: "invitation-revocations",
 	}
 	return s.Audited(ctx, entry, func(ctx context.Context, q db.Querier) (int, error) {
@@ -582,7 +377,6 @@ func (s *Service) RevokeInvitations(ctx context.Context, in RevokeInvitationsInp
 	})
 }
 
-// validateBulkIDs refuses an empty or over-sized array and drops duplicates.
 func validateBulkIDs(ids []id.UUID) ([]id.UUID, error) {
 	if len(ids) == 0 {
 		return nil, ErrNoInvitations
@@ -591,10 +385,6 @@ func validateBulkIDs(ids []id.UUID) ([]id.UUID, error) {
 		return nil, fmt.Errorf("%w: %d is over the %d accepted", ErrTooManyInvitations, len(ids), MaxBulkInvitationIDs)
 	}
 
-	// Duplicates are collapsed, and the ceiling is checked against the CALLER'S
-	// count rather than the deduplicated one: a request of five hundred copies of
-	// one id is a request of five hundred things, and it is refused before the
-	// deduplication that would make it look small.
 	seen := make(map[id.UUID]bool, len(ids))
 	out := make([]id.UUID, 0, len(ids))
 	for _, one := range ids {

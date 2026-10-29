@@ -9,14 +9,6 @@ import (
 	"github.com/anywaye/identity/internal/platform/id"
 )
 
-// MIGRATION 00030's TEST, on disabled_test.go's terms: the suite is red on a
-// machine with no database by design, because a test that skipped without
-// TEST_DATABASE_URL would go green and prove nothing.
-//
-// A new row is NOT STAFF, and that is the whole meaning of the default. The
-// assertion is on the value the store hands back rather than on the database
-// directly, because a column that exists and is never scanned is a column
-// whose default nothing depends on.
 func TestANewUserIsNotStaff(t *testing.T) {
 	pool := dbtest.Pool(t)
 	store := NewStore(pool)
@@ -34,10 +26,6 @@ func TestANewUserIsNotStaff(t *testing.T) {
 		t.Error("IsStaff on a fresh row = true, want false — staff is granted, never initial")
 	}
 
-	// Read back through ByID rather than trusting the INSERT's RETURNING: the
-	// read path is a different query with its own column list, and a migration
-	// applied to the table but not to `userColumns` produces a row that is
-	// silently not staff.
 	read, err := store.ByID(ctx, pool, created.ID)
 	if err != nil {
 		t.Fatalf("ByID: %v", err)
@@ -47,9 +35,6 @@ func TestANewUserIsNotStaff(t *testing.T) {
 	}
 }
 
-// SetStaff grants and revokes, and reports a user id this service never
-// issued. Asserted through re-reads, so the test proves the column moved and
-// not just the absence of an error.
 func TestSetStaffGrantsAndRevokes(t *testing.T) {
 	pool := dbtest.Pool(t)
 	store := NewStore(pool)

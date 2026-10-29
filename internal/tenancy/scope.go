@@ -1,55 +1,3 @@
-// Package tenancy is identity's account boundary.
-//
-// Two halves, and they are deliberately in one package because they are one
-// decision:
-//
-//   - scope.go, here: the RUNTIME seam. Where the account a request acts as is
-//     carried, and the one call that hands it to Postgres.
-//   - credential.go: the SECOND runtime seam, for the one lookup that has no
-//     account to predicate on — resolving a presented secret to its row. It is a
-//     separate file rather than two more functions in this one because this file's
-//     whole argument is that there is exactly ONE place that writes
-//     `anywaye.account_id`, and a reader hunting that one place should not have to
-//     decide whether the second statement is part of it.
-//   - the proof beside them: isolation.sql, assertions.txt and tenancy_test.go,
-//     which assert that the substrate in migrations/00016 actually holds.
-//
-// # WHY begin_account IS CALLED HERE AND NOWHERE ELSE
-//
-// kit's templates/database/tenancy/README.md §Adopting step 3 asks for
-// `anywaye.begin_account/1` "once per request, inside your transaction, from
-// whatever already authenticates the request". In this service the thing that
-// already authenticates a request and resolves its account is
-// `requireAccountRole` in internal/httpapi, which is middleware rather than a
-// transaction — and the transaction that has to carry the identity is opened
-// DEEPER, by the use case the handler calls. So the identity travels on the
-// request CONTEXT from the middleware to the transaction, and this file is the
-// seam that turns a context value into the GUC.
-//
-// It is a context value rather than a parameter for one reason: six services
-// open transactions, each behind its own `UnitOfWork` interface declared at the
-// consumer. Threading an account id through every one of those interfaces is a
-// signature change in six packages and a new argument in every use case, and the
-// argument would have to be threaded again by every future caller. The context is
-// already how the HTTP layer hands a request's identity to a handler, so the
-// account joins it there and the transaction picks it up on the way past.
-//
-// # IT IS TRANSACTION-LOCAL, AND THAT IS NOT AN OPTIMISATION
-//
-// `begin_account` is `set_config(..., is_local => true)`. Outside an explicit
-// transaction that expires at the end of the statement that set it, so a caller
-// reaching the database in autocommit reads zero rows. That is why TxRunner below
-// sets it INSIDE the transaction it has already begun, and why a store handed a
-// bare pool cannot be made to see an account at all. It is also why the
-// transaction-local form is the safe one on a pooled connection: a session-level
-// account variable goes back to the pool carrying tenant A's identity and tenant
-// B is handed the connection.
-//
-// # THE ONE PLACE THAT WRITES THIS GUC
-//
-// Every statement that sets `anywaye.account_id` in this service is the one
-// `beginAccount` below, which is why it is not a constant query string a caller
-// can pass around. A second spelling of it is a second place to forget.
 package tenancy
 
 import (
@@ -70,19 +18,8 @@ import (
 // demand different responses.
 var ErrNoIdentity = errors.New("setting the account identity on the transaction")
 
-// beginAccountSQL is kit's seam, called by name rather than written out.
-//
-// It is kit's function, not ours: migrations/00016 applies kit's substrate
-// verbatim and this is the one entry point that substrate declares. A service
-// that hand-rolled the GUC would have two sources of truth for the boundary, and
-// the one that drifts is the one nothing checks.
 const beginAccountSQL = `select anywaye.begin_account($1)`
 
-// accountKey is the context key the account travels on.
-//
-// An unexported struct type rather than a string, because a context key that is
-// a plain string can be forged by any package that guesses the name — and this
-// one decides which tenant's rows a statement can see.
 type accountKey struct{}
 
 // WithAccount returns a context carrying the account a request acts as.
@@ -114,12 +51,6 @@ func AccountFrom(ctx context.Context) (id.UUID, bool) {
 	return account, true
 }
 
-// beginAccount sets the identity on a transaction that is already open.
-//
-// It is deliberately unexported: a store cannot call it, so the identity is set
-// by the transaction boundary and by nothing else. The exported way to get an
-// identity into a transaction is TxRunner, or BeginAccount for the one write that
-// creates the account it acts as.
 func beginAccount(ctx context.Context, q db.Querier, account id.UUID) error {
 	if _, err := q.Exec(ctx, beginAccountSQL, account); err != nil {
 		return fmt.Errorf("%w: %w", ErrNoIdentity, err)
@@ -149,10 +80,6 @@ func beginAccount(ctx context.Context, q db.Querier, account id.UUID) error {
 // — would put it somewhere the RLS policies cannot see.
 func BeginAccount(ctx context.Context, q db.Querier, account id.UUID) error {
 	if account.IsZero() {
-		// Named rather than defaulted. A caller reaching here with no account is
-		// about to write a membership for nobody, and the substrate's refusal of
-		// that INSERT is correct — this makes the mistake legible at the call site
-		// instead of leaving it to be read out of a 42501.
 		return fmt.Errorf("%w: refusing to begin as the nil account", ErrNoIdentity)
 	}
 	return beginAccount(ctx, q, account)

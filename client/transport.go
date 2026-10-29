@@ -1,44 +1,5 @@
 package client
 
-// THE TRANSPORT, AND WHY IT IS A SUBPACKAGE AND A SEPARATE FILE.
-//
-// `client/generated` is oapi-codegen's output and this file is the only place that
-// imports it. Three things are true of that arrangement and all three are load-
-// bearing.
-//
-// # WHY A SUBPACKAGE
-//
-// The generated code declares its own `Client` and `ClientInterface`, and this
-// repository's hand-written client is also a `Client`. In one package those
-// collide.
-//
-// The collision is not the interesting part. The interesting part is what resolving
-// it the other way — renaming the hand-written client, or renaming the generated one
-// — would cost. Either way the GENERATED types stay exported from the package a
-// consumer imports, and MD6's whole argument for generating at all is that
-// "generated code stays an implementation detail, so a generator upgrade can never
-// break the public API". A generator that renamed `MintAPIKeyJSONRequestBody` would
-// then be a breaking change to `client`, which is precisely the lock-in that killed
-// Stainless.
-//
-// A subpackage makes the generated surface unreachable except through this wrapper.
-// A consumer cannot construct `generated.Client` by accident, cannot depend on its
-// types, and is unaffected by a regeneration that renames anything in it — as long
-// as this file is updated in the same commit, which the drift gate forces.
-//
-// # WHY `Transport` IS DECLARED HERE AND NOT ALIASED
-//
-// Declaring the interface in this package rather than writing
-// `type Transport = generated.ClientInterface` keeps the dependency on the METHOD
-// SET, not on the generated type. A document change that renames a method changes
-// this interface and fails the build here, in one place — which is what makes the
-// regeneration gate's blast radius visible instead of spread across twenty call
-// sites.
-//
-// The fifty methods below are the document's fifty `operationId`s, in
-// the document's order, with the generated parameter types. The compile-time
-// assertion at the bottom is what proves the generated `*generated.Client` still
-// satisfies it, so a mismatch is a build failure rather than a runtime surprise.
 
 import (
 	"context"
@@ -61,21 +22,9 @@ type Transport interface {
 	CreateSession(ctx context.Context, body generated.CreateSessionJSONRequestBody, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	RegisterUser(ctx context.Context, body generated.RegisterUserJSONRequestBody, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	DeleteSession(ctx context.Context, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
-	// The session listing and the single-session revoke, which sit beside
-	// `DeleteSession` in the document and are a DIFFERENT operation from it:
-	// `deleteSession` needs no id because the session you are using is the one you
-	// already have, and these two are for "the other devices".
-	//
-	// `ListSessions` is session-only in the document, so a caller of this method
-	// with an api key attached gets a 403 — which is the wrapper's problem to
-	// explain and is said on `Client.ListSessions`.
 	ListSessions(ctx context.Context, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	DeleteSessionByID(ctx context.Context, sessionId openapiTypes.UUID, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	CompleteSecondFactor(ctx context.Context, body generated.CompleteSecondFactorJSONRequestBody, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
-	// The session-to-token exchange, beside the login it is the second half
-	// of: a session in, one account-scoped access token out. Session-only in
-	// the document, so a caller with an api key attached gets a 403 — said on
-	// `Client.MintSessionToken`.
 	MintSessionToken(ctx context.Context, body generated.MintSessionTokenJSONRequestBody, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	GetMFAStatus(ctx context.Context, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	DisableMFA(ctx context.Context, body generated.DisableMFAJSONRequestBody, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
@@ -104,12 +53,6 @@ type Transport interface {
 	RemoveMember(ctx context.Context, accountId openapiTypes.UUID, userId openapiTypes.UUID, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	TransferAccountOwnership(ctx context.Context, accountId openapiTypes.UUID, body generated.TransferAccountOwnershipJSONRequestBody, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	AcceptInvitation(ctx context.Context, body generated.AcceptInvitationJSONRequestBody, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
-	// ClaimAgent binds an agent principal to an account. It is session-only for
-	// the reason `ListSessions` is above: a claim is a human binding a thing to an
-	// account they belong to, and a scoped api key is refused with 403 before the
-	// handler runs. The link in the body is the only thing that names the
-	// principal — the account comes from the path, the human from the session —
-	// so a caller cannot name an agent they were never given a link for.
 	ClaimAgent(ctx context.Context, accountId openapiTypes.UUID, body generated.ClaimAgentJSONRequestBody, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	RegisterOIDCClient(ctx context.Context, accountId openapiTypes.UUID, body generated.RegisterOIDCClientJSONRequestBody, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	ListOIDCClients(ctx context.Context, accountId openapiTypes.UUID, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
@@ -123,23 +66,10 @@ type Transport interface {
 	RedeemSessionLink(ctx context.Context, body generated.RedeemSessionLinkJSONRequestBody, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	Liveness(ctx context.Context, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	Readiness(ctx context.Context, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
-	// MintSignupTimestamp is the signup form's mint: a fresh `timestamp` +
-	// `signature` pair, the second half of signup bot defense. It is public and
-	// unauthenticated like the probes — a browser arriving at the form holds
-	// nothing but the address it was sent to — and it takes no body.
 	MintSignupTimestamp(ctx context.Context, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	ListAccountAuditLog(ctx context.Context, accountId openapiTypes.UUID, params *generated.ListAccountAuditLogParams, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
-	// The operator surface. `userId` is a PERSON and not a member of `accountId`,
-	// which is why there is no account parameter at all — a token holding
-	// `users:disable` names any user on the deployment, and this service's own mint
-	// will not hand one to a tenant's owner. See DECISIONS.md D14.
 	DisableUser(ctx context.Context, userId openapiTypes.UUID, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	EnableUser(ctx context.Context, userId openapiTypes.UUID, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
-	// The HUMAN staff surface (DECISIONS.md D17): the Parlor console's four
-	// routes, reachable by a signed-in staff member's session only — never by a
-	// scoped api key. A machine client holding a session cookie for a staff user
-	// can call these; a pipeline holding a token cannot, and must use the two
-	// methods above instead.
 	GetOperatorMe(ctx context.Context, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	SearchOperatorUsers(ctx context.Context, params *generated.SearchOperatorUsersParams, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	GetOperatorSummary(ctx context.Context, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
@@ -148,40 +78,10 @@ type Transport interface {
 	StaffEnableUser(ctx context.Context, userId openapiTypes.UUID, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	RevokeAccountInvitation(ctx context.Context, accountId openapiTypes.UUID, invitationId openapiTypes.UUID, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	RevokeAccountInvitations(ctx context.Context, accountId openapiTypes.UUID, body generated.BulkInvitationRevocation, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
-	// The social-login round trip is here for completeness of the METHOD SET, which
-	// is all this interface promises, and neither of these two is a call a machine
-	// client should make.
-	//
-	// `StartSocialLogin` answers 302 with a Location and no body, and
-	// `CompleteSocialLogin` is the far side of that redirect — the browser is
-	// supposed to arrive, holding nothing but the `__Host-oauth-state` cookie this
-	// service set. A caller presenting an `Authorization` header to either is
-	// sending a credential to a route that ignores it, because the surface is
-	// `security: []` in the document. The wrapper in client.go says the same thing
-	// where somebody will actually read it.
 	StartSocialLogin(ctx context.Context, provider generated.StartSocialLoginParamsProvider, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	CompleteSocialLogin(ctx context.Context, provider generated.CompleteSocialLoginParamsProvider, params *generated.CompleteSocialLoginParams, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
-	// The agent surface's public and self-service halves (the account-scoped claim
-	// is `ClaimAgent` above). None of these takes an account id: registration is
-	// anonymous, and the rest authenticate with the agent's OWN bearer token, so
-	// the principal they act on is the one the credential resolves to — never one a
-	// path parameter could name.
-	//
-	// RegisterAgent is public and unauthenticated; a caller with no credential
-	// reaches it, which is the whole of what agent self-registration means (D4).
-	// GetAgentClaimPreview is also public, for the same reason an invitation
-	// redemption is: the claim link in the path is the credential, and the screen
-	// a human opens before they sign in has to say whose agent it is.
-	// The others need the agent token attached by newTransport, so a wrapper
-	// caller holds one on `Client` before it can call them.
 	RegisterAgent(ctx context.Context, body generated.RegisterAgentJSONRequestBody, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
-	// GetAgentClaimPreview is the claim screen's first frame. It is ANONYMOUS —
-	// the claim link in the path is the credential — so newTransport must be
-	// able to send it with no credential attached at all.
 	GetAgentClaimPreview(ctx context.Context, token string, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
-	// GetAgentHome is `caf agent whoami`, and it needs the AGENT's own token
-	// rather than a session: the credential kind is what decides which principal
-	// answers.
 	GetAgentHome(ctx context.Context, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	RefreshAgentClaimLink(ctx context.Context, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 	MintAgentToken(ctx context.Context, body generated.MintAgentTokenJSONRequestBody, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
@@ -190,51 +90,9 @@ type Transport interface {
 	RotateAgentToken(ctx context.Context, tokenID openapiTypes.UUID, body generated.RotateAgentTokenJSONRequestBody, reqEditors ...generated.RequestEditorFn) (*http.Response, error)
 }
 
-// The proof that the generated client still satisfies the interface above.
-//
-// A compile-time assertion, not a test: a generated `*Client` that stopped matching
-// is a BUILD failure in this file, which is the earliest and loudest place it could
-// be caught, and it costs one line. `TestTheTransportCoversEveryOperationInTheDocument`
-// is the companion that checks the other direction — that this interface has not
-// quietly LOST a method to a document that gained one — because an interface can
-// match while being incomplete.
 var _ Transport = (*generated.Client)(nil)
 
-// newTransport builds the generated client for one base URL and credential.
-//
-// The credential is attached HERE rather than per call, as a request editor, so that
-// it cannot be forgotten by a call site. A transport that attaches a credential in
-// twenty places is one where the twenty-first call site forgets, and the twentieth
-// is the one somebody reads.
-//
-// The editor is installed on the generated client rather than passed to each method,
-// which is what `WithRequestEditorFn` is for and which is why `Transport`'s methods
-// do not take one from the caller: the wrapper is the only thing that constructs one
-// of these, so there is no path to a client that sends unauthenticated requests.
 func newTransport(baseURL, token string) (Transport, error) {
-	// THE REDIRECT POLICY IS NOT A DETAIL, and this is the one place it belongs.
-	//
-	// `net/http`'s default follows up to ten 3xx hops. That is right for a browser
-	// and wrong here twice over: `StartSocialLogin`'s 302 carries a third party's
-	// authorization endpoint, which is an instruction to a BROWSER and not a hop
-	// this client should make — following it turns a method that returns a URL into
-	// one that makes an authenticated request to Google — and every other operation
-	// in this document has no 3xx at all, so there is nothing else here to follow.
-	//
-	// `http.ErrUseLastResponse` rather than an error of our own, and the reason is
-	// that it is the one return value `net/http` documents as "give me the
-	// response": the 302 comes back with its `Location` intact and its body
-	// unread, and `StartSocialLogin` reads the header. Returning an error instead
-	// would discard the very thing the caller came for, and the wrapper would have
-	// no status to inspect — which is the shape of a transport that refuses to
-	// redirect rather than declining to follow one.
-	//
-	// What it costs, stated plainly: this is a policy change for the WHOLE client,
-	// not a per-call option, because `Transport`'s methods take no per-call
-	// `http.Client`. In practice it changes nothing else, because no other
-	// operation in this document answers 3xx — and if one starts to, refusing to
-	// follow it is the safe direction: a server choosing where this client goes
-	// next is not something a machine credential should be replayed across.
 	httpClient := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
 	}}

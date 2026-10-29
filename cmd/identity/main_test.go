@@ -19,29 +19,15 @@ import (
 	"github.com/anywaye/identity/internal/config"
 )
 
-// testTimeout bounds every wait in this file. Nothing here sleeps: every wait
-// is on a channel that the code under test signals, or a failure deadline.
 const testTimeout = 5 * time.Second
 
-// signupKeyValue is the SIGNUP_SIGNING_KEY every Config literal in this package
-// carries: 32 bytes, the shape the environment takes.
-//
-// It is a constant rather than a generated value because these tests assert on
-// behavior and logs, not on the key — but a missing key would change the
-// outcome from a running process to a startup failure, which is not what any
-// test here is about. The same value, base64url, is what the child process in
-// TestMainHandlesSIGTERM is given.
 var signupKeyValue = []byte("0123456789abcdef0123456789abcdef")
 
-// withSignupKey returns a copy of cfg with SignupSigningKeyValue set, for the
-// literals that need a bootable configuration.
 func withSignupKey(cfg config.Config) config.Config {
 	cfg.SignupSigningKeyValue = signupKeyValue
 	return cfg
 }
 
-// newDiscardApp builds an app with logs thrown away. Tests that assert on log
-// output live in internal/httpapi.
 func newDiscardApp(t *testing.T, cfg config.Config) *app {
 	t.Helper()
 
@@ -52,7 +38,6 @@ func newDiscardApp(t *testing.T, cfg config.Config) *app {
 	return a
 }
 
-// newServer boots an app on an ephemeral port and tears it down with the test.
 func newServer(t *testing.T, cfg config.Config) *app {
 	t.Helper()
 
@@ -67,8 +52,6 @@ func newServer(t *testing.T, cfg config.Config) *app {
 	return a
 }
 
-// freePort returns a TCP port that was bound a moment ago and released, so a
-// connection to it is refused immediately instead of hanging.
 func freePort(t *testing.T) string {
 	t.Helper()
 
@@ -85,7 +68,6 @@ func freePort(t *testing.T) string {
 	return port
 }
 
-// getRaw performs a request and reports transport errors instead of failing.
 func getRaw(url string) (int, string, error) {
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
 	if err != nil {
@@ -114,7 +96,6 @@ func mustGet(t *testing.T, url string) (int, string) {
 	return code, body
 }
 
-// serveOne drives the app's handler directly, without binding a port.
 func serveOne(t *testing.T, a *app, method, target string) (int, string) {
 	t.Helper()
 
@@ -149,7 +130,6 @@ func TestRunServesRequestsAndStopsWhenTheContextIsCancelled(t *testing.T) {
 		t.Fatal("Run() did not return after the context was canceled")
 	}
 
-	// The socket must be released so the orchestrator can rebind immediately.
 	if conn, err := (&net.Dialer{Timeout: time.Second}).DialContext(t.Context(), "tcp", a.Addr()); err == nil {
 		conn.Close()
 		t.Errorf("listener on %s still accepts connections after shutdown", a.Addr())
@@ -184,7 +164,7 @@ func TestRunLetsInFlightRequestsFinish(t *testing.T) {
 	}()
 
 	<-started
-	cancel() // shutdown begins while the request is still running
+	cancel()
 	close(release)
 
 	select {
@@ -241,8 +221,6 @@ func TestNewAppWiresReadinessToTheDatabase(t *testing.T) {
 	})
 
 	t.Run("an unreachable database fails readiness", func(t *testing.T) {
-		// A port nothing listens on refuses connections immediately, so this
-		// exercises the real pgx path without waiting on a network timeout.
 		a := newDiscardApp(t, withSignupKey(config.Config{
 			Port:        "0",
 			LogLevel:    "info",
@@ -296,8 +274,6 @@ func TestNewAppRejectsAnUnusableDatabaseURL(t *testing.T) {
 	}
 }
 
-// TestMainHandlesSIGTERM runs the real main() in a child process and proves the
-// production signal path: SIGTERM drains the listener and exits 0.
 func TestMainHandlesSIGTERM(t *testing.T) {
 	if os.Getenv("IDENTITY_TEST_CHILD") == "1" {
 		main()
@@ -306,10 +282,6 @@ func TestMainHandlesSIGTERM(t *testing.T) {
 
 	port := freePort(t)
 	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestMainHandlesSIGTERM$")
-	// SIGNUP_SIGNING_KEY is the one secret a boot cannot go without, and the
-	// child runs the REAL main(), which reads the REAL environment: without
-	// it the child refuses to start and the signal lands on a dead process.
-	// The value is the base64url of the 32 bytes the other literals carry.
 	cmd.Env = append(os.Environ(),
 		"IDENTITY_TEST_CHILD=1",
 		"PORT="+port,
@@ -333,8 +305,6 @@ func TestMainHandlesSIGTERM(t *testing.T) {
 		close(lines)
 	}()
 
-	// Wait for the child to report that it is serving, so the signal lands on a
-	// running server rather than somewhere inside startup.
 	waitForLine(t, lines, "listening")
 
 	if code, body := mustGet(t, "http://127.0.0.1:"+port+"/healthz"); code != http.StatusOK || body != `{"status":"ok"}` {

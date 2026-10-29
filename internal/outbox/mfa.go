@@ -6,43 +6,10 @@ import (
 	"github.com/anywaye/identity/internal/platform/id"
 )
 
-// The MFA events: a second factor went on, and a second factor went off.
-//
-// The names are core's, fixed before this packet: `identity.mfa.enabled` and
-// `identity.mfa.disabled`, both three-segment, both in core's catalog under
-// "the user" as the subject (docs/event-naming.md). This file is the publisher
-// side of two rows another repository is writing the schema for, so the payload
-// is the narrowest thing that is still useful rather than a guess at what the
-// schema will turn out to want.
-//
-// THE SUBJECT IS THE USER, and for this pair that is not a judgement call the
-// way the tenancy events' subject was. A membership change is about an account's
-// member list, so five acceptances are five events in one ordered stream. A
-// factor changing is about one person and one device they carry, and a consumer
-// that cares means "this person's security posture changed" — which is a stream
-// keyed on the user. core's catalog already says so, and the event id is what
-// makes two rapid changes (rotate, then disable) two ordered facts about one
-// person rather than an ambiguous pair.
 
-// The event types this service publishes for MFA. These are core's catalog rows;
-// see the note above on the payload shape.
 const (
-	// EventMFAEnabled is emitted when a TOTP credential is confirmed.
-	//
-	// It fires for the FIRST enrollment and for every rotation after it, and both
-	// are the same fact: a second factor is live for this user now. A consumer
-	// that wants to tell the two apart reads whether it had already seen one,
-	// which is information it has, rather than a field on the event that would be
-	// a boolean meaning nothing to anybody else.
-	//
-	// A rotation is a genuine change — a new secret, a new device, a new set of
-	// recovery codes — and a consumer that only heard about the first enrollment
-	// would be holding a stale picture of how the account is protected.
 	EventMFAEnabled = "identity.mfa.enabled"
 
-	// EventMFADisabled is emitted when a user turns their second factor off with a
-	// valid factor of their own. There is no other way to reach it from this
-	// service.
 	EventMFADisabled = "identity.mfa.disabled"
 )
 

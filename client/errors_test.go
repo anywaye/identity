@@ -1,11 +1,5 @@
 package client
 
-// RFC 9457, ONE TEST PER PROBLEM TYPE, PLUS THE FALLBACK THAT IS THE REQUIREMENT.
-//
-// The brief asks for "one per problem type **plus the unknown fallback**". The
-// unknown case is the important half and gets its own file section, because the
-// brief's own words are that a client which "returns `ok, false` on an unknown
-// problem type breaks the day the API grows, and it breaks silently".
 
 import (
 	"encoding/json"
@@ -17,12 +11,6 @@ import (
 	"github.com/anywaye/identity/client/generated"
 )
 
-// problemBody builds a well-formed problem document, so each case differs only in the
-// one field under test.
-//
-// Built rather than pasted because a fixture per case is a fixture that can drift
-// from the contract independently of the code, and the point of these tests is the
-// MAPPING, not the JSON.
 func problemBody(code string, status int) []byte {
 	document := map[string]any{
 		"type":     "https://docs.anywaye.com/errors/" + code,
@@ -46,18 +34,6 @@ func problemBody(code string, status int) []byte {
 	return body
 }
 
-// TestEveryProblemCodeMapsToItsOwnType is the per-code table.
-//
-// Every case asserts THREE things, because each can fail independently and a test
-// that checks only one of them can pass while the mapping is wrong:
-//
-//   - the concrete type, by `errors.As` — so the branch is taken
-//   - `Code()`, so the code survives onto the error rather than being consumed
-//   - `ProblemError` as the INTERFACE — so the single catch a caller writes works
-//
-// The third assertion is the one this package's shape exists for. A base struct
-// embedded by value would satisfy the first two and fail the third for every typed
-// error, which is the failure that inverts the fallback story.
 
 func TestEveryProblemCodeMapsToItsOwnType(t *testing.T) {
 	for _, tc := range []struct {
@@ -134,26 +110,11 @@ func TestEveryProblemCodeMapsToItsOwnType(t *testing.T) {
 	}
 }
 
-// isType is a small generic helper so each table row is one line rather than four.
 func isType[T error](err error) bool {
 	var target T
 	return errors.As(err, &target)
 }
 
-// TestAnUnknownProblemCodeStillProducesATypedError is THE FALLBACK, and the brief's
-// central requirement.
-//
-// identity's own document lists four codes that are NOT in core's reserved list —
-// `account_locked`, `invalid_json`, `payload_too_large`, `service_unavailable` — and
-// flags them for core as a proposal rather than a fait accompli. So "a code this
-// build has never heard of" is not a hypothetical state for this service; it is a
-// state this service is already in, for the code that has not been typed here.
-//
-// Three assertions, and the first is the one the brief names:
-//
-//   - `errors.As(err, &ProblemError)` succeeds — the caller's single catch works
-//   - the code survives verbatim on `Code()`, so the caller can act on it
-//   - the status and trace id survive, so a support ticket is possible
 func TestAnUnknownProblemCodeStillProducesATypedError(t *testing.T) {
 	const unknownCode = "quantum_entanglement_revoked"
 
@@ -188,23 +149,13 @@ func TestAnUnknownProblemCodeStillProducesATypedError(t *testing.T) {
 			"logging it and moving on.", err)
 	}
 
-	// And the rendered message names the code, because the whole point of the
-	// fallback is that somebody can read what happened without a debugger.
 	if rendered := err.Error(); !strings.Contains(rendered, unknownCode) {
 		t.Errorf("the message does not name the code: %s", rendered)
 	}
 }
 
-// TestTheCodeChoosesTheTypeAndTheStatusOnlyBreaksTies covers the precedence, which
-// is a decision rather than an accident.
-//
-// core makes `code` the contract and `status` "repeated in the body" — advisory, and
-// RFC 9457 permits a service to omit it. So a service that answers 403 with
-// `code: "forbidden"` must produce a `ForbiddenError` even if the number drifts, and
-// a service that omits `code` entirely must still be mapped from the number.
 func TestTheCodeChoosesTheTypeAndTheStatusOnlyBreaksTies(t *testing.T) {
 	t.Run("the code wins over a drifted status", func(t *testing.T) {
-		// A 401 body that says `forbidden`. Contradictory on purpose.
 		err := ProblemFrom("getCurrentUser", http.StatusUnauthorized, ProblemContentType, "",
 			problemBody("forbidden", http.StatusUnauthorized), NewRedactor())
 
@@ -231,8 +182,6 @@ func TestTheCodeChoosesTheTypeAndTheStatusOnlyBreaksTies(t *testing.T) {
 	})
 }
 
-// TestAResponseThatIsNotAProblemDocumentIsNotAProblemError covers the two edges the
-// problem hierarchy cannot, both of which are judgement calls worth stating.
 func TestAResponseThatIsNotAProblemDocumentIsNotAProblemError(t *testing.T) {
 	t.Run("a proxy's html 502", func(t *testing.T) {
 		err := ProblemFrom("getCurrentUser", http.StatusBadGateway, "text/html", "",
@@ -270,13 +219,6 @@ func TestAResponseThatIsNotAProblemDocumentIsNotAProblemError(t *testing.T) {
 	})
 }
 
-// TestAccountLockedCarriesTheRetryAfter covers the one code where waiting is the
-// right answer, and asserts both the present and absent cases.
-//
-// Zero and absent are told apart on purpose. The document says the value is "never
-// negative", so a literal `0` is a real answer the service can give — "retry
-// immediately" — and it is not the same as "there was no header". A client that
-// collapsed them would hammer an account the lockout exists to protect.
 func TestAccountLockedCarriesTheRetryAfter(t *testing.T) {
 	body := problemBody("account_locked", http.StatusLocked)
 
@@ -346,7 +288,6 @@ func TestAccountLockedCarriesTheRetryAfter(t *testing.T) {
 	})
 }
 
-// TestValidationCarriesTheFieldErrors is the only code that does, per the document.
 func TestValidationCarriesTheFieldErrors(t *testing.T) {
 	err := ProblemFrom("registerUser", http.StatusUnprocessableEntity, ProblemContentType, "",
 		problemBody("validation_failed", http.StatusUnprocessableEntity), NewRedactor())
@@ -365,12 +306,6 @@ func TestValidationCarriesTheFieldErrors(t *testing.T) {
 	}
 }
 
-// TestIsRetryableIsNarrow is the assertion that this package does not retry, and
-// does not encourage a caller to retry something that cannot succeed.
-//
-// A 409 is deliberately absent even though it is sometimes transient: a conflict
-// means the request conflicts with current state, and repeating it unchanged repeats
-// the conflict. That is a decision for whoever holds the domain, not for a transport.
 func TestIsRetryableIsNarrow(t *testing.T) {
 	retryable := ProblemFrom("getCurrentUser", http.StatusTooManyRequests,
 		ProblemContentType, "", problemBody("rate_limited", http.StatusTooManyRequests),
@@ -399,17 +334,7 @@ func TestIsRetryableIsNarrow(t *testing.T) {
 	}
 }
 
-// TestProblemFieldsAreRedacted is the contract half of the leak invariant, stated
-// where the problem is built rather than only in the credential-leak file.
-//
-// Every member goes through the redactor INCLUDING the ones this package did not
-// know the contract had, because a service that adds an extension member tomorrow
-// must not be able to start leaking through a client that predates it.
 func TestProblemFieldsAreRedacted(t *testing.T) {
-	// Built with %q-escaped JSON rather than a hand-written literal with spliced
-	// quotes: single quotes are not valid JSON, and a fixture that does not parse
-	// exercises the "not a problem document" branch instead of the redaction this
-	// test is about. It cost one run to find out.
 	leaky, marshalErr := json.Marshal(map[string]any{
 		"type":     "https://docs.anywaye.com/errors/validation_failed",
 		"title":    "Validation failed",
@@ -419,9 +344,6 @@ func TestProblemFieldsAreRedacted(t *testing.T) {
 		"code":     "validation_failed",
 		"trace_id": "0af7651916cd43dd8448eb211c80319c",
 		"errors":   []map[string]string{{"field": "token", "code": "invalid_format"}},
-		// A member this client knows nothing about, carrying the credential. The
-		// generator's struct has no field for it, so it cannot reach the error type —
-		// which is the point: an unknown member is dropped, not forwarded.
 		"an_extension_member_nobody_declared": apiCredential,
 	})
 	if marshalErr != nil {
@@ -449,19 +371,11 @@ func TestProblemFieldsAreRedacted(t *testing.T) {
 		}
 	}
 
-	// And the trace id survived, because a redactor that ate it would make every
-	// unsupported failure harder to report.
 	if document.TraceID != "0af7651916cd43dd8448eb211c80319c" {
 		t.Errorf("TraceID is %q; it must survive redaction", document.TraceID)
 	}
 }
 
-// TestTheGeneratedProblemTypeIsTheOneUsed is a small guard against the day somebody
-// declares a second `Problem` struct by hand.
-//
-// `client/generated` declares `Problem`, `FieldError` and a `ProblemCode` enum from
-// the document. This package uses them rather than restating them, which is what
-// makes the code a compile-time enum and keeps the drift gate meaningful.
 func TestTheGeneratedProblemTypeIsTheOneUsed(t *testing.T) {
 	var document generated.Problem
 	document.Code = generated.ProblemCodeUnauthorized

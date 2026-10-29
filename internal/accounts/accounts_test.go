@@ -8,10 +8,6 @@ import (
 	"github.com/anywaye/identity/internal/platform/id"
 )
 
-// These are the rules the whole tenancy surface rests on, and none of them needs
-// a database: which role outranks which, what a slug may look like, and what a
-// name may be. A change to any of them is a change to the authorization matrix,
-// so they are pinned here rather than only implied by the HTTP tests.
 
 func TestRoleIsOrdered(t *testing.T) {
 	tests := []struct {
@@ -37,9 +33,6 @@ func TestRoleIsOrdered(t *testing.T) {
 	}
 }
 
-// The ordering is a total order, not a set. A role that does not compare against
-// another one would make AtLeast answer a coin flip, and "the minimum role" is
-// the single most load-bearing idea in the tenancy surface.
 func TestEveryRoleComparesAgainstEveryOther(t *testing.T) {
 	all := AllRoles()
 
@@ -52,8 +45,6 @@ func TestEveryRoleComparesAgainstEveryOther(t *testing.T) {
 	if got, want := len(all), 3; got != want {
 		t.Errorf("AllRoles() has %d roles, want %d (%v)", got, want, all)
 	}
-	// Ascending, so the zero value of the enum's ordinal is the weakest role and
-	// an accidental numeric comparison cannot invert the hierarchy.
 	if all[0] != RoleMember || all[1] != RoleAdmin || all[2] != RoleOwner {
 		t.Errorf("AllRoles() = %v, want [member admin owner]", all)
 	}
@@ -131,13 +122,11 @@ func TestSlugify(t *testing.T) {
 	}
 }
 
-// A slug that does not match the migration's CHECK is a 500 at insert time, so
-// this is the one that actually protects the database contract.
 func TestSlugifyAlwaysProducesAStorableSlug(t *testing.T) {
 	for _, in := range []string{"a", "A", "---", "東京", "  ", "MiXeD CaSe 42", strings.Repeat("x", 500)} {
 		slug := Slugify(in)
 		if slug == "" {
-			continue // the caller turns this into a 422, tested in ValidateName
+			continue
 		}
 		if len(slug) > MaxSlugLength {
 			t.Errorf("Slugify(%q) is %d characters, over the %d limit", in, len(slug), MaxSlugLength)
@@ -198,10 +187,6 @@ func TestValidateName(t *testing.T) {
 	}
 }
 
-// The personal account's slug is derived from a user id, and two people can
-// share an email local part. If the suffix were not there, the second
-// registration of "kaka@example.com" would be a 409 and the second human could
-// not sign up at all.
 func TestPersonalSlugIsUniquePerUser(t *testing.T) {
 	first := id.MustNew()
 	second := id.MustNew()
@@ -220,20 +205,14 @@ func TestPersonalSlugIsUniquePerUser(t *testing.T) {
 			t.Errorf("PersonalSlug produced %q at %d characters, over the %d limit", s, len(s), MaxSlugLength)
 		}
 	}
-	// Deterministic: a retried transaction re-derives the same slug, so a unique
-	// violation means the slug really is taken and not that we rolled a die twice.
 	if again := PersonalSlug("kaka", first); again != a {
 		t.Errorf("PersonalSlug is not deterministic: %q then %q", a, again)
 	}
-	// An email local part with nothing sluggable still yields a storable slug.
 	if got := PersonalSlug("東京", first); got == "" {
 		t.Error("PersonalSlug(\"東京\") is empty, which the accounts table's CHECK would reject")
 	}
 }
 
-// The personal account's name is the email's local part, per the packet. It is
-// an email local part and not the whole address, so a display name never leaks
-// the domain to anyone who can see the account list.
 func TestPersonalNameIsTheEmailLocalPart(t *testing.T) {
 	tests := []struct {
 		email string

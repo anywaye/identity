@@ -1,20 +1,3 @@
-// Package accounts owns tenancy: the account, the memberships that give a user
-// a role in it, and the invitations that create new memberships.
-//
-// It is the package that answers "may this user do this thing in this account",
-// and it answers it from one idea: a membership is a single role, and the roles
-// form a total order — member < admin < owner. That is what makes
-// RequireAccountRole(min) a comparison rather than a lookup, and it is why the
-// packet calls the minimum a minimum.
-//
-// PLAN.md §7 records that OpenFGA is deferred and that this service hand-rolls
-// "Jumpstart-level RBAC (owner/admin/member) with OpenFGA-compatible semantics".
-// A single ordered role is exactly that: a relation between a user and an account
-// whose name is the set of things they may do there. The migration path is to
-// replace AtLeast with a ReBAC check behind the same signature.
-//
-// Nothing here knows about HTTP. Handlers translate the errors below into the
-// anywaye error envelope; they do not define the rules.
 package accounts
 
 import (
@@ -27,123 +10,40 @@ import (
 	"github.com/anywaye/identity/internal/platform/id"
 )
 
-// Errors the store, the service and the validators return. Callers match them
-// with errors.Is; nothing here is compared by string.
 var (
-	// ErrNotFound means the account, membership or invitation is not there — or,
-	// for a lookup scoped to a caller, is not *visible* to that caller.
-	//
-	// Those are deliberately one error. A caller who is not a member of an
-	// account learns nothing about whether it exists, which is core's rule: "403
-	// is not allowed to leak existence" (docs/openapi-conventions.md). The
-	// authorization layer turns a membership miss into 404 for the same reason a
-	// wrong password is a 401.
 	ErrNotFound = errors.New("account not found")
 
-	// ErrNotAMember means the caller is authenticated and the account exists, but
-	// holds no membership in it. It is separate from ErrNotFound precisely so the
-	// HTTP layer can decide which of the two to say out loud; see
-	// RequireAccountRole.
 	ErrNotAMember = errors.New("caller is not a member of this account")
 
-	// ErrSlugTaken means the derived slug is already in use. Registration and
-	// account creation map it to 409.
 	ErrSlugTaken = errors.New("account slug already in use")
 
-	// ErrAlreadyAMember means the user is already in the account. It is what an
-	// invitation for someone who has since accepted another one produces, and it
-	// is a 409 rather than a silent no-op: the caller's intent was to add a
-	// membership and the state they asked for already holds.
 	ErrAlreadyAMember = errors.New("user is already a member of this account")
 
-	// ErrInvitationNotFound means no pending invitation matches. It covers a
-	// wrong token, an unknown token and a malformed one identically.
 	ErrInvitationNotFound = errors.New("invitation not found")
 
-	// ErrInvitationExpired means the invitation existed and its window has
-	// closed. It is distinct from ErrInvitationNotFound because the caller can
-	// act on it — ask for a new one — and core's 410 is exactly "the old surface
-	// is gone, here is what replaced it".
 	ErrInvitationExpired = errors.New("invitation has expired")
 
-	// ErrInvitationUsed means the invitation was already accepted. Same status as
-	// expired and the same reasoning: it is not redeemable any more.
 	ErrInvitationUsed = errors.New("invitation has already been accepted")
 
-	// ErrInvitationRevoked means the invitation was withdrawn by an admin before
-	// it was redeemed.
-	//
-	// IT IS DISTINCT FROM ErrInvitationUsed even though both mean "not
-	// redeemable any more", and the difference is what an operator needs: a used
-	// invitation became a membership, and the question "where is the membership
-	// this link created?" is a support question. A revoked one never became
-	// anything, and the question is "who withdrew it and when" — which the
-	// account's audit trail answers, and which is the entire reason the admin
-	// surface that produces this error writes a row when it does.
 	ErrInvitationRevoked = errors.New("invitation has been revoked")
 
-	// ErrInvitationEmailTaken means this account already has a pending
-	// invitation for that address. Answering 409 rather than minting a second
-	// token stops an admin from filling the table with invitations that all say
-	// the same thing.
 	ErrInvitationEmailTaken = errors.New("an invitation for that email is already pending")
 
-	// ErrLastOwner is returned by a role change or a removal that would leave the
-	// account with no owner. It is a 422: the request was understood, is
-	// syntactically fine, and describes a state the account cannot be left in.
 	ErrLastOwner = errors.New("an account must keep at least one owner")
 
-	// ErrOwnerProtected is returned when a caller who is not an owner tries to
-	// remove one. An admin may remove members and other admins; the owner's
-	// membership is a different object, and only an owner touches it.
 	ErrOwnerProtected = errors.New("only an owner may remove an owner")
 
-	// ErrRoleNotInvitable is returned when a role outside {admin, member} is
-	// asked of an invitation. Ownership is granted, never invited: an account
-	// whose owner appears by accepting a link has an owner nobody chose.
 	ErrRoleNotInvitable = errors.New("an invitation may only carry the admin or member role")
 
-	// ErrSelfRoleChange is returned when an owner tries to change their own role
-	// when they are the only one. It is the same invariant as ErrLastOwner, given
-	// its own name because the packet names it and a client should be able to
-	// tell the two apart.
 	ErrSelfRoleChange = errors.New("the only owner of an account cannot change their own role")
 
-	// ErrNotOwner is returned when a caller who is not the account's OWNER tries
-	// to transfer it. It is separate from ErrOwnerProtected on purpose: that one
-	// is about an admin acting on an owner's membership ("you may not remove or
-	// change this person"), while this is about the caller themselves not holding
-	// the role a particular action requires. It is a 403 for the same reason
-	// ErrOwnerProtected is — the caller can see the account, so the refusal leaks
-	// nothing about it.
-	//
-	// The rule is checked against the MEMBERSHIP on this account rather than
-	// against anything the request carries, which is what makes an owner of a
-	// different account a refusal here too: ownership is per-account.
 	ErrNotOwner = errors.New("only an account's owner may do this")
 
-	// ErrNotTransferable is returned when an account cannot be transferred at
-	// all, for either of the two reasons there are: it is PERSONAL, or it has
-	// fewer than two members. One error for two facts because both are 422 —
-	// "understood, and describes something that does not exist here" — and because
-	// the client-facing repair is the same in both cases: this account is not one
-	// that changes hands.
-	//
-	// It is deliberately NOT ErrLastOwner. That one is about a role change that
-	// would leave nobody in charge, which a transfer can never do: the heir is
-	// promoted before the previous owner is demoted, in one transaction.
 	ErrNotTransferable = errors.New("this account cannot be transferred")
 
-	// ErrTransferToSelf is returned when the owner names themselves as the new
-	// owner. It is distinct from ErrNotTransferable because it is the one case
-	// where the account IS transferable and the REQUEST is wrong, and answering it
-	// 422 would tell an owner that their own account is untransferable.
 	ErrTransferToSelf = errors.New("an owner cannot transfer an account to themselves")
 )
 
-// Field validation codes. These land verbatim in the `errors[]` array of the
-// anywaye error envelope, so they are part of the contract and clients may switch
-// on them.
 const (
 	CodeRequired      = "required"
 	CodeInvalidFormat = "invalid_format"
@@ -188,12 +88,8 @@ func fieldErr(field, code string) error {
 type Role string
 
 const (
-	// RoleMember may read the account and nothing else.
 	RoleMember Role = "member"
-	// RoleAdmin may also rename the account, invite members, and remove members.
 	RoleAdmin Role = "admin"
-	// RoleOwner may additionally change roles, invite admins, and delete the
-	// account.
 	RoleOwner Role = "owner"
 )
 
@@ -284,17 +180,8 @@ func ParseInvitableRole(s string) (Role, error) {
 // Account is a row in the accounts table.
 type Account struct {
 	ID id.UUID
-	// Name is what a human sees. Personal accounts are named after the email's
-	// local part; team accounts are named by whoever creates them.
 	Name string
-	// Slug is derived from Name at creation and never changes. It is a stable
-	// handle for logs, emails and a future hostname, which is why a rename does
-	// not re-derive it: a slug that moved would break every link already sent.
 	Slug string
-	// Personal marks the account a registration creates for its user. Personal
-	// accounts are created by the system rather than by a request, and the
-	// distinction is what lets a later packet say "you always have exactly one
-	// personal account" without a second table.
 	Personal  bool
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -322,16 +209,7 @@ type Invitation struct {
 	Role        Role
 	TokenDigest string
 	ExpiresAt   time.Time
-	// AcceptedAt is nil until the invitation is redeemed. A pointer because
-	// "never accepted" and "accepted at the epoch" are different answers and only
-	// one of them is true.
 	AcceptedAt *time.Time
-	// RevokedAt is nil until an admin withdraws the invitation, and this field is
-	// the whole reason the redemption path was broken until identity-30: a
-	// revoked invitation is deliberately still a row — kept so the audit trail can
-	// say "withdrawn" rather than "never existed" — which means a lookup that
-	// found the row has never been evidence that the token works. A pointer for
-	// the same reason as AcceptedAt.
 	RevokedAt *time.Time
 	InvitedBy id.UUID
 	CreatedAt time.Time
@@ -369,9 +247,6 @@ func Slugify(name string) string {
 			dash = false
 			b.WriteRune(r - ('A' - 'a'))
 		default:
-			// Everything else — space, punctuation, non-ASCII, control characters
-			// — is a separator. A pending dash is left to the next alphanumeric so
-			// that a run of them collapses to one.
 			dash = b.Len() > 0
 		}
 	}
@@ -379,8 +254,6 @@ func Slugify(name string) string {
 	return truncateSlug(b.String())
 }
 
-// truncateSlug cuts s to MaxSlugLength and then drops any dash the cut left
-// dangling, so a truncated slug still satisfies the table's CHECK.
 func truncateSlug(s string) string {
 	if len(s) <= MaxSlugLength {
 		return s
@@ -425,9 +298,6 @@ func PersonalSlug(email string, userID id.UUID) string {
 	copy(hexID[:], userID[:4])
 	suffix := hex.EncodeToString(hexID[:])
 
-	// The suffix is nine characters including the dash, so the base has to make
-	// room for it or the result would be cut and two long names could collide on
-	// the same truncated prefix.
 	room := MaxSlugLength - len(suffix) - 1
 	if room < 1 {
 		room = 1

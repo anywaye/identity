@@ -13,14 +13,7 @@ import (
 	"github.com/anywaye/identity/internal/sessions"
 )
 
-// The MFA management surface, the second step of a login, and the properties the
-// packet names. Every test runs the real router and the real SQL over a private
-// schema, so what they assert is what a client would experience.
 
-// TestTheBrowserCookieFinishesTheLoginToo: a browser has no way to set a body
-// field from a form, so the cookie is the only route it has. Both routes are real
-// and each needs its own test, because "a client can use a cookie" and "a client
-// can use a body" are different claims.
 func TestTheBrowserCookieFinishesTheLoginToo(t *testing.T) {
 	s := newMFAServer(t)
 	email, token := s.signUp(t)
@@ -35,7 +28,6 @@ func TestTheBrowserCookieFinishesTheLoginToo(t *testing.T) {
 		t.Fatalf("the 202 body is not JSON: %v", err)
 	}
 
-	// The form posts the code, and the cookie comes with it.
 	s.clock.Advance(mfa.Period + time.Second)
 	finished := sendWith(t, s.handler, http.MethodPost, "/v1/session/mfa", "", body.Challenge,
 		`{"code":"`+user.code(t, s.clock.Now())+`"}`)
@@ -47,8 +39,6 @@ func TestTheBrowserCookieFinishesTheLoginToo(t *testing.T) {
 	}
 }
 
-// TestNoChallengeIs401WhateverTheBodySays: a caller with no challenge and a
-// perfectly good code is still not authenticated.
 func TestNoChallengeIs401WhateverTheBodySays(t *testing.T) {
 	s := newMFAServer(t)
 	email, token := s.signUp(t)
@@ -68,18 +58,12 @@ func TestNoChallengeIs401WhateverTheBodySays(t *testing.T) {
 	_ = token
 }
 
-// TestAWrongCodeIs401AndIsNotDistinguishableFromASpentOne is the packet's replay
-// property at the wire: the two are the same status AND the same body, because an
-// attacker who can tell them apart learns which to keep trying.
 func TestAWrongCodeIs401AndIsNotDistinguishableFromASpentOne(t *testing.T) {
 	s := newMFAServer(t)
 	email, token := s.signUp(t)
 	user := s.enrollAndConfirmFor(t, email, token)
 	token = s.token
 
-	// A FRESH period. The fixture signed this user in to establish the
-	// enrollment, which spent the current step against the same secret — capturing
-	// the code for it here would test the replay guard rather than the replay guard.
 	s.clock.Advance(mfa.Period + time.Second)
 	captured := user.code(t, s.clock.Now())
 
@@ -101,10 +85,6 @@ func TestAWrongCodeIs401AndIsNotDistinguishableFromASpentOne(t *testing.T) {
 		t.Fatalf("a replayed code = %d, want 401", replay.Code)
 	}
 
-	// The two failures must be the SAME ANSWER: same status, same problem code,
-	// same detail sentence. Compared field by field rather than byte for byte,
-	// because trace_id and instance differ per request by design and a byte
-	// comparison would either pass vacuously or fail for the wrong reason.
 	wrongProblem, replayProblem := decodeProblem(t, wrong), decodeProblem(t, replay)
 	if wrongProblem.Code != replayProblem.Code {
 		t.Errorf("a wrong code and a replay report different codes (%q vs %q), which tells an attacker which was which",
@@ -120,8 +100,6 @@ func TestAWrongCodeIs401AndIsNotDistinguishableFromASpentOne(t *testing.T) {
 	_ = token
 }
 
-// TestTheSecondFactorLockoutIs423WithRetryAfter, and it is the SECOND factor's
-// lockout: the password's counter on the users row is not involved.
 func TestTheSecondFactorLockoutIs423WithRetryAfter(t *testing.T) {
 	s := newMFAServer(t)
 	email, token := s.signUp(t)
@@ -145,7 +123,6 @@ func TestTheSecondFactorLockoutIs423WithRetryAfter(t *testing.T) {
 		t.Errorf("Retry-After = %q, want 900 seconds", got)
 	}
 
-	// And the password still works, which is what "the limits are per-factor" means.
 	login := post(t, s.handler, "/v1/session", `{"email":"`+email+`","password":"`+matrixPassword+`"}`)
 	if login.Code != http.StatusAccepted {
 		t.Errorf("the password login = %d, want 202; the second factor's lockout leaked into it", login.Code)
@@ -153,9 +130,6 @@ func TestTheSecondFactorLockoutIs423WithRetryAfter(t *testing.T) {
 	_ = token
 }
 
-// TestTheMFARoutesNeedASession: every one of them answers 401 to an anonymous
-// caller, and the coverage check below is what stops a new route joining them
-// without a row.
 func TestTheMFARoutesNeedASession(t *testing.T) {
 	s := newMFAServer(t)
 
@@ -167,10 +141,6 @@ func TestTheMFARoutesNeedASession(t *testing.T) {
 		{"confirm an enrollment", http.MethodPost, "/v1/mfa/enrollments/" + id.UUID{}.String() + "/confirm", `{"code":"123456"}`},
 		{"regenerate the recovery codes", http.MethodPost, "/v1/mfa/recovery-codes", `{"code":"123456"}`},
 		{"disable", http.MethodDelete, "/v1/mfa", `{"code":"123456"}`},
-		// No `challenge` at all, so this is the "no usable credential" case. A caller
-		// WITH a challenge is a different thing: the challenge IS the credential, so
-		// an anonymous caller holding one is not anonymous, and a made-up one is a
-		// 404 rather than a 401. Both are asserted elsewhere.
 		{"complete a second factor", http.MethodPost, "/v1/session/mfa", `{"code":"123456"}`},
 	}
 
@@ -187,13 +157,10 @@ func TestTheMFARoutesNeedASession(t *testing.T) {
 	}
 }
 
-// TestGetMFAStatus is the settings-page read, and the count on it is the packet's
-// "tell them before they get there".
 func TestGetMFAStatus(t *testing.T) {
 	s := newMFAServer(t)
 	email, token := s.signUp(t)
 
-	// Before: enabled:false, and 200 rather than 404.
 	before := s.get(t, "/v1/mfa", token)
 	if before.Code != http.StatusOK {
 		t.Fatalf("GET /v1/mfa before enrolling = %d, want 200; body: %s", before.Code, before.Body)
@@ -230,8 +197,6 @@ func TestGetMFAStatus(t *testing.T) {
 		t.Errorf("recovery_codes_remaining = %v, want %d", on.RecoveryCodesRemaining, mfa.RecoveryCodeCount)
 	}
 
-	// And the count goes down as they are spent — the warning is a number a client
-	// can render before the last one is gone.
 	if _, err := s.second.VerifyFactor(t.Context(), s.userIDFor(t), user.RecoveryCode, s.clock.Now()); err != nil {
 		t.Fatalf("spending a recovery code: %v", err)
 	}
@@ -246,13 +211,7 @@ func TestGetMFAStatus(t *testing.T) {
 	}
 }
 
-// TestTheDestructiveRoutesRequireAFactor: a session alone is not enough to turn a
-// second factor off, to replace the secret, or to reissue the recovery codes. This
-// is the property the packet names and it is asserted by sending each route every
-// thing a session can send.
 func TestTheDestructiveRoutesRequireAFactor(t *testing.T) {
-	// One loop rather than three near-identical tests, because the property is the
-	// same for all three and a table is what makes a fourth one cheap to add.
 	t.Run("disable", func(t *testing.T) {
 		s := newMFAServer(t)
 		email, token := s.signUp(t)
@@ -273,8 +232,6 @@ func TestTheDestructiveRoutesRequireAFactor(t *testing.T) {
 		}
 		_ = user
 
-		// With a factor, it works — and it revokes the caller's own session, which is
-		// the price and is documented rather than surprising.
 		s.clock.Advance(mfa.Period + time.Second)
 		ok := s.del(t, "/v1/mfa", token, `{"code":"`+user.code(t, s.clock.Now())+`"}`)
 		if ok.Code != http.StatusNoContent {
@@ -287,9 +244,6 @@ func TestTheDestructiveRoutesRequireAFactor(t *testing.T) {
 			t.Errorf("%d sessions survived the disable, want 0: every session is revoked", got)
 		}
 
-		// The account is back to a one-factor login, so a PLAIN login works and
-		// reports enabled:false. That it is plain is the assertion: a client that
-		// expected a challenge here would be told the second factor is still on.
 		relogin := post(t, s.handler, "/v1/session",
 			`{"email":"`+email+`","password":"`+matrixPassword+`"}`)
 		if relogin.Code != http.StatusOK {
@@ -329,13 +283,11 @@ func TestTheDestructiveRoutesRequireAFactor(t *testing.T) {
 		if body.RecoveryCodesRemaining != mfa.RecoveryCodeCount {
 			t.Errorf("remaining = %d, want %d", body.RecoveryCodesRemaining, mfa.RecoveryCodeCount)
 		}
-		// Every OLD code is dead, which is the half a partial write fails.
 		for _, old := range []string{user.RecoveryCode} {
 			if _, err := s.second.VerifyFactor(t.Context(), s.userIDFor(t), old, s.clock.Now()); !errors.Is(err, mfa.ErrInvalidFactor) {
 				t.Errorf("an old recovery code still works: %v", err)
 			}
 		}
-		// And a NEW one works, including the one in this response.
 		if _, err := s.second.VerifyFactor(t.Context(), s.userIDFor(t), body.RecoveryCodes[0], s.clock.Now()); err != nil {
 			t.Errorf("a new recovery code does not work: %v", err)
 		}
@@ -347,7 +299,6 @@ func TestTheDestructiveRoutesRequireAFactor(t *testing.T) {
 		user := s.enrollAndConfirmFor(t, email, token)
 		token = s.token
 
-		// A rotation without a factor is refused.
 		if rec := s.post(t, "/v1/mfa/enrollments", token, `{}`); rec.Code != http.StatusUnauthorized {
 			t.Errorf("rotating with no code = %d, want 401; body: %s", rec.Code, rec.Body)
 		}
@@ -384,7 +335,6 @@ func TestTheDestructiveRoutesRequireAFactor(t *testing.T) {
 			t.Error("the confirmation does not say it replaced an existing secret")
 		}
 
-		// The old secret is gone, which is the property the packet names.
 		s.clock.Advance(mfa.Period + time.Second)
 		if _, err := s.second.VerifyFactor(t.Context(), s.userIDFor(t),
 			mustTOTPCode(t, oldSecret, s.clock.Now()), s.clock.Now()); !errors.Is(err, mfa.ErrInvalidFactor) {
@@ -393,8 +343,6 @@ func TestTheDestructiveRoutesRequireAFactor(t *testing.T) {
 	})
 }
 
-// TestAnExpiredEnrollmentIs404RatherThanASecret: the client is told to start again
-// and is not told whether the secret it held is still the one.
 func TestAnExpiredEnrollmentIs404(t *testing.T) {
 	s := newMFAServer(t)
 	email, token := s.signUp(t)
@@ -422,9 +370,6 @@ func TestAnExpiredEnrollmentIs404(t *testing.T) {
 	_ = email
 }
 
-// TestConfirmWithoutACodeIs422: the only 422 on this surface, and it is here rather
-// than being folded into the 401 because it names a missing FIELD rather than a
-// wrong one.
 func TestConfirmWithoutACodeIs422(t *testing.T) {
 	s := newMFAServer(t)
 	email, token := s.signUp(t)
@@ -451,8 +396,6 @@ func TestConfirmWithoutACodeIs422(t *testing.T) {
 	_ = email
 }
 
-// TestAnEnrollmentIdThatIsNotTheCallersIs404: one user's enrollment cannot be
-// confirmed by another, which would be a takeover with no factor at all.
 func TestAnEnrollmentIdThatIsNotTheCallersIs404(t *testing.T) {
 	s := newMFAServer(t)
 	email, token := s.signUp(t)
@@ -475,8 +418,6 @@ func TestAnEnrollmentIdThatIsNotTheCallersIs404(t *testing.T) {
 	_ = email
 }
 
-// TestDisablingMFAThatIsNotEnabledIs409: a different question from "not yours",
-// which is 404.
 func TestDisablingMFAThatIsNotEnabledIs409(t *testing.T) {
 	s := newMFAServer(t)
 	_, token := s.signUp(t)
@@ -490,8 +431,6 @@ func TestDisablingMFAThatIsNotEnabledIs409(t *testing.T) {
 	}
 }
 
-// TestTheMFARoutesAreAbsentWithoutAService: the house rule, and the reason a
-// deployment with no key is a 404 on these paths rather than a 500 on every call.
 func TestTheMFARoutesAreAbsentWithoutAService(t *testing.T) {
 	s := newMFAServer(t)
 	email, token := s.signUp(t)
@@ -515,11 +454,7 @@ func TestTheMFARoutesAreAbsentWithoutAService(t *testing.T) {
 	_ = email
 }
 
-// ---------------------------------------------------------------------------
-// helpers
-// ---------------------------------------------------------------------------
 
-// challenge is a fresh POST /v1/session for a user with MFA.
 func (s *mfaServer) challenge(t *testing.T, email string) challengeResponse {
 	t.Helper()
 	rec := post(t, s.handler, "/v1/session", `{"email":"`+email+`","password":"`+matrixPassword+`"}`)
@@ -536,19 +471,11 @@ func (s *mfaServer) challenge(t *testing.T, email string) challengeResponse {
 	return body
 }
 
-// finish is POST /v1/session/mfa with the challenge in the BODY, as an API client
-// sends it.
 func (s *mfaServer) finish(t *testing.T, challenge, code string) *httptest.ResponseRecorder {
 	t.Helper()
 	return s.post(t, "/v1/session/mfa", "", `{"challenge":"`+challenge+`","code":"`+code+`"}`)
 }
 
-// userIDFor is the fixture's user, remembered from signUp.
-//
-// It is NOT looked up through the sessions table, and that is the reason: an
-// enrollment and a disable both empty that table, so a helper which found the user
-// by "whichever session exists" would break precisely in the tests that assert a
-// session was revoked.
 func (s *mfaServer) userIDFor(t *testing.T) id.UUID {
 	t.Helper()
 	if s.userID.IsZero() {
@@ -557,8 +484,6 @@ func (s *mfaServer) userIDFor(t *testing.T) id.UUID {
 	return s.userID
 }
 
-// sessionsForID counts a user's sessions, which is the number every "no session was
-// issued" assertion in this file is really about.
 func (s *mfaServer) sessionsForID(t *testing.T, userID id.UUID) int {
 	t.Helper()
 	var n int
@@ -578,9 +503,6 @@ func mustTOTPCode(t *testing.T, secret string, at time.Time) string {
 	return code
 }
 
-// reportsEnabled reads the boolean out of a GET /v1/mfa body, because three tests
-// assert on it and each re-implementing an Unmarshal is three chances to assert on
-// the wrong field.
 func reportsEnabled(t *testing.T, rec *httptest.ResponseRecorder) bool {
 	t.Helper()
 	if rec.Code != http.StatusOK {

@@ -18,10 +18,6 @@ import (
 	"github.com/anywaye/identity/internal/platform/dbtest"
 )
 
-// freePort asks the kernel for a free port, closes the listener and returns the
-// port. The caller must be prepared to retry if the subsequent server fails to
-// bind — the port is not reserved — but in practice the window is tiny and the
-// helper is retried by the caller where it matters.
 func freePort(t *testing.T) int {
 	t.Helper()
 	l, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
@@ -33,7 +29,6 @@ func freePort(t *testing.T) int {
 	return port
 }
 
-// startServerOnPort starts a NATS server with JetStream on the given port.
 func startServerOnPort(t *testing.T, port int) *server.Server {
 	t.Helper()
 	s, err := server.NewServer(&server.Options{
@@ -54,9 +49,6 @@ func startServerOnPort(t *testing.T, port int) *server.Server {
 	return s
 }
 
-// safeBuf is a bytes.Buffer guarded by a mutex, because the NATS handlers
-// are called from a different goroutine than the test's reads and
-// bytes.Buffer is not safe for concurrent use.
 type safeBuf struct {
 	mu sync.Mutex
 	b  bytes.Buffer
@@ -74,16 +66,12 @@ func (s *safeBuf) String() string {
 	return s.b.String()
 }
 
-// captureLogger returns a logger that writes to a thread-safe buffer, and the
-// buffer. The logger's handler is async (NATS calls it from its own
-// goroutine), so the buffer must be safe for concurrent use.
 func captureLogger() (*slog.Logger, *safeBuf) {
 	buf := &safeBuf{}
 	logger := slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	return logger, buf
 }
 
-// waitForStatus waits until nc.Status() == want or timeout.
 func waitForStatus(t *testing.T, nc *nats.Conn, want nats.Status, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
@@ -96,10 +84,6 @@ func waitForStatus(t *testing.T, nc *nats.Conn, want nats.Status, timeout time.D
 	t.Fatalf("nats status = %v, want %v after %s", nc.Status(), want, timeout)
 }
 
-// TestNewNATSPublisherDoesNotFailWhenBrokerIsDownAtBoot proves the boot
-// behavior is unchanged: a broker that is down when the process starts is NOT
-// a startup failure. With RetryOnFailedConnect the client enters RECONNECTING
-// and NewNATSPublisher returns nil error so the outbox table can accumulate.
 func TestNewNATSPublisherDoesNotFailWhenBrokerIsDownAtBoot(t *testing.T) {
 	t.Parallel()
 
@@ -112,7 +96,6 @@ func TestNewNATSPublisherDoesNotFailWhenBrokerIsDownAtBoot(t *testing.T) {
 	}
 	defer pub.Close()
 
-	// The connection is not closed — it is retrying.
 	if pub.nc.IsClosed() {
 		t.Error("connection is closed with broker down at boot; want reconnecting")
 	}
@@ -124,10 +107,6 @@ func TestNewNATSPublisherDoesNotFailWhenBrokerIsDownAtBoot(t *testing.T) {
 	}
 }
 
-// TestNATSPublisherMaxReconnectIsInfinite asserts the reconnect budget is
-// unbounded. The old budget was 60 attempts at 2s = ~120s; a broker away for
-// nine minutes (the live 1200 failures) exceeds it and left the connection
-// closed. -1 is nats.go's "never give up".
 func TestNATSPublisherMaxReconnectIsInfinite(t *testing.T) {
 	t.Parallel()
 
@@ -144,35 +123,18 @@ func TestNATSPublisherMaxReconnectIsInfinite(t *testing.T) {
 	if got := pub.nc.Opts.MaxReconnect; got != -1 {
 		t.Errorf("MaxReconnect = %d, want -1 (unbounded)", got)
 	}
-	// Ensure the server was actually used — the test is not vacuous.
 	if !pub.nc.IsConnected() {
 		t.Error("publisher not connected after successful start")
 	}
 	_ = s
 }
 
-// TestNATSPublisherRecoversAfterExtendedOutage is the green control: broker
-// away longer than the old budget, publisher reconnects when it returns and
-// the queued rows publish.
-//
-// The old budget is 60 × 2s = 120s. With a production 2s ReconnectWait the
-// test would take two minutes, so the reconnect loop is accelerated to 10ms
-// for the test via a direct nats.Connect with the same MaxReconnects(-1) the
-// publisher uses — the injectable reconnect path the packet allows when a real
-// broker would be too slow. The behavior is identical: infinite vs 60, only
-// the wait is shorter.
-//
-// Steps: broker up → publish succeeds → broker down (longer than 60 fast
-// attempts = 600ms) → publishes fail → broker up → queued row drains.
 func TestNATSPublisherRecoversAfterExtendedOutage(t *testing.T) {
-	// Not parallel with other port-reusing tests to avoid port clash; but can
-	// still run parallel with DB tests because port is unique.
 	port := freePort(t)
 	url := fmt.Sprintf("nats://127.0.0.1:%d", port)
 
 	s1 := startServerOnPort(t, port)
 
-	// Stream the stack must define.
 	{
 		nc, err := nats.Connect(url)
 		if err != nil {
@@ -185,7 +147,6 @@ func TestNATSPublisherRecoversAfterExtendedOutage(t *testing.T) {
 		nc.Close()
 	}
 
-	// Build publisher with infinite reconnect and fast wait.
 	logger, _ := captureLogger()
 	nc, err := nats.Connect(url,
 		nats.RetryOnFailedConnect(true),
@@ -211,10 +172,8 @@ func TestNATSPublisherRecoversAfterExtendedOutage(t *testing.T) {
 	pub := &NATSPublisher{nc: nc, js: js}
 	defer pub.Close()
 
-	// Connected.
 	waitForStatus(t, nc, nats.CONNECTED, 2*time.Second)
 
-	// One successful publish before the outage.
 	pool := dbtest.Schema(t)
 	store := NewStore(pool)
 	ctx := context.Background()
@@ -227,13 +186,9 @@ func TestNATSPublisherRecoversAfterExtendedOutage(t *testing.T) {
 		t.Fatalf("RunOnce before outage: n=%d err=%v", n, err)
 	}
 
-	// Take the broker away.
 	s1.Shutdown()
 	waitForStatus(t, nc, nats.RECONNECTING, 2*time.Second)
 
-	// Stay away longer than the old budget would allow: 70 fast attempts
-	// = 700ms > 60×10ms. The old 60-budget client would be closed by now;
-	// the infinite one is still reconnecting.
 	time.Sleep(700 * time.Millisecond)
 	if nc.IsClosed() {
 		t.Fatal("infinite-reconnect publisher is closed after extended outage; want reconnecting")
@@ -242,17 +197,10 @@ func TestNATSPublisherRecoversAfterExtendedOutage(t *testing.T) {
 		t.Errorf("status after extended outage = %v, want RECONNECTING", nc.Status())
 	}
 
-	// Queue another row while broker is away — the durable outbox: rows
-	// accumulate while the broker is away.
 	e2 := mustUserCreated(t, dbtest.UniqueEmail(t))
 	if err := store.Append(ctx, pool, e2); err != nil {
 		t.Fatalf("Append while down: %v", err)
 	}
-	// Publishing while down fails. Use a short context so the test does not
-	// wait DefaultPublishTimeout (10s) per event — a direct Publish with a
-	// 500ms deadline fails the same way (broker unanswered) but returns
-	// quickly. The row has not been claimed yet, so published_at is still
-	// NULL regardless.
 	shortCtx, shortCancel := context.WithTimeout(ctx, 500*time.Millisecond)
 	err = pub.Publish(shortCtx, e2)
 	shortCancel()
@@ -263,7 +211,6 @@ func TestNATSPublisherRecoversAfterExtendedOutage(t *testing.T) {
 		t.Error("row published while broker down")
 	}
 
-	// Broker returns on same port.
 	s2 := startServerOnPort(t, port)
 	{
 		nc2, err := nats.Connect(url)
@@ -272,16 +219,13 @@ func TestNATSPublisherRecoversAfterExtendedOutage(t *testing.T) {
 		}
 		js2, _ := nc2.JetStream()
 		if _, err := js2.AddStream(&nats.StreamConfig{Name: "TEST2", Subjects: []string{"identity.>"}}); err != nil {
-			// May already exist if store reused; ignore.
 			_ = err
 		}
 		nc2.Close()
 	}
 
-	// Publisher reconnects.
 	waitForStatus(t, nc, nats.CONNECTED, 5*time.Second)
 
-	// Queued row drains.
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		n, err := svc.RunOnce(ctx)
@@ -300,7 +244,6 @@ func TestNATSPublisherRecoversAfterExtendedOutage(t *testing.T) {
 		t.Error("published_at still NULL after drain")
 	}
 
-	// And a fresh publish still works.
 	e3 := mustUserCreated(t, dbtest.UniqueEmail(t))
 	if err := store.Append(ctx, pool, e3); err != nil {
 		t.Fatalf("Append e3: %v", err)
@@ -310,8 +253,6 @@ func TestNATSPublisherRecoversAfterExtendedOutage(t *testing.T) {
 	}
 	_ = s2
 
-	// Subscribe to verify delivery on the new server — proves the publish
-	// reached the broker, not just the row marked.
 	verifyNC, err := nats.Connect(url)
 	if err != nil {
 		t.Fatalf("verify connect: %v", err)
@@ -321,29 +262,13 @@ func TestNATSPublisherRecoversAfterExtendedOutage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("subscribe: %v", err)
 	}
-	// FLUSH BEFORE PUBLISHING — this is the fix for the flake that was red in CI
-	// twice, and the two deadlines it was tried with (2s, then 15s) are why the
-	// flake was worth chasing instead of smoothing: no deadline can find a
-	// message the server never routed. SubscribeSync returns once the SUB is in
-	// verifyNC's write buffer; it does NOT wait for the server to process it,
-	// and the publish below goes out on the PUBLISHER's connection, which has
-	// no ordering with this one. A publish processed before the SUB is not
-	// delivered here and is lost for good — measured with a throwaway probe on
-	// a loopback server: 65 of 300 messages lost without the flush, 0 of 300
-	// with it. Flush round-trips a PING/PONG, so it returns only after the
-	// server has processed every command sent before it.
 	if err := verifyNC.Flush(); err != nil {
 		t.Fatalf("flush after subscribe: %v", err)
 	}
-	// Publish one more to catch.
 	e4 := mustUserCreated(t, dbtest.UniqueEmail(t))
 	if err := pub.Publish(ctx, e4); err != nil {
 		t.Fatalf("Publish after reconnect: %v", err)
 	}
-	// Fifteen seconds, not two: with the flush above the message is guaranteed
-	// to be routed, so this is purely a wait budget for a loaded runner (the
-	// CI gate runs the whole suite under -race at default package parallelism),
-	// not a threshold anything meaningful sits under.
 	msg, err := sub.NextMsg(15 * time.Second)
 	if err != nil {
 		t.Fatalf("nextMsg: %v", err)
@@ -357,11 +282,6 @@ func TestNATSPublisherRecoversAfterExtendedOutage(t *testing.T) {
 	}
 }
 
-// TestNATSPublisherWithBoundedBudgetGivesUp is the RED control: with the old
-// 60-attempt budget, a broker away for longer than the budget leaves the
-// connection closed and rows never draining. This test uses a small budget
-// (5 attempts at 10ms = 50ms) to show the same terminal behavior quickly.
-// It proves the old code's defect rather than the new code's fix.
 func TestNATSPublisherWithBoundedBudgetGivesUp(t *testing.T) {
 	port := freePort(t)
 	url := fmt.Sprintf("nats://127.0.0.1:%d", port)
@@ -382,7 +302,6 @@ func TestNATSPublisherWithBoundedBudgetGivesUp(t *testing.T) {
 	s1.Shutdown()
 	waitForStatus(t, nc, nats.RECONNECTING, 2*time.Second)
 
-	// Longer than budget: 5×10ms + jitter (up to 100ms each).
 	time.Sleep(1 * time.Second)
 
 	if !nc.IsClosed() {
@@ -391,7 +310,6 @@ func TestNATSPublisherWithBoundedBudgetGivesUp(t *testing.T) {
 	if nc.Status() != nats.CLOSED {
 		t.Errorf("status = %v, want CLOSED after budget exhausted", nc.Status())
 	}
-	// Every publish now sees "connection closed".
 	js, _ := nc.JetStream()
 	pub := &NATSPublisher{nc: nc, js: js}
 	err = pub.Publish(context.Background(), mustUserCreated(t, dbtest.UniqueEmail(t)))
@@ -400,10 +318,6 @@ func TestNATSPublisherWithBoundedBudgetGivesUp(t *testing.T) {
 	}
 }
 
-// TestNATSPublisherLogsConnectionStateOncePerClosure is the second RED control:
-// the "connection closed"/"disconnected" line is emitted once per closure, not
-// once per publish. A retry-loop log per publish is how a real defect gets
-// buried — 1200 WARNs in five minutes hid the one line that explained them.
 func TestNATSPublisherLogsConnectionStateOncePerClosure(t *testing.T) {
 	port := freePort(t)
 	url := fmt.Sprintf("nats://127.0.0.1:%d", port)
@@ -438,13 +352,8 @@ func TestNATSPublisherLogsConnectionStateOncePerClosure(t *testing.T) {
 
 	s1.Shutdown()
 	waitForStatus(t, nc, nats.RECONNECTING, 2*time.Second)
-	// Give the disconnect handler time to fire.
 	time.Sleep(50 * time.Millisecond)
 
-	// Publish multiple events while disconnected — each publish fails and the
-	// loop would log one WARN per event, but the connection-state line must
-	// appear only once. Direct Publish with a short context is used so the
-	// test does not wait DefaultPublishTimeout (10s) per event.
 	for i := 0; i < 5; i++ {
 		e := mustUserCreated(t, dbtest.UniqueEmail(t))
 		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
@@ -461,5 +370,4 @@ func TestNATSPublisherLogsConnectionStateOncePerClosure(t *testing.T) {
 	if disconnectedCount != 1 && closedCount != 1 {
 		t.Errorf("expected exactly one disconnect or closed line, got disconnect=%d closed=%d\nlog:\n%s", disconnectedCount, closedCount, buf.String())
 	}
-	// The per-publish WARNs are elsewhere (Service logs), not this handler.
 }

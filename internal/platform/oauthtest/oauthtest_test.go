@@ -11,45 +11,13 @@ import (
 	"github.com/anywaye/identity/internal/platform/oauthtest"
 )
 
-// A FAKE IS A CLAIM ABOUT A PROVIDER, and this file pins the one claim here
-// that a reader cannot check by looking.
-//
-// The default `ProviderUID` is `107346492749283471920`: nineteen digits, above
-// `int64`'s ceiling of 9223372036854775807, and far above `2^53`. That number
-// is deliberate — it is the value that made MD21 visible — and `serveUserInfo`
-// has to cope with it:
-//
-//	if _, err := strconv.ParseInt(s.ProviderUID, 10, 64); err == nil {
-//		body["id"] = json.Number(s.ProviderUID)
-//	}
-//
-// So the fake emits `sub` ALWAYS and `id` only when the uid fits an int64.
-// Both spellings are served because the decoder picks the one its provider
-// uses. The consequence is that a 19-digit uid produces a body carrying
-// `sub` and NO `id`, and that is the branch every GitHub test in this
-// repository runs through without anyone reading the guard.
-//
-// WHY IT NEEDS A TEST, which is the part worth stating: `id` is emitted as a
-// raw `json.Number` and is never unmarshalled back through an int64 anywhere in
-// the OAuth client, so the guard's removal is INVISIBLE TO THE EXISTING
-// SUITE — nothing in this repository decodes that field, so every OAuth test
-// keeps passing either way. The regression it would allow is silent: a decoder
-// that preferred `id` would start reading a float64 that has lost its last
-// digits, which is exactly the failure MD21 rules out, and it would do so in a
-// fixture whose whole purpose is to make that failure visible.
 
-// fetchUserInfo drives the fake the way a provider is actually driven: over
-// HTTP, against the URL the client was configured with, so the assertions below
-// are about bytes on the wire rather than about a Go map.
 func fetchUserInfo(t *testing.T, uid string) map[string]json.RawMessage {
 	t.Helper()
 
 	server := oauthtest.NewServer(t).Person(uid, "someone@example.test", "Someone")
 	provider := server.Provider(t, oauth.GitHub())
 
-	// The bearer is not optional: `authorizes` compares it against the fake's own
-	// access token, and a 401 here would be the fake refusing rather than a fact
-	// about the uid.
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, provider.UserInfoURL, nil)
 	if err != nil {
 		t.Fatalf("building the request: %v", err)
@@ -77,9 +45,6 @@ func fetchUserInfo(t *testing.T, uid string) map[string]json.RawMessage {
 	return body
 }
 
-// The uid crosses as a JSON STRING under `sub`, always, whatever it is. This is
-// MD21's ruling as a property of the fixture: a JSON number here is already a
-// float64 by the time anything downstream re-serializes it.
 func TestSubIsAStringAndSurvivesExactly(t *testing.T) {
 	t.Parallel()
 
@@ -107,13 +72,6 @@ func TestSubIsAStringAndSurvivesExactly(t *testing.T) {
 	}
 }
 
-// A uid that does NOT fit an int64 gets no `id` at all. Not a zero, not a
-// truncated value, not the same digits as a float64 — absent.
-//
-// The reason it has to be absent rather than approximate is the one MD21 names:
-// an `id` of 107346492749283480000 is not this user's id. Serving it would let
-// a decoder prefer `id` over `sub` and silently key a publisher on a number
-// that belongs to nobody.
 func TestAUidTooLargeForInt64IsServedAsSubAlone(t *testing.T) {
 	t.Parallel()
 
@@ -129,10 +87,6 @@ func TestAUidTooLargeForInt64IsServedAsSubAlone(t *testing.T) {
 	}
 }
 
-// The other half, and the reason the guard is a guard rather than a deletion:
-// a uid that DOES fit gets both spellings, so a decoder that reads either one
-// is exercised. Without this the test above would pass against a fake that
-// simply never served `id`.
 func TestAUidThatFitsInt64IsServedUnderBothSpellings(t *testing.T) {
 	t.Parallel()
 
@@ -159,9 +113,6 @@ func TestAUidThatFitsInt64IsServedUnderBothSpellings(t *testing.T) {
 	}
 }
 
-// The fixture's own default is the 19-digit one. This is asserted because every
-// other test in this repository inherits it silently: change the default and a
-// hundred tests change shape without any of them failing to explain why.
 func TestTheDefaultUIDIsTheOneThatExceedsInt64(t *testing.T) {
 	t.Parallel()
 

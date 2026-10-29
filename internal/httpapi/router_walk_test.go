@@ -1,46 +1,5 @@
 package httpapi
 
-// EVERY ROUTER WALK MUST SEE EVERY CONDITIONAL SURFACE.
-//
-// This file exists because of a bug that was in this repository for the whole of
-// packet identity-11, and it is worth stating precisely because the check that
-// should have caught it did not.
-//
-// # WHAT HAPPENED
-//
-// The admin surface is mounted conditionally, like every other optional surface in
-// this service: `registerAdminRoutes` returns immediately when `o.admin` is nil.
-// `servedRoutes` in openapi_drift_test.go builds an `options` struct LITERAL to
-// make every conditional take its "configured" path, and that literal did not
-// mention `admin`.
-//
-// The result was that `TestEveryServedRouteIsDocumentedOrNamed` — the reverse-
-// direction check, the one holding this repository's twelve findings, the one
-// written specifically so a route nobody documented could not hide — went GREEN
-// while three undocumented operations were mounted and being served. It was green
-// because the router it walked had no admin routes in it. The check agreed with
-// the document, and it agreed because it had read a smaller service than the one
-// that runs.
-//
-// The same omission was in `mountedAccountRoutes`, so `TestEveryRouteIsInTheMatrix`
-// — the completeness check the packet names by name — also passed with no admin
-// row required, for the same reason and at the same time.
-//
-// # WHY IT IS NOT FIXED BY ADDING THE FIELD
-//
-// Because the fix that was applied (adding `admin:` to the literal in
-// servedRoutes) is invisible to the next person who adds a conditional surface.
-// Nothing about that edit tells a future author that the literal is a
-// completeness obligation, and the next `o.someNewSurface == nil` early return
-// would reproduce the bug exactly, with every test still green.
-//
-// So the property is stated as a check: every surface field that can cause a
-// registrar to skip its routes must be set in every walk of the router, and a
-// field that is not set is a failure here rather than a silent hole in two other
-// checks.
-//
-// This is the same shape as the tripwire's own argument — a check that can be
-// made green by not checking is not a check — applied to the check itself.
 
 import (
 	"reflect"
@@ -48,55 +7,15 @@ import (
 	"testing"
 )
 
-// conditionalSurfaces is every option field whose nil value causes a registrar to
-// skip mounting routes.
-//
-// IT IS A LIST AND NOT A REFLECTION, deliberately: the reflection this file also
-// does is over the STRUCT, and a struct cannot tell a service field from a
-// config field. `WithReadinessTimeout` and `WithClock` are Options that take
-// durations and clocks, not services, and a test that demanded a double for
-// `readinessTimeout` would be asking for something meaningless.
-//
-// The cost of the list is that a new conditional surface must be added to it, and
-// the benefit is that adding one and forgetting the walks is a failure in this
-// file rather than a hole in two others.
 var conditionalSurfaces = []string{
-	// The service fields, each of which gates a registrar's early return.
-	//
-	// `social` is here because it is the THIRD instance of this bug and the first
-	// one where the check it blinded was the check for the very surface being
-	// mounted. oauth_absent_test.go was the tripwire for social login and it was
-	// GREEN on the day the routes appeared, because neither servedRoutes nor
-	// walkOptions set this field. See oauth_fake_test.go's header for the whole of
-	// it, including why nobody noticed for a whole packet.
 	"auth", "tenancy", "apiKeyCaller", "introspector", "apiKeys", "oidc",
 	"oidcClients", "mfa", "admin", "recovery", "signup", "social",
 
-	// `deletion` is here because a NEW surface did exactly what `social` did and
-	// the list is the only thing standing between that and a silent pass.
-	//
-	// The account-deletion routes were mounted and the whole httpapi package was
-	// GREEN before this line existed: `servedRoutes` builds an `options` literal,
-	// a field it does not set is a surface it cannot see, and a route no walk sees
-	// needs no document, no README row and no enumeration-audit row. Adding the
-	// field to `options` without adding it HERE is the same defect a fourth time,
-	// and it is why the list is a named thing a test reads rather than a habit.
 	"deletion",
 
-	// `agents` is here for the same reason, and it was found the same way: the
-	// agent claim route was mounted, wired into main, and the whole package stayed
-	// GREEN with no document entry and no enumeration-audit row, because neither
-	// `servedRoutes` nor `mountedAccountRoutes` sets the field and
-	// `registerAgentRoutes` returns early without it. This is the fifth instance.
 	"agents",
 }
 
-// TestEveryConditionalSurfaceIsVisibleToTheWalk is the check.
-//
-// It reads the `options` struct's own field list and requires that every field
-// named in conditionalSurfaces exists — so a rename in internal/httpapi fails here
-// rather than making the walk quietly skip a surface that is still wired under the
-// old name.
 func TestEveryConditionalSurfaceIsVisibleToTheWalk(t *testing.T) {
 	t.Parallel()
 
@@ -121,14 +40,6 @@ func TestEveryConditionalSurfaceIsVisibleToTheWalk(t *testing.T) {
 	}
 }
 
-// TestTheDriftWalkSeesTheAdminSurface is the specific instance, and it is here
-// rather than only in the general check because the general one is a list
-// membership test and this one is a behavioral one: it asserts the walk FINDS
-// the routes, not that a field is set.
-//
-// A field can be set to a double that does not satisfy the interface's idea of
-// "configured" — nil embedded in a non-nil struct, a double whose registrar takes
-// a different branch — and the list test would pass. This one would not.
 func TestTheDriftWalkSeesTheAdminSurface(t *testing.T) {
 	t.Parallel()
 
@@ -148,13 +59,6 @@ func TestTheDriftWalkSeesTheAdminSurface(t *testing.T) {
 	}
 }
 
-// TestTheDriftWalkSeesTheRecoverySurface is the third instance of the admin-surface
-// bug, for the eight routes the recovery packet added.
-//
-// It is here rather than folded into the general check because the general one is a
-// list membership test and this one is behavioral: it asserts the walk FINDS the
-// routes. A field can be set to a double the registrar does not consider
-// "configured", and only the routes appearing in the walk can tell.
 func TestTheDriftWalkSeesTheRecoverySurface(t *testing.T) {
 	t.Parallel()
 
@@ -178,23 +82,6 @@ func TestTheDriftWalkSeesTheRecoverySurface(t *testing.T) {
 	}
 }
 
-// TestTheDriftWalkSeesTheSessionLinkSurface is the fourth instance of the same bug,
-// for the two routes the session-link packets added.
-//
-// IT IS HERE FOR A REASON SPECIFIC TO THIS SURFACE, and the reason is that the mint
-// is mounted with NO CONDITIONAL SURFACE OF ITS OWN — it hangs off `recovery`, which
-// every walk already sets — so there is no missing-field failure mode here to catch.
-// The row is therefore not insurance against a literal; it is a claim that the route
-// is visible to the walk that holds `openapi/v1.yaml` to the router. Without it, a
-// route that no walk could see would still be "documented" as far as
-// `TestEveryServedRouteIsDocumentedOrNamed` is concerned, which is precisely the
-// state that file's comment says made it green over three undocumented operations.
-//
-// BOTH ROUTES ARE NAMED, and the redemption's presence is the sharper half: it is the
-// route a browser reaches with NO credential at all, so it is also the one an
-// undocumented entry would hide best — a caller would have discovered it by reading
-// the router rather than the document, which is how a public surface grows past what
-// anybody decided.
 func TestTheDriftWalkSeesTheSessionLinkSurface(t *testing.T) {
 	t.Parallel()
 
@@ -216,16 +103,6 @@ func TestTheDriftWalkSeesTheSessionLinkSurface(t *testing.T) {
 	}
 }
 
-// TestTheDriftWalkSeesTheSignupSurface is the behavioral instance for the signup
-// timestamp mint, and it is the fifth instance of the same bug.
-//
-// IT IS HERE FOR A REASON SPECIFIC TO THIS SURFACE: the mint is mounted in newMux
-// BESIDE registerRoutes (it needs no database, only the key), so it is the one
-// conditional surface whose routes are not reached by a walk that calls
-// registerRoutes alone. servedRoutes in openapi_drift_test.go walks newMux, so it
-// sees the mint — but a walk that assembled the router by hand would not, and the
-// public, unauthenticated endpoint would be a route no documentation check could
-// report. The row asserts the walk FINDS the route, not that a field was set.
 func TestTheDriftWalkSeesTheSignupSurface(t *testing.T) {
 	t.Parallel()
 
@@ -241,23 +118,6 @@ func TestTheDriftWalkSeesTheSignupSurface(t *testing.T) {
 	}
 }
 
-// TestTheDriftWalkSeesTheSocialLoginSurface is the behavioral instance for the
-// third occurrence, and it is the pair of checks that let the social-login
-// tripwire go green on the day its own subject was mounted.
-//
-// `TestEveryConditionalSurfaceIsVisibleToTheWalk` above is a list membership test:
-// it requires every name in `conditionalSurfaces` to BE a field of options, and
-// `social` was a field nobody listed — so it passed, and the walk stayed blind to
-// both social routes. A list that can omit an entry without failing is a list that
-// cannot enforce its own claim, which is why this file's real work is asserting
-// that the walk FINDS the routes.
-//
-// Both directions of the failure are named, because they were both real here. The
-// drift walk reporting the routes is what makes
-// `TestEveryServedRouteIsDocumentedOrNamed` able to fail on an undocumented social
-// operation. The claim walk reporting them is what makes the README's
-// social-login rows checkable rather than decorative — a README row for a route
-// the walk cannot see would be checked against nothing.
 func TestTheDriftWalkSeesTheSocialLoginSurface(t *testing.T) {
 	t.Parallel()
 
@@ -283,8 +143,6 @@ func TestTheDriftWalkSeesTheSocialLoginSurface(t *testing.T) {
 	}
 }
 
-// TestTheMatrixWalkSeesTheAdminSurface is the same property for the
-// authorization matrix, and it is the second of the two checks the bug blinded.
 func TestTheMatrixWalkSeesTheAdminSurface(t *testing.T) {
 	t.Parallel()
 

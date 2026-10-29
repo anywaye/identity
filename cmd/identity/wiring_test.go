@@ -18,16 +18,10 @@ import (
 	"github.com/anywaye/identity/internal/signup"
 )
 
-// discardLogger matches the helper the app tests use: assertions on log output
-// live in internal/httpapi, where the handler that writes them is.
 func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-// The wiring tests: newApp has to produce a process that serves the v1 surface
-// when a database is configured, and that still serves its probes when one is
-// not. The auth behavior itself is covered in internal/httpapi and
-// internal/auth; what matters here is that the two are actually connected.
 
 func testDatabaseURL(t *testing.T) string {
 	t.Helper()
@@ -39,8 +33,6 @@ func testDatabaseURL(t *testing.T) string {
 	return dsn
 }
 
-// With a database, the v1 routes are mounted and the whole flow works over the
-// real handler the process serves.
 func TestNewAppServesTheAuthSurfaceWithADatabase(t *testing.T) {
 	dsn := testDatabaseURL(t)
 	ctx := context.Background()
@@ -55,11 +47,6 @@ func TestNewAppServesTheAuthSurfaceWithADatabase(t *testing.T) {
 	email := dbtest.UniqueEmail(t)
 	const password = "correct horse battery staple"
 
-	// Mint a signup timestamp pair, the way the form does. The registration
-	// carries it, and the verify refuses a submission without one — so this test
-	// mints through the real endpoint rather than constructing a pair by hand:
-	// the point is that newApp mounts the mint AND wires the verify, and a
-	// hand-built pair would prove only the second.
 	pairRec := serveBody(t, a, http.MethodPost, "/v1/signup-timestamp", "", nil)
 	if pairRec.Code != http.StatusOK {
 		t.Fatalf("POST /v1/signup-timestamp = %d, want 200; body: %s", pairRec.Code, pairRec.Body)
@@ -72,21 +59,14 @@ func TestNewAppServesTheAuthSurfaceWithADatabase(t *testing.T) {
 		t.Fatalf("the minted pair is not JSON: %v\n%s", err, pairRec.Body)
 	}
 
-	// Wait out the two-second floor. It is the protection — a bot submits
-	// instantly — so the test cannot avoid it any more than a bot can: the pair
-	// must be at least MinAge old before the submission verifies. The sleep is
-	// the honest cost of a real clock; the unit tests move time exactly through
-	// the fake clock instead.
 	time.Sleep(signup.MinAge + 500*time.Millisecond)
 
-	// Register.
 	rec := serveBody(t, a, http.MethodPost, "/v1/users", `{"email":"`+email+`","password":"`+password+
 		`","timestamp":`+strconv.FormatInt(pair.Timestamp, 10)+`,"signature":"`+pair.Signature+`"}`, nil)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("POST /v1/users = %d, want 201; body: %s", rec.Code, rec.Body)
 	}
 
-	// Log in.
 	loginRec := serveBody(t, a, http.MethodPost, "/v1/session", `{"email":"`+email+`","password":"`+password+`"}`, nil)
 	if loginRec.Code != http.StatusOK {
 		t.Fatalf("POST /v1/session = %d, want 200; body: %s", loginRec.Code, loginRec.Body)
@@ -107,7 +87,6 @@ func TestNewAppServesTheAuthSurfaceWithADatabase(t *testing.T) {
 		t.Errorf("the login set cookies %+v, want one __Host-session", cookies)
 	}
 
-	// The identity of the session.
 	meRec := serveBody(t, a, http.MethodGet, "/v1/me", "", map[string]string{
 		"Authorization": "Bearer " + login.Token,
 	})
@@ -115,7 +94,6 @@ func TestNewAppServesTheAuthSurfaceWithADatabase(t *testing.T) {
 		t.Fatalf("GET /v1/me = %d, want 200; body: %s", meRec.Code, meRec.Body)
 	}
 
-	// Log out, and the token dies.
 	logoutRec := serveBody(t, a, http.MethodDelete, "/v1/session", "", map[string]string{
 		"Authorization": "Bearer " + login.Token,
 	})
@@ -131,9 +109,6 @@ func TestNewAppServesTheAuthSurfaceWithADatabase(t *testing.T) {
 	}
 }
 
-// Without a database the process must still start and still answer its probes.
-// The v1 routes are absent rather than present-and-broken, so the failure mode of
-// a missing DATABASE_URL is a clear 404 instead of a pile of 500s.
 func TestNewAppWithoutADatabaseStillServesTheProbes(t *testing.T) {
 	cfg := withSignupKey(config.Config{Port: "0", LogLevel: "error"})
 
@@ -150,13 +125,11 @@ func TestNewAppWithoutADatabaseStillServesTheProbes(t *testing.T) {
 		}
 	}
 
-	// Readiness reports that there is nothing to probe, which is the v0 shape.
 	readyRec := serveBody(t, a, http.MethodGet, "/readyz", "", nil)
 	if !strings.Contains(readyRec.Body.String(), `"deps":"none"`) {
 		t.Errorf("/readyz = %s, want deps none with no database", readyRec.Body)
 	}
 
-	// The auth surface is simply not there.
 	for _, route := range []struct{ method, target string }{
 		{http.MethodPost, "/v1/users"},
 		{http.MethodPost, "/v1/session"},
@@ -170,11 +143,6 @@ func TestNewAppWithoutADatabaseStillServesTheProbes(t *testing.T) {
 	}
 }
 
-// A syntactically valid DATABASE_URL pointing at nothing is a different case from
-// a malformed one: db.Open parses without dialing, so the app builds and the
-// readiness probe is what reports the database as unreachable. main_test.go covers
-// the malformed case. This one proves the lazy-pool rule still holds now that the
-// pool is also carrying the auth stores.
 func TestNewAppWithAnUnreachableDatabaseStillBuilds(t *testing.T) {
 	cfg := config.Config{
 		Port:        "0",
@@ -188,22 +156,12 @@ func TestNewAppWithAnUnreachableDatabaseStillBuilds(t *testing.T) {
 	}
 	defer a.Close()
 
-	// Liveness is unconditional even with the database gone.
 	rec := serveBody(t, a, http.MethodGet, "/healthz", "", nil)
 	if rec.Code != http.StatusOK {
 		t.Errorf("GET /healthz = %d, want 200 with an unreachable database; body: %s", rec.Code, rec.Body)
 	}
 }
 
-// registerUserWithPair registers a user the way the form does: it carries a
-// signup timestamp pair minted under the app's own key.
-//
-// The pair is minted directly rather than through POST /v1/signup-timestamp
-// because these tests are about the MFA/OIDC wiring, not the mint — the mint's
-// end-to-end proof is TestNewAppServesTheAuthSurfaceWithADatabase, which mints
-// through the real endpoint and waits out the floor. The timestamp is 30 s in
-// the past, so the pair is already past the two-second floor and no sleep is
-// needed; the verify it passes through is the real one, under the real key.
 func registerUserWithPair(t *testing.T, a *app, email, password string) {
 	t.Helper()
 
@@ -215,7 +173,6 @@ func registerUserWithPair(t *testing.T, a *app, email, password string) {
 	}
 }
 
-// serveBody drives the app's handler with a body and optional headers.
 func serveBody(t *testing.T, a *app, method, target, body string, headers map[string]string) *httptest.ResponseRecorder {
 	t.Helper()
 

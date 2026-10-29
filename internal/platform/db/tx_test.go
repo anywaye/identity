@@ -6,13 +6,6 @@ import (
 	"testing"
 )
 
-// TxRunner runs a function inside a transaction and commits or rolls back
-// around it.
-//
-// It exists so a use case that must write two rows together — a user and its
-// outbox event — can say so without naming pgx, and so that use case can be
-// tested without a database. The alternative, a use case that calls Begin itself,
-// forces every test of its branching to stand up Postgres or fake pgx.Tx.
 
 func TestTxRunnerCommitsWhenTheFunctionSucceeds(t *testing.T) {
 	t.Parallel()
@@ -49,8 +42,6 @@ func TestTxRunnerRollsBackAndReturnsTheError(t *testing.T) {
 		return boom
 	})
 
-	// The error is returned unwrapped: a caller that has to unwrap to find out
-	// what went wrong will eventually stop checking.
 	if !errors.Is(err, boom) {
 		t.Errorf("Do = %v, want the function's error verbatim", err)
 	}
@@ -62,10 +53,6 @@ func TestTxRunnerRollsBackAndReturnsTheError(t *testing.T) {
 	}
 }
 
-// The function gets the transaction as its Querier, not the pool. That is the
-// whole mechanism behind "these two writes are one transaction", and a test can
-// see it: a statement issued through the handed-over querier must not be visible
-// on the pool.
 func TestTxRunnerHandsOverTheTransactionNotThePool(t *testing.T) {
 	t.Parallel()
 
@@ -88,10 +75,6 @@ func TestTxRunnerHandsOverTheTransactionNotThePool(t *testing.T) {
 	}
 }
 
-// A panic inside the function must roll back rather than leave the transaction
-// open on a connection. The error is returned, not re-panicked: the transaction
-// manager is below the HTTP handlers, and a panic there is a bug to be surfaced,
-// not one to be re-raised from two frames down.
 func TestTxRunnerRecoversAPanicAndRollsBack(t *testing.T) {
 	t.Parallel()
 
@@ -116,9 +99,6 @@ func TestTxRunnerRecoversAPanicAndRollsBack(t *testing.T) {
 	}
 }
 
-// A commit that fails is reported, not swallowed. A caller that believes two
-// writes are durable when they are not will go on to tell a client its
-// registration succeeded.
 func TestTxRunnerReportsACommitFailure(t *testing.T) {
 	t.Parallel()
 
@@ -132,8 +112,6 @@ func TestTxRunnerReportsACommitFailure(t *testing.T) {
 	}
 }
 
-// An already-canceled context is refused before a transaction is opened, so the
-// caller does not hold a connection for a request that is not going to happen.
 func TestTxRunnerRefusesADeadContext(t *testing.T) {
 	t.Parallel()
 

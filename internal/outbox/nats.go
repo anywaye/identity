@@ -171,10 +171,6 @@ func (p *NATSPublisher) Publish(ctx context.Context, e Envelope) error {
 		return fmt.Errorf("outbox: marshaling the envelope: %w", err)
 	}
 
-	// The budget is applied here, inside Publish, so every caller is protected
-	// and not just the loop: the process's context has no deadline, and an
-	// unbounded publish is a publish that can hang forever. Deriving from the
-	// caller's context keeps a shutdown able to abort the publish immediately.
 	publishCtx, cancel := context.WithTimeout(ctx, DefaultPublishTimeout)
 	defer cancel()
 

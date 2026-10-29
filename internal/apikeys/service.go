@@ -14,61 +14,12 @@ import (
 	"github.com/anywaye/identity/internal/users"
 )
 
-// The use cases: mint a credential, list an account's credentials, withdraw one,
-// and turn a presented value into a caller.
-//
-// THE FOUR OPERATIONS, AND THE THREE THAT ARE NOT HERE, are the shape of the
-// feature. There is no Rotate, no Reveal, no MintForAnotherUser, no SetScopes.
-//
-//	no Reveal          there is nothing to reveal. The plaintext exists once, in
-//	                   the 201, and a "show me the token again" endpoint would be
-//	                   an endpoint whose only purpose is to be called by somebody
-//	                   who has already lost the credential.
-//	no SetScopes       a token's authority is fixed at issue. Changing it means
-//	                   minting a new one, which means a new secret, which means
-//	                   the old one is revoked — so "change the scopes" is exactly
-//	                   "rotate", expressed in two words, and having a second
-//	                   spelling of it would be a second way to get the security
-//	                   property wrong.
-//	no MintForAnotherUser  a credential is minted BY the caller FOR the caller's
-//	                   own account. There is no subject field, and MintInput has
-//	                   no UserID: a machine credential is a user's own authority,
-//	                                     narrowed, and one that can be minted for
-//	                   somebody else is a way for an owner to plant a credential
-//	                   somebody did not choose to hold.
-//
-// Errors beyond the package's own. They are declared here rather than in the
-// store because each of them is a decision about what a CALLER is told, and the
-// HTTP layer renders three of them differently on purpose.
 var (
-	// ErrNotAuthorized means the caller may not do this in this account: a member
-	// where an owner is required, or a stranger.
-	//
-	// The use case returns it rather than the route, and the route turns it into
-	// 403 for a member and 404 for a stranger — because a 403 for somebody who is
-	// not in the account at all confirms that the account exists, which is the
-	// tenant-enumeration oracle RequireAccountRole exists to avoid. The route has
-	// the membership; this layer does not, and asking it to distinguish the two
-	// would mean a second membership read.
 	ErrNotAuthorized = errors.New("caller may not manage api keys in this account")
 
-	// ErrScopeNotMintableHere means the requested scope set is well-formed and every
-	// name in it is one this build knows, but one of them is not GRANTABLE by this
-	// surface. Only `users:disable` is: it names no account, so a credential minted
-	// for one account must not carry it. See refuseNonAccountScope.
-	//
-	// IT IS 403 AND NOT 422, and the difference is the point: the caller's request is
-	// not malformed and the scope does not exist — they asked a settings page for a
-	// capability it is not allowed to hand out. A 422 naming `scopes` as invalid would
-	// send a developer to the vocabulary table to look for a typo that is not there.
 	ErrScopeNotMintableHere = errors.New("this surface cannot mint a credential carrying that scope")
 )
 
-// ErrNameTaken and ErrAlreadyRevoked are the STORE's, and they are returned from
-// these use cases unchanged rather than re-declared. A caller matches them with
-// errors.Is against this package's exported names, and there is exactly one
-// declaration of each: two would be two values that a `errors.Is` on one would not
-// match against the other, and the 409 would silently become a 500.
 
 // Caller is who a presented credential turned out to be.
 //
@@ -186,23 +137,6 @@ type CredentialResolver interface {
 	Do(ctx context.Context, digest string, fn func(ctx context.Context, q db.Querier) error) error
 }
 
-// resolveByDigest is the one lookup that has no account to predicate on, and it
-// is HERE rather than inlined at each of its two call sites because the seam is
-// the security-relevant part: the digest is hashed off the request by the
-// caller, handed to Postgres as the statement that scopes the read, and expired
-// with the transaction — before any query runs.
-//
-// THE QUERY IS UNCHANGED, and that is the point of adopting kit's mechanism
-// rather than a local workaround. `where k.token_digest = $1` was always there;
-// what changed is that the boundary now knows how to read it, because the
-// policy carries the same predicate the query does.
-//
-// An error from inside the transaction is returned unchanged, so a refused
-// resolution is still ErrNotFound and still 401. A failure to SET the digest is
-// a different thing — a database problem, not an unknown credential — and it
-// keeps its own sentinel (tenancy.ErrNoCredential) rather than being folded into
-// ErrNotFound, because the two mean opposite things to whoever is reading the
-// log at three in the morning.
 func (s *Service) resolveByDigest(ctx context.Context, digest string, now time.Time) (Key, error) {
 	var key Key
 	err := s.resolve.Do(ctx, digest, func(ctx context.Context, q db.Querier) error {
@@ -234,9 +168,6 @@ type MintInput struct {
 	AccountID id.UUID
 	Name      string
 	Scopes    []string
-	// ExpiresIn is optional. nil is the default lifetime; 0 or negative is
-	// refused rather than defaulted, so a client that meant "forever" and typed
-	// the wrong thing is told so.
 	ExpiresIn *time.Duration
 	MintedBy  id.UUID
 }
@@ -294,9 +225,6 @@ func (s *Service) Mint(ctx context.Context, in MintInput) (IssuedKey, error) {
 		return IssuedKey{}, err
 	}
 
-	// Minted AFTER validation and AFTER the role check, so a rejected request does
-	// not consume entropy and a caller who may not have a credential is not told
-	// anything about the randomness.
 	token, digest, err := NewToken()
 	if err != nil {
 		return IssuedKey{}, err
@@ -339,29 +267,6 @@ func (s *Service) Mint(ctx context.Context, in MintInput) (IssuedKey, error) {
 	return IssuedKey{Key: created, Token: token}, nil
 }
 
-// refuseNonAccountScope is the mint's account boundary, and it is here rather than
-// in the HTTP layer because a check only a handler performs is a check the next
-// caller does not inherit.
-//
-// `users:disable` is IN THE VOCABULARY — a token holding it reaches
-// `POST /v1/users/{userID}/disable` — and it is the one scope that must never be
-// GRANTED here. This method mints a credential **for an account**, and it requires
-// that account's owner; a token minted through it therefore belongs to one tenant.
-// Granting it the operator scope would let any account owner mint a credential that
-// names any user on the deployment, which is exactly the reach D2–D5 spent five
-// entries refusing — handed out through a settings page, by a role check that has
-// nothing to do with the capability being granted.
-//
-// So the operator credential is NOT minted by this service's account surface. It is
-// a deployment fact: the row is provisioned for the deployment by whoever operates
-// it, and it is revoked by revoking that row. That is the honest shape — the
-// vocabulary says a scope exists, and this entry says the route that hands it out is
-// not an account route, rather than the vocabulary lying by omission.
-//
-// THE ERROR IS `ErrScopeNotMintableHere` RATHER THAN A VALIDATION FAILURE, because
-// the request is well-formed and the value is a scope this build knows. A 422 naming
-// `scopes` as invalid would tell a developer their vocabulary is wrong; what is
-// wrong is the surface.
 func refuseNonAccountScope(scopes []string) error {
 	for _, scope := range scopes {
 		if scope == ScopeUsersDisable || scope == ScopeTokensIntrospect {
@@ -396,7 +301,6 @@ type RevokeInput struct {
 	AccountID id.UUID
 	KeyID     id.UUID
 	RevokedBy id.UUID
-	// Reason is stored on the row and NOT in the event. See outbox's note.
 	Reason string
 }
 
@@ -574,10 +478,6 @@ func (s *Service) Introspect(ctx context.Context, token string, now time.Time) (
 func (s *Service) Authenticate(ctx context.Context, token string, now time.Time) (Caller, error) {
 	key, err := s.resolveByDigest(ctx, Digest(token), now)
 	if err != nil {
-		// Already ErrNotFound for every case, and the store's error is not wrapped
-		// again here: a caller matching on it is the HTTP layer, and a wrapped
-		// sentinel would still match, but a second error string on a refusal is
-		// one more thing that could differ between two refusals.
 		return Caller{}, err
 	}
 
@@ -587,26 +487,9 @@ func (s *Service) Authenticate(ctx context.Context, token string, now time.Time)
 
 	user, err := s.users.ByID(ctx, s.read.Queryer(), key.UserID)
 	if err != nil {
-		// A key whose user has been deleted cannot happen — the table cascades —
-		// and a row that somehow names a user who is not there must not resolve. It
-		// is refused as "not found" rather than as a 500 because from the caller's
-		// side it is the same answer as a token that never existed, and a 500 here
-		// would be the one way to tell them apart.
 		return Caller{}, ErrNotFound
 	}
 
-	// Best effort, and deliberately not surfaced. The store's Touch is already
-	// bounded to one write per LastUsedResolution, so this is at most one UPDATE
-	// every five minutes on a row nobody is waiting on, and a failure of it — a
-	// deadlock, a read-only replica, a dropped connection — is a missing audit
-	// timestamp rather than a broken credential. Returning it would let a busy
-	// token's own bookkeeping deny it service.
-	//
-	// The resolved row is updated IN HAND after the write rather than re-read, and
-	// that is so the caller sees the timestamp of the use it just made. A caller
-	// that rendered "last used: never" for a token it is currently using would be
-	// reporting the state before its own request, which is the one reading that is
-	// never true at the moment it is read.
 	if err := s.store.Touch(ctx, s.read.Queryer(), key.ID, now); err == nil {
 		key.LastUsedAt = &now
 	}
@@ -614,28 +497,13 @@ func (s *Service) Authenticate(ctx context.Context, token string, now time.Time)
 	return Caller{User: user, Key: key, Role: key.Role}, nil
 }
 
-// requireOwner is the one authorization rule in this package: minting and revoking
-// are owner-only, and "owner" is read through accounts.Role rather than compared
-// here.
-//
-// IT IS IN THE TRANSACTION on purpose. Reading the role outside and then writing
-// inside would leave a window in which the caller is demoted between the check and
-// the write, and the credential they were about to mint would be minted anyway —
-// the same read-then-write race mfa's partial unique index exists to remove.
 func (s *Service) requireOwner(ctx context.Context, accountID, userID id.UUID) error {
 	if s.roles == nil {
-		// Said out loud rather than panicking: a deployment without tenancy wired
-		// cannot answer "who owns this", and a nil-pointer panic in a
-		// credential-management path is a 500 that says nothing.
 		return ErrNotAuthorized
 	}
 
 	_, role, err := s.roles.Get(ctx, accountID, userID)
 	if err != nil {
-		// accounts.ErrNotAMember and accounts.ErrNotFound both mean the same thing
-		// here — this caller has no standing in this account — and the route has
-		// already answered the two differently before it got here. Anything else is
-		// a real failure and stays one.
 		if errors.Is(err, accounts.ErrNotAMember) || errors.Is(err, accounts.ErrNotFound) {
 			return ErrNotAuthorized
 		}

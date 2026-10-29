@@ -13,14 +13,6 @@ import (
 	"github.com/anywaye/identity/internal/platform/id"
 )
 
-// The session-to-token exchange, endpoint by endpoint.
-//
-// The claim set itself (iss, aud, account_id, the signature) is the provider's
-// and is asserted in `internal/oidc/mint_test.go`. What is asserted HERE is the
-// authorization decision this layer owns: which account is allowed to be named,
-// what a refusal looks like, and which credentials may reach the route at all.
-// The double is `fakeOIDC`, which records every call, so "nothing was minted"
-// is a check that can actually fail.
 type fixedClock struct{ now time.Time }
 
 func (c fixedClock) Now() time.Time { return c.now }
@@ -63,8 +55,6 @@ func TestMintSessionTokenMintsForTheAccountTheCallerNamed(t *testing.T) {
 		t.Errorf("expires_at = %s, want %s — the provider's expiry, through the service's clock", body.ExpiresAt, want)
 	}
 
-	// The whole of the decision: the subject is the session's user, the account
-	// is the one the BODY named, and the instant is the service clock's.
 	if len(provider.minted) != 1 {
 		t.Fatalf("the provider was asked %d times, want 1", len(provider.minted))
 	}
@@ -83,10 +73,6 @@ func TestMintSessionTokenMintsForTheAccountTheCallerNamed(t *testing.T) {
 	}
 }
 
-// A caller who is not a member of the account they named gets the tenancy
-// layer's one absence sentence, and NOTHING is signed. The second half is the
-// half that matters: a 404 that still minted would be a lockout with a
-// credential attached.
 func TestMintSessionTokenIsAbsentForAnAccountTheCallerIsNotIn(t *testing.T) {
 	tenancy := newFakeTenancy()
 	tenancy.getErr = accounts.ErrNotAMember
@@ -107,9 +93,6 @@ func TestMintSessionTokenIsAbsentForAnAccountTheCallerIsNotIn(t *testing.T) {
 	}
 }
 
-// Table of the shapes that are wrong before any store is consulted: a missing
-// field, an account id that cannot name anything, an audience that is not a
-// service name. Each is a 422 naming its own field, and none of them mints.
 func TestMintSessionTokenFieldRefusals(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -136,8 +119,6 @@ func TestMintSessionTokenFieldRefusals(t *testing.T) {
 			wantCode:  codeTokenFieldInvalid,
 		},
 		{
-			// Uppercase, spaces, a path: none of them is a service name, and a
-			// receiver pinning its own audience will never match one.
 			name:      "an audience that is not a service name",
 			body:      `{"account_id":"` + id.MustNew().String() + `","audience":"https://billing.anywaye.com"}`,
 			wantField: "audience",
@@ -166,9 +147,6 @@ func TestMintSessionTokenFieldRefusals(t *testing.T) {
 	}
 }
 
-// A scoped api key is refused by the same middleware every session surface
-// uses. THIS IS THE ESCALATION GUARD: a machine credential bound to one account
-// must not be able to mint a token that asserts a human's identity.
 func TestMintSessionTokenRefusesAnAPIKey(t *testing.T) {
 	provider := newFakeOIDC()
 	handler, _ := sessionTokenRouter(t, newFakeTenancy(), provider, testInstant)
@@ -184,8 +162,6 @@ func TestMintSessionTokenRefusesAnAPIKey(t *testing.T) {
 	}
 }
 
-// A signer failure is this service's own fault and is a 500, not a refusal the
-// caller could act on. The provider double makes it expressible.
 func TestMintSessionTokenRefusesWithoutASigner(t *testing.T) {
 	provider := newFakeOIDC()
 	provider.mintErr = errors.New("the signing key is gone")
@@ -199,9 +175,6 @@ func TestMintSessionTokenRefusesWithoutASigner(t *testing.T) {
 	}
 }
 
-// Without a provider the route is not mounted, which is the rule every
-// conditional surface here follows: a deployment that cannot mint says so with
-// a 404 rather than with a 500 on every request.
 func TestMintSessionTokenIsAbsentWithoutAProvider(t *testing.T) {
 	auth := newFakeAuth()
 	handler := New(nil, WithAuth(auth), WithTenancy(newFakeTenancy()))
@@ -214,6 +187,4 @@ func TestMintSessionTokenIsAbsentWithoutAProvider(t *testing.T) {
 	}
 }
 
-// clock.System satisfies the interface the route reads its instant from; this
-// line fails to compile if the option stops accepting it.
 var _ clock.Clock = clock.System{}

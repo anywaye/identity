@@ -11,28 +11,11 @@ import (
 	"github.com/anywaye/identity/internal/users"
 )
 
-// THE MINT, AT THE USE CASE.
-//
-// The machine's own tests (session_link_test.go) drive `Store` directly, because the
-// claim there is that a link is a fourth purpose on the existing table. This file
-// is the other claim: that the USE CASE refuses the right things in the right
-// order, and refuses them before a credential exists.
-//
-// EVERY REFUSAL IS ASSERTED AGAINST THE TABLE, not just the returned error, because
-// "it returned an error" and "it left no live row behind" are different facts and
-// only the second one is the security property. A mint that refused after inserting
-// would pass every test that reads the error.
 
-// isErr matches a sentinel, however it was wrapped.
 func isErr(sentinel error) func(error) bool {
 	return func(err error) bool { return errors.Is(err, sentinel) }
 }
 
-// isWindowError matches a `*users.FieldError` on the `window` field with one code.
-//
-// It is a separate matcher rather than a general field-error matcher because the
-// FIELD is half of what is being asserted: an error naming some other field would
-// tell a caller to fix a field this request does not have, and the 422 would say so.
 func isWindowError(code string) func(error) bool {
 	return func(err error) bool {
 		var fieldErr *users.FieldError
@@ -68,9 +51,6 @@ func TestAMintedLinkIsOneLiveRowAndThePlaintextIsOnlyTheReturnValue(t *testing.T
 			live.TargetEmail, live.TargetMinted)
 	}
 
-	// The plaintext is in no column. TestASessionLinkIsOneRowOfTheMachineAndNothingElse
-	// proves this at the store level; this is the same property seen from the use case,
-	// because the use case is where the value exists and a future field could hold it.
 	for column, value := range h.storedTokenRow(live.ID) {
 		if text, ok := value.(string); ok && strings.Contains(text, link.Token) {
 			t.Errorf("the minted plaintext is in column %q", column)
@@ -78,24 +58,10 @@ func TestAMintedLinkIsOneLiveRowAndThePlaintextIsOnlyTheReturnValue(t *testing.T
 	}
 }
 
-// TestTheMintRefusesBeforeItWritesAnything is the table above turned into the
-// property it exists for: every refusal is a refusal of a REQUEST, so there is no
-// row for a caller to find afterwards.
-//
-// THE COUNT IS A SUM OVER THE TABLE, not over the returned errors. Four refusals
-// that each returned an error and each wrote a row would pass an error-shaped test
-// completely, and a live row for a refused subject is a live credential.
 func TestTheMintRefusesBeforeItWritesAnything(t *testing.T) {
 	cases := []struct {
 		name string
-		// arrange sets the fixture up, so a refusal that depends on the subject's
-		// state can be expressed as a fixture rather than as a branch in the test.
 		arrange func(t *testing.T, h *harness) MintSessionLinkInput
-		// want says what the mint must fail with. It is a PREDICATE rather than a
-		// sentinel because two of the five refusals are `*users.FieldError`, and
-		// `errors.Is` on a pointer to a struct with no `Is` method is pointer
-		// identity: a table written as `want: &users.FieldError{...}` would compare
-		// two different allocations and fail while the behavior was correct.
 		want func(error) bool
 	}{
 		{
@@ -129,10 +95,6 @@ func TestTheMintRefusesBeforeItWritesAnything(t *testing.T) {
 			want: isWindowError(users.CodeInvalidFormat),
 		},
 		{
-			// THE SEAM THAT CANNOT ANSWER. A deployment with no way to say whether
-			// anybody has a second factor must mint nothing, because the alternative
-			// is minting on an assumption and the assumption is the control this route
-			// has.
 			name: "a deployment that cannot ask about second factors",
 			arrange: func(t *testing.T, h *harness) MintSessionLinkInput {
 				h.secondFactor.err = ErrMFAUnavailable
@@ -143,10 +105,6 @@ func TestTheMintRefusesBeforeItWritesAnything(t *testing.T) {
 		{
 			name: "a nil second-factor seam",
 			arrange: func(t *testing.T, h *harness) MintSessionLinkInput {
-				// A service constructed without the seam at all, which the required
-				// constructor argument makes a wiring fault rather than a supported
-				// configuration — and a fault must fail closed rather than read as
-				// "nobody has a second factor".
 				h.svc.secondFactor = nil
 				return MintSessionLinkInput{UserID: h.registerSimple().id}
 			},
@@ -179,14 +137,6 @@ func TestTheMintRefusesBeforeItWritesAnything(t *testing.T) {
 	}
 }
 
-// TestAMintForAnEnrolledSubjectIsRefusedRatherThanServedWithAChallenge is the MFA
-// decision, asserted as the two things it could have been and was not.
-//
-// THE CLAIM IS A REFUSAL, so this test cannot be satisfied by a mint that succeeds
-// with a challenge attached: the first assertion is that the call fails. The second
-// is the reason — that the refusal is about the SUBJECT and is therefore only
-// available to a caller holding `sessions:write`, which is what makes a 409 here
-// safe in a way the same status on a stranger-facing route would not be.
 func TestAMintForAnEnrolledSubjectIsRefusedRatherThanServedWithAChallenge(t *testing.T) {
 	h := newHarness(t, true)
 	who := h.registerSimple()
@@ -202,22 +152,12 @@ func TestAMintForAnEnrolledSubjectIsRefusedRatherThanServedWithAChallenge(t *tes
 			"reusing it here would make one sentinel carry two different meanings")
 	}
 
-	// The negative control on the fixture: with the seam saying "not enrolled" the
-	// very same call succeeds, so the refusal above is about the answer and not about
-	// the subject or the route.
 	h.secondFactor.enrolled = false
 	if _, err := h.svc.MintSessionLink(t.Context(), MintSessionLinkInput{UserID: who.id}); err != nil {
 		t.Fatalf("the same mint with no second factor enrolled = %v, want a link", err)
 	}
 }
 
-// TestTheWindowIsARefusedBoundAndNotAClamp: a caller that asked for more than the
-// ceiling learns so, rather than receiving the ceiling and believing it got what it
-// asked for.
-//
-// THE COMPARISON IS ON THE ERROR AND ON THE ABSENCE OF A ROW, because a clamp that
-// still wrote a row would answer 422 and leave a live credential — the worst of the
-// two shapes, and the one a test reading only the error would pass.
 func TestTheWindowIsARefusedBoundAndNotAClamp(t *testing.T) {
 	h := newHarness(t, true)
 	who := h.registerSimple()
@@ -240,8 +180,6 @@ func TestTheWindowIsARefusedBoundAndNotAClamp(t *testing.T) {
 		}
 	}
 
-	// And the ceiling itself is a legal request, which is what makes the refusal a
-	// bound rather than a rejection of the field.
 	atCeiling, err := h.svc.MintSessionLink(t.Context(), MintSessionLinkInput{
 		UserID: who.id,
 		Window: MaxSessionLinkTTL,
@@ -254,9 +192,6 @@ func TestTheWindowIsARefusedBoundAndNotAClamp(t *testing.T) {
 	}
 }
 
-// TestAShorterWindowIsHonoured, because a ceiling nobody may approach is a constant
-// and not a policy: the caller is allowed to ask for less than the default, and the
-// value it asked for is the value that is written.
 func TestAShorterWindowIsHonoured(t *testing.T) {
 	h := newHarness(t, true)
 	who := h.registerSimple()

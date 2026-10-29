@@ -6,43 +6,10 @@ import (
 	"github.com/anywaye/identity/internal/platform/id"
 )
 
-// The api key events: a scoped machine credential was issued, and it stopped
-// working.
-//
-// BOTH NAMES ARE CORE'S AND ARE NOT A CHOICE. docs/event-naming.md carries a row
-// for each — `identity.api_key.created` and `identity.api_key.revoked`, subject
-// "the api key" — so this file is the publisher side of two rows another
-// repository is writing the schema for. It is also the second piece of evidence
-// for the table being named api_keys rather than api_tokens: the published
-// vocabulary is the one thing in the schema another repository has already
-// committed to, and a different table name would have meant asking core to change
-// it.
-//
-// THE SUBJECT IS THE KEY'S OWN ROW ID, and that is a real choice rather than the
-// tenancy package's "the account". Two accounts can each hold a credential, and a
-// consumer that wants per-credential ordering — "this was revoked after that was
-// created", which is the question a rotation asks — correlates on the credential.
-// A consumer that wants per-tenant ordering correlates on data.account_id, which
-// is in every payload for exactly that reason. The MFA events took the user for
-// the same kind of reason and said so there.
-//
-// `identity.api_key.revoked` IS ALSO THE EVENT FOR AN EXPIRY, which is core's own
-// wording — "A scoped API token is revoked or expired" — and this service has no
-// sweeper, so nothing emits that second case yet. See README.md, "Not built yet".
 
-// The event types this service publishes for scoped API tokens.
 const (
-	// EventAPIKeyCreated is emitted when a credential is minted.
-	//
-	// It fires for the first credential a user mints and for every rotation after
-	// it, and both are the same fact: this account now holds a machine credential
-	// with these capabilities. A consumer that wants to tell a first mint from a
-	// rotation has the information it needs already — it has seen the earlier
-	// event — which is information a field on this one would not add.
 	EventAPIKeyCreated = "identity.api_key.created"
 
-	// EventAPIKeyRevoked is emitted when a credential stops being honored,
-	// whether a person withdrew it or its window closed.
 	EventAPIKeyRevoked = "identity.api_key.revoked"
 )
 

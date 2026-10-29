@@ -15,20 +15,7 @@ import (
 	"github.com/anywaye/identity/internal/tenancy"
 )
 
-// THE PASSWORD RESET FLOW, AND EVERY NEGATIVE IT HAS TO HAVE.
-//
-// The brief names four of them — an expired token is refused, a reused token is
-// refused, a token minted for one account does not work on another, and a request
-// for an unknown address leaks nothing — and they are the four tests below with
-// those names, over a real database rather than a double.
 
-// TestAResetForAnUnknownAddressSendsNothingAndWritesNothing is the enumeration
-// property stated as a fact about the world rather than about a response body.
-//
-// IT ASSERTS THE NEGATIVE IN BOTH DIRECTIONS, which is what makes it a test rather
-// than a comment: no message went out (so an unknown address costs a stranger
-// nothing), and no row was written (so the table does not become a list of every
-// address anybody has ever asked about).
 func TestAResetForAnUnknownAddressSendsNothingAndWritesNothing(t *testing.T) {
 	h := newHarness(t, false)
 
@@ -39,8 +26,6 @@ func TestAResetForAnUnknownAddressSendsNothingAndWritesNothing(t *testing.T) {
 	if got := h.mailer.count(); got != 0 {
 		t.Errorf("%d messages delivered for an address with no account, want 0", got)
 	}
-	// And no row anywhere: the strongest form of the same assertion, and the one a
-	// private schema makes possible.
 	private := newHarness(t, true)
 	if err := private.svc.RequestPasswordReset(t.Context(), dbtest.UniqueEmail(t)); err != nil {
 		t.Fatalf("RequestPasswordReset: %v", err)
@@ -50,9 +35,6 @@ func TestAResetForAnUnknownAddressSendsNothingAndWritesNothing(t *testing.T) {
 	}
 }
 
-// TestAResetForAKnownAddressWritesExactlyOneRowAndOneMessage is the other half of
-// the pair above. Without it, "an unknown address sends nothing" passes on a service
-// whose request route sends nothing for anybody.
 func TestAResetForAKnownAddressWritesExactlyOneRowAndOneMessage(t *testing.T) {
 	h := newHarness(t, true)
 	who := h.registerSimple()
@@ -74,12 +56,6 @@ func TestAResetForAKnownAddressWritesExactlyOneRowAndOneMessage(t *testing.T) {
 	}
 }
 
-// TestAResetRequestInsideTheWindowSendsNothing is the mail-cannon test.
-//
-// THE ATTACK IS AN ANONYMOUS ENDPOINT, so what it needs to assert is that N
-// requests produce one message. It is also why nothing here is a lockout: there is
-// no counter, no 423 and nothing an attacker can trip on somebody else's account —
-// the answer to every request inside the window is the answer to the first one.
 func TestAResetRequestInsideTheWindowSendsNothing(t *testing.T) {
 	h := newHarness(t, true)
 	who := h.registerSimple()
@@ -88,10 +64,6 @@ func TestAResetRequestInsideTheWindowSendsNothing(t *testing.T) {
 		t.Fatalf("the first request: %v", err)
 	}
 
-	// Twenty more, spread across the window rather than all at one instant: a
-	// cooldown measured against the NEWEST token is what the code does, and a test
-	// that fired them all at t+0 would not notice the difference between measuring
-	// against the newest and measuring against the oldest.
 	for i := range 20 {
 		h.clk.Advance(time.Second)
 		if err := h.svc.RequestPasswordReset(t.Context(), who.email); err != nil {
@@ -106,7 +78,6 @@ func TestAResetRequestInsideTheWindowSendsNothing(t *testing.T) {
 		t.Errorf("%d rows after 21 requests, want 1", got)
 	}
 
-	// One second short of the window, measured from the newest token: still nothing.
 	h.clk.Advance(RequestWindow - 21*time.Second - time.Second)
 	if err := h.svc.RequestPasswordReset(t.Context(), who.email); err != nil {
 		t.Fatalf("a request one second short of the window: %v", err)
@@ -115,8 +86,6 @@ func TestAResetRequestInsideTheWindowSendsNothing(t *testing.T) {
 		t.Errorf("%d messages one second short of the window, want 1", got)
 	}
 
-	// And past it the endpoint mails again, because a user who lost the first email
-	// must be able to ask again without a support ticket.
 	h.clk.Advance(2 * time.Second)
 	if err := h.svc.RequestPasswordReset(t.Context(), who.email); err != nil {
 		t.Fatalf("the request after the window: %v", err)
@@ -130,11 +99,6 @@ func TestAResetRequestInsideTheWindowSendsNothing(t *testing.T) {
 	}
 }
 
-// TestAReusedResetTokenIsRefused is the packet's single-use negative.
-//
-// IT CHECKS THE PASSWORD TWICE, which is the half that matters: a service that
-// returned ErrTokenNotFound on the second attempt while having written the second
-// password would pass a status-only test and leave the token working.
 func TestAReusedResetTokenIsRefused(t *testing.T) {
 	h := newHarness(t, false)
 	who := h.registerSimple()
@@ -146,26 +110,16 @@ func TestAReusedResetTokenIsRefused(t *testing.T) {
 		t.Fatalf("the first redemption: %v", err)
 	}
 
-	// The token that worked, presented again.
 	if _, err := h.svc.RedeemPasswordReset(t.Context(), RedeemPasswordResetInput{
 		Token: token, Password: "a third password entirely",
 	}); err == nil {
 		t.Fatal("a reset token was accepted twice")
 	}
 
-	// The password is the FIRST new one. A token redeemed twice would leave the
-	// second one in place, and a service that returned an error while doing it would
-	// have handed an attacker the account.
 	assertPasswordIs(t, h, who, "a brand new password")
 	assertPasswordIsNot(t, h, who, "a third password entirely")
 }
 
-// TestAnExpiredResetTokenIsRefused is the packet's expiry negative.
-//
-// IT MOVES THE CLOCK PAST THE WINDOW rather than waiting, and it checks the window
-// is the one the token was given rather than a constant the test invented: the row's
-// own expires_at is read back and compared, so a TTL that drifted from the
-// documentation fails here instead of passing.
 func TestAnExpiredResetTokenIsRefused(t *testing.T) {
 	h := newHarness(t, false)
 	who := h.registerSimple()
@@ -178,7 +132,6 @@ func TestAnExpiredResetTokenIsRefused(t *testing.T) {
 		t.Errorf("the row expires at %v, want %v", row["expires_at"], wantExpiry)
 	}
 
-	// One second before, it still works.
 	h.clk.Advance(PasswordResetTTL - time.Second)
 	if _, err := h.svc.RedeemPasswordReset(t.Context(), RedeemPasswordResetInput{
 		Token: token, Password: "still inside the window",
@@ -186,7 +139,6 @@ func TestAnExpiredResetTokenIsRefused(t *testing.T) {
 		t.Fatalf("a token one second before its own expiry was refused: %v", err)
 	}
 
-	// A second later it is dead, and the password it set is still the one in force.
 	h.clk.Advance(2 * time.Second)
 	if _, err := h.svc.RedeemPasswordReset(t.Context(), RedeemPasswordResetInput{
 		Token: token, Password: "past the window",
@@ -196,15 +148,6 @@ func TestAnExpiredResetTokenIsRefused(t *testing.T) {
 	assertPasswordIs(t, h, who, "still inside the window")
 }
 
-// TestATokenMintedForOneAccountDoesNotTouchAnother is the packet's cross-account
-// negative, and it is asserted as the absence of an EFFECT rather than the presence
-// of an error.
-//
-// TWO ACCOUNTS, and the one that is not involved has to be untouched in every way
-// the flows can touch an account: its password, its sessions, and its tokens. The
-// dangerous version of this bug is not that account B's token works on account A —
-// it is that redeeming A's token quietly ends B's sessions, which is a denial of
-// service an attacker can trigger with a token they were never given.
 func TestATokenMintedForOneAccountDoesNotTouchAnother(t *testing.T) {
 	h := newHarness(t, false)
 	alice := h.registerSimple()
@@ -220,7 +163,6 @@ func TestATokenMintedForOneAccountDoesNotTouchAnother(t *testing.T) {
 		t.Fatalf("the redemption: %v", err)
 	}
 
-	// Alice changed and Bob did not.
 	assertPasswordIs(t, h, alice, "alice's new password")
 	assertPasswordIsNot(t, h, alice, "correct horse battery staple")
 
@@ -239,15 +181,10 @@ func TestATokenMintedForOneAccountDoesNotTouchAnother(t *testing.T) {
 	}
 }
 
-// TestAResetRevokesEverySessionAndEveryAccessToken is the requirement the brief
-// calls out by name: a reset that leaves the old session alive is not a reset.
 func TestAResetRevokesEverySessionAndEveryAccessToken(t *testing.T) {
 	h := newHarness(t, false)
 	who := h.registerSimple()
 
-	// A second session, because one is not the shape of the thing being asserted.
-	// Minted rather than hand-written, because the sessions table has a UNIQUE index
-	// on the digest and every test in this package shares one database.
 	_, second, err := sessions.NewToken()
 	if err != nil {
 		t.Fatalf("minting a second session: %v", err)
@@ -281,34 +218,10 @@ func TestAResetRevokesEverySessionAndEveryAccessToken(t *testing.T) {
 	}
 }
 
-// TestAResetDoesNotRevokeAScopedAPIKey is the other half of the requirement above,
-// and it is the decision README.md already records for MFA: a machine credential
-// outlives every session, its owner named it on purpose, and silently revoking it
-// breaks an unrelated CI job with nothing in the response saying why.
 func TestAResetDoesNotRevokeAScopedAPIKey(t *testing.T) {
 	h := newHarness(t, false)
 	who := h.registerSimple()
 
-	// WRITTEN DIRECTLY, because this test is about what the reset does NOT do, and
-	// minting a key through the tenancy use cases would drag half this service into a
-	// question about one statement's absence. The account and the membership go in
-	// with it: the row has to be a real one on the real table for the assertion to
-	// mean anything, and a key needs an account to belong to.
-	//
-	// ALL THREE GOES IN ONE TRANSACTION THAT BEGINS AS THE FIXTURE ACCOUNT, and
-	// that is the same rule the service follows rather than a concession to the
-	// substrate. `account_users` and `api_keys` are protected by row-level
-	// security, so an INSERT into them meets
-	// `with check (account_id = (select anywaye.current_account_id()))`, and a
-	// fixture that inserted with no identity was refused with SQLSTATE 42501 —
-	// the substrate correctly refusing an account-scoped write that claims no
-	// account.
-	//
-	// It is a transaction rather than three statements because begin_account is
-	// TRANSACTION-LOCAL: outside one it expires at the end of the statement that
-	// set it, so a bare `pool.Exec` could never carry an identity. `accounts` is
-	// not itself protected, which is why it can go in the same transaction
-	// before the identity matters.
 	accountID, keyID := id.MustNew(), id.MustNew()
 	_, keyDigest, err := sessions.NewToken()
 	if err != nil {
@@ -347,16 +260,6 @@ func TestAResetDoesNotRevokeAScopedAPIKey(t *testing.T) {
 		t.Fatalf("the redemption: %v", err)
 	}
 
-	// THE ASSERTION READS AS THE FIXTURE ACCOUNT TOO, on the same rule as the
-	// fixture above and for the same reason: `api_keys` is protected, so a bare
-	// pool query carrying no identity reads zero rows — which is the safe
-	// direction, but it would make this test pass for the wrong reason. "The
-	// reset did not revoke the key" and "the reset could not see the key" both
-	// yield no rows here, and only one of them is the property being claimed.
-	//
-	// So the read begins as the account the key belongs to. If the reset HAD
-	// revoked it, `revoked_at` would be non-nil and the assertion below would
-	// fire — which is the whole test, and it can only fire if the row is visible.
 	var revokedAt *time.Time
 	readRunner := db.TxRunner{Pool: h.pool}
 	if err := readRunner.Do(t.Context(), func(ctx context.Context, q db.Querier) error {
@@ -374,10 +277,6 @@ func TestAResetDoesNotRevokeAScopedAPIKey(t *testing.T) {
 	}
 }
 
-// TestAResetClearsALockout: a user who was locked out by somebody else's five wrong
-// passwords must be able to sign in after recovering their own account. Leaving the
-// lock in place would make the recovery route useless for exactly the users who
-// needed it most, for up to LockoutDuration afterwards.
 func TestAResetClearsALockout(t *testing.T) {
 	h := newHarness(t, false)
 	who := h.registerSimple()
@@ -408,13 +307,6 @@ func TestAResetClearsALockout(t *testing.T) {
 	}
 }
 
-// TestAResetTokenIsStoredAsADigestAndThePlaintextIsNowhere is the storage property,
-// asserted over the whole table rather than one column.
-//
-// The plaintext has to be searched for three ways, because "it is not in
-// token_digest" would pass on a table that stored it in a column nobody thought to
-// check: the whole row serialized, the whole table, and the digest — which has to be
-// FOUND, or the test would pass on a table that stored nothing at all.
 func TestAResetTokenIsStoredAsADigestAndThePlaintextIsNowhere(t *testing.T) {
 	h := newHarness(t, true)
 	who := h.registerSimple()
@@ -431,7 +323,6 @@ func TestAResetTokenIsStoredAsADigestAndThePlaintextIsNowhere(t *testing.T) {
 		t.Error("token_digest contains the token")
 	}
 
-	// The whole table, rendered as text, for the token and for its bare digest.
 	table := dumpTable(t, h, `SELECT * FROM recovery_tokens`)
 	for _, forbidden := range []string{token, token[:20]} {
 		if strings.Contains(table, forbidden) {
@@ -443,21 +334,12 @@ func TestAResetTokenIsStoredAsADigestAndThePlaintextIsNowhere(t *testing.T) {
 			"stored nothing at all")
 	}
 
-	// And the outbox: the event a reset announces must not carry the credential.
 	events := dumpTable(t, h, `SELECT * FROM outbox_events`)
 	if strings.Contains(events, token) {
 		t.Error("the token reached the outbox")
 	}
 }
 
-// TestAResetTokenIsNotAVerificationToken cross-checks the purposes, in both
-// directions.
-//
-// The store filters on `purpose`, so the two token families live in the same table
-// and the only thing keeping them apart is that filter. A version of this package
-// that looked tokens up by digest alone would accept a reset token at the
-// verification endpoint, and the consequence is not subtle: redeeming it would mark
-// an address proved that nobody proved.
 func TestAResetTokenIsNotAVerificationToken(t *testing.T) {
 	h := newHarness(t, false)
 	who := h.registerSimple()
@@ -478,18 +360,10 @@ func TestAResetTokenIsNotAVerificationToken(t *testing.T) {
 		t.Error("a verification token was accepted by the password reset redemption")
 	}
 
-	// And the refusals changed nothing.
 	assertPasswordIs(t, h, who, "correct horse battery staple")
 	assertNotVerified(t, h, who)
 }
 
-// TestADeploymentWithNoMailerRefusesBeforeItLearnsAnything is the enumeration
-// property for the configuration this service actually ships in.
-//
-// The order in RequestPasswordReset is that Ready is asked BEFORE the users table
-// is read, so a deployment that cannot send mail cannot be probed: every address,
-// registered or not, produces the same ErrNoMailer, and the rows prove that nothing
-// was written and nothing was sent for any of them.
 func TestADeploymentWithNoMailerRefusesBeforeItLearnsAnything(t *testing.T) {
 	h := newHarness(t, true)
 	known := h.registerSimple()
@@ -520,9 +394,6 @@ func TestADeploymentWithNoMailerRefusesBeforeItLearnsAnything(t *testing.T) {
 	}
 }
 
-// TestUnavailableRefusesEveryEntryPoint is the seam's own contract, and it is
-// separate from the test above so that a Mailer which is merely PRESENT and broken
-// cannot be confused with one that is absent.
 func TestUnavailableRefusesEveryEntryPoint(t *testing.T) {
 	var m Mailer = Unavailable{}
 
@@ -534,9 +405,6 @@ func TestUnavailableRefusesEveryEntryPoint(t *testing.T) {
 	}
 }
 
-// TestAMalformedAddressIsRefusedAndNoRowIsWritten: a 422 is about the caller's own
-// input and not about an account, so it is safe to answer — and it must not leave a
-// row behind on the way out.
 func TestAMalformedAddressIsRefusedAndNoRowIsWritten(t *testing.T) {
 	h := newHarness(t, true)
 
@@ -551,9 +419,7 @@ func TestAMalformedAddressIsRefusedAndNoRowIsWritten(t *testing.T) {
 	}
 }
 
-// --- helpers -----------------------------------------------------------------
 
-// requestReset runs the whole request step and returns the mailed token.
 func (h *harness) requestReset(t *testing.T, who account) string {
 	t.Helper()
 	if err := h.svc.RequestPasswordReset(t.Context(), who.email); err != nil {
@@ -562,7 +428,6 @@ func (h *harness) requestReset(t *testing.T, who account) string {
 	return tokenFrom(t, h.mailer.last(t))
 }
 
-// assertPasswordIs checks the stored digest verifies the given plaintext.
 func assertPasswordIs(t *testing.T, h *harness, who account, plaintext string) {
 	t.Helper()
 	if !testHasher().Verify(digestOf(t, h, who), plaintext) {
@@ -570,9 +435,6 @@ func assertPasswordIs(t *testing.T, h *harness, who account, plaintext string) {
 	}
 }
 
-// assertPasswordIsNot is the same check's negative, and it exists because a test
-// that only ever asserts the positive passes on a service that never writes the
-// password column at all.
 func assertPasswordIsNot(t *testing.T, h *harness, who account, plaintext string) {
 	t.Helper()
 	if testHasher().Verify(digestOf(t, h, who), plaintext) {
@@ -580,7 +442,6 @@ func assertPasswordIsNot(t *testing.T, h *harness, who account, plaintext string
 	}
 }
 
-// digestOf reads the stored digest for a user.
 func digestOf(t *testing.T, h *harness, who account) string {
 	t.Helper()
 	var digest string
@@ -591,7 +452,6 @@ func digestOf(t *testing.T, h *harness, who account) string {
 	return digest
 }
 
-// assertNotVerified checks the account's address is still unproved.
 func assertNotVerified(t *testing.T, h *harness, who account) {
 	t.Helper()
 	var at *time.Time
@@ -604,7 +464,6 @@ func assertNotVerified(t *testing.T, h *harness, who account) {
 	}
 }
 
-// assertVerified checks the account's address is proved, and when.
 func assertVerified(t *testing.T, h *harness, who account) {
 	t.Helper()
 	var at *time.Time
@@ -620,7 +479,6 @@ func assertVerified(t *testing.T, h *harness, who account) {
 	}
 }
 
-// countRows runs a counting query.
 func countRows(t *testing.T, h *harness, query string, args ...any) int {
 	t.Helper()
 	var n int
@@ -630,11 +488,6 @@ func countRows(t *testing.T, h *harness, query string, args ...any) int {
 	return n
 }
 
-// dumpTable renders every row of a one-column-or-more query as text, for the
-// "the plaintext is nowhere" sweeps.
-//
-// IT RENDERS WITH %v AND NOT BY SELECTING INTO A STRUCT, because the point is to
-// see every column including the ones no Go type has a field for.
 func dumpTable(t *testing.T, h *harness, query string, args ...any) string {
 	t.Helper()
 	rows, err := h.pool.Query(t.Context(), query, args...)
@@ -660,7 +513,6 @@ func dumpTable(t *testing.T, h *harness, query string, args ...any) string {
 	return b.String()
 }
 
-// stringify renders a database value for the sweeps.
 func stringify(v any) string {
 	switch typed := v.(type) {
 	case nil:

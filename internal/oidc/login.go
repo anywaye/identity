@@ -7,12 +7,6 @@ import (
 	"github.com/anywaye/identity/internal/platform/id"
 )
 
-// The two operations the login page needs from the provider, kept off the HTTP
-// handler so that the handler holds no storage machinery and the provider holds
-// no knowledge of a form.
-//
-// They are methods on *Storage rather than on *Provider because that is where
-// the statements are, and *Provider is the library's configuration.
 
 // PathAuthorizeCallback is where the library sends the browser back to once the
 // login UI has authenticated somebody.
@@ -36,14 +30,8 @@ const PathAuthorizeCallback = PathAuthorize + "/callback"
 // loginui.go. A page on this service's own origin could escape it by
 // construction, and a page on somebody else's cannot be escaped here.
 type LoginBanner struct {
-	// RequestID names the authorization request this login completes.
 	RequestID string
-	// ClientName is the registration's display name. UNTRUSTED TEXT: it is
-	// whatever an account owner typed into a registration.
 	ClientName string
-	// LoginHint is the `login_hint` the client sent, if any. It pre-fills the
-	// form and is never trusted: it is a string a third party chose, and the
-	// password is still checked against the address the user types.
 	LoginHint string
 }
 

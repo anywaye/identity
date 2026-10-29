@@ -1,44 +1,8 @@
 #!/usr/bin/env bash
-# The coverage floor, over the profile the suite produced, minus the paths
-# coverage-exclusions declares.
-#
-#   bin/coverage-floor <coverage.out> [coverage-exclusions]
-#
-# This is not a second gate and it is not a variant of bin/prime. bin/prime is
-# kit's and is untouched; this is the implementation of the one check that used
-# to be an inline `go tool cover … | awk` inside ci/ci.yml, where
-# no test could reach it. The `coverage` step calls this, and
-# `TestTheCoverageStepRunsTheCheckedInFilter` fails if it ever stops calling it,
-# so the tested filter and the enforcing filter cannot be two programs.
-#
-# WHY A SCRIPT AND NOT A `go tool cover` PIPE
-#
-# `go tool cover -func` computes `total:` over every entry in the profile and
-# there is no flag to leave entries out. The only way to exclude a path is to
-# take it out of the profile first, and doing that with a shell pipe inside a
-# workflow step means the exclusion is a regular expression written in a YAML
-# block that nothing executes but CI. Everything below is a program with a
-# documented exit code, and TestTheCoverageFilterCanFail drives it.
-#
-# EXIT CODES
-#   0  at or above the floor, every entry validated
-#   1  below the floor, or a declaration that does not parse / is expired / is
-#      missing a field / names a path with no Go file in it (kit's rule 4)
-#   2  usage, or the profile is unreadable
-#
-# Any non-zero is a red build. There is no mode in which this exits 0 having
-# measured nothing: an unreadable declaration, a declaration with no entries, a
-# profile with no `total:` line and a profile whose filtered result has no
-# statements are all failures, because a floor that cannot be computed is not a
-# floor that is satisfied.
 set -o pipefail
 
 profile="${1:-}"
 declarations="${2:-coverage-exclusions}"
-# The floor the CALLER asserts, when it has one. `ci/ci.yml` sets
-# COVERAGE_FAIL_UNDER in its `env:` block, so that copy and the declaration's are
-# two statements of one number and the script compares them here rather than
-# letting whichever ran first win.
 asserted_floor="${3:-}"
 
 if [ -z "$profile" ]; then
@@ -60,30 +24,6 @@ work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 records="$work/records"
 
-# ---------------------------------------------------------------------------
-# READ THE DECLARATION
-#
-# One entry per line:
-#
-#   excluded coverage <prefix> files=N lines=N coverage-fail-under=N \
-#       reason="…" owner=… since=YYYY-MM-DD until=YYYY-MM-DD
-#
-# Parsed here rather than in the workflow step so that a malformed declaration
-# fails with a message naming the line, and fails identically on a developer
-# machine, in CI, and in TestTheCoverageFilterCanFail. kit's field rules are the
-# rules here: reason, owner, since and until are all required, `until` is read
-# against the clock, and an entry matching nothing is a failure.
-#
-# The grammar is deliberately small and it fails CLOSED. A line this does not
-# recognise is an error, never a skip: the failure mode of a permissive reader
-# is a file that has quietly stopped excluding anything while still reading as a
-# declaration. A quoted value is read as one token, so a reason is a sentence
-# rather than a word — a field parser that splits on spaces is a field parser
-# that cannot be given a real reason.
-#
-# Records come out tab-separated on `records`; the reason is checked for tabs
-# first, because a tab is the one character that would silently split a record.
-# ---------------------------------------------------------------------------
 awk -v file="$declarations" -v out="$records" -v today="$(date -u +%Y-%m-%d)" '
   function fail(line_no, message) {
     printf "  - %s:%d: %s\n", file, line_no, message > "/dev/stderr"
@@ -142,7 +82,7 @@ awk -v file="$declarations" -v out="$records" -v today="$(date -u +%Y-%m-%d)" '
   {
     line = $0
     sub(/\r$/, "", line)
-    if (line ~ /^[[:space:]]*#/ || line ~ /^[[:space:]]*$/) next
+    if (line ~ /^[[:space:]]*
 
     delete seen_field
     delete field
@@ -220,13 +160,6 @@ if [ ! -f "$records.count" ]; then
 fi
 entries="$(cat "$records.count")"
 
-# ---------------------------------------------------------------------------
-# THE FLOOR IS ONE NUMBER, AND EVERY ENTRY MUST NAME THE SAME ONE
-#
-# A second entry naming a different floor is two floors, and a floor that depends
-# on which line you read is not a floor. Checked here, and against
-# ci/ci.yml in TestTheCoverageFloorInTheDeclarationIsTheFloorsFloor.
-# ---------------------------------------------------------------------------
 floor=""
 while IFS=$'\t' read -r prefix files lines entry_floor reason owner since until; do
   if [ "$floor" = "" ]; then
@@ -252,27 +185,8 @@ if [ -n "$asserted_floor" ] && [ "$asserted_floor" != "$floor" ]; then
   exit 1
 fi
 
-# ---------------------------------------------------------------------------
-# FILTER THE PROFILE
-#
-# A profile line is `file.go:startLine.startCol,endLine.endCol numStmts count`.
-# The path is everything before the first `:`, which is unambiguous because the
-# only colons after it are in the line/column range.
-#
-# The exclusion is a PATH PREFIX matched at a DIRECTORY boundary: the needle is
-# `/<prefix>/`, so it can only align on a whole segment. `client/generated`
-# excludes `…/client/generated/api.gen.go` and does NOT exclude
-# `…/client/generat/foo.go`, `…/client/generated_extra/…` or
-# `…/other/client/generated/…`. A bare string prefix on the directory name would
-# exempt all three, which is the broad-exclusion failure the lint exclusion in
-# .golangci.yml exists to refuse — and this one is already coarser than that one,
-# because Go's coverage step takes a package pattern and not a file.
-# ---------------------------------------------------------------------------
 filtered="$work/filtered.out"
 
-# Pass 1 — every entry must match at least one block. kit's rule 4, and the
-# reason it is a separate pass from the filtering: the failure has to name the
-# entry, and a filter that reports "you excluded everything" cannot.
 needles=""
 while IFS=$'\t' read -r prefix files lines entry_floor reason owner since until; do
   count="$(awk -v dir="/$prefix/" '
@@ -295,16 +209,6 @@ while IFS=$'\t' read -r prefix files lines entry_floor reason owner since until;
   needles="$needles /$prefix/"
 done < "$records"
 
-# Pass 2 — ONE pass that removes every line matching ANY entry.
-#
-# Cumulative on purpose, and the first version of this script got it wrong: it
-# filtered once per entry and appended each pass, so each pass re-admitted the
-# lines the previous pass had removed and only the LAST entry's exclusion was
-# real. Two entries excluding two directories measured the whole module twice
-# over and excluded one of them. The arithmetic only ever moved in the safe
-# direction — more statements in the denominator, lower percentage — which is
-# exactly why a filter's failure direction is not a substitute for it being
-# right.
 excluded_blocks="$(awk -v dirs="$needles" '
   NR == 1 { next }
   {
@@ -322,23 +226,6 @@ excluded_blocks="$(cat "$work/excluded.count")"
 head -1 "$profile" > "$filtered"
 cat "$work/kept.out" >> "$filtered"
 
-# ---------------------------------------------------------------------------
-# MEASURE
-#
-# covered statements divided by total statements, weighted by the statement
-# count each block carries. That IS the definition `go tool cover -func` prints
-# as its `total:` line, and it is spelled out here rather than borrowed for a
-# reason that is not elegance: `go tool cover -func` LOADS every package named in
-# the profile so it can attribute blocks to functions, so it needs the module to
-# compile and it cannot be driven by a profile a test wrote by hand. A floor whose
-# proofs need a full suite run is a floor whose proofs rot.
-#
-# The agreement between this arithmetic and the tool's own `total:` is measured,
-# not assumed: on this repository's 5,581-block profile both read 44.6% over the
-# whole module and 73.6% with `client/generated` excluded. The comparison is in
-# REPORT-identity-12-coverage rather than in a comment here, because a comment
-# stating a measurement is the one kind of number that goes stale quietly.
-# ---------------------------------------------------------------------------
 read -r statements covered <<<"$(awk '
   NR == 1 { next }
   {
@@ -357,34 +244,7 @@ fi
 measured="$(awk -v c="${covered:-0}" -v t="$statements" \
   'BEGIN { printf "%.1f", 100 * c / t }')"
 
-# THE COMPARISON IS EXACT, AND THAT IS NOT PEDANTRY.
-#
-# The printed number is rounded to one decimal — a percentage is a report, not an
-# input — but comparing the ROUNDED number would let a floor be passed by
-# rounding: 699 of 999 statements is 69.97%, prints as "70.0", and a floor of 70
-# would be satisfied. That is the whole floor, given away in the last character of
-# a display format, and it was found by a red proof rather than by reading: the
-# 69.9% case built here came out green the first time because the fixture had 999
-# statements instead of 1000.
-#
-# So the test is `covered * 100 < floor * total` in integers. No float, no
-# rounding, no locale, and no dependence on how many digits anybody prints.
-# Go's own tool rounds the same way and kit's step compares the rounded value, so
-# this is stricter than the tool it replaces — deliberately, because the tool's
-# job is to report and this one's job is to refuse.
 
-# ---------------------------------------------------------------------------
-# PRINT THE THREE FACTS TOGETHER, THEN COMPARE
-#
-# The measured number, the excluded set and the floor are ONE output block, and
-# they are printed BEFORE the comparison, so a reader of a green run can see what
-# the number is over. A green line that says only "coverage 73.6% (floor 70%)" is
-# decoration: 70% of what?
-#
-# The total count of entries is on the first line, on PASS as well as on FAIL,
-# for kit's reason: every entry individually looks justified, and the aggregate
-# is the problem.
-# ---------------------------------------------------------------------------
 echo "coverage ${measured}% of ${statements} statements, over the profile minus" \
      "${excluded_blocks} block(s) this file excludes"
 echo "excluded — ${entries} declared entry/entries in $declarations:"

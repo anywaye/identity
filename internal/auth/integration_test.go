@@ -24,10 +24,6 @@ import (
 	"github.com/anywaye/identity/internal/users"
 )
 
-// The unit tests in service_test.go cover the branching against doubles. This
-// file covers the one thing doubles cannot: that the two writes really are one
-// transaction, against a real Postgres, with the real SQL and the real
-// constraints.
 
 func newIntegrationService(t *testing.T) (*Service, *pgxpool.Pool, *clock.Fake) {
 	t.Helper()
@@ -35,9 +31,6 @@ func newIntegrationService(t *testing.T) (*Service, *pgxpool.Pool, *clock.Fake) 
 	return svc, pool, clk
 }
 
-// newIntegrationServiceWithMFA is newIntegrationService and also hands back the
-// second-factor service, so the tests that need to ENROLL a user can reach it
-// without building a second, differently-wired copy of the same things.
 func newIntegrationServiceWithMFA(t *testing.T) (*Service, *pgxpool.Pool, *clock.Fake, *mfa.Service) {
 	t.Helper()
 
@@ -53,13 +46,7 @@ func newIntegrationServiceWithMFA(t *testing.T) (*Service, *pgxpool.Pool, *clock
 		outbox.NewStore(pool),
 		realTenancy(pool, clk),
 		second,
-		// The real sweep over the real table, as main wires it. The use case
-		// refuses to disable anybody without it, so a nil here would make every
-		// disable in this file answer ErrNoAccessTokenRevoker.
 		oidc.NewStore(pool),
-		// The real audit writer, on the sibling's reasoning: the use case refuses to
-		// disable anybody without it, so a nil here would make every disable in this
-		// file answer ErrNoUserAuditRecorder instead of exercising anything.
 		useraudit.NewStore(pool),
 		users.NewHasherWithParams(&argon2id.Params{
 			Memory: 8 * 1024, Iterations: 1, Parallelism: 1, SaltLength: 16, KeyLength: 32,
@@ -81,7 +68,6 @@ func TestIntegrationRegisterCommitsTheUserAndTheEventTogether(t *testing.T) {
 		t.Fatalf("Register: %v", err)
 	}
 
-	// The row exists, normalized.
 	if got.Email != email {
 		t.Errorf("Email = %q, want the trimmed, lower-cased %q", got.Email, email)
 	}
@@ -93,7 +79,6 @@ func TestIntegrationRegisterCommitsTheUserAndTheEventTogether(t *testing.T) {
 		t.Errorf("PasswordDigest = %q, want an argon2id digest", stored.PasswordDigest)
 	}
 
-	// The event exists, and it is the one we would have published.
 	var (
 		eventType    string
 		eventSource  string
@@ -121,8 +106,6 @@ func TestIntegrationRegisterCommitsTheUserAndTheEventTogether(t *testing.T) {
 		t.Error("published_at is set; nothing has been published yet")
 	}
 
-	// The stored envelope is exactly what core's schema validates, and the
-	// payload carries no credential.
 	var e outbox.Envelope
 	if err := json.Unmarshal(raw, &e); err != nil {
 		t.Fatalf("the stored envelope does not parse: %v", err)
@@ -135,9 +118,6 @@ func TestIntegrationRegisterCommitsTheUserAndTheEventTogether(t *testing.T) {
 	}
 }
 
-// The unique index is what makes a duplicate registration fail, and the failure
-// has to arrive as users.ErrEmailTaken so the handler can answer 409 rather than
-// 500. This also proves the failed transaction wrote no event.
 func TestIntegrationRegisterDuplicateWritesNoEvent(t *testing.T) {
 	svc, pool, _ := newIntegrationService(t)
 	ctx := context.Background()
@@ -181,7 +161,6 @@ func TestIntegrationFullLifecycle(t *testing.T) {
 		t.Errorf("the session belongs to %s, want %s", login.User.ID, registered.ID)
 	}
 
-	// The token works, and only its digest is stored.
 	me, err := svc.Authenticate(ctx, login.Token)
 	if err != nil {
 		t.Fatalf("Authenticate: %v", err)
@@ -200,7 +179,6 @@ func TestIntegrationFullLifecycle(t *testing.T) {
 		t.Error("the stored digest is not Digest(token)")
 	}
 
-	// Logout kills the token immediately.
 	if err := svc.Logout(ctx, login.Token); err != nil {
 		t.Fatalf("Logout: %v", err)
 	}
@@ -209,8 +187,6 @@ func TestIntegrationFullLifecycle(t *testing.T) {
 	}
 }
 
-// The lockout end to end, with the clock moved rather than slept through, and
-// the counter read back out of Postgres rather than out of a fake.
 func TestIntegrationLockoutPersistsAcrossServiceInstances(t *testing.T) {
 	svc, pool, clk := newIntegrationService(t)
 	ctx := context.Background()
@@ -238,7 +214,6 @@ func TestIntegrationLockoutPersistsAcrossServiceInstances(t *testing.T) {
 		t.Errorf("locked_until = %s, want %s — the lock is stamped from the injected clock", lockedUntil, want)
 	}
 
-	// Refused with the remaining window, and the correct password does not help.
 	_, err := svc.Login(ctx, LoginInput{Email: email, Password: password})
 	var locked *LockedError
 	if !errors.As(err, &locked) {
@@ -248,17 +223,12 @@ func TestIntegrationLockoutPersistsAcrossServiceInstances(t *testing.T) {
 		t.Errorf("RetryAfter = %s, want %s", locked.RetryAfter, sessions.LockoutDuration)
 	}
 
-	// Move the clock to the end of the window. No sleep, and the state came from
-	// the database, so this proves the expiry is evaluated against the injected
-	// instant rather than something cached in the process.
 	clk.Set(start.Add(sessions.LockoutDuration))
 	if _, err := svc.Login(ctx, LoginInput{Email: email, Password: password}); err != nil {
 		t.Fatalf("Login after the window closed = %v, want success", err)
 	}
 }
 
-// A locked account is locked in the database, so a brand-new Service over the
-// same pool — as a second process would be — sees the same lock.
 func TestIntegrationLockIsVisibleToAnotherServiceInstance(t *testing.T) {
 	svc, pool, _ := newIntegrationService(t)
 	ctx := context.Background()
@@ -282,13 +252,7 @@ func TestIntegrationLockIsVisibleToAnotherServiceInstance(t *testing.T) {
 		outbox.NewStore(pool),
 		realTenancy(pool, clock.NewFake(start)),
 		realSecondFactor(t, pool, clock.NewFake(start)),
-		// The real sweep over the real table, as main wires it — the second
-		// instance must see the same table the first one does, because that is
-		// what the disable's sweep revokes in.
 		oidc.NewStore(pool),
-		// The real writer, on the same reasoning: a disable's record has to land in
-		// the same table this instance can see, or the second service would be
-		// answering with a trail the first one cannot read.
 		useraudit.NewStore(pool),
 		users.NewHasherWithParams(&argon2id.Params{
 			Memory: 8 * 1024, Iterations: 1, Parallelism: 1, SaltLength: 16, KeyLength: 32,
@@ -304,17 +268,12 @@ func TestIntegrationLockIsVisibleToAnotherServiceInstance(t *testing.T) {
 	}
 }
 
-// A registration whose event cannot be written must leave no user. Forcing this
-// needs a failure the service cannot swallow, and the simplest honest one is a
-// payload the envelope builder would never produce — so the constraint does it.
 func TestIntegrationRegisterIsAtomicWhenTheEventIsRejected(t *testing.T) {
 	pool := dbtest.Schema(t)
 	ctx := context.Background()
 	email := dbtest.UniqueEmail(t)
 
 	userStore := users.NewStore(pool)
-	// A store that takes the row but cannot write the event, which is the
-	// half-failure the transaction exists to prevent.
 	failingEvents := &rejectingAppender{inner: outbox.NewStore(pool), bad: outbox.Envelope{
 		SpecVersion: outbox.SpecVersion,
 		Type:        "NOT A VALID TYPE",
@@ -328,18 +287,10 @@ func TestIntegrationRegisterIsAtomicWhenTheEventIsRejected(t *testing.T) {
 		db.Direct{Pool: pool},
 		userStore,
 		sessions.NewStore(pool),
-		// The event appender is broken and the tenancy is real, so this test now
-		// covers the whole transaction: the user, the account, the membership and
-		// both events have to disappear together.
 		failingEvents,
 		realTenancy(pool, clock.NewFake(start)),
 		realSecondFactor(t, pool, clock.NewFake(start)),
-		// The real sweep, as main wires it: this test is about a registration
-		// rolling back, and nothing about it turns on the disable's sweep.
 		oidc.NewStore(pool),
-		// And the real writer, on the same reasoning — a required dependency is
-		// required in the fixtures that are not about it too, so that a test in this
-		// file can never answer ErrNoUserAuditRecorder by accident.
 		useraudit.NewStore(pool),
 		users.NewHasherWithParams(&argon2id.Params{
 			Memory: 8 * 1024, Iterations: 1, Parallelism: 1, SaltLength: 16, KeyLength: 32,
@@ -359,15 +310,11 @@ func TestIntegrationRegisterIsAtomicWhenTheEventIsRejected(t *testing.T) {
 	if n := countEvents(t, pool); n != 0 {
 		t.Errorf("outbox_events has %d rows, want 0", n)
 	}
-	// The tenancy rolled back with it: a user with no personal account is the
-	// half-written state this packet is about.
 	if n := countRows(t, pool, "accounts"); n != 0 {
 		t.Errorf("accounts has %d rows after a failed registration, want 0", n)
 	}
 }
 
-// rejectingAppender substitutes one bad envelope, to force the second write of a
-// transaction to fail after the first has succeeded.
 type rejectingAppender struct {
 	inner *outbox.Store
 	bad   outbox.Envelope
@@ -382,16 +329,11 @@ func ptrAddr(s string) *netip.Addr {
 	return &a
 }
 
-// countEvents returns how many events the outbox holds, so a test can assert
-// that a rejected registration wrote none.
 func countEvents(t *testing.T, pool *pgxpool.Pool) int {
 	t.Helper()
 	return countRows(t, pool, "outbox_events")
 }
 
-// countRows counts one of the service's tables, so a test can assert that a
-// failed transaction left nothing behind. The table name is a test constant, not
-// a caller-supplied string.
 func countRows(t *testing.T, pool *pgxpool.Pool, table string) int {
 	t.Helper()
 

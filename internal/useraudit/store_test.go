@@ -1,25 +1,5 @@
 package useraudit
 
-// THE STORE'S TESTS AGAINST A REAL POSTGRES.
-//
-// These are the claims only a database can settle, and each one is a property of the
-// TABLE rather than of this Go code:
-//
-//	TestTheRecordCannotBeUpdated    the trigger, from the table's side
-//	TestTheRecordCannotBeDeleted
-//	TestTheTrailOutlivesTheUser    no foreign key, so deleting the person does not
-//	                               delete the record of who turned them off
-//	TestTheClosedSetIsARefusalNotASchemaCheck
-//	TestTheActorIdsAreBothRequired
-//
-// A Go-level test could not establish any of them. A promise written in the service
-// does not bind a psql session, a repair script, or a future packet — which is the
-// whole reason 00022's trigger is in the database and not in Append.
-//
-// EVERY ASSERTION ABOUT A ROW GOES AROUND THE STORE, issuing its SQL directly against
-// the pool. A test that read the row back through Append would be restating the
-// method's own behavior; the point of these is to prove what happens when something
-// that is NOT this package touches the table.
 
 import (
 	"context"
@@ -34,9 +14,6 @@ import (
 	"github.com/anywaye/identity/internal/platform/id"
 )
 
-// The database tier must actually run. Every test in this file needs a migrated
-// schema, and a file that skips itself proves nothing — the rule AGENTS.md states
-// for internal/mfa and internal/admin, and it applies here for the same reason.
 func TestTheDatabaseTierActuallyRan(t *testing.T) {
 	if testing.Short() {
 		t.Fatal("this file is entirely database tests; -short would report them as skipped, " +
@@ -61,14 +38,6 @@ func testEntry(t *testing.T) Entry {
 	}
 }
 
-// tableExists is the guard against a check over nothing.
-//
-// EVERY assertion below counts rows in `user_audit_log`, and a count of zero is the
-// answer both "nothing was recorded" and "there is no such table here" would produce
-// if the query were allowed to fail quietly. This asserts the TABLE is there and is
-// this table, before any test reasons about its contents — which is the second time
-// this codebase has been bitten by a comparison of two empty things, and the reason
-// the check is a named helper rather than something each test remembers to do.
 func tableExists(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 
@@ -85,13 +54,6 @@ func tableExists(t *testing.T, pool *pgxpool.Pool) {
 	}
 }
 
-// TestTheRecordCannotBeUpdated is a red proof for the strongest claim in the
-// migration: the record cannot be edited by the operator who performed it.
-//
-// It issues the UPDATE directly against the pool, which is what makes it a proof
-// rather than a restatement — a test that called this package could only show that
-// this package has no Update method, which is true, and irrelevant to somebody with
-// psql.
 func TestTheRecordCannotBeUpdated(t *testing.T) {
 	store, pool := newTestStore(t)
 	tableExists(t, pool)
@@ -113,9 +75,6 @@ func TestTheRecordCannotBeUpdated(t *testing.T) {
 		t.Errorf("the UPDATE failed for a reason that is not the append-only rule: %v", err)
 	}
 
-	// And the row is genuinely unchanged, not merely reported as failing. This is the
-	// direction that matters: a trigger that raised AFTER writing would satisfy the
-	// check above.
 	var action string
 	if err := pool.QueryRow(ctx, `SELECT action FROM user_audit_log WHERE id = $1`, rec.ID).
 		Scan(&action); err != nil {
@@ -127,9 +86,6 @@ func TestTheRecordCannotBeUpdated(t *testing.T) {
 	}
 }
 
-// TestTheRecordCannotBeDeleted is the other half, and DELETE is the one that matters
-// more: a trail that cannot be edited can still be emptied, and an emptied trail is
-// indistinguishable from one where nothing suspicious happened.
 func TestTheRecordCannotBeDeleted(t *testing.T) {
 	store, pool := newTestStore(t)
 	tableExists(t, pool)
@@ -156,13 +112,6 @@ func TestTheRecordCannotBeDeleted(t *testing.T) {
 	}
 }
 
-// TestTheTrailOutlivesTheUser is 00022's no-FOREIGN-KEY decision, proven.
-//
-// `DELETE /v1/users/{userID}` is not a route today, but the point is not today's
-// routes: it is that the SHORTEST route from "an operator did something questionable"
-// to "there is no record of it" must not be one statement. A CASCADE from users would
-// make it one, and the trigger would be bypassed by it rather than enforcing against
-// it — a cascading delete is a delete, and this table refuses deletes.
 func TestTheTrailOutlivesTheUser(t *testing.T) {
 	store, pool := newTestStore(t)
 	tableExists(t, pool)
@@ -179,9 +128,6 @@ func TestTheTrailOutlivesTheUser(t *testing.T) {
 		t.Fatalf("appending a record: %v", err)
 	}
 
-	// The user id is a bare uuid with no row behind it, which is the point: there is
-	// nothing to delete. The assertion is that the RECORD is still there, and that the
-	// table declares no foreign key that could have taken it.
 	var fks int
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*) FROM pg_constraint c
@@ -206,12 +152,6 @@ func TestTheTrailOutlivesTheUser(t *testing.T) {
 	}
 }
 
-// TestTheTableCarriesNoAccountColumn is D14 as a database fact.
-//
-// The temptation this forecloses is the exact one the packet named: making a disable
-// fit the account-scoped trail by adding an account_id. A nullable one would be worse
-// than either extreme — a column that is supposed to be filled in and never is, so
-// every reader handles two worlds and every writer decides what absence means.
 func TestTheTableCarriesNoAccountColumn(t *testing.T) {
 	_, pool := newTestStore(t)
 	tableExists(t, pool)
@@ -232,35 +172,17 @@ func TestTheTableCarriesNoAccountColumn(t *testing.T) {
 	}
 }
 
-// TestTheClosedSetIsARefusalNotASchemaCheck is the Go half of the decision 00012
-// makes for its own action column.
-//
-// The property is TWO things at once and both are asserted: Append REFUSES an action
-// this build does not know, and the DATABASE ACCEPTS one. The second is the half that
-// distinguishes this design from a CHECK constraint — a closed set in the schema would
-// make adding an action a migration, and 00011 gives that argument for api_keys.scopes
-// and 00012 gives it for account_audit_log's action.
-//
-// The row is written with raw SQL on purpose. Going through Append could not produce
-// the contrast: Append is the thing refusing.
 func TestTheClosedSetIsARefusalNotASchemaCheck(t *testing.T) {
 	store, pool := newTestStore(t)
 	tableExists(t, pool)
 	ctx := t.Context()
 
-	// The refusal, first: no row, and a sentinel the caller can match on.
 	unknown := testEntry(t)
 	unknown.Action = Action("user.exploded")
 	if _, err := store.Append(ctx, pool, unknown); !errors.Is(err, ErrUnknownAction) {
 		t.Fatalf("Append accepted %q, want ErrUnknownAction", unknown.Action)
 	}
 
-	// THE DATABASE ACCEPTS IT, and that is the design rather than a hole in one. It is
-	// also the fail-closed direction at the point of use: a row holding an action this
-	// build does not know about is refused WHEN IT IS READ, which is what a future
-	// reader of this trail has to do — and the alternative, treating an unknown action
-	// as "and so anything goes", is the bug a CHECK constraint would introduce
-	// silently the first time somebody wanted to add an action without a migration.
 	const raw = `INSERT INTO user_audit_log
 		(user_id, action, actor_user_id, actor_key_id, trace_id, occurred_at)
 		VALUES ($1, 'user.exploded', $2, $3, 'trace-raw', now()) RETURNING id`
@@ -272,8 +194,6 @@ func TestTheClosedSetIsARefusalNotASchemaCheck(t *testing.T) {
 			"is a CODE fact and belongs in Go, or adding an action becomes a migration.", err)
 	}
 
-	// And the row is counted, so the insert above is proven to have inserted rather
-	// than merely to have returned an id.
 	var count int
 	if err := pool.QueryRow(ctx,
 		`SELECT count(*) FROM user_audit_log WHERE id = $1`, rawID).Scan(&count); err != nil {
@@ -284,15 +204,6 @@ func TestTheClosedSetIsARefusalNotASchemaCheck(t *testing.T) {
 	}
 }
 
-// TestTheActorIdsAreBothRequired is the NOT NULL pair, and the reason is that there is
-// no user to attribute this to on the other side: the caller is a machine credential.
-//
-// A row must name WHO acted and carry the trace that joins it to the request's
-// log line — whichever surface wrote it. The key id is NOT required: a zero key
-// id is a human session's action (DECISIONS.md D17), and `HumanSession` is how a
-// reader tells it from a token's. These refusals happen in Go before any
-// statement runs, so this file proves the refusal AND that no row was left
-// behind.
 func TestTheActorUserAndTraceAreRequired(t *testing.T) {
 	store, pool := newTestStore(t)
 	tableExists(t, pool)
@@ -327,14 +238,6 @@ func TestTheActorUserAndTraceAreRequired(t *testing.T) {
 	}
 }
 
-// A zero key id is a human session's action, not a refusal.
-//
-// D14's rule was "every row names a key", because the only surface was
-// token-only. D17 adds the staff surface, which is session-only: its rows name
-// the signed-in staff user and no key, and refusing them here would make the
-// staff disable/reenable unwritable. The per-surface gates keep the stronger
-// promise — `operatorActorFrom` (machine) still 500s on a zero key — so this
-// acceptance cannot launder a token call into an unattributed row.
 func TestAZeroKeyIdIsAHumanSessionRow(t *testing.T) {
 	store, pool := newTestStore(t)
 	tableExists(t, pool)
@@ -359,7 +262,6 @@ func TestAZeroKeyIdIsAHumanSessionRow(t *testing.T) {
 	}
 }
 
-// TestTheSubjectIsRequired, because a row naming no user is a record of nothing.
 func TestTheSubjectIsRequired(t *testing.T) {
 	store, pool := newTestStore(t)
 	tableExists(t, pool)
@@ -372,9 +274,6 @@ func TestTheSubjectIsRequired(t *testing.T) {
 	}
 }
 
-// TestATraceIdIsRequiredAndBounded, because the column carries a CHECK and this
-// package carries the same bound — and two implementations of one bound is two things
-// that can disagree.
 func TestATraceIdIsRequiredAndBounded(t *testing.T) {
 	store, pool := newTestStore(t)
 	tableExists(t, pool)
@@ -395,7 +294,6 @@ func TestATraceIdIsRequiredAndBounded(t *testing.T) {
 			len(long.Actor.TraceID), maxTraceIDLength)
 	}
 
-	// The boundary itself, which is the value a CHECK's off-by-one would hide.
 	edge := testEntry(t)
 	edge.Actor.TraceID = strings.Repeat("t", maxTraceIDLength)
 	if _, err := store.Append(ctx, pool, edge); err != nil {
@@ -403,9 +301,6 @@ func TestATraceIdIsRequiredAndBounded(t *testing.T) {
 	}
 }
 
-// TestAppendNeedsAQuerier, because a nil one panics inside pgx rather than refusing,
-// and a panic in the middle of a disable transaction is the worst place to discover
-// the wiring is wrong.
 func TestAppendNeedsAQuerier(t *testing.T) {
 	store, _ := newTestStore(t)
 
@@ -414,14 +309,6 @@ func TestAppendNeedsAQuerier(t *testing.T) {
 	}
 }
 
-// TestTheRecordedRowComesBackAsWritten proves the RETURNING clause and the column
-// list agree with each other.
-//
-// It is here because a drift between `auditColumns` and `scanRecord` is a RUNTIME
-// error in one direction and a silent mis-mapping in the other: a column added to the
-// list and not to the scan is a compile error, but a REORDERED pair is not, and the
-// record would come back holding one field's value in another's. So every field is
-// asserted against the entry it came from.
 func TestTheRecordedRowComesBackAsWritten(t *testing.T) {
 	store, pool := newTestStore(t)
 	tableExists(t, pool)
@@ -457,13 +344,6 @@ func TestTheRecordedRowComesBackAsWritten(t *testing.T) {
 	}
 }
 
-// TestAllActionsIsTheClosedSetAndNothingMore holds the vocabulary in place from both
-// sides, which is the shape admin.AllActions has.
-//
-// One direction catches an action added to the constant block and forgotten in the
-// list — it would validate, and then never be reachable. The other catches a name in
-// the list with no constant behind it, which would be an action this build promises
-// and cannot produce.
 func TestAllActionsIsTheClosedSetAndNothingMore(t *testing.T) {
 	got := AllActions()
 

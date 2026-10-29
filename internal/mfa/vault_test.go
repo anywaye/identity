@@ -9,16 +9,11 @@ import (
 	"github.com/pquerna/otp"
 )
 
-// The library's own values, named once so the tests read against the same
-// constants the production code passes.
 var (
 	six  = otp.DigitsSix
 	sha1 = otp.AlgorithmSHA1
 )
 
-// A key for the vault tests. It is a constant so two runs produce the same
-// ciphertext, which is what lets a test assert a specific value is stable — and it
-// is not a secret, it is a test fixture.
 var testKey = []byte("0123456789abcdef0123456789abcdef")
 
 func TestVaultRoundTripsASecret(t *testing.T) {
@@ -48,10 +43,6 @@ func TestVaultRoundTripsASecret(t *testing.T) {
 	}
 }
 
-// TestTheSameSecretSealsDifferentlyEveryTime. A deterministic nonce would mean
-// two rows for the same user hold byte-identical ciphertext, which tells a reader
-// of the database that two users chose the same secret — and GCM under one nonce
-// is a catastrophic failure rather than a curiosity.
 func TestTheSameSecretSealsDifferentlyEveryTime(t *testing.T) {
 	vault, err := NewAESCipher(testKey)
 	if err != nil {
@@ -72,10 +63,6 @@ func TestTheSameSecretSealsDifferentlyEveryTime(t *testing.T) {
 	}
 }
 
-// TestASealedSecretCannotBeMovedBetweenUsers is what the AAD buys, and it is a
-// real attack: an attacker with write access to the mfa_credentials table copies
-// their own sealed secret onto a victim's row and then presents codes for a secret
-// they already hold. Without per-user AAD the copy decrypts.
 func TestASealedSecretCannotBeMovedBetweenUsers(t *testing.T) {
 	vault, err := NewAESCipher(testKey)
 	if err != nil {
@@ -93,9 +80,6 @@ func TestASealedSecretCannotBeMovedBetweenUsers(t *testing.T) {
 	}
 }
 
-// TestASecretSealedUnderAnotherKeyDoesNotOpen. This is the key-rotation path: a
-// deployment that pastes the wrong MFA_ENCRYPTION_KEY must fail every
-// verification loudly rather than every verification silently passing.
 func TestASecretSealedUnderAnotherKeyDoesNotOpen(t *testing.T) {
 	first, err := NewAESCipher(testKey)
 	if err != nil {
@@ -116,8 +100,6 @@ func TestASecretSealedUnderAnotherKeyDoesNotOpen(t *testing.T) {
 	}
 }
 
-// TestAVaultRefusesAnEditedCiphertext rather than decrypting it to something an
-// attacker chose. GCM is authenticated, so a flipped bit must be a failure.
 func TestAVaultRefusesAnEditedCiphertext(t *testing.T) {
 	vault, err := NewAESCipher(testKey)
 	if err != nil {
@@ -137,8 +119,6 @@ func TestAVaultRefusesAnEditedCiphertext(t *testing.T) {
 	}
 }
 
-// TestTheKeyLengthIsExact. A 16-byte key is accepted by AES and would halve the
-// guarantee, so it has to be refused rather than stretched.
 func TestTheKeyLengthIsExact(t *testing.T) {
 	for _, size := range []int{0, 1, 16, 24, 31, 33, 64} {
 		if _, err := NewAESCipher(make([]byte, size)); !errors.Is(err, ErrInvalidKey) {
@@ -147,12 +127,6 @@ func TestTheKeyLengthIsExact(t *testing.T) {
 	}
 }
 
-// TestUnavailableVaultFailsClosed is the deployment with no MFA_ENCRYPTION_KEY.
-//
-// Both directions must be ErrNoVault. The Seal direction stops a process with no
-// key from storing something it could never read back; the Open direction is the
-// one that matters, because it is the difference between refusing an enrolled
-// user and waving them in on their password.
 func TestUnavailableVaultFailsClosed(t *testing.T) {
 	var vault Vault = Unavailable{}
 	user := mustUUID(t, "6f1a3f2e-0000-4000-8000-000000000001")
@@ -165,19 +139,12 @@ func TestUnavailableVaultFailsClosed(t *testing.T) {
 	}
 }
 
-// TestTheVaultIsNotTheOAuthOne is a cheap guard against a future merge of the two
-// ciphertext formats. internal/oauth seals provider tokens under a "v1." prefix
-// and no AAD; if that prefix ever appeared here, a token could be pasted into a
-// credential column.
 func TestTheVaultIsNotTheOAuthOne(t *testing.T) {
 	if strings.HasPrefix(SealPrefix, "v1.") {
 		t.Error("the mfa seal prefix collides with internal/oauth's")
 	}
 }
 
-// TestHotpOptionsRejectsWhatTheSchemaForbids. The CHECK constraints in the
-// migration make these values unwritable, so reaching here means a row was written
-// by something other than this service — and the answer has to be a refusal.
 func TestHotpOptionsRejectsWhatTheSchemaForbids(t *testing.T) {
 	if _, err := hotpOptions(DigitEight, AlgorithmSHA1); err != nil {
 		t.Errorf("eight digits should be verifiable: %v", err)
@@ -195,8 +162,6 @@ func TestHotpOptionsRejectsWhatTheSchemaForbids(t *testing.T) {
 	}
 }
 
-// TestTotpCodeGeneratesTheCodeForAnInstant, which is what every test fixture in
-// this package and in internal/httpapi uses to act as an authenticator.
 func TestTotpCodeGeneratesTheCodeForAnInstant(t *testing.T) {
 	got, err := Code(rawKey, at)
 	if err != nil {

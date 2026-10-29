@@ -10,56 +10,20 @@ import (
 	"golang.org/x/oauth2"
 )
 
-// Provider names. These are the two values of the `oauth_provider` enum in
-// migrations/00008_connected_accounts.sql, and the two keys the URL would accept
-// once the surface is mounted. There is one list of them and it is here.
-//
-// The OpenAPI mention this comment used to make was false: no document in this
-// repository declares a social-login operation, because there is no route for one.
-// The migration number was stale for the same kind of reason — the table was
-// renumbered from 00005 to 00008 when the accounts packet moved it.
 const (
 	ProviderGoogle = "google"
 	ProviderGitHub = "github"
-	// ProviderMicrosoft is the third value of the `oauth_provider` enum, added
-	// by migrations/00025_oauth_provider_microsoft.sql. The comment on
-	// knownProviders says what the closed set is for; what is worth adding here
-	// is that the enum value, the constant and the settings table row are one
-	// fact stated three times, and the two checks that hold them together are
-	// TestKnownProvidersMatchesTheNamesTheEnumAccepts (Go against the migration)
-	// and TestEveryProviderThisServiceOffersIsInTheTable (the closed set against
-	// Settings.providers()).
 	ProviderMicrosoft = "microsoft"
-	// ProviderApple is the fourth value of the `oauth_provider` enum, added by
-	// migrations/00026_oauth_provider_apple.sql — in the same migration that adds
-	// the provider, for the reason that migration's comment gives. Apple is also
-	// the one provider with a mechanism rather than a credential: its
-	// client_secret is a JWT this service signs, and its identity comes from a
-	// verified id_token rather than a userinfo call. Both live in apple.go.
 	ProviderApple = "apple"
 )
 
-// knownProviders is the closed set, in the order they are logged. An unlisted name
-// is a 404 rather than a lookup, so a typo in a URL cannot become a query against
-// a provider this service has no client credentials for.
 var knownProviders = []string{ProviderGoogle, ProviderGitHub, ProviderMicrosoft, ProviderApple}
 
-// Errors from the registry and from Settings.Validate.
 var (
-	// ErrUnknownProvider means the name is not one this service offers. It is a
-	// 404: an endpoint that does not exist and an endpoint whose resource does not
-	// exist are the same answer, and neither reveals which providers are
-	// configured on this deployment.
 	ErrUnknownProvider = errors.New("unknown oauth provider")
 
-	// ErrIncompleteProvider means a provider has one half of its credentials and
-	// not the other. Startup fails on this rather than disabling the provider: a
-	// sign-in button that 404s because a secret went missing is a support call
-	// that should have been a failed deploy.
 	ErrIncompleteProvider = errors.New("oauth provider is half-configured")
 
-	// ErrInvalidRedirectBaseURL means the public base URL this service builds
-	// callback URLs from is unusable.
 	ErrInvalidRedirectBaseURL = errors.New("invalid oauth redirect base url")
 )
 
@@ -70,38 +34,15 @@ var (
 // Google() and GitHub(), with this deployment's endpoint overrides applied once at
 // startup, and nothing mutates them after that.
 type Provider struct {
-	// Name is the enum value: "google" or "github".
 	Name string
-	// ClientID and ClientSecret are the redirect pair registered with the provider.
 	ClientID     string
 	ClientSecret string
-	// Scopes are space-separated on the wire.
 	Scopes []string
-	// AuthorizeURL is where the browser is sent to obtain a code.
 	AuthorizeURL string
-	// TokenURL exchanges that code for a token.
 	TokenURL string
-	// UserInfoURL is called with the access token to learn who the user is.
 	UserInfoURL string
-	// EmailsURL is GitHub-only: /user returns a null email for an account whose
-	// address is private, and /user/emails is the documented way to get it.
-	// Empty for providers that always return the address on the identity call.
 	EmailsURL string
-	// JWKSURL is Apple-only: where the provider's public keys are published, for
-	// the one provider whose identity comes from a signed id_token this service
-	// verifies against them rather than from a userinfo call. Empty for
-	// providers with a userinfo endpoint.
-	//
-	// It is a field and not an endpoint override for the reason EmailsURL is
-	// one: it is pointed at a test server by rewriting the field, the same way
-	// every other endpoint is. There is no OAUTH_APPLE_JWKS_URL because Apple's
-	// key document is not a deployment choice the way a token endpoint is — a
-	// deployment that could point this anywhere could point it at a key document
-	// of its own, and then the id_token it verifies would be one the deployment
-	// signed itself.
 	JWKSURL string
-	// ExtraAuthorizeOptions are provider-specific parameters appended to every
-	// authorize URL. There is exactly one, and why it exists is in Google().
 	ExtraAuthorizeOptions []oauth2.AuthCodeOption
 }
 
@@ -121,10 +62,6 @@ func Google() Provider {
 		AuthorizeURL: GoogleAuthorizeURL,
 		TokenURL:     GoogleTokenURL,
 		UserInfoURL:  GoogleUserInfoURL,
-		// Google issues a refresh token only on the FIRST consent unless the
-		// request asks for offline access. Without this, refresh_token is NULL on
-		// every account forever, and the stored credential dies an hour later with
-		// nothing to renew it.
 		ExtraAuthorizeOptions: []oauth2.AuthCodeOption{oauth2.AccessTypeOffline},
 	}
 }
@@ -188,14 +125,6 @@ func Apple() Provider {
 	}
 }
 
-// providerByName returns this service's definition for a known provider name.
-//
-// It exists because the definitions and the settings have to be walked TOGETHER —
-// Validate has to know which endpoints a provider has before it can refuse an
-// override for one it does not, and Providers has to start from the definition the
-// name names. Keying by name rather than pairing two slices positionally is what
-// keeps a provider added to one and not the other from quietly becoming the other's
-// settings.
 func providerByName(name string) (Provider, bool) {
 	switch name {
 	case ProviderGoogle:
@@ -222,18 +151,9 @@ func (p Provider) AuthCodeURL(state, redirectURI string) string {
 	conf := p.oauth2Config()
 	conf.RedirectURL = redirectURI
 
-	// The URL is built by golang.org/x/oauth2 rather than assembled here, so the
-	// authorize step and the exchange step are guaranteed to agree about the
-	// client, the scopes and the endpoint. Two implementations of "what the
-	// provider expects" in one service is a bug waiting for the one provider
-	// whose authorize parameters differ from its token parameters.
 	return conf.AuthCodeURL(state, p.ExtraAuthorizeOptions...)
 }
 
-// oauth2Config is the provider expressed as an x/oauth2 configuration. It is
-// unexported because callers outside this package have no business constructing
-// one: they should call AuthCodeURL or Client.Exchange, both of which set the
-// fields that matter.
 func (p Provider) oauth2Config() *oauth2.Config {
 	return &oauth2.Config{
 		ClientID:     p.ClientID,
@@ -270,7 +190,6 @@ func (p Provider) RedirectURI(baseURL string) string {
 // distinguishes those two is a way to enumerate a deployment's configuration.
 type Registry struct {
 	byName map[string]Provider
-	// redirectBase is the public base URL every callback is built from.
 	redirectBase string
 }
 
@@ -331,13 +250,6 @@ func (r *Registry) Names() []string {
 // clean 404 rather than a redirect to a provider it cannot authenticate with.
 func (r *Registry) Empty() bool { return len(r.byName) == 0 }
 
-// validateRedirectBase rejects a base URL this service cannot build a callback
-// from.
-//
-// The scheme has to be http or https because a callback on any other scheme does
-// not come back to a browser. Query and fragment are refused because the callback
-// is appended as a path: a base with "?x=1" would produce a URL whose query
-// absorbs the path, and the provider would refuse the registration match.
 func validateRedirectBase(baseURL string) error {
 	if baseURL == "" {
 		return fmt.Errorf("%w: it is empty", ErrInvalidRedirectBaseURL)

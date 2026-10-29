@@ -8,36 +8,6 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// TestTenancyAnInvitationResolvesByTheDigestTheCallerPresentedAndNothingElse
-// is the invitation half of the credential mechanism, asserted against the real
-// protected table.
-//
-// # WHAT IT EXERCISES
-//
-// `Service.Accept` resolves an invitation by `WHERE token_digest = $1` with no
-// account to predicate on, because the account is what the lookup is FOR — the
-// same shape that made every scoped token 401 before migrations/00016 gave
-// `api_keys` a digest-scoped policy. `account_invitations` carried only account
-// policies, so the same lookup read zero rows and every fresh invitation 404'd
-// on redemption (the site-loop walk proved it live). migrations/00029 extends
-// the same call to this table —
-// `anywaye.protect_credential_table('account_invitations', 'token_digest')` —
-// and `Accept` opens its transaction with `tenancy.BeginCredential`.
-//
-// # WHY HERE AND NOT ONLY IN internal/accounts
-//
-// The accounts proof drives the use case and would pass with the wiring while
-// a widened policy stood behind it: a resolve policy of `using (true)` returns
-// the invitation too. This file proves the NARROWNESS — exactly the presented
-// row, no browse, no write, nothing after the transaction — as the application
-// role, on the real tables. One is the proof the redemption works; the other
-// is the proof it works for the reason stated.
-//
-// # WHY THE APP ROLE, REACHED BY SET ROLE
-//
-// Same reason as the credential-join proof: the tenancy proof connects as the
-// owner and sets identities, which proves the policies exist; this proves what
-// production answers, and production connects as identity_app.
 func TestTenancyAnInvitationResolvesByTheDigestTheCallerPresentedAndNothingElse(t *testing.T) {
 	ownerDSN := dsnOrSkip(t)
 
@@ -61,13 +31,6 @@ func TestTenancyAnInvitationResolvesByTheDigestTheCallerPresentedAndNothingElse(
 
 	tenantA, tenantB := seedInvitationRows(ctx, t, owner)
 
-	// 0. THE FIXTURE REALLY HOLDS TWO INVITATIONS, one per tenant. Every
-	// "exactly one row" assertion below is only meaningful against a table
-	// holding more than one: with a single row, "the table" and "that row"
-	// are the same set and a table-wide SELECT would pass all of them. Both
-	// counts run under their own account identity, so they hold whatever the
-	// account policies do — they are a precondition on the seed, not on the
-	// resolve policy under test.
 	for _, tenant := range []string{tenantA, tenantB} {
 		var own int
 		if err := inTransaction(ctx, owner, `select anywaye.begin_account($1)`, tenant,
@@ -82,10 +45,6 @@ func TestTenancyAnInvitationResolvesByTheDigestTheCallerPresentedAndNothingElse(
 		}
 	}
 
-	// 1. NO DIGEST AND NO IDENTITY: nothing. This also catches the boundary
-	// being ABSENT rather than too narrow: with no RLS at all the digest
-	// predicate in the query would still match the row, so a non-zero here is
-	// either a widened resolve policy or no policy.
 	var seen int
 	if err := app.QueryRow(ctx,
 		`select count(*) from account_invitations where token_digest = $1`, digestFor(tenantA)).Scan(&seen); err != nil {
@@ -95,9 +54,6 @@ func TestTenancyAnInvitationResolvesByTheDigestTheCallerPresentedAndNothingElse(
 		t.Errorf("an invitation lookup with NO identity and NO digest saw %d rows, want 0.", seen)
 	}
 
-	// 2. THE RESOLUTION ITSELF: the presented digest returns its row, with NO
-	// account identity set — which is the whole claim, because the account is
-	// what the query is FOR and cannot also be what it is scoped by.
 	for _, tc := range []struct {
 		name   string
 		digest string
@@ -130,10 +86,6 @@ func TestTenancyAnInvitationResolvesByTheDigestTheCallerPresentedAndNothingElse(
 		})
 	}
 
-	// 3. IT CANNOT BROWSE. `select account_id` with no WHERE, inside a
-	// digest-A session, returns exactly A's account — WHICH row, not merely
-	// how many, because the fixture holds two and "one row" alone would also
-	// describe a session that can see nothing.
 	t.Run("a resolution cannot browse", func(t *testing.T) {
 		var accounts []string
 		if err := inTransaction(ctx, app, `select anywaye.begin_credential($1)`, digestFor(tenantA),
@@ -160,10 +112,6 @@ func TestTenancyAnInvitationResolvesByTheDigestTheCallerPresentedAndNothingElse(
 		}
 	})
 
-	// 4. IT CANNOT WRITE. `for select` and nothing else: a resolution session
-	// meets the ordinary account policies on the write side, where a NULL
-	// identity is 42501. The assertion is that the STATEMENT fails, unwound
-	// to a savepoint so the refusal costs nothing else.
 	t.Run("a resolution cannot write", func(t *testing.T) {
 		accepted := false
 		err := inTransaction(ctx, app, `select anywaye.begin_credential($1)`, digestFor(tenantA),
@@ -193,9 +141,6 @@ func TestTenancyAnInvitationResolvesByTheDigestTheCallerPresentedAndNothingElse(
 		}
 	})
 
-	// 5. AFTER THE TRANSACTION THE SESSION HAS NO IDENTITY. The digest is
-	// transaction-local: a session-level digest would survive the pool and
-	// hand one redemption's bearer token to the next connection leased.
 	seen = 0
 	if err := app.QueryRow(ctx,
 		`select count(*) from account_invitations where token_digest = $1`, digestFor(tenantA)).Scan(&seen); err != nil {
@@ -207,11 +152,6 @@ func TestTenancyAnInvitationResolvesByTheDigestTheCallerPresentedAndNothingElse(
 	}
 }
 
-// TestTheInvitationResolvePolicyIsInstalled is the control this file's
-// resolution proof depends on: without the digest-scoped policy every case
-// above reads zero rows and the file is green for the reason of asserting a
-// defect. It names the policy and the qualifier, so a policy that stopped
-// scoping by the presented digest is a red build here rather than a quiet one.
 func TestTheInvitationResolvePolicyIsInstalled(t *testing.T) {
 	ownerDSN := dsnOrSkip(t)
 
@@ -251,14 +191,6 @@ func TestTheInvitationResolvePolicyIsInstalled(t *testing.T) {
 	}
 }
 
-// seedInvitationRows writes one account, user and invitation per tenant, each
-// under its own identity, and returns the account ids.
-//
-// The identities have to be set per row because the owner's INSERT is itself
-// subject to `with check` — FORCE removed the exemption. The invitation's
-// digest is digestFor(accountID), so each tenant's invitation has a stable,
-// distinct value the test can present; the column's 64-character CHECK is what
-// makes that shape mandatory rather than convenient.
 func seedInvitationRows(ctx context.Context, t *testing.T, owner *pgx.Conn) (tenantA, tenantB string) {
 	t.Helper()
 

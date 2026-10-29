@@ -36,7 +36,6 @@ func InitErrorReporting() {
 		AttachStacktrace: true,
 		Debug:            true,
 		BeforeSend: func(event *sentry.Event, hint *sentry.EventHint) *sentry.Event {
-			// Keep the exception message so errors are actionable.
 			if event.Request != nil {
 				if u := event.Request.URL; u != "" {
 					if i := strings.IndexByte(u, '?'); i >= 0 {
@@ -85,7 +84,6 @@ func CaptureError(err error, r *http.Request) {
 		})
 	}
 	hub.CaptureException(err)
-	// Flush is bounded so a slow store cannot hold a request open.
 	if !sentry.Flush(2 * time.Second) {
 		slog.Warn("error reporting flush timed out")
 	}

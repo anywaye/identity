@@ -111,8 +111,6 @@ func (s *Service) RunOnce(ctx context.Context) (int, error) {
 
 	published, err := s.publishAll(ctx, batch)
 	if err != nil {
-		// The context is gone or the transaction is broken; there is nothing
-		// useful to mark. Release so the rows are not held.
 		if releaseErr := batch.Release(ctx); releaseErr != nil {
 			s.logger.Warn("releasing the outbox batch failed", "error", releaseErr)
 		}
@@ -125,9 +123,6 @@ func (s *Service) RunOnce(ctx context.Context) (int, error) {
 	return published, nil
 }
 
-// publishAll walks the batch, marking each event published or failed. It returns
-// an error only for a failure that affects the whole batch — a dead context or a
-// broken transaction — never for a single event's publish failing.
 func (s *Service) publishAll(ctx context.Context, batch Batch) (int, error) {
 	published := 0
 
@@ -141,9 +136,6 @@ func (s *Service) publishAll(ctx context.Context, batch Batch) (int, error) {
 				"type", e.Type, "id", e.ID, "error", err)
 
 			if markErr := batch.MarkFailed(ctx, e.ID, err.Error()); markErr != nil {
-				// The mark failed, so the transaction is unusable. Report it: the
-				// batch will be released and re-claimed, and a silent swallow here
-				// would leave a loop that believes it published something it did not.
 				return published, fmt.Errorf("outbox: recording the failure of %s: %w", e.ID, markErr)
 			}
 			continue
@@ -174,7 +166,7 @@ func (s *Service) Run(ctx context.Context) error {
 		case err == nil:
 			if n > 0 {
 				s.logger.Debug("published outbox events", "count", n)
-				continue // a full batch may mean there is more waiting
+				continue
 			}
 		case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 			s.logger.Info("outbox publisher stopping")

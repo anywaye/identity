@@ -1,16 +1,5 @@
 package httpapi
 
-// The reader's own tests, and the tests for every normalisation it applies.
-//
-// This file exists because the check in openapi_drift_test.go is only worth
-// having if the thing producing the two sets is itself trustworthy. A reader is
-// a place a check can be made to pass by a document it quietly failed to read,
-// and a normaliser is a place a check can be made to pass by a rewrite that
-// should have failed it — so every rule gets a test naming the case it covers.
-//
-// The fault tests drive the real reader and the real comparison rather than
-// hand-built maps, because a test of a tidier imitation of the code proves
-// something about the imitation.
 
 import (
 	"os"
@@ -20,9 +9,6 @@ import (
 	"testing"
 )
 
-// writeDocument writes lines to a temporary file and returns its path. A
-// document is data on disk, so the reader is given a real file and the tests do
-// not get a seam that production does not have.
 func writeDocument(t *testing.T, lines ...string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "v1.yaml")
@@ -32,8 +18,6 @@ func writeDocument(t *testing.T, lines ...string) string {
 	return path
 }
 
-// keysOf is the reader's output as sorted "METHOD /path" strings, which is how
-// every assertion below reads.
 func keysOf(doc openAPIDocument) []string {
 	out := make([]string, 0, len(doc.Operations))
 	for key := range doc.Operations {
@@ -43,8 +27,6 @@ func keysOf(doc openAPIDocument) []string {
 	return out
 }
 
-// mustRead reads a document or fails the test, for the cases whose point is what
-// the reader FOUND rather than what it refused.
 func mustRead(t *testing.T, lines ...string) openAPIDocument {
 	t.Helper()
 	doc, err := readOpenAPIDocument(writeDocument(t, lines...))
@@ -94,7 +76,6 @@ func TestTheReaderTakesThePathsAndTheMethodsAndNothingElse(t *testing.T) {
 	}
 }
 
-// The spellings are kept so a failure can name a path as the source wrote it.
 func TestTheReaderKeepsTheSpellingsTheSourceUsed(t *testing.T) {
 	doc := mustRead(t, "openapi: 3.1.0", "info:", "  version: 1.0.0",
 		"paths:", "  /v1/widgets/{widget_id}:", "    get:")
@@ -107,10 +88,6 @@ func TestTheReaderKeepsTheSpellingsTheSourceUsed(t *testing.T) {
 }
 
 func TestTheReaderReadsTheOperationIdAndOnlyTheOperationsOwn(t *testing.T) {
-	// The second `operationId` is three levels down inside a response example. A
-	// reader that took the first one it found anywhere below the method key would
-	// report this operation as named after an example payload, which is a name no
-	// client would ever have.
 	doc := mustRead(t,
 		"openapi: 3.1.0", "info:", "  version: 1.0.0",
 		"paths:",
@@ -135,8 +112,6 @@ func TestTheReaderReadsTheOperationIdAndOnlyTheOperationsOwn(t *testing.T) {
 }
 
 func TestAKeyThatMerelyStartsWithAMethodNameIsNotAnOperation(t *testing.T) {
-	// `get:` is an operation. `getaway:` is not, and a reader matching on the
-	// prefix would count a schema property as a route.
 	doc := mustRead(t, "openapi: 3.1.0", "info:", "  version: 1.0.0",
 		"paths:", "  /v1/widgets:", "    get:", "    getaway:", "    posting:")
 
@@ -161,8 +136,6 @@ func TestCommentsAndBlankLinesInsideTheBlockAreSkipped(t *testing.T) {
 	}
 }
 
-// A reader that hardcoded two and four spaces would read four-space YAML as
-// having no operations at all — and a check that finds nothing passes.
 func TestTheTwoIndentationLevelsAreDerivedFromTheDocumentNotAssumed(t *testing.T) {
 	doc := mustRead(t, "openapi: 3.1.0", "info:", "    version: 1.0.0",
 		"paths:", "    /v1/widgets:", "        get:", "        post:")
@@ -173,9 +146,6 @@ func TestTheTwoIndentationLevelsAreDerivedFromTheDocumentNotAssumed(t *testing.T
 }
 
 func TestAnythingDeeperThanTheOperationLevelIsAnOperationsBody(t *testing.T) {
-	// A real document nests: `parameters` holds a list of `$ref:` entries and an
-	// operation holds a `responses:` mapping. A reader that treated every deeper
-	// level as structure would count response status codes as routes.
 	doc := mustRead(t,
 		"openapi: 3.1.0", "info:", "  version: 1.0.0",
 		"paths:",
@@ -199,10 +169,6 @@ func TestAnythingDeeperThanTheOperationLevelIsAnOperationsBody(t *testing.T) {
 	}
 }
 
-// The failure this guards against is specific: a schema property named `delete`
-// three levels down inside a response body, read as a DELETE route. It would be
-// a phantom operation in the document, and the check would demand a route that
-// should not exist.
 func TestAKeyInsideABodySpelledLikeAMethodIsNotAnOperation(t *testing.T) {
 	doc := mustRead(t,
 		"openapi: 3.1.0", "info:", "  version: 1.0.0",
@@ -235,9 +201,6 @@ func TestAKeyInsideABodySpelledLikeAMethodIsNotAnOperation(t *testing.T) {
 	}
 }
 
-// `parameters` is the Path Item Object field that bites: every account path in
-// this repository's document carries one, and a reader that did not know the
-// difference would report it as an operation with no operationId.
 func TestAPathItemsOwnFieldsAreNotOperations(t *testing.T) {
 	doc := mustRead(t, "openapi: 3.1.0", "info:", "  version: 1.0.0",
 		"paths:", "  /v1/widgets:", "    summary: widgets", "    get:")
@@ -248,11 +211,7 @@ func TestAPathItemsOwnFieldsAreNotOperations(t *testing.T) {
 	}
 }
 
-// --- the reader refuses rather than under-reads --------------------------------
 
-// Every case here is a document that would make the check pass for the wrong
-// reason. "Finds no paths and passes" is the failure mode this whole file is
-// about, so the reader raises rather than returning an empty set.
 func TestTheReaderRefusesRatherThanUnderReading(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -282,8 +241,6 @@ func TestTheReaderRefusesRatherThanUnderReading(t *testing.T) {
 			want: "no operation under it",
 		},
 		{
-			// Prepending a slash would quietly accept an invalid document and hide
-			// the invalidity, so the reader refuses it.
 			name: "a path key that does not start with a slash",
 			lines: []string{"openapi: 3.1.0", "info:", "  version: 1.0.0",
 				"paths:", "  v1/widgets:", "    get:"},
@@ -327,9 +284,6 @@ func TestAMissingDocumentIsAnError(t *testing.T) {
 	}
 }
 
-// A rewrite is only safe while it cannot map two different operations onto one.
-// If it can, the check is blind to the collision, so the reader says so rather
-// than keeping one of them.
 func TestTwoOperationsThatNormaliseOntoOneAreAnError(t *testing.T) {
 	_, err := readOpenAPIDocument(writeDocument(t,
 		"openapi: 3.1.0", "info:", "  version: 1.0.0",
@@ -340,14 +294,8 @@ func TestTwoOperationsThatNormaliseOntoOneAreAnError(t *testing.T) {
 	}
 }
 
-// --- normalising ---------------------------------------------------------------
 
 func TestARenamedPathParameterIsNotDrift(t *testing.T) {
-	// A generated client substitutes a path parameter positionally, so `{id}`
-	// becoming `{widget_id}` is a rename inside one route, not two routes. Failing
-	// on it would make the check cry wolf, and a check people turn off is worse
-	// than none. This is not hypothetical here: chi registers `{accountID}` and
-	// the document writes `{account_id}`.
 	if got := normalisePath("/v1/accounts/{accountID}"); got != normalisePath("/v1/accounts/{account_id}") {
 		t.Errorf("chi's `{accountID}` and the document's `{account_id}` normalise to %q "+
 			"and %q; they are one route", got, normalisePath("/v1/accounts/{account_id}"))
@@ -355,9 +303,6 @@ func TestARenamedPathParameterIsNotDrift(t *testing.T) {
 }
 
 func TestTheParameterNameIsTheOnlyThingErasedAndOnlyInsideASegment(t *testing.T) {
-	// A mechanical rewrite: the whole segment becomes `{}` whether it is written
-	// `{id}`, `:id` or `{some_long_name}`. What is NOT erased is WHICH segment it
-	// was, so a path that gains or loses a parameter is still a difference.
 	for _, tc := range []struct{ in, want string }{
 		{"/v1/widgets/{id}", "/v1/widgets/{}"},
 		{"/v1/widgets/:id", "/v1/widgets/{}"},
@@ -365,8 +310,6 @@ func TestTheParameterNameIsTheOnlyThingErasedAndOnlyInsideASegment(t *testing.T)
 		{"/v1/widgets", "/v1/widgets"},
 		{"/v1/widgets/{id}/parts/{part_id}", "/v1/widgets/{}/parts/{}"},
 		{"/v1/widgets/{id}/parts", "/v1/widgets/{}/parts"},
-		// A file suffix on the same parameter: erasing only `{id}` would leave
-		// `.json` behind and produce a path the router could never serve.
 		{"/v1/widgets/{id}.json", "/v1/widgets/{}"},
 		{"/v1/widgets/:id.json", "/v1/widgets/{}"},
 	} {
@@ -377,8 +320,6 @@ func TestTheParameterNameIsTheOnlyThingErasedAndOnlyInsideASegment(t *testing.T)
 }
 
 func TestATrailingSlashIsNotADifference(t *testing.T) {
-	// Grounded in the router's own behavior rather than in taste: chi routes
-	// `/healthz/` to the `/healthz` handler, so the two are one route.
 	if got := normalisePath("/healthz/"); got != "/healthz" {
 		t.Errorf("normalisePath(\"/healthz/\") is %q, want /healthz", got)
 	}
@@ -394,11 +335,7 @@ func TestTheRootPathKeepsItsSlash(t *testing.T) {
 	}
 }
 
-// --- the comparison, pointed at an injected fault ------------------------------
 
-// Each of these injects one fault and asserts the comparison names it. This is
-// the test that a comparison pointed the wrong way cannot pass: if it reported
-// drift in the wrong direction, or none at all, the assertions below would fail.
 
 func contractOf(pairs ...string) map[operationKey]documentedOperation {
 	out := map[operationKey]documentedOperation{}
@@ -450,9 +387,6 @@ func TestTheComparisonNamesAServedOperationNoDocumentDescribes(t *testing.T) {
 	}
 }
 
-// A count comparison passes here: two operations become two operations.
-// Comparing the paths does not, and the offender appears on both sides — once
-// for the document's spelling and once for the router's.
 func TestTheComparisonReportsARenamedPathOnBothSides(t *testing.T) {
 	got := diff(
 		contractOf("GET /v1/widgets", "GET /v1/wodgets/{id}"),
@@ -469,11 +403,6 @@ func TestTheComparisonReportsARenamedPathOnBothSides(t *testing.T) {
 	}
 }
 
-// THE billing bug. The path is in both sets, so a comparison over paths — or
-// over counts — reports agreement, and one method goes on being served with
-// nothing written down about it. In billing that was `PUT /v1/customers/{id}` in
-// a money-handling service; here `POST /oidc/authorize` and `POST
-// /oidc/userinfo` already are the same shape.
 func TestAMethodAddedOnOneSideOnlyIsDriftEvenThoughThePathMatches(t *testing.T) {
 	document := contractOf("GET /v1/widgets")
 	agreed := servedOf("GET /v1/widgets")
@@ -482,7 +411,6 @@ func TestAMethodAddedOnOneSideOnlyIsDriftEvenThoughThePathMatches(t *testing.T) 
 		t.Fatalf("the agreed pair already reports %v", got.Unexplained)
 	}
 
-	// A second method on the same path. The path set is unchanged on both sides.
 	withDelete := servedOf("GET /v1/widgets", "DELETE /v1/widgets")
 	got := diff(document, withDelete, nil)
 
@@ -496,8 +424,6 @@ func TestAMethodAddedOnOneSideOnlyIsDriftEvenThoughThePathMatches(t *testing.T) 
 	}
 }
 
-// A carve-out is how a real omission stays a real omission, and it has to be
-// narrow: the same omission under a different method is drift again.
 func TestAnAdmissionCoversTheOperationItNamesAndNotAnotherMethodOnTheSamePath(t *testing.T) {
 	document := contractOf("GET /v1/widgets")
 	router := servedOf("GET /v1/widgets", "GET /healthz", "DELETE /healthz")
@@ -512,9 +438,6 @@ func TestAnAdmissionCoversTheOperationItNamesAndNotAnotherMethodOnTheSamePath(t 
 		t.Errorf("the served-but-undocumented set is %v, want both methods on /healthz",
 			got.ServedNotDocumented)
 	}
-	// The one the admission names is out of the unexplained set, and the one it
-	// does not name is in it. Keying an admission by method rather than by path
-	// is the whole of what makes that true.
 	if !equalStrings(got.Unexplained, []string{"DELETE /healthz"}) {
 		t.Errorf("the unexplained set is %v, want [DELETE /healthz]. An admission keyed by "+
 			"path would have covered both methods, which is how an undocumented method "+
@@ -540,10 +463,6 @@ func TestTheComparisonReportsEveryOffenderAndNotTheFirst(t *testing.T) {
 }
 
 func TestTwoEmptySetsAgreeAndThatIsNotAReasonToTrustTheComparison(t *testing.T) {
-	// The property that makes the emptiness guards in the reader worth having:
-	// diff over nothing is empty and reports no drift. So a reader that found
-	// nothing would make this check pass, which is why every under-read in
-	// readOpenAPIDocument is an error and why servedRoutes fails on zero routes.
 	got := diff(map[operationKey]documentedOperation{}, map[operationKey]string{}, nil)
 	if len(got.Unexplained)+len(got.DocumentedNotServed) != 0 {
 		t.Errorf("diff over two empty sets reported %v; it is supposed to report nothing, "+

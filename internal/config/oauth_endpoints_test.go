@@ -12,29 +12,11 @@ import (
 	"github.com/anywaye/identity/internal/oauth"
 )
 
-// This file holds the two halves of the endpoint-override wiring that
-// internal/oauth cannot see: the read (which variable sets which field) and the
-// naming (which variable an operator is told about when one is refused).
-//
-// internal/oauth refuses an endpoint by provider and struct field, because the
-// variable names live here. That split is the reason these tests exist — a boot log
-// that says "TokenURL" instead of OAUTH_GOOGLE_TOKEN_URL sends a deployer looking
-// through thirteen variables, and nothing in the oauth package's tests would notice.
 
-// oauthTestKey is a valid token encryption key: standard base64 of 32 bytes.
 func oauthTestKey() string {
 	return base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32))
 }
 
-// oauthTestEnv is a deployment with every provider configured and nothing else
-// overridden. Every endpoint test starts from it, because an endpoint override in a
-// deployment with no credentials is a deployment that does not mount the routes at
-// all.
-//
-// It carries SIGNUP_SIGNING_KEY because a boot without it is a startup failure:
-// the endpoint tests are about the OAuth block, and a deployment that cannot
-// boot cannot dial any endpoint. The value is the same 32-byte shape
-// oauthTestKey uses, base64url.
 func oauthTestEnv() map[string]string {
 	return map[string]string{
 		OAuthRedirectBaseURLVar:       "https://identity.anywaye.com",
@@ -49,17 +31,8 @@ func oauthTestEnv() map[string]string {
 	}
 }
 
-// oauthTestEndpointNames is every endpoint field on a provider, in the order they
-// appear in the struct. It is here rather than derived so that a row in the table
-// naming a field this list does not have is visible as a failure, and it is compared
-// against the struct by reflection in the test below.
 var oauthTestEndpointNames = []string{"AuthorizeURL", "TokenURL", "UserInfoURL", "EmailsURL"}
 
-// endpointValue reads one endpoint off a provider by field name.
-//
-// It reflects because the point of the comparisons that use it is that they walk the
-// struct rather than spell out four assignments per provider: an expectation written
-// out a second time would agree with the second copy.
 func endpointValue(p oauth.Provider, field string) string {
 	value := reflect.ValueOf(p).FieldByName(field)
 	if !value.IsValid() || value.Kind() != reflect.String {
@@ -68,7 +41,6 @@ func endpointValue(p oauth.Provider, field string) string {
 	return value.String()
 }
 
-// providerEndpoints reads the endpoints off a provider definition by field name.
 func providerEndpoints(name string) map[string]string {
 	var definition oauth.Provider
 	switch name {
@@ -91,21 +63,6 @@ func providerEndpoints(name string) map[string]string {
 	return out
 }
 
-// Every endpoint a provider HAS has a variable that sets it, and every variable in
-// the table sets an endpoint a provider has. Both directions, because either alone
-// is satisfiable by a table with nothing in it: a provider whose token URL cannot be
-// pointed anywhere is a deployment stuck with the real one, and a variable that sets
-// no field is one that reads as if it configures something.
-//
-// The shape of the table is therefore decided by internal/oauth — three endpoints
-// for Google, four for GitHub, two for Apple — and not by this file, which is the
-// point of the directions: GitHub has an emails endpoint and Google does not, so
-// OAUTH_GITHUB_EMAILS_URL exists and OAUTH_GOOGLE_EMAILS_URL is not a variable
-// anybody is missing. Apple has no userinfo endpoint (its identity comes from a
-// verified id_token) and its JWKS document is deliberately NOT overridable — a
-// deployment that could point it at a key document of its own could forge
-// identities — so OAUTH_APPLE_AUTHORIZE_URL and OAUTH_APPLE_TOKEN_URL exist and
-// there is no OAUTH_APPLE_JWKS_URL.
 func TestEveryOAuthEndpointHasAVariableAndEveryVariableHasAnEndpoint(t *testing.T) {
 	t.Parallel()
 
@@ -138,9 +95,6 @@ func TestEveryOAuthEndpointHasAVariableAndEveryVariableHasAnEndpoint(t *testing.
 		}
 	}
 
-	// The field names a row may name are the ones the struct has. A row pointing at
-	// a field that does not exist compiles fine — it is a string in a table — and
-	// would set nothing while reading as if it set something.
 	fields := map[string]bool{}
 	reflected := reflect.TypeOf(oauth.ProviderEndpoints{})
 	for i := 0; i < reflected.NumField(); i++ {
@@ -169,9 +123,6 @@ func TestEveryOAuthEndpointHasAVariableAndEveryVariableHasAnEndpoint(t *testing.
 	}
 }
 
-// The whole point of the variables: a deployment can point this service's provider
-// calls at a server it controls. The assertion is on what this process would DIAL
-// and where it would SEND A BROWSER, not on the settings struct having a field set.
 func TestTheEndpointOverridesReachTheBuiltAuthorizeURLAndTheTokenURL(t *testing.T) {
 	t.Parallel()
 
@@ -226,8 +177,6 @@ func TestTheEndpointOverridesReachTheBuiltAuthorizeURLAndTheTokenURL(t *testing.
 				p.Name, p, w.authorize, w.token, w.userInfo, w.emails)
 		}
 
-		// The browser goes to the override, and the redirect_uri it carries is still
-		// the configured one rather than anything the deployment's endpoints suggest.
 		authorizeURL, err := url.Parse(p.AuthCodeURL("state-123", cfg.OAuth.RedirectBaseURL+"/v1/auth/oauth/"+p.Name+"/callback"))
 		if err != nil {
 			t.Fatalf("%s: parsing the authorize url: %v", p.Name, err)
@@ -241,11 +190,6 @@ func TestTheEndpointOverridesReachTheBuiltAuthorizeURLAndTheTokenURL(t *testing.
 	}
 }
 
-// With nothing set, this service dials the endpoints its definitions carry. The
-// comparison is against the definitions rather than against literals because that is
-// the concern at this layer: the READ must not blank a field, reorder a provider or
-// substitute anything. That the definitions are Google's and GitHub's real endpoints
-// is internal/oauth's regression guard, which spells them out.
 func TestWithNothingSetTheEndpointsAreTheDefinitions(t *testing.T) {
 	t.Parallel()
 
@@ -284,9 +228,6 @@ func TestWithNothingSetTheEndpointsAreTheDefinitions(t *testing.T) {
 	}
 }
 
-// A present-but-wrong value fails startup, and the message names the VARIABLE. That
-// is the difference between a boot log that sends a deployer to one line of a config
-// file and one that says "TokenURL", which is not in any config file at all.
 func TestAMalformedEndpointOverrideFailsStartupNamingTheVariable(t *testing.T) {
 	t.Parallel()
 
@@ -326,9 +267,6 @@ func TestAMalformedEndpointOverrideFailsStartupNamingTheVariable(t *testing.T) {
 	}
 }
 
-// One override is enough to make the deployment's endpoints inconsistent — a code
-// exchanged at the fake IdP's authorize URL and presented to Google's token URL —
-// so the variable being set alone, with no credentials, still has to be loud.
 func TestAnEndpointOverrideIsCheckedEvenWithNoProviderConfigured(t *testing.T) {
 	t.Parallel()
 
@@ -342,16 +280,10 @@ func TestAnEndpointOverrideIsCheckedEvenWithNoProviderConfigured(t *testing.T) {
 	}
 }
 
-// A variable that is PRESENT AND WRONG is a startup failure; a variable that is
-// absent is a deployment that said nothing, which is the shipped state. Both halves,
-// because a rule that treated every value as fatal would stop this service booting
-// anywhere without thirteen new variables set.
 func TestAnAbsentEndpointOverrideKeepsTheDefaultsAndBoots(t *testing.T) {
 	t.Parallel()
 
 	env := oauthTestEnv()
-	// Present-but-empty is how compose passes an unset variable through, and
-	// lookupValue trims it, so it must read as absent rather than as a broken URL.
 	env[OAuthGoogleTokenURLVar] = "   "
 
 	cfg, err := Load(lookupFrom(env))

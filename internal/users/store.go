@@ -14,10 +14,6 @@ import (
 	"github.com/anywaye/identity/internal/platform/id"
 )
 
-// Postgres SQLSTATE 23505, unique_violation. The store maps exactly this, and
-// only for the email index, onto ErrEmailTaken. Any other unique violation is
-// left as-is: a 23505 on some future index is a different problem and deserves
-// to be visible as one.
 const uniqueViolation = "23505"
 
 // CreateParams is everything a new user needs. It carries an already-normalized
@@ -36,8 +32,6 @@ type Store struct {
 // NewStore returns a Store backed by pool.
 func NewStore(pool db.Pool) *Store { return &Store{pool: pool} }
 
-// userColumns is the select list, in the order scan expects. One constant, so a
-// column added here cannot be forgotten in one query and present in another.
 const userColumns = `id, email, display_name, preferences, password_digest, failed_login_attempts, locked_until, ` +
 	`email_verified_at, disabled_at, is_staff, created_at, updated_at`
 
@@ -344,11 +338,6 @@ func (s *Store) DeleteForAccount(ctx context.Context, q db.Querier, accountID, u
 
 	tag, err := q.Exec(ctx, `DELETE FROM users WHERE id = $1`, userID)
 	if err != nil {
-		// A foreign-key violation here is a THIRD-PARTY RECORD still naming this
-		// user, and it is reported rather than swallowed: after migrations/00024
-		// the four known cases cannot produce it, so a 23503 from here means a
-		// later migration added a fifth `RESTRICT` column and this method needs to
-		// know about it.
 		return fmt.Errorf("deleting a user: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
@@ -435,20 +424,9 @@ type DirectoryEntry struct {
 	CreatedAt       time.Time
 }
 
-// Search bounds for the staff directory. The handler validates the request; the
-// store clamps defensively, so a caller that forgot is bounded rather than
-// open-ended.
 const (
-	// MinSearchLength is the shortest useful search term. A one-character query
-	// matches a large fraction of every deployment's addresses, which is a
-	// directory dump wearing a query string — and a bounded one is still a dump
-	// the caller did not have to think about.
 	MinSearchLength = 2
-	// DefaultSearchLimit is the page size when the caller names none.
 	DefaultSearchLimit = 25
-	// MaxSearchLimit is the ceiling. Over it is a refusal, never a silent
-	// truncation: a client that asked for 500 rows and received 50 has been
-	// told a lie about how much directory it has read.
 	MaxSearchLimit = 50
 )
 
@@ -473,8 +451,6 @@ func (s *Store) Search(ctx context.Context, q db.Querier, query string, limit in
 		limit = MaxSearchLimit
 	}
 
-	// Escape before wrapping: the term is text, and `%` and `_` in it must match
-	// themselves rather than become wildcards.
 	pattern := "%" + strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(query) + "%"
 
 	const sql = `
@@ -490,7 +466,6 @@ func (s *Store) Search(ctx context.Context, q db.Querier, query string, limit in
 	}
 	defer rows.Close()
 
-	// Non-nil, so an empty directory renders `[]` and not `null`.
 	out := make([]DirectoryEntry, 0, limit)
 	for rows.Next() {
 		var e DirectoryEntry
@@ -534,8 +509,6 @@ func (s *Store) MarkEmailVerified(ctx context.Context, q db.Querier, userID id.U
 	return tag.RowsAffected() > 0, nil
 }
 
-// scanOne turns "no rows" into ErrNotFound. pgx reports it as pgx.ErrNoRows, and
-// a caller that has to know that is a caller that will get it wrong.
 func scanOne(row interface{ Scan(...any) error }) (User, error) {
 	var u User
 
@@ -551,19 +524,6 @@ func scanOne(row interface{ Scan(...any) error }) (User, error) {
 	return u, nil
 }
 
-// isEmailTaken reports whether err is a unique violation raised by the email
-// index.
-//
-// It matches on the SQLSTATE alone, and that is load-bearing rather than lazy: the
-// users table has exactly one unique index, on email, so 23505 can only mean the
-// address is taken. Matching the constraint *name* instead would be more precise
-// in principle and is in practice brittle — Postgres renames an index when a table
-// is cloned with LIKE ... INCLUDING INDEXES, which is exactly what the integration
-// tests do, and a future migration could rename it legitimately. A silently
-// mis-detected duplicate turns a 409 into a 500.
-//
-// TestUsersHasExactlyOneUniqueIndex fails if a second unique index is ever added,
-// which is the point at which this has to become precise.
 func isEmailTaken(err error) bool {
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) {

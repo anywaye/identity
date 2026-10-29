@@ -1,53 +1,5 @@
 package client
 
-// WHERE REQUESTS GO, IN A DOCUMENTED ORDER, WITH NO DEFAULT THAT GUESSES.
-//
-// The generated client does not decide this. `api.gen.go` carries a `Server`
-// default of `https://identity.anywaye.com`, read out of the document's `servers:`
-// block, and that default is a trap rather than a convenience: a self-hoster
-// running their own identity who never set a base URL would have their traffic —
-// and their credentials — sent to somebody else's deployment, and the first
-// symptom would be a login attempt against a host they do not control.
-//
-// MD6 gives the wrapper this job for the same reason it gives it credential
-// handling: the fleet's documents cannot express a self-hoster's deployment, so
-// something hand-written has to.
-//
-// # THE PRECEDENCE, HIGHEST FIRST
-//
-//  1. `BaseURL` on the options — explicit beats ambient
-//  2. `ANYWAYE_IDENTITY_BASE_URL` — this service, specifically
-//  3. `ANYWAYE_BASE_URL` — every anywaye service, one variable
-//  4. throw
-//
-// Steps 2 and 3 are one source in two granularities: a per-service variable is more
-// specific than a fleet-wide one, and the fleet-wide one exists because a
-// self-hoster with one deployment of everything should not have to spell out six
-// variable names.
-//
-// This mirrors `anywaye-ts`'s `baseUrlEnvFor` precedence rather than inventing one.
-// anywaye-ts has an extra step this client does not — `globalThis.location.origin`,
-// which is right for a browser bundle served from the same origin as the fleet and
-// has no meaning at all in a Go binary. A divergence between three clients for one
-// platform is a defect in the platform, so the steps that mean the same thing are
-// named the same and the one that does not is absent rather than reordered.
-//
-// # WHY THERE IS NO LOCALHOST, AND WHY STEP 4 THROWS
-//
-// The brief asks for "explicit, then `ANYWAYE_BASE_URL`, then the default". The
-// default is the part this file refuses, and the refusal is the design.
-//
-// A localhost default is attractive for exactly the wrong reason — it makes a
-// developer's laptop work — and it is a silent misdirection everywhere else. A
-// production process resolving to `http://localhost:3000` fails with a connection
-// refused against a service nobody asked for, and the error names the wrong thing.
-// The alternative default, the document's own `servers:` entry, sends a
-// self-hoster's credentials to public SaaS, which is worse: it succeeds, so nothing
-// is visibly wrong until somebody reads a log.
-//
-// So step 4 throws, and the error names every source it consulted and suggests no
-// host. The generated client's SaaS default is never reachable from here, and that
-// is the property that makes this file worth existing.
 
 import (
 	"errors"
@@ -98,11 +50,8 @@ type LookupEnv func(string) string
 // and a custom transport are the obvious next two — and a caller who has to
 // remember the order of four strings is a caller who gets one wrong.
 type BaseURLOptions struct {
-	// BaseURL is the explicit value. Highest precedence, and the only source that
-	// is a decision somebody made in code.
 	BaseURL string
 
-	// LookupEnv reads the environment. nil means `os.Getenv`.
 	LookupEnv LookupEnv
 }
 
@@ -141,11 +90,6 @@ func ResolveBaseURL(opts BaseURLOptions) (string, error) {
 	}
 
 	if chosen == nil {
-		// The message is long, and the length is the point: a caller who gets this
-		// has a misconfigured deployment and the message is the only thing telling
-		// them which variable to set. The first line carries the sentinel and no
-		// trailing punctuation, because `staticcheck`'s ST1005 is right that an
-		// error string is often embedded in another sentence — this one is not.
 		return "", fmt.Errorf("%w for identity, and this client will not guess one;\n\n"+
 			"Set one of, in order:\n"+
 			"  1. the BaseURL option\n"+
@@ -180,18 +124,9 @@ func ResolveBaseURL(opts BaseURLOptions) (string, error) {
 			chosen.source, parsed.Scheme)
 	}
 
-	// Trailing slashes are stripped so the URL this reports is the URL that goes
-	// out. The generated client concatenates rather than resolving, so a trailing
-	// slash becomes a doubled separator in the path — and a path prefix is KEPT,
-	// which a self-hoster serving the fleet under `/anywaye` needs and which
-	// `parsed.Scheme + "://" + parsed.Host` would helpfully but wrongly delete.
 	return strings.TrimRight(chosen.value, "/"), nil
 }
 
-// present trims, and treats blank as absent. An empty base URL is not a base URL.
 func present(value string) string { return strings.TrimSpace(value) }
 
-// osGetenv is the default lookup, named so the production path is one line and
-// `ResolveBaseURL` never calls `os.Getenv` directly — which is what lets every
-// precedence test in this package run without touching the process environment.
 func osGetenv(name string) string { return os.Getenv(name) }

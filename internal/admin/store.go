@@ -1,13 +1,5 @@
 package admin
 
-// THE AUDIT TABLE'S STORE.
-//
-// Append and List and nothing else, and the absence is the design: the table
-// refuses UPDATE and DELETE at the database (migrations/00012), so a method here
-// would be a function whose only possible return is an error. The interface on
-// AuditStore is the shape; the BEFORE UPDATE OR DELETE trigger is the guarantee,
-// and it is in the database rather than in this file because a guarantee written
-// in Go does not survive a psql session, a repair script, or a future packet.
 
 import (
 	"context"
@@ -18,12 +10,6 @@ import (
 	"github.com/anywaye/identity/internal/platform/id"
 )
 
-// auditColumns is the table's own column list, in one place.
-//
-// It is a const rather than a prefixed() call for the reason
-// accounts.membersSelectList gives the other way round: there is no alias here,
-// so there is nothing to compute, and a computed list is a list that can fall out
-// of step with a column added to the table.
 const auditColumns = `id, account_id, action, actor_user_id, actor_key_id, target, affected, trace_id, occurred_at`
 
 // Store is the account_audit_log table.
@@ -56,9 +42,6 @@ func (s *Store) Append(ctx context.Context, q db.Querier, e Entry) (Record, erro
 		return Record{}, err
 	}
 	if q == nil {
-		// A nil querier would panic inside pgx rather than refuse, and a panic in
-		// the middle of an admin transaction is the worst place to discover the
-		// wiring is wrong.
 		return Record{}, fmt.Errorf("appending an audit record: no querier was supplied")
 	}
 
@@ -75,12 +58,6 @@ func (s *Store) Append(ctx context.Context, q db.Querier, e Entry) (Record, erro
 
 	rec, err := scanRecord(row)
 	if err != nil {
-		// NOT WRAPPED INTO A SENTINEL. A unique violation is not a code fact
-		// about this statement — there is no unique constraint a caller can
-		// provoke on this table — so mapping one would be a mapping that could
-		// only ever be wrong. The error reaches the caller as a 500 and the
-		// transaction rolls back, which is the behavior that matters: the
-		// mutation does not happen.
 		return Record{}, fmt.Errorf("inserting an audit record: %w", err)
 	}
 	return rec, nil
@@ -102,26 +79,6 @@ func (s *Store) List(ctx context.Context, q db.Querier, accountID id.UUID, page 
 		return nil, err
 	}
 
-	// THE KEYSET, and the (occurred_at, id) tuple comparison is the whole reason
-	// the cursor is opaque.
-	//
-	// A row-value comparison against the index's own column order is what makes
-	// this an index range: account_audit_log_account_idx is
-	// (account_id, occurred_at DESC, id DESC), and this predicate is the same
-	// tuple in the same order, so the planner walks the index and stops at the
-	// cursor rather than sorting the account's whole history to discard most of
-	// it.
-	//
-	// Comparing on `occurred_at` ALONE is the bug the cursor test caught, and it
-	// is worth stating because it looks right: it drops every row sharing the
-	// cursor's instant, so a trail with two actions in the same second loses one
-	// of them at every page boundary. This service's clock is a timestamp and not
-	// a sequence, so two rows in the same instant is the normal case and not a
-	// curiosity.
-	//
-	// The OR-IS-NULL form keeps it one statement with one prepared plan. A Go-side
-	// branch building two strings is two places the WHERE clause can be wrong, and
-	// the wrong one would only be exercised by clients on page two.
 	const query = `
 		SELECT ` + auditColumns + ` FROM account_audit_log
 		WHERE account_id = $1
@@ -152,11 +109,6 @@ func (s *Store) List(ctx context.Context, q db.Querier, accountID id.UUID, page 
 		return nil, fmt.Errorf("reading the audit trail: %w", err)
 	}
 
-	// The cursor for the next page is attached to the LAST row, and only when
-	// there is a plausible next page. Handing back a cursor after the final row
-	// would have a client issue one more request to be told the same thing, which
-	// is a small cost; handing back none when a page was short is the important
-	// one, because it is how a client knows it has reached the end.
 	if len(out) == limit {
 		last := out[len(out)-1]
 		out[len(out)-1].Next = encodeCursor(last.OccurredAt, last.ID)
@@ -164,12 +116,6 @@ func (s *Store) List(ctx context.Context, q db.Querier, accountID id.UUID, page 
 	return out, nil
 }
 
-// nullTime renders an absent cursor instant as SQL NULL rather than as the zero
-// time, and nullUUID does the same for the id half of the pair.
-//
-// The alternative is a Go-side branch that builds one of two query strings, and
-// two strings is two places a WHERE clause can be wrong. A single statement with
-// explicit casts keeps the predicate in one place.
 func nullTime(t time.Time) any {
 	if t.IsZero() {
 		return nil
@@ -184,10 +130,6 @@ func nullUUID(u id.UUID) any {
 	return u
 }
 
-// scanRecord reads one row. It is a method-shaped function rather than inline in
-// both callers for the reason every other store in this service scans in one
-// place: a column added to auditColumns that is not scanned here is a compile
-// error, and a scan order that drifts from the column list is a runtime one.
 func scanRecord(row interface{ Scan(...any) error }) (Record, error) {
 	var (
 		rec    Record

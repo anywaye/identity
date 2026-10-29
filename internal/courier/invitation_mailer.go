@@ -1,16 +1,5 @@
 package courier
 
-// The invitation email's adapter: accounts.OutgoingInvitation in, one
-// courier `team_invitation` out.
-//
-// IT IS DELIBERATELY NOT RecoveryMailer, and the reason is the same one that
-// keeps `recovery.Purpose` a closed set of two: an invitation is not a
-// recovery purpose. The recovery machinery — its per-purpose templates, its
-// refusals, its shared-default warning — all hang off `recovery.Purpose`, and
-// an invitation belongs to accounts: its token is an invitation token, its
-// screen is the product's accept route, and its send happens inside the invite
-// use case rather than a recovery flow. Gave it a recovery purpose, "recovery"
-// would mean something it does not.
 
 import (
 	"context"
@@ -30,43 +19,19 @@ import (
 type InvitationMailer struct {
 	client *Client
 
-	// link renders the accept link from the one-time token.
-	//
-	// IT IS CONFIGURED RATHER THAN DERIVED, for the reason RecoveryMailer's
-	// linkTemplates are: this service does not know where a product puts its
-	// accept screen, and inventing a path here would put identity's guess into
-	// every invitation link on the platform. A deployment says what the link
-	// looks like (INVITATION_LINK_TEMPLATE) and this renders it.
 	link LinkTemplate
 
-	// logger takes the refusals. IT MAY BE NIL, and a nil logger is a refusal
-	// logged nowhere rather than a panic: `main` always passes one, and a test
-	// does not have to.
 	logger *slog.Logger
 
-	// now is read for nothing but the log line's duration field, and it is a
-	// func so a test can pin it. It is not a clock the adapter depends on for
-	// any decision.
 	now func() time.Time
 }
 
 // InvitationMailerConfig is what NewInvitationMailer needs.
 type InvitationMailerConfig struct {
-	// Client is the courier client, and its credential comes with it. Required.
 	Client *Client
 
-	// LinkTemplate is what the accept link looks like — the value of
-	// INVITATION_LINK_TEMPLATE, resolved and validated by internal/config.
-	//
-	// IT IS REQUIRED, AND THE PLACEHOLDER IS REQUIRED WITH IT, because a
-	// deployment that can send mail cannot say where an invitation link goes:
-	// every invite would be mailed with nothing to click. internal/config
-	// refuses the deployment at boot when the variable is unset or broken, and
-	// this refuses a template that cannot render a working link — the same
-	// rule at the same place, for the reason `validateMailBaseURL` gives.
 	LinkTemplate string
 
-	// Logger takes the refusals. May be nil.
 	Logger *slog.Logger
 }
 
@@ -113,8 +78,6 @@ func NewInvitationMailer(cfg InvitationMailerConfig) (*InvitationMailer, error) 
 // redeem.
 func (m *InvitationMailer) SendInvitation(ctx context.Context, invitation accounts.OutgoingInvitation) error {
 	if invitation.Token == "" {
-		// Unreachable through accounts, which mints the token. Checked because
-		// the alternative is a link reaching a real inbox with nothing in it.
 		return fmt.Errorf("%w: the invitation has no token to put in the link", ErrInvalidRequest)
 	}
 
@@ -144,9 +107,6 @@ func (m *InvitationMailer) SendInvitation(ctx context.Context, invitation accoun
 		return err
 	}
 
-	// The one thing worth saying out loud on a success, and what is NOT in it:
-	// the token is not, the recipient is not, and the credential is not. See
-	// RecoveryMailer.Send for the same line with the same omissions.
 	m.log("courier accepted an invitation for delivery",
 		"message_id", result.MessageID,
 		"event_id", result.EventID,
@@ -156,14 +116,6 @@ func (m *InvitationMailer) SendInvitation(ctx context.Context, invitation accoun
 	return nil
 }
 
-// logSendFailure writes one line per refused send.
-//
-// WHAT IS IN IT is the invitation's id, courier's status, courier's `code`,
-// whether another attempt can help, and courier's trace id. What is NOT in it
-// is the token, the recipient, and the credential — the absence is deliberate
-// rather than incidental, for the reason RecoveryMailer's log gives: a log
-// aggregator is the last place an invitation token and the deployment's mail
-// credential should meet.
 func (m *InvitationMailer) logSendFailure(invitation accounts.OutgoingInvitation, started time.Time, err error) {
 	attrs := []any{
 		"invitation_id", invitation.ID,

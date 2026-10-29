@@ -1,58 +1,3 @@
-// Package client is the anywaye Go client for identity: a generated transport over
-// `openapi/v1.yaml`, and a hand-written wrapper over that transport.
-//
-// # WHY GO GENERATES AND PYTHON DOES NOT
-//
-// MD6 ruled "generate for TypeScript and Go, hand-write the unified client, and do
-// not generate Python yet", and the asymmetry is deliberate rather than accidental.
-// Go has oapi-codegen, which emits typed structs and a `Client` interface and whose
-// output reaches this repository's stack with no new dependency in the shipped
-// binary. Python's generators impose a runtime model layer or a dependency the user
-// must install, and a hand-written Python client has the smaller attack surface of
-// the two.
-//
-// **One correction to MD6's stated reason, measured while building this package.**
-// MD6 says the Go client "reaches `identity`'s existing stack with no new dependency
-// at runtime". That is true of the SERVICE and false of the generated code, and the
-// distinction matters because it is the whole argument. `client/generated` imports
-// `github.com/oapi-codegen/runtime`, so `go.mod` gains three modules. What it does
-// not do is reach the binary: `go list -deps ./cmd/identity` does not contain
-// `github.com/oapi-codegen/runtime`, because nothing under `cmd/` imports this
-// package. The generated client has a dependency; the shipped artifact does not.
-// See `TestTheServiceBinaryDoesNotReachTheGeneratedClient`, which holds it.
-//
-// # WHAT IS HERE
-//
-//	client/generated/   oapi-codegen v2.8.0 output, COMMITTED, lint-excluded
-//	transport.go        the interface the generated client satisfies
-//	client.go           the hand-written client: forty-three operations, typed results
-//	credentials.go      which credential this is, and where it may be sent
-//	baseurl.go          where requests go, in a documented order
-//	errors.go           RFC 9457 problem to typed error, with a typed fallback
-//	redact.go           the scrubber, and the all-or-nothing rule
-//
-// # THE SECURITY INVARIANT
-//
-// **No credential ever reaches a string a human reads.** Not in a log, not in an
-// error message, not in a serialized form, not in a `fmt.Stringer`, not in a
-// `%v`. This package holds the token for its whole life, and `error.Error()` and
-// `fmt.Sprintf("%v", …)` reach a log file, a crash report and a support ticket with
-// no configuration.
-//
-// The rule is structural rather than a matter of care: every string this package
-// builds out of anything a caller or a service supplied passes through
-// `Redactor.String` first, and redaction is all-or-nothing — a string comes back
-// whole or comes back as `Redacted`. `TestTheClientNeverPrintsACredential` is what
-// holds it.
-//
-// # WHAT THIS PACKAGE DELIBERATELY DOES NOT DO
-//
-// No retry, no pagination helper, no token refresh, no cache, no response
-// validation, no method spanning two operations. MD6 named four responsibilities —
-// credentials, base URLs, RFC 9457 mapping, and being the public surface — and this
-// has those four. The one exception is `Transport()`, an escape hatch for an
-// operation the document gained after generation, named so its cost is visible:
-// errors from it are not typed.
 package client
 
 import (
@@ -80,15 +25,6 @@ import (
 // verification — and short enough that a caller is not left holding a goroutine.
 const DefaultTimeout = 30 * time.Second
 
-// maxResponseBytes bounds what a single response body may cost.
-//
-// A bound, not a limit that is never reached: without one, a misbehaving or
-// impersonating endpoint streams as much as it likes into this process's memory
-// while the caller waits. Eight MiB is far above any response in this document —
-// the largest is a member list — so hitting it means something is wrong.
-//
-// `io.LimitReader` reads one byte more than the limit, so the truncation is
-// detectable rather than silent.
 const maxResponseBytes = 8 << 20
 
 // Options configures a Client.
@@ -96,30 +32,14 @@ const maxResponseBytes = 8 << 20
 // A struct so a caller names what they set, and so the next field is additive rather
 // than a positional argument somebody has to remember the order of.
 type Options struct {
-	// BaseURL is where identity is. Required unless `ANYWAYE_IDENTITY_BASE_URL` or
-	// `ANYWAYE_BASE_URL` is set — see ResolveBaseURL for the precedence and for why
-	// there is no default.
 	BaseURL string
 
-	// Token is the credential. Empty means an anonymous client, which is
-	// legitimate: `GET /healthz`, `GET /readyz`, `POST /v1/session` and
-	// `POST /v1/users` are all served without one.
 	Token string
 
-	// Timeout bounds one request. Zero means DefaultTimeout.
 	Timeout time.Duration
 
-	// LookupEnv reads the environment. nil means `os.Getenv`. Present so every test
-	// in this package exercises precedence without mutating the process environment,
-	// which would race every other test in the package and leak past its end.
 	LookupEnv LookupEnv
 
-	// HTTPClient replaces the transport entirely. nil means a client built from
-	// Timeout.
-	//
-	// The seam that makes this package testable without a network: a test points
-	// this at an `httptest.Server`. No test in this package reaches the internet —
-	// a client suite that did would fail on somebody else's outage.
 	HTTPClient *http.Client
 }
 
@@ -149,16 +69,10 @@ type Options struct {
 type Client struct {
 	baseURL string
 
-	// hasCredential is what `HasCredential` reports. A bool, so the accessor cannot
-	// be the leak.
 	hasCredential bool
 
-	// transport is the generated client behind the `Transport` interface.
 	transport Transport
 
-	// redactor carries this client's credential inside a closure, so every string
-	// this package builds can be scrubbed without the caller passing it in each
-	// time — and without the redactor itself being printable.
 	redactor Redactor
 }
 
@@ -240,19 +154,6 @@ func (c *Client) HasCredential() bool { return c.hasCredential }
 // visible rather than preventing it, and this hatch is what makes it acceptable.
 func (c *Client) Transport() Transport { return c.transport }
 
-// call runs one operation and turns the outcome into (result, error).
-//
-// The one place a response becomes a decision, so every operation gets identical
-// treatment: a 2xx decodes into `out`, anything else becomes a typed error, and an
-// empty body on a success is not an error.
-//
-// `operation` is the `operationId` — the name of the generated method and therefore
-// what a reader recognizes in a log line.
-//
-// The body is always closed here, which is the most common defect in a hand-written
-// HTTP client and the reason `bodyclose` is in kit's linter set. It is closed on the
-// error paths too, and the read is bounded by `maxResponseBytes` for the reason on
-// that constant.
 func call[Out any](
 	c *Client,
 	operation string,
@@ -261,14 +162,8 @@ func call[Out any](
 ) error {
 	res, err := send()
 	if err != nil {
-		// A transport failure has no response and no status.
 		return c.transportError(operation, err)
 	}
-	// The body is closed on the way out of THIS function, not at the end of the
-	// caller's, because `call` is the only place that reads one. A `defer` here
-	// would be right and this is one — the explicitness is because errcheck is in
-	// kit's set and `bodyclose` is the linter that catches a missing one, and the
-	// cheapest way to keep both happy is to have exactly one reader.
 	defer closeBody(res)
 
 	body, readErr := io.ReadAll(io.LimitReader(res.Body, maxResponseBytes+1))
@@ -297,9 +192,6 @@ func call[Out any](
 		}
 	}
 
-	// A 204, and any success with no body, is a success with nothing to decode.
-	// Treating "empty" as an error would make every DELETE in this document — eight
-	// of the forty-three operations — fail while succeeding.
 	if len(bytes.TrimSpace(body)) == 0 {
 		return nil
 	}
@@ -317,30 +209,10 @@ func call[Out any](
 	return nil
 }
 
-// callVoid is `call` for an operation whose contract is a 204 with no body.
-//
-// It exists because Go cannot infer a type parameter from an untyped `nil`, and the
-// alternative — passing a `*struct{}` and hoping — is how a caller ends up with a
-// method that returns a value the contract says does not exist. Eleven of the forty-three
-// operations in this document answer 204, so this is not a rare shape.
-//
-// `ctx` is accepted and ignored for symmetry with `call`; the context reaches the
-// request through the transport, not through here.
 func callVoid(ctx context.Context, c *Client, operation string, send func() (*http.Response, error)) error {
 	return call[struct{}](c, operation, send, nil)
 }
 
-// --- the forty-three operations ------------------------------------------------
-//
-// One per `operationId`, named exactly as the document names them. That naming is
-// not a style choice: `operationId` is the contract, it is what every generated
-// client in the fleet uses as its method name, and a Go client calling this `GetMe`
-// where `anywaye-ts` says `getCurrentUser` would be a divergence in three clients for
-// one platform, which the fleet treats as a defect in the platform.
-//
-// Each is one call through `call`. There is no per-operation validation, no retry
-// and no transformation, because any of those is a policy this package should not
-// own — see the file header.
 
 // Liveness answers whether the process is running, without touching a dependency.
 // Corresponds to `GET /healthz`.
@@ -430,12 +302,6 @@ func (c *Client) RegisterUserWithSignupTimestamp(
 	body generated.RegisterUserJSONRequestBody,
 	pair generated.SignupTimestamp,
 ) (*generated.User, error) {
-	// THE EDITOR RUNS BEFORE THE REQUEST IS SENT, and this is the only place its
-	// refusal can become something typed rather than a raw error out of a
-	// request editor. An editor error surfaces from the generated client as a
-	// plain error with no operation name and no status, and a caller that cannot
-	// tell "I sent a body this client could not rewrite" from "the network
-	// failed" is debugging a bot defense instead of the bug.
 	editor := withSignupTimestamp(pair)
 	if err := editor(ctx, probeRequestEditorInput(ctx, body)); err != nil {
 		return nil, &CallError{
@@ -453,49 +319,18 @@ func (c *Client) RegisterUserWithSignupTimestamp(
 	return &out, err
 }
 
-// probeRequestEditorInput builds a throwaway request carrying the marshaled
-// body, so the editor can be run for its refusal before a real request exists.
-//
-// IT IS A PRE-FLIGHT, not a shortcut: the same editor runs again on the real
-// request, so this cannot change what is sent. It exists so a body the editor
-// cannot rewrite is refused by a typed error here rather than by an untyped one
-// from inside the generated client.
 func probeRequestEditorInput(ctx context.Context, body generated.RegisterUserJSONRequestBody) *http.Request {
 	encoded, err := json.Marshal(body)
 	if err != nil {
-		// Unreachable for this struct: two string fields. If it ever became
-		// reachable the editor's own unmarshal below is what reports it, and a
-		// nil body here produces that report rather than a silent success.
 		encoded = nil
 	}
-	// A relative URL is deliberate: nothing here sends this request, and
-	// `http.NewRequestWithContext` needs a parseable target to fill in the fields the editor
-	// reads. A fixed path keeps the pre-flight free of any configuration.
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://identity.invalid/v1/users", bytes.NewReader(encoded))
 	if err != nil {
-		// Also unreachable for the same reason as the marshal above. Handed back
-		// anyway so the editor runs against a non-nil request and reports
-		// whatever is actually wrong with the body.
 		return &http.Request{Method: http.MethodPost, Body: http.NoBody}
 	}
 	return req
 }
 
-// withSignupTimestamp returns the request editor that adds the pair to a
-// registration body.
-//
-// IT REWRITES THE BODY RATHER THAN APPENDING TO IT, and the reason is that
-// `additionalProperties: false` is what the document says about a registration
-// and the server's decoder is not the only thing reading this request: a body
-// this function could not parse must be an error here rather than a request sent
-// with a pair missing, because the server's answer to that is a 422 naming
-// nothing and the caller's only way to tell a wiring mistake from a bot defense
-// is to read this function.
-//
-// The pair is read back out of the body and re-rendered, never logged and never
-// placed in an error message: a signature is a one-hour bearer credential for one
-// form submission, and this package's rule is that a credential reaches no
-// string a human reads.
 func withSignupTimestamp(pair generated.SignupTimestamp) generated.RequestEditorFn {
 	return func(_ context.Context, req *http.Request) error {
 		if req.Body == nil {
@@ -509,10 +344,6 @@ func withSignupTimestamp(pair generated.SignupTimestamp) generated.RequestEditor
 		if len(sent) > maxResponseBytes {
 			return fmt.Errorf("the registration body is over this client's %d-byte limit", maxResponseBytes)
 		}
-		// An empty body reads as no bytes rather than as an error, so it is named
-		// here. "unexpected end of JSON input" is a message about this function;
-		// the caller needs to hear that a registration with no body is what it
-		// handed over.
 		if len(bytes.TrimSpace(sent)) == 0 {
 			return fmt.Errorf("the registration request has an empty body to add the signup " +
 				"timestamp to")
@@ -523,18 +354,11 @@ func withSignupTimestamp(pair generated.SignupTimestamp) generated.RequestEditor
 			return fmt.Errorf("the registration body is not a JSON object, so the signup "+
 				"timestamp cannot be added to it: %w", err)
 		}
-		// `null` unmarshals into a NIL map with no error, and the assignment
-		// below would panic on it. A registration body is caller-supplied, and a
-		// panic on one is this package's worst possible answer: it takes the
-		// process down rather than returning a refusal a caller can act on.
 		if fields == nil {
 			return fmt.Errorf("the registration body is JSON null, so the signup timestamp cannot " +
 				"be added to it")
 		}
 
-		// Marshal the two values rather than splicing strings in: the signature is
-		// base64url and the timestamp a number, and a hand-built `"…":"…"` is a
-		// place a quoting mistake could turn a credential into malformed JSON.
 		timestamp, err := json.Marshal(pair.Timestamp)
 		if err != nil {
 			return fmt.Errorf("encoding the signup timestamp: %w", err)
@@ -577,11 +401,6 @@ func (c *Client) CreateSession(ctx context.Context, body generated.LoginRequest)
 	var session generated.Session
 	var challenge generated.MFAChallenge
 
-	// The status has to be read here rather than left to `call`, because the two
-	// outcomes are both 2xx: 200 carries a session and 202 carries a challenge and
-	// no session at all. `call` is written for "2xx is one shape", and this is the
-	// one operation in the document where it is not — so it does not go through
-	// `call`, and the reason is written here rather than left to be rediscovered.
 	res, err := c.transport.CreateSession(ctx, body)
 	if err != nil {
 		return nil, c.transportError("createSession", err)
@@ -600,11 +419,6 @@ func (c *Client) CreateSession(ctx context.Context, body generated.LoginRequest)
 		}
 	}
 
-	// 202 first, before decoding anything: the two bodies decode into different
-	// types and decoding the challenge into a Session would produce a Session whose
-	// Token is the empty string — a credential-shaped value that is not a
-	// credential, which is the exact shape of bug this repository's `MFAChallenge`
-	// comment says a client must not introduce.
 	if res.StatusCode == http.StatusAccepted {
 		if err := json.Unmarshal(payload, &challenge); err != nil {
 			return nil, &CallError{
@@ -631,25 +445,10 @@ func (c *Client) CreateSession(ctx context.Context, body generated.LoginRequest)
 	return &session, nil
 }
 
-// closeBody closes a response body and ignores its error, on purpose and in one
-// place.
-//
-// The error from `Close` on a fully-read body is not actionable: the connection is
-// being returned to the pool either way, and there is nothing a caller could do
-// with "the body could not be signaled closed". Discarding it is correct — but
-// discarding it with a bare `_ =` is a decision that should be written down once
-// rather than argued about at forty call sites, and `bodyclose`/`errcheck` are in
-// the fleet's linter set precisely so that "did anybody close it" is never a
-// question.
 func closeBody(res *http.Response) {
 	_ = res.Body.Close()
 }
 
-// transportError turns a `net/http` failure into a CallError.
-//
-// Its own method rather than inlined because three call paths need it and the
-// redaction is the point: `*url.Error`'s text embeds the request URL, and a URL is
-// the one place a caller can have put a credential in a query parameter.
 func (c *Client) transportError(operation string, err error) error {
 	return &CallError{
 		Operation: operation,
@@ -1263,10 +1062,6 @@ func (c *Client) ClaimAgent(ctx context.Context, accountId openapiTypes.UUID, bo
 // grants nothing: the wrapper's caller cannot claim through this any more than
 // the route can, and a caller that wants to bind an agent calls `ClaimAgent`.
 func (c *Client) GetAgentClaimPreview(ctx context.Context, token string) (*generated.AgentClaimPreview, error) {
-	// The token is a PATH SEGMENT and it is encoded, the same reason
-	// `StartSocialLogin` encodes its provider: a raw value would put a
-	// caller-chosen string into a URL and a traversal or a `?` into someone
-	// else's request.
 	encoded := url.PathEscape(token)
 	var out generated.AgentClaimPreview
 	err := call(c, "getAgentClaimPreview", func() (*http.Response, error) {
@@ -1435,11 +1230,6 @@ func (c *Client) ListAPIKeys(ctx context.Context, accountId openapiTypes.UUID) (
 // through `Transport`, which is the documented cost of that hatch.
 func (c *Client) RevokeAPIKey(ctx context.Context, accountId, keyId openapiTypes.UUID) error {
 	return callVoid(ctx, c, "revokeAPIKey", func() (*http.Response, error) {
-		// The zero body, which marshals to `{}`. The document is explicit that a
-		// DELETE with no body at all is a revoke — "refusing it for want of a JSON
-		// document would be a 400 on a DELETE that needs nothing else" — and
-		// `RevokeAPIKeyRequest` has exactly one optional field, so an empty object
-		// is indistinguishable from no reason having been given.
 		return c.transport.RevokeAPIKey(ctx, accountId, keyId, generated.RevokeAPIKeyJSONRequestBody{})
 	})
 }
@@ -1641,13 +1431,6 @@ func (c *Client) StartSocialLogin(ctx context.Context, provider generated.StartS
 	}
 	defer closeBody(res)
 
-	// THE 3xx IS HANDLED BEFORE ANY ERROR PATH, and the ordering is the whole of
-	// this method. A 302 is this operation's success, so it has to be recognized
-	// before the shared non-2xx branch below sees it — `ProblemFrom` would
-	// otherwise read a redirect as a malformed answer and report a proxy or a
-	// gateway, because a 302 carries no problem document. Same reason
-	// `CreateSession` reads its own status: `call` assumes one JSON shape per
-	// success and this operation's success is a header.
 	if res.StatusCode >= 300 && res.StatusCode < 400 {
 		location := res.Header.Get("Location")
 		if location == "" {
@@ -1673,9 +1456,6 @@ func (c *Client) StartSocialLogin(ctx context.Context, provider generated.StartS
 			res.Header.Get(RetryAfterHeader), body, c.redactor)
 	}
 
-	// A 2xx from an operation whose success is a redirect is not a success this
-	// build knows how to read, and saying so beats handing back an empty string a
-	// caller would render as a sign-in button pointing at itself.
 	return "", &CallError{
 		Operation: "startSocialLogin", Status: res.StatusCode, redactor: c.redactor,
 		message: "this operation answers a redirect, and the document promises no 2xx for " +
@@ -1734,10 +1514,6 @@ func (c *Client) CompleteSocialLogin(
 		return nil, false, MFARequiredFrom("completeSocialLogin", body, c.redactor)
 	}
 
-	// `linked_provider` is absent from the sign-in body and `token` is absent from
-	// the link body, so this is a check on which key the document promised and not a
-	// heuristic. Anything carrying both is a response this build does not recognize,
-	// and returning a session for it would be a guess.
 	var probe struct {
 		Token          *json.RawMessage `json:"token"`
 		LinkedProvider *string          `json:"linked_provider"`
@@ -1770,7 +1546,6 @@ func (c *Client) CompleteSocialLogin(
 	return &session, false, nil
 }
 
-// itoa avoids importing strconv for one call in a message string.
 func itoa(n int) string {
 	if n == 0 {
 		return "0"

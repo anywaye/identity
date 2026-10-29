@@ -36,38 +36,15 @@ import (
 	"testing"
 )
 
-// generatedPath is the path the exclusion must name, in the repository-relative
-// form golangci-lint matches against: forward slashes, no leading `./`.
 const generatedPath = "client/generated/api.gen.go"
 
-// lintConfig is the file under test, relative to the repository root.
 const lintConfig = ".golangci.yml"
 
-// lintExclusions is the set of rules read out of the config.
-//
-// Parsed by `regexp` and by hand rather than with a YAML library, and the reason
-// is the one AGENTS.md gives for `openapi_reader_test.go`: this repository has no
-// YAML dependency and adding one — for forty lines of structure — would make a
-// transitive library a direct requirement with its own versions and CVEs. The
-// subset understood here is stated in the two regexes below, and anything that
-// does not match is reported rather than skipped, so this reader cannot quietly
-// read nothing and pass.
 var (
-	// One `path:` value, as it appears in the file.
 	lintPathValue = regexp.MustCompile(`^\s*- path:\s*(\S+)\s*$`)
-	// The `linters:` block under it, as its list items.
 	lintLinterItem = regexp.MustCompile(`^\s*-\s+([a-z][a-z0-9]*)\s*$`)
 )
 
-// TestTheLintExclusionIsOneFileAndNotAPrefix is the narrowness check, and it is
-// the whole reason this file exists.
-//
-// The assertion is not "the path mentions api.gen.go". It is that the path
-// matches exactly `client/api.gen.go` and nothing else, which is a stronger claim
-// and the one that actually prevents a hand-written file from being exempted. The
-// test asks the question the linter asks — does this pattern match this file —
-// for every `.go` file in the repository, so a widened exclusion is caught by the
-// same mechanism that would have applied it.
 func TestTheLintExclusionIsOneFileAndNotAPrefix(t *testing.T) {
 	root := repoRoot(t)
 	paths := lintExclusionPaths(t, root)
@@ -91,9 +68,6 @@ func TestTheLintExclusionIsOneFileAndNotAPrefix(t *testing.T) {
 			continue
 		}
 
-		// The load-bearing half: walk the tree and ask which OTHER Go files the
-		// pattern matches. A pattern that matches a hand-written file is a bug
-		// however well-intentioned it is.
 		for _, other := range goFiles(t, root) {
 			if other == generatedPath {
 				continue
@@ -161,9 +135,6 @@ func TestTheLintExclusionNamesEveryEnabledLinter(t *testing.T) {
 			"is not exempt.", lintConfig)
 	}
 
-	// Naming a linter that is not enabled is harmless, so the reverse direction is
-	// deliberately not asserted — it would make this file fail on every upgrade
-	// that REMOVES a default linter, which is not a defect worth a red build.
 	var unaccounted []string
 	for _, name := range enabled {
 		if excluded[name] {
@@ -190,17 +161,6 @@ func TestTheLintExclusionNamesEveryEnabledLinter(t *testing.T) {
 	}
 }
 
-// lintersKeptOnGenerated are the enabled linters this repository deliberately does
-// NOT exclude from `client/api.gen.go`, and why each one stays on.
-//
-// A map rather than a bare list, because an entry with no reason is an assertion
-// and `internal/httpapi/openapi_drift_test.go` already holds identity's
-// `knownDrift` to that standard for exactly this reason: a list nobody can check
-// is a list that grows.
-//
-// Empty means the test above has nothing to consult, which would make every
-// enabled linter a failure — the right default, and the reason an empty map here
-// cannot be mistaken for a finished state.
 var lintersKeptOnGenerated = map[string]string{
 	"govet": "`go vet ./client/` passes on the generated file — verified, not assumed, when " +
 		"this packet was written — so excluding it would buy nothing. It is also the one " +
@@ -209,15 +169,6 @@ var lintersKeptOnGenerated = map[string]string{
 		"generated client is inside `./...`, so it is vetted in CI regardless of this file.",
 }
 
-// TestTheLintExclusionFileItselfIsLinted proves the exclusion did not swallow the
-// config, or any other file, by being written too broadly.
-//
-// A single path entry is the whole shape of this configuration, so a SECOND one
-// is worth failing on: it means somebody exempted something else, and a config
-// whose exemptions grow one at a time is how a repository ends up with none of
-// its code linted and a green badge that means nothing. If a second genuinely
-// generated file appears, this test is the thing that has to be updated in the
-// same commit — and its failure message says so.
 func TestTheLintExclusionFileItselfIsLinted(t *testing.T) {
 	paths := lintExclusionPaths(t, repoRoot(t))
 
@@ -233,15 +184,7 @@ func TestTheLintExclusionFileItselfIsLinted(t *testing.T) {
 	}
 }
 
-// --- the reader ---------------------------------------------------------------
 
-// lintExclusionPaths is every `path:` value in the config's exclusion rules.
-//
-// The parser is deliberately narrow and says so: it looks for `- path:` entries
-// under `linters: exclusions: rules:` and returns what it found. A shape it does
-// not recognize is a failure below rather than an empty result, because a reader
-// that finds nothing agrees with a config that excludes nothing and the two are
-// indistinguishable.
 func lintExclusionPaths(t *testing.T, root string) []string {
 	t.Helper()
 
@@ -255,8 +198,6 @@ func lintExclusionPaths(t *testing.T, root string) []string {
 	for _, line := range strings.Split(raw, "\n") {
 		trimmed := strings.TrimSpace(line)
 
-		// `linters:` / `exclusions:` / `rules:` at increasing indentation, and
-		// `- path:` inside `rules:`.
 		switch {
 		case strings.HasPrefix(trimmed, "linters:"):
 			inRules = false
@@ -265,8 +206,6 @@ func lintExclusionPaths(t *testing.T, root string) []string {
 		case strings.HasPrefix(trimmed, "rules:"):
 			inRules = true
 		case inRules && trimmed == "- path:":
-			// A `- path:` with nothing after it on the line; the value is on the
-			// next. Handled below by the linter-item branch.
 			continue
 		}
 
@@ -290,12 +229,6 @@ func lintExclusionPaths(t *testing.T, root string) []string {
 	return paths
 }
 
-// lintExclusionLinters is the `linters:` list under the exclusion, as a set.
-//
-// It assumes the same structure lintExclusionPaths found and reads the items that
-// follow the last `- path:` at the same indentation. That assumption is checked
-// by the two tests above: if the shape moved, one of them fails with a message
-// about the shape rather than this returning something plausible and wrong.
 func lintExclusionLinters(t *testing.T, root string) map[string]bool {
 	t.Helper()
 
@@ -309,7 +242,6 @@ func lintExclusionLinters(t *testing.T, root string) map[string]bool {
 			continue
 		}
 
-		// Items are indented further than the `- path:` key itself.
 		keyIndent := len(line) - len(strings.TrimLeft(line, " "))
 		inList := false
 
@@ -354,12 +286,6 @@ func readLintConfig(t *testing.T, root string) string {
 	return string(raw)
 }
 
-// golangciLintEnabled asks the tool which linters it has enabled, in the same
-// configuration this repository ships.
-//
-// `linters` with no `--json` prints a human table; the machine-readable form is
-// requested explicitly so this parses names rather than prose. It fails rather
-// than skips when the tool is absent, as explained on the test above.
 func golangciLintEnabled(t *testing.T) []string {
 	t.Helper()
 
@@ -387,18 +313,6 @@ func golangciLintEnabled(t *testing.T) []string {
 	return parseEnabledLinters(stdout.String())
 }
 
-// parseEnabledLinters pulls the enabled linter names out of
-// `golangci-lint linters --json`.
-//
-// `encoding/json` rather than a line scan, and the reason is that the line scan
-// was wrong: the tool emits the whole document on ONE line, so a parser reading
-// line by line found nothing, returned an empty list, and the test above failed
-// with "the output shape changed" — a message that pointed at the parser when the
-// parser was the bug. `encoding/json` is stdlib, so it costs this repository no
-// dependency, which is the same reason openapi_reader_test.go hand-parses YAML.
-//
-// A shape it does not recognize yields an empty list, and the test above fails on
-// that explicitly rather than passing quietly.
 func parseEnabledLinters(raw string) []string {
 	var document struct {
 		Enabled []struct {
@@ -419,16 +333,7 @@ func parseEnabledLinters(raw string) []string {
 	return names
 }
 
-// --- the tree ----------------------------------------------------------------
 
-// goFiles is every `.go` file in the repository, as a git-style forward-slash
-// path relative to the root, excluding the vendor directory that does not exist
-// here but would be a trap if one were added.
-//
-// `git ls-files` rather than a `filepath.WalkDir`, because the question is "which
-// files does this repository have" and git is the only one that answers it
-// without counting ignored files — and an ignored file is exactly what the
-// generated-file test above is about.
 func goFiles(t *testing.T, root string) []string {
 	t.Helper()
 

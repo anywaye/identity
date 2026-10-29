@@ -13,17 +13,9 @@ import (
 	"github.com/anywaye/identity/internal/platform/id"
 )
 
-// The store, over real SQL in a private schema.
-//
-// These are the statements the OIDC flow leans on, so they are tested against the
-// database rather than against a plan for one: the conditional UPDATEs, the CHECK
-// constraints, the partial unique index on a code digest, and the single-use
-// gate. A fake would agree with all of them.
 
 var storeTestNow = time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
 
-// storeFixture is the world these tests run in: a private schema, a store over
-// it, and the account and owner a registration needs.
 type storeFixture struct {
 	pool    *pgxpool.Pool
 	store   *Store
@@ -33,9 +25,6 @@ type storeFixture struct {
 	owner   id.UUID
 }
 
-// q is the querier these tests issue single statements through. db.Direct is
-// the same thing the production read paths use, so a statement that works here
-// works in the service.
 func (f storeFixture) q() db.Querier { return f.querier.Queryer() }
 
 func newStoreFixture(t *testing.T) storeFixture {
@@ -55,11 +44,6 @@ func newStoreFixture(t *testing.T) storeFixture {
 	return f
 }
 
-// seedAccount writes the one account and the one user a registration needs.
-//
-// Direct inserts rather than the tenancy use case, because these tests are about
-// the OIDC tables and a registration's preconditions are the service tests' job.
-// The user is inserted and read back because the table generates its own id.
 func (f storeFixture) seedAccount(t *testing.T, label string) (account, owner id.UUID) {
 	t.Helper()
 
@@ -155,9 +139,6 @@ func TestStoreClientRoundTrip(t *testing.T) {
 	}
 }
 
-// The exact-match rule, at the layer that owns it. The prefix case is the one
-// that matters: `https://app.example.com.evil.com/cb` shares a prefix with a
-// registered origin and belongs to somebody else entirely.
 func TestStoreClientRedirectMatchingIsExact(t *testing.T) {
 	t.Parallel()
 
@@ -221,8 +202,6 @@ func TestStoreRevokeClientIsOnceOnly(t *testing.T) {
 		t.Errorf("revoke_reason = %v, want rotated", revoked.RevokeReason)
 	}
 
-	// The second revocation is refused rather than moving revoked_at, so the
-	// record of who revoked and when stays the first, truthful one.
 	if _, err := f.store.RevokeClient(f.ctx, f.q(), created.ID, f.account, other, storeTestNow.Add(time.Hour), "again"); !errors.Is(err, ErrAlreadyRevoked) {
 		t.Errorf("the second RevokeClient = %v, want ErrAlreadyRevoked", err)
 	}
@@ -244,7 +223,6 @@ func TestStoreListClientsForAccount(t *testing.T) {
 
 	f := newStoreFixture(t)
 
-	// An empty account lists an empty slice, not nil, so the JSON is [].
 	empty, err := f.store.ClientsForAccount(f.ctx, f.q(), f.account)
 	if err != nil {
 		t.Fatalf("ClientsForAccount: %v", err)
@@ -259,9 +237,6 @@ func TestStoreListClientsForAccount(t *testing.T) {
 	f.mustCreateClient(t, f.account, f.owner)
 	f.mustCreateClient(t, f.account, f.owner)
 
-	// Another account registers one. It must not appear in this list: the
-	// scoping by account_id is the whole reason a product's registration is not
-	// visible to a different tenant.
 	elsewhere, elsewhereOwner := f.seedAccount(t, "elsewhere")
 	f.mustCreateClient(t, elsewhere, elsewhereOwner)
 
@@ -314,8 +289,6 @@ func TestStoreAccessTokenRoundTripAndRevocation(t *testing.T) {
 	if _, err := f.store.AccessToken(f.ctx, f.q(), tokenID); !errors.Is(err, ErrNoAccessToken) {
 		t.Errorf("AccessToken after revocation = %v, want ErrNoAccessToken", err)
 	}
-	// Idempotent, because a revocation endpoint has to answer the same way for a
-	// token it has already revoked.
 	if err := f.store.RevokeAccessToken(f.ctx, f.q(), tokenID, storeTestNow.Add(2*time.Minute)); err != nil {
 		t.Errorf("the second RevokeAccessToken = %v, want nil", err)
 	}
@@ -324,8 +297,6 @@ func TestStoreAccessTokenRoundTripAndRevocation(t *testing.T) {
 	}
 }
 
-// The fifteen-minute cap is core's, and it is a CHECK on the column rather than
-// a property of the code path that happened to write the row.
 func TestStoreRefusesAnAccessTokenLongerThanFifteenMinutes(t *testing.T) {
 	t.Parallel()
 

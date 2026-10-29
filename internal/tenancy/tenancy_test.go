@@ -1,37 +1,3 @@
-// Package tenancy proves that identity's account boundary is enforced by Postgres.
-//
-// Two tests, and they prove two different things, which is why both are here.
-//
-//	TestTenancyAccountIsolation          kit's assertion set, run whole. Its fixture is
-//	                                    its OWN TEMPORARY tables, so it proves the
-//	                                    SUBSTRATE 00016 installed and that the
-//	                                    assertion set can still fail - including the
-//	                                    FORCE-RLS control, which is the only half that
-//	                                    proves the owner is subject to its own policies.
-//
-// TestTenancyIdentityOwnsItsFiveTables  the other half. The first test's tables are
-//
-//	kit's, not identity's, so on its own it proves a
-//	service can call protect_table and nothing about
-//	whether identity's FIVE tables are protected.
-//	This one names them, reads pg_catalog, and runs
-//	the three-way denial against real rows.
-//
-// THE DSN IS THE OWNER. TEST_DATABASE_URL must be a role that may `set role` to
-// `identity_app`, because the proof has to run as BOTH roles and impersonating a
-// strictly weaker one cannot widen anything. On the dev cluster the owner is
-// `identity` and kit's initdb grants `identity_app` TO `identity` for exactly this.
-// In CI the same DSN is `identity:identity@localhost:5432/identity`.
-//
-// NO BUILD TAG, and that is a decision rather than an omission. kit's template is
-// tagged `tier_db`, and this repository has no tier_db convention: `go test ./...` in
-// ci/ci.yml is the whole suite and it passes no tags, so a tagged test
-// would never be COMPILED there and the account boundary would ship with a proof that
-// cannot run. What replaces the tag is the repository's own pair: a loud skip when
-// TEST_DATABASE_URL is unset (so `go test ./...` stays green with no database, which
-// this suite is built to do), and REQUIRED_DB=1 to turn that skip into a FAILURE for
-// anyone who needs the tier to be non-optional - which is the same contract kit's
-// driver states, carried over so the driver is still recognizably kit's.
 package tenancy
 
 import (
@@ -50,17 +16,10 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// result is one row of the proof's answer: what was asserted, what was expected,
-// what happened, and why the assertion exists at all.
 type result struct{ expected, actual, verdict, why string }
 
-// oneMinute is the whole budget for the proof. Bounded rather than defaulted because
-// a hang here is a hang in the service's gate.
 const oneMinute = time.Minute
 
-// identityTables is the set 00016 protects. Named here as well as in the migration
-// because the migration is the decision and this is the check on the decision: a
-// table added to one and not the other is exactly what the sweep below reports.
 var identityTables = []string{
 	"account_users",
 	"account_invitations",
@@ -69,11 +28,6 @@ var identityTables = []string{
 	"account_audit_log",
 }
 
-// dsnOrSkip is the loud one.
-//
-// The message names the variable, says what was NOT proven, and says what to do -
-// a skip whose text is only "skipping" is indistinguishable at a glance from a test
-// that passed, which is the whole failure mode a database tier has.
 func dsnOrSkip(t *testing.T) string {
 	t.Helper()
 	dsn := os.Getenv("TEST_DATABASE_URL")
@@ -105,22 +59,9 @@ func connect(t *testing.T) (ctx context.Context, conn *pgx.Conn) {
 	return ctx, conn
 }
 
-// TestTenancyAccountIsolation runs kit's assertion set and checks the names it got
-// back against the manifest, in BOTH directions.
-//
-// Named with a `Tenancy` prefix rather than kit's `TestAccountIsolation` so that
-// `-run Tenancy` selects it; the shape of the file is otherwise kit's, because the
-// file's own argument is that a thin driver is safe precisely when it compares names
-// rather than counts.
 func TestTenancyAccountIsolation(t *testing.T) {
 	ctx, conn := connect(t)
 
-	// The proof, run whole and unexamined. It opens a transaction and leaves it open,
-	// because two of the things it does refuse to do outside one; every object it
-	// creates is TEMPORARY, so nothing survives the session either way.
-	//
-	// pgx sends a statement with no bind parameters over the simple protocol, which
-	// is the one that accepts a multi-statement batch.
 	script, err := os.ReadFile(here("isolation.sql"))
 	if err != nil {
 		t.Fatalf("read isolation.sql: %v", err)
@@ -151,9 +92,6 @@ func TestTenancyAccountIsolation(t *testing.T) {
 		t.Fatalf("iterate the assertion results: %v", err)
 	}
 
-	// Roll the proof's transaction back rather than leaving it open: everything it
-	// created is temporary, but a test that leaves a transaction open makes every test
-	// after it run inside it.
 	if _, err := conn.Exec(ctx, "rollback"); err != nil {
 		t.Fatalf("roll back the proof's transaction: %v", err)
 	}
@@ -163,42 +101,10 @@ func TestTenancyAccountIsolation(t *testing.T) {
 	assertAllPass(t, got)
 }
 
-// TestTenancyIdentityOwnsItsFiveTables is the half kit's assertion set cannot be.
-//
-// isolation.sql protects its own temporary fixture table and proves the substrate
-// works. It never names account_users, account_invitations, oidc_clients, api_keys or
-// account_audit_log, so a migration that installed a perfect substrate and protected
-// NO tables would pass it. This test is the one that closes that gap, in the two ways
-// that are available from outside:
-//
-//  1. the CATALOG. For each of the five: row-level security enabled, and FORCED - the
-//     bit without which the owner reads every account's rows while the policies look
-//     like they are in place - plus the four named policies protect_table wrote.
-//  2. THE THREE-WAY DENIAL, on real rows, as BOTH roles. no identity reads zero; the
-//     other tenant's VALID identity reads zero of that tenant's rows; the account's
-//     own identity reads its own rows. The third arm is the one with the information
-//     in it: a suite that only asserts the first two is satisfied by a table nobody
-//     can read.
-//
-// IT USES account_audit_log FOR THE DATA-BEARING HALF, and the reason is in 00012's
-// header: this table has NO foreign keys, so the fixture needs no users and no
-// accounts and cannot collide with any other package's rows. The four tables that do
-// have foreign keys are covered by the catalog half above rather than by fixture
-// rows, because seeding them correctly means seeding users and accounts in tables
-// this repository's other packages also write to - and a shared database plus a
-// global TRUNCATE is precisely the non-deterministic failure dbtest's package comment
-// warns about.
 func TestTenancyIdentityOwnsItsFiveTables(t *testing.T) {
 	ctx, conn := connect(t)
 
 	t.Run("the owner and app roles are not superuser or BYPASSRLS", func(t *testing.T) {
-		// A role with rolsuper or rolbypassrls bypasses row-level security even
-		// when FORCE is set, so the catalog can read t/t while the owner still
-		// reads every row. The gate postgres that used POSTGRES_USER=identity on
-		// postgres:17-alpine made identity the bootstrap superuser; fresh volume,
-		// migrations green, tenancy red with extra owner rows and the append-only
-		// trigger instead of the RLS denial — m156. kit's cluster and brew postgres
-		// provision identity as NOSUPERUSER NOBYPASSRLS.
 		for _, role := range []string{"identity", "identity_app"} {
 			var super, bypass bool
 			if err := conn.QueryRow(ctx, `select rolsuper, rolbypassrls from pg_roles where rolname = $1`, role).Scan(&super, &bypass); err != nil {
@@ -216,19 +122,12 @@ func TestTenancyIdentityOwnsItsFiveTables(t *testing.T) {
 	t.Run("every declared table is enabled and FORCED", func(t *testing.T) {
 		for _, table := range identityTables {
 			enabled, forced, acctIndex, policies := protectedCatalogRow(ctx, t, conn, table)
-			// One sentence for every finding below, decided once. Four failure
-			// messages that each restate "the catalog disagrees" is how a
-			// two-line catalog diff ends up costing a worker an hour: the
-			// messages name the disagreement and not the two things that can
-			// cause it, and both of those are things the reader can go and check.
 			why := rlsDiagnosis(enabled, policies)
 
 			if !enabled {
 				t.Errorf("%s: row level security is NOT enabled, so no policy on it is ever evaluated.%s", table, why)
 			}
 			if !forced {
-				// The one finding no lint in this fleet checks for, and the one this
-				// whole migration exists to get right.
 				t.Errorf("%s: NOT set FORCE ROW LEVEL SECURITY. Postgres exempts a table's owner "+
 					"from its own policies, and this service runs its migrations as the role that "+
 					"owns every table here - so the role that matters reads every account's rows "+
@@ -246,24 +145,6 @@ func TestTenancyIdentityOwnsItsFiveTables(t *testing.T) {
 	})
 
 	t.Run("the sweep finds nothing unprotected", func(t *testing.T) {
-		// The sweep is the question "is this service isolated?", and it answers for
-		// every table rather than the first, because a caller that gets rows can
-		// print them all.
-		//
-		// SCOPED TO public, and this is not a narrowing to make the assertion pass.
-		// `go test ./...` runs packages in parallel and internal/platform/dbtest
-		// gives every package that needs an empty database a PRIVATE schema named
-		// test_<hex>, built with LIKE ... INCLUDING ALL. LIKE does not copy
-		// row-level security, so every one of those clones carries an account_id
-		// column and no policies — and the sweep reports them, which is correct and
-		// is exactly what kit's README says it is for ("temporary tables are NOT
-		// excluded, and that is deliberate... a temp table with an account_id
-		// column and no policies is genuinely unprotected, it is exactly the shape
-		// a service's test fixture has").
-		//
-		// Measured before this was scoped, running the whole suite: 21 rows, every
-		// one of them another package's fixture schema. identity's own five tables
-		// are in `public`, and that is the schema this assertion is about.
 		rows, err := conn.Query(ctx, `
 			select table_schema, table_name, why
 			  from anywaye.unprotected_tables()
@@ -290,19 +171,10 @@ func TestTenancyIdentityOwnsItsFiveTables(t *testing.T) {
 		}
 	})
 
-	// THE THREE-WAY DENIAL, on real rows, as each role in turn.
-	//
-	// `role` is a parameter rather than an identifier, so it cannot be interpolated
-	// into SQL - it is passed to `set role`, which takes a string, and both values
-	// are literals in this file.
 	for _, role := range []string{"identity_app", "identity"} {
 		t.Run("three-way denial as "+role, func(t *testing.T) {
 			ctx, conn := connect(t)
 
-			// The transaction is explicit because begin_account/1 is
-			// transaction-local: outside one it expires at the end of the statement
-			// that set it, and this would read zero rows everywhere and look like
-			// perfect isolation.
 			if _, err := conn.Exec(ctx, "begin"); err != nil {
 				t.Fatalf("begin: %v", err)
 			}
@@ -316,15 +188,8 @@ func TestTenancyIdentityOwnsItsFiveTables(t *testing.T) {
 				t.Fatalf("set local role %s: %v", role, err)
 			}
 
-			// Two tenants, one row each, written by the OWNER before the identity is
-			// set and before the role is dropped - because the insert policy is
-			// `with check (account_id = (select anywaye.current_account_id()))`, so a
-			// writer with no identity is refused, which is the write-side twin of the
-			// read denial and is itself correct.
 			tenantA, tenantB := seedAuditRows(ctx, t, conn, role)
 
-			// ARM ONE. No identity. `begin_account(NULL)` clears, which is the state a
-			// request that never authenticated is in.
 			if _, err := conn.Exec(ctx, `select anywaye.begin_account(NULL)`); err != nil {
 				t.Fatalf("clearing the account identity: %v", err)
 			}
@@ -333,9 +198,6 @@ func TestTenancyIdentityOwnsItsFiveTables(t *testing.T) {
 					"authenticated is reading account data", role, got)
 			}
 
-			// ARM TWO. The other tenant's VALID identity. This is the arm that carries
-			// the information: the credential is real, it belongs to another account,
-			// and it must be indistinguishable from one that does not exist.
 			if _, err := conn.Exec(ctx, `select anywaye.begin_account($1)`, tenantB); err != nil {
 				t.Fatalf("setting the other tenant's identity: %v", err)
 			}
@@ -348,8 +210,6 @@ func TestTenancyIdentityOwnsItsFiveTables(t *testing.T) {
 					"tenant's rows, want 0", role, got)
 			}
 
-			// ARM THREE. Its own identity. The positive control, and the only arm a
-			// deny-everything table can pass.
 			if _, err := conn.Exec(ctx, `select anywaye.begin_account($1)`, tenantA); err != nil {
 				t.Fatalf("setting the account's own identity: %v", err)
 			}
@@ -363,10 +223,6 @@ func TestTenancyIdentityOwnsItsFiveTables(t *testing.T) {
 					"(its own only)", role, got)
 			}
 
-			// AND THE WRITE SIDE, because a read denial with no write assertion is
-			// half a boundary: `using` denies an UPDATE by matching zero rows and
-			// raising nothing, so "the other tenant's row came back unchanged" is the
-			// only proof that the denial happened rather than the write being a no-op.
 			if _, err := conn.Exec(ctx, `select anywaye.begin_account($1)`, tenantB); err != nil {
 				t.Fatalf("setting the other tenant's identity: %v", err)
 			}
@@ -385,23 +241,6 @@ func TestTenancyIdentityOwnsItsFiveTables(t *testing.T) {
 	}
 }
 
-// catalogProof is the proof's one question about one of identity's tables,
-// answered from the catalog: is the table in `public` protected — row-level
-// security enabled, FORCED, the account_id index in place, at least one
-// policy.
-//
-// SCOPED TO public, AND THE SCOPE IS THE FIX FOR THE FLAKE OF 2026-10-06.
-// dbtest.Schema clones these same table names into test_<hex> schemas with
-// LIKE ... INCLUDING ALL — which copies the indexes and NOT the row-level
-// security — so an unscoped `where c.relname = $1` returns one row per clone
-// as well, in whatever order the heap happens to walk. A proof that reads the
-// first row of that can read a CLONE's answer — relrowsecurity false, no
-// policies — and report the public table broken, which is exactly the
-// signature the damaged days produced. The public tables were never damaged;
-// rebuilding the database "fixed" it only because a fresh database has no
-// clones to be confused with. The scope narrows nothing the proof claims:
-// identity's tables live in public, and a table that migrates elsewhere is a
-// fact the proof should report, not a row to quietly skip.
 const catalogProof = `
 	select c.relrowsecurity, c.relforcerowsecurity,
 	       (select count(*) > 0 from pg_index i
@@ -414,13 +253,6 @@ const catalogProof = `
 	   and c.relkind = 'r'
 	   and c.relname = $1`
 
-// protectedCatalogRow asks catalogProof about one table and returns the
-// answer.
-//
-// IT FAILS THE TEST UNLESS THE ANSWER IS EXACTLY ONE ROW. "Exactly one" is
-// the property the schema scope exists to guarantee — a relation name is
-// unique within a schema — and a proof that accepted two rows and read
-// either one would be the flake again with extra steps.
 func protectedCatalogRow(ctx context.Context, t *testing.T, conn *pgx.Conn, table string) (enabled, forced, acctIndex, policies bool) {
 	t.Helper()
 
@@ -448,34 +280,6 @@ func protectedCatalogRow(ctx context.Context, t *testing.T, conn *pgx.Conn, tabl
 	return enabled, forced, acctIndex, policies
 }
 
-// rlsDiagnosis is the sentence every finding in
-// "every declared table is enabled and FORCED" carries, and it is one function
-// because the two causes have to be told apart by SOMETHING and the only
-// something available is the rest of the row.
-//
-// THE TWO CAUSES, AND WHICH IS WHICH.
-//
-//   - POLICIES PRESENT, RLS OFF. This is migrations/00016's Down section, cut in
-//     half. That section disables row-level security on the five tables in five
-//     separate statements and only THEN drops their policies
-//     (migrations/00016_account_isolation.sql:1025-1056), so a replay that stops
-//     between the two groups leaves a table with all of its policies still
-//     installed and no RLS evaluating them — a boundary that looks complete and
-//     enforces nothing. psql runs a Down section one statement per transaction,
-//     so a replay is only ever atomic per statement, and a replay running
-//     against a database another suite is using is interrupted more easily than
-//     it looks: `ALTER TABLE` needs ACCESS EXCLUSIVE, and the third table is as
-//     likely to be the one a concurrent test holds a lock on as the first.
-//
-//   - POLICIES ABSENT. Not a half-finished undo: a table with no policies on it
-//     is what the migrations never produced, so this is the database not being
-//     the one these tests were written against.
-//
-// WHY THE MESSAGE SAYS SO INSTEAD OF NAMING THE SYMPTOM. The two produce the
-// same two lines of diff in a log — "NOT enabled", "NOT FORCE" — and they have
-// opposite remedies: one is somebody's interrupted migration replay and the other
-// is a database to rebuild. A reader who is handed only the first has to go and
-// work out which one they are looking at.
 func rlsDiagnosis(enabled, policies bool) string {
 	if enabled && policies {
 		return ""
@@ -499,45 +303,9 @@ func rlsDiagnosis(enabled, policies bool) string {
 		"    goose -dir migrations postgres \"$TEST_DATABASE_URL\" up"
 }
 
-// TestTheCatalogProofReadsThePublicRowNotAClone is the regression test for
-// the flake of 2026-10-06, and it is a test of the PROOF rather than of the
-// database: it builds the thing that fooled the proof — a same-named clone
-// in a test_ schema, with the indexes and without the row-level security,
-// which is what dbtest.Schema's LIKE ... INCLUDING ALL produces — and asserts
-// the proof's query still answers with the public table's row and nothing
-// else.
-//
-// WHAT IT WOULD HAVE CAUGHT. The proof's catalog query was
-// `where c.relname = $1` with no schema filter and no ORDER BY, and it read one
-// row of what could be many. Which row came first was not the query's business:
-// with enough same-named relations in the catalog, Postgres answers that shape
-// with a Bitmap Heap Scan, which returns rows in physical heap order — and the
-// public table's physical position is NOT stable. `ANALYZE`, `TRUNCATE` and
-// `ALTER TABLE` all write a new pg_class tuple under MVCC, and a new tuple
-// version lands AFTER every clone created since the last move. `dbtest.Schema`
-// clones every one of the five tables in identityTables and drops the clone at
-// test cleanup, so a clone outlives its test whenever the suite is killed
-// mid-run — and a clone that predates the public table's current tuple is a
-// row the proof reads first: RLS off, no FORCE, no policies, and the
-// account_id index present because LIKE copies indexes. Reproduced
-// deterministically on a scratch database for this packet: with the public
-// tuple moved and 1200 clones present, the old query returns the clone's
-// (enabled=false, forced=false) for a public table that reads (true, true).
-//
-// THE COUNT IS THE DETERMINISTIC HALF, and it is the half asserted first.
-// Against the old query a clone makes it match two rows — every time, no
-// ordering luck involved — so removing the scope fails this test even on a heap
-// where the public row would have won. The unscoped query is run here on
-// purpose rather than described in a comment: a comment saying "the old query
-// was ambiguous" is a claim, and the query matching two rows is the proof of
-// it. The enabled/forced assertions are the other half: the one row read must be
-// the public table's answer, not merely A row.
 func TestTenancyCatalogProofReadsThePublicRowNotAClone(t *testing.T) {
 	ctx, conn := connect(t)
 
-	// The clone, built the way dbtest.Schema builds them. The name is random
-	// for the reason dbtest.Schema's is: two proofs running at once, or a
-	// killed run's debris, must not collide with this one.
 	var noise [6]byte
 	if _, err := rand.Read(noise[:]); err != nil {
 		t.Fatalf("generating a schema name: %v", err)
@@ -557,14 +325,6 @@ func TestTenancyCatalogProofReadsThePublicRowNotAClone(t *testing.T) {
 		t.Fatalf("cloning account_users into the %s schema: %v", schema, err)
 	}
 
-	// THE FAILURE DIRECTION, asserted before the fix is asserted. This is the
-	// query that was there before, verbatim apart from the columns: it matched
-	// every relation of that name in the whole cluster and read whichever row
-	// the plan produced first. With one clone beside the public table it matches
-	// two rows — every time, no ordering luck involved — so the assertion is
-	// about a COUNT and not about an ordering. A check that only asked which row
-	// came first would pass on a heap where the public row happened to win, and
-	// that heap is the one the flake was hiding in.
 	var sameName int
 	if err := conn.QueryRow(ctx,
 		`select count(*) from pg_class where relname = $1`, "account_users").Scan(&sameName); err != nil {
@@ -576,7 +336,6 @@ func TestTenancyCatalogProofReadsThePublicRowNotAClone(t *testing.T) {
 			"proves nothing.", sameName)
 	}
 
-	// The proof's query, with a clone of the same name sitting in the catalog.
 	rows, err := conn.Query(ctx, catalogProof, "account_users")
 	if err != nil {
 		t.Fatalf("reading the catalog for account_users: %v", err)
@@ -600,10 +359,6 @@ func TestTenancyCatalogProofReadsThePublicRowNotAClone(t *testing.T) {
 		t.Fatalf("iterating the catalog rows for account_users: %v", err)
 	}
 
-	// And the one row it did read is the PUBLIC table's answer: protected.
-	// A clone's row reads enabled=false, forced=false — the flake's signature —
-	// so this is the assertion that the scope is pointed at the right schema
-	// and not merely at one row.
 	if !enabled || !forced {
 		t.Errorf("the proof read a catalog row for account_users with enabled=%v, forced=%v — "+
 			"that is a clone's answer (or a real regression in 00016), and the proof is "+
@@ -611,33 +366,9 @@ func TestTenancyCatalogProofReadsThePublicRowNotAClone(t *testing.T) {
 	}
 }
 
-// seedAuditRows writes one account_audit_log row per tenant and returns the two
-// account ids.
-//
-// IT SETS AN IDENTITY FOR EACH ROW, AND THAT IS NOT A WORKAROUND — it is the write
-// side of the same boundary, arriving in the fixture. `protect_table` names the OWNER
-// in every policy (FORCE removed the owner's exemption, so an owner with no identity
-// would read nothing at all), which means the owner's INSERT is subject to
-// `with check (account_id = (select anywaye.current_account_id()))` too. Seeding
-// without an identity fails with:
-//
-//	ERROR: new row violates row-level security policy for table "account_audit_log"
-//	(SQLSTATE 42501)
-//
-// which is the correct behavior and the first evidence in this repository that the
-// boundary is live: before 00016 that INSERT succeeded. Each row therefore gets its
-// own `begin_account` inside the same transaction — `is_local = true` means the value
-// is transaction-scoped rather than connection-scoped, so overwriting it per row is
-// exactly what it is for and a pooled connection cannot carry it to the next request.
-//
-// account_audit_log is the table used because 00012 gives it NO foreign keys, so the
-// fixture needs no users and no accounts and cannot collide with another package's
-// rows in the shared TEST_DATABASE_URL.
 func seedAuditRows(ctx context.Context, t *testing.T, conn *pgx.Conn, role string) (tenantA, tenantB string) {
 	t.Helper()
 
-	// `gen_random_uuid()` is executable by PUBLIC and reads no table, so this works
-	// under either role.
 	var ids [2]string
 	for i := range ids {
 		if err := conn.QueryRow(ctx, `select gen_random_uuid()::text`).Scan(&ids[i]); err != nil {
@@ -658,8 +389,6 @@ func seedAuditRows(ctx context.Context, t *testing.T, conn *pgx.Conn, role strin
 		}
 	}
 
-	// `set local role` again, because seeding ran under whichever role the caller had
-	// already selected and this makes the choice explicit rather than inherited.
 	if _, err := conn.Exec(ctx, "set local role "+role); err != nil {
 		t.Fatalf("restoring the role under test: %v", err)
 	}
@@ -689,14 +418,6 @@ func countAuditRowsIn(ctx context.Context, t *testing.T, conn *pgx.Conn, account
 	return n
 }
 
-// assertComplete — the assertion set is EXACTLY the one assertions.txt names.
-//
-// Both directions, and both are needed. A missing name means the proof stopped
-// asserting something, which a "no failures" assertion would report as a pass. An
-// extra name means the proof grew something the driver does not know about, which
-// means the driver and the proof have separated and the next edit to either is made
-// against a stale idea of the other. A count would not do: a count of 24 is
-// compatible with 24 of the wrong 24.
 func assertComplete(t *testing.T, got map[string]result) {
 	t.Helper()
 	want := readManifest(t)
@@ -729,7 +450,6 @@ func assertComplete(t *testing.T, got map[string]result) {
 	}
 }
 
-// assertAllPass — every assertion that came back, and its reason when it did not.
 func assertAllPass(t *testing.T, got map[string]result) {
 	t.Helper()
 	var failed []string
@@ -747,7 +467,6 @@ func assertAllPass(t *testing.T, got map[string]result) {
 	}
 }
 
-// readManifest — the names assertions.txt lists, comments and blanks dropped.
 func readManifest(t *testing.T) []string {
 	t.Helper()
 	raw, err := os.ReadFile(here("assertions.txt"))
@@ -768,11 +487,6 @@ func readManifest(t *testing.T) []string {
 	return names
 }
 
-// here — the directory this source file is in.
-//
-// `runtime.Caller` rather than the working directory, because a test's working
-// directory is the package directory only for `go test` in the module root: run from
-// elsewhere, and a relative path silently finds nothing.
 func here(name string) string {
 	_, self, _, _ := runtime.Caller(0)
 	return filepath.Join(filepath.Dir(self), name)

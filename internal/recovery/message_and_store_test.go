@@ -9,19 +9,7 @@ import (
 	"github.com/anywaye/identity/internal/sessions"
 )
 
-// THE MESSAGES, AND THE STORE'S TWO CLAIMS.
-//
-// A token in a subject line is a token in a provider's index, a notification
-// daemon's log and a phone's lock screen, so the subject assertions here are the
-// ones worth writing by hand rather than deriving from the same map the renderer
-// reads.
 
-// TestNoSubjectCarriesAToken walks every message kind and asserts the property that
-// has no equivalent elsewhere in this package.
-//
-// IT RENDERS FIRST AND THEN SEARCHES, so a test that cannot render cannot pass: the
-// assertion is about a real rendered subject, not about the constant that produced
-// it.
 func TestNoSubjectCarriesAToken(t *testing.T) {
 	const token = "Zz3vK7mXpR2tY8wB4cN6dF0gH1jK5lM9oP3qS7uV2wX4yZ8"
 
@@ -50,9 +38,6 @@ func TestNoSubjectCarriesAToken(t *testing.T) {
 	}
 }
 
-// TestEveryMessageNamesTheAddressAndTheDeadline: a code that arrives with nothing
-// else in it is a code somebody cannot tell is theirs, and a deadline nobody can
-// place is a deadline they ignore.
 func TestEveryMessageNamesTheAddressAndTheDeadline(t *testing.T) {
 	for kind := range messageBodies {
 		t.Run(string(kind), func(t *testing.T) {
@@ -76,8 +61,6 @@ func TestEveryMessageNamesTheAddressAndTheDeadline(t *testing.T) {
 	}
 }
 
-// TestAMessageWithNoTokenIsRefused: the one rendering bug that matters, caught where
-// it can happen rather than in a delivered mail.
 func TestAMessageWithNoTokenIsRefused(t *testing.T) {
 	for kind := range messageBodies {
 		if _, err := messageFor(kind, messageData{Email: "kaka@example.com"}); err == nil {
@@ -86,18 +69,12 @@ func TestAMessageWithNoTokenIsRefused(t *testing.T) {
 	}
 }
 
-// TestAMessageKindWithNoBodyIsRefusedRatherThanRenderedEmpty: a new kind that
-// somebody forgets to write a body for must fail here, not arrive at an inbox.
 func TestAMessageKindWithNoBodyIsRefusedRatherThanRenderedEmpty(t *testing.T) {
 	if _, err := messageFor(messageKind("not_a_kind"), messageData{Token: "a-token"}); err == nil {
 		t.Fatal("an unknown message kind rendered")
 	}
 }
 
-// TestAnEmailChangeBodyNamesTheNewAddress is the one message with a third address
-// in it, and it is the one a user needs: "somebody asked to move the account on
-// kaka@example.com to THIS address" is only actionable if the reader can see which
-// address they are being asked to confirm.
 func TestAnEmailChangeBodyNamesTheNewAddress(t *testing.T) {
 	message, err := messageFor(messageChangeNew, messageData{
 		Email: "kaka@example.com", Target: "new@example.com",
@@ -111,14 +88,6 @@ func TestAnEmailChangeBodyNamesTheNewAddress(t *testing.T) {
 	}
 }
 
-// TestThePurposesAreAClosedSetThatTheSchemaAgreesWith is the Go half of a pair; the
-// schema half is TestTheSchemaRefusesAnUnknownPurpose. Between them, a row naming a
-// purpose this build does not implement cannot be written and cannot be read.
-//
-// IT WALKS `allPurposes` AGAINST A SET PINNED HERE, in both directions, so adding a
-// purpose is an edit to this file rather than a silent widening of a list. The
-// pinned set is the definition; `allPurposes` is the enumeration that the TTL and
-// delivery checks walk, and one of them drifting is the failure.
 func TestThePurposesAreAClosedSetThatTheSchemaAgreesWith(t *testing.T) {
 	want := map[Purpose]bool{
 		PurposePasswordReset: true,
@@ -138,17 +107,6 @@ func TestThePurposesAreAClosedSetThatTheSchemaAgreesWith(t *testing.T) {
 	}
 }
 
-// TestEveryPurposeIsMailedHereOrDeclaredCallerDelivered is the half of the
-// completeness obligation a session link introduced: a purpose with no message body
-// used to be impossible (the three flows all mail), and it is now a fact that has
-// to be WRITTEN DOWN rather than inferred.
-//
-// The failure this catches is the obvious one: a fourth flow added, no body
-// written, and a user told a mail is on its way that this package never sends.
-// The opposite error is not caught here — a purpose listed as caller-delivered that
-// somebody has since started mailing from here — because that would show up as two
-// delivery paths for one flow, and the honest place to notice it is a reader of
-// `callerDeliveredPurposes` rather than a test.
 func TestEveryPurposeIsMailedHereOrDeclaredCallerDelivered(t *testing.T) {
 	for _, p := range allPurposes() {
 		_, hasBody := messageBodies[purposeMessageKind(p)]
@@ -160,8 +118,6 @@ func TestEveryPurposeIsMailedHereOrDeclaredCallerDelivered(t *testing.T) {
 		}
 	}
 
-	// And the declaration must say WHO, because "delivered elsewhere" without a
-	// subject is the sentence that outlives the person who knew.
 	for p, who := range callerDeliveredPurposes {
 		if who == "" {
 			t.Errorf("%q is declared caller-delivered with nobody named as the deliverer", p)
@@ -169,9 +125,6 @@ func TestEveryPurposeIsMailedHereOrDeclaredCallerDelivered(t *testing.T) {
 	}
 }
 
-// purposeMessageKind is the mapping a request flow uses: the FIRST message of a
-// purpose. An email change's second message is not reachable from a purpose, which
-// is why this returns one kind rather than a slice.
 func purposeMessageKind(p Purpose) messageKind {
 	if p == PurposeEmailChange {
 		return messageChangeFirst
@@ -179,7 +132,6 @@ func purposeMessageKind(p Purpose) messageKind {
 	return messageKind(p)
 }
 
-// TestTheSchemaRefusesAnUnknownPurpose is the database half of the pair above.
 func TestTheSchemaRefusesAnUnknownPurpose(t *testing.T) {
 	h := newHarness(t, true)
 	who := h.registerSimple()
@@ -197,11 +149,6 @@ func TestTheSchemaRefusesAnUnknownPurpose(t *testing.T) {
 	}
 }
 
-// TestTheSchemaRefusesATokenWhoseExpiryIsItsOwnCreation is the second CHECK worth
-// holding, and it is the one that makes an expired token indistinguishable from an
-// absent one at the storage layer: a row that expires at the instant it was minted
-// can never pass `expires_at > now`, so it can never be spent and cannot be told
-// apart from a row that was never there.
 func TestTheSchemaRefusesATokenWhoseExpiryIsItsOwnCreation(t *testing.T) {
 	h := newHarness(t, true)
 	who := h.registerSimple()
@@ -219,9 +166,6 @@ func TestTheSchemaRefusesATokenWhoseExpiryIsItsOwnCreation(t *testing.T) {
 	}
 }
 
-// TestTheSchemaRefusesATargetOnAFlowThatDoesNotMoveAddresses: the
-// `target_is_for_an_email_change` CHECK, which is what stops a reset token from
-// carrying an address somebody could later claim it was for.
 func TestTheSchemaRefusesATargetOnAFlowThatDoesNotMoveAddresses(t *testing.T) {
 	h := newHarness(t, true)
 	who := h.registerSimple()
@@ -246,16 +190,11 @@ func TestTheSchemaRefusesATargetOnAFlowThatDoesNotMoveAddresses(t *testing.T) {
 	}
 }
 
-// TestTokensAreGoneWithTheirUser: a token for a deleted account can only ever be
-// refused, and leaving it behind would keep the table growing for accounts that
-// are not there.
 func TestTokensAreGoneWithTheirUser(t *testing.T) {
 	h := newHarness(t, false)
 	who := h.registerSimple()
 	h.requestReset(t, who)
 
-	// Scoped to THIS row rather than counting the table, because every test in this
-	// package shares one database and an unscoped count measures the run.
 	rowID := h.newestTokenID(who.id, PurposePasswordReset)
 	if got := countRows(t, h, `SELECT count(*) FROM recovery_tokens WHERE id = $1`, rowID); got != 1 {
 		t.Fatalf("%d rows before the user is deleted, want 1", got)
@@ -268,13 +207,6 @@ func TestTokensAreGoneWithTheirUser(t *testing.T) {
 	}
 }
 
-// TestOneTokenSpentOnceUnderConcurrency is the single-use property at the only
-// place it can actually be wrong: two requests carrying the same token at the same
-// instant, resolved by a conditional UPDATE with no lock.
-//
-// It asserts the SUM — exactly one redemption — rather than "at least one
-// succeeded". A service that let every racer through would pass the second and fail
-// this one, which is the whole direction the assertion has to point.
 func TestOneTokenSpentOnceUnderConcurrency(t *testing.T) {
 	h := newHarness(t, false)
 	who := h.registerSimple()
@@ -307,14 +239,6 @@ func TestOneTokenSpentOnceUnderConcurrency(t *testing.T) {
 	assertPasswordIs(t, h, who, "one of these will win")
 }
 
-// TestTheStoredDigestIsTheOnlyCredential checks the digest construction itself, at
-// the store, over a row created by the store rather than by a flow.
-//
-// The reason sessions.Digest is a *function* and not a field is that a lookup has
-// to turn ANY presented value into a well-formed digest, so "no token", "wrong
-// token" and "expired token" are one query and one response time. That is the
-// timing story this whole service tells, and it is worth one test at the layer where
-// it is decided.
 func TestTheStoredDigestIsTheOnlyCredential(t *testing.T) {
 	h := newHarness(t, true)
 	who := h.registerSimple()
@@ -336,8 +260,6 @@ func TestTheStoredDigestIsTheOnlyCredential(t *testing.T) {
 		t.Errorf("token_digest = %v, want the digest the store was handed", got)
 	}
 
-	// Garbage still produces a well-formed digest, so a lookup cannot be told from
-	// its query shape whether the caller had anything.
 	for _, garbage := range []string{"", " ", "not-a-token", token, token[:20], strings.Repeat("x", 4096)} {
 		got := sessions.Digest(garbage)
 		if len(got) != 64 {
@@ -348,8 +270,6 @@ func TestTheStoredDigestIsTheOnlyCredential(t *testing.T) {
 		t.Error("Digest is not a function of its input; the lookup could not be an indexed equality")
 	}
 
-	// The purpose filter is the only thing keeping the three flows' tokens apart,
-	// and it is asserted here at the store rather than only through a flow.
 	if _, err := NewStore(h.pool).Live(t.Context(), h.pool, digest, PurposePasswordReset, h.now()); err != nil {
 		t.Fatalf("Live on a fresh token: %v", err)
 	}

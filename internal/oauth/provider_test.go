@@ -1,32 +1,5 @@
 package oauth
 
-// TESTS FOR THE PROVIDER REGISTRY — the file that decides WHICH providers a
-// deployment will accept, and the second of the two files in this package that
-// carried a security decision with no test at all.
-//
-// # WHAT IS WORTH A TEST HERE, AND WHAT IS NOT
-//
-// `Registry` is a map with four accessors. What makes it worth a file is not the
-// accessors; it is that three of them encode a REFUSAL, and a refusal is a
-// security decision that a future edit can quietly undo:
-//
-//   - `NewRegistry` DROPS a provider with no credentials rather than storing a
-//     broken entry, so a half-configured deployment serves a 404 instead of a
-//     redirect that cannot complete.
-//   - `Lookup` answers ErrUnknownProvider for a real provider this deployment has
-//     no credentials for AND for a name that does not exist. Those two must stay
-//     indistinguishable, because telling them apart enumerates a deployment's
-//     configuration through an unauthenticated endpoint.
-//   - `Empty` is what the mount consults to decide whether to serve social login
-//     at all, so its answer is a routing decision and not a convenience.
-//
-// The tests below assert those three refusals and the shape of the two provider
-// definitions. They do NOT test `AuthCodeURL` or `oauth2Config` beyond what
-// internal/httpapi and client_test.go already cover, and they do not test
-// `validateRedirectBase` exhaustively — settings_test.go holds the matrix of
-// valid and invalid bases through `Settings.Validate`, which reaches the same
-// function. Duplicating that table here would be a second list to keep in step
-// with the first.
 
 import (
 	"errors"
@@ -35,16 +8,12 @@ import (
 	"testing"
 )
 
-// credentials returns a provider definition with both halves of its credentials
-// present, which is the only form NewRegistry keeps.
 func credentials(p Provider) Provider {
 	p.ClientID = "client-id-" + p.Name
 	p.ClientSecret = "client-secret-" + p.Name
 	return p
 }
 
-// newTestRegistry returns a registry over base with the named providers
-// credentialed.
 func newTestRegistry(t *testing.T, base string, names ...string) *Registry {
 	t.Helper()
 
@@ -65,33 +34,10 @@ func newTestRegistry(t *testing.T, base string, names ...string) *Registry {
 	return registry
 }
 
-// ---------------------------------------------------------------------------
-// The definitions
-// ---------------------------------------------------------------------------
 
-// TestTheProviderDefinitionsAreFixed pins the two definitions.
-//
-// It is here because both endpoint sets are FIELDS rather than constants, and
-// that is deliberate (client_test.go needs to point a flow at an httptest
-// server). The cost of fields is that a typo in a production endpoint is a valid
-// Go value that a test has to catch — and an endpoint is a URL this service sends
-// a person's authorization code to, so "wrong host" is not a cosmetic error.
-//
-// Google carries `access_type=offline` and GitHub does not, because the two
-// providers differ there and the asymmetry is real: Google issues a refresh token
-// only on first consent unless the request asks for offline access, so a Google
-// account without this parameter has a stored credential that dies in an hour.
-// Asserting the asymmetry is the point; asserting the parameter's spelling for
-// Google alone would not catch GitHub acquiring one.
 func TestTheProviderDefinitionsAreFixed(t *testing.T) {
 	t.Parallel()
 
-	// wantEndpoints maps every endpoint field to whether it must be NON-EMPTY
-	// for that provider. The two directions are both load-bearing and neither is
-	// inferable from the provider name: Google's userinfo carries the address so
-	// it has no emails endpoint, and Apple has no userinfo endpoint at all — its
-	// identity comes from an id_token verified against JWKSURL, which is the one
-	// field no other provider has.
 	for _, tc := range []struct {
 		name          string
 		provider      Provider
@@ -103,15 +49,8 @@ func TestTheProviderDefinitionsAreFixed(t *testing.T) {
 			wantEndpoints: map[string]bool{"AuthorizeURL": true, "TokenURL": true, "UserInfoURL": true, "EmailsURL": false, "JWKSURL": false}},
 		{name: "github", provider: GitHub(), wantName: ProviderGitHub,
 			wantEndpoints: map[string]bool{"AuthorizeURL": true, "TokenURL": true, "UserInfoURL": true, "EmailsURL": true, "JWKSURL": false}},
-		// Microsoft carries no extra authorize option — its offline access is a
-		// SCOPE, not a parameter, and sending Google's access_type to it would be
-		// the same noise in the other direction — and no emails endpoint, because
-		// its userinfo carries the address itself.
 		{name: "microsoft", provider: Microsoft(), wantName: ProviderMicrosoft,
 			wantEndpoints: map[string]bool{"AuthorizeURL": true, "TokenURL": true, "UserInfoURL": true, "EmailsURL": false, "JWKSURL": false}},
-		// Apple has no UserInfoURL — there is no userinfo endpoint to point
-		// anywhere — and no EmailsURL. Its identity comes from the id_token,
-		// verified against JWKSURL, which is the field only it carries.
 		{name: "apple", provider: Apple(), wantName: ProviderApple,
 			wantEndpoints: map[string]bool{"AuthorizeURL": true, "TokenURL": true, "UserInfoURL": false, "EmailsURL": false, "JWKSURL": true}},
 	} {
@@ -149,23 +88,7 @@ func TestTheProviderDefinitionsAreFixed(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// NewRegistry
-// ---------------------------------------------------------------------------
 
-// TestNewRegistryDropsAProviderWithNoCredentials is the half-configured refusal.
-//
-// `NewRegistry`'s own comment says providers with no credentials are "dropped
-// rather than stored as broken entries", and the reason is in ErrIncompleteProvider:
-// a sign-in button that 404s because a secret went missing should have been a
-// failed deploy, and a deploy that failed loudly leaves nothing to drop.
-//
-// So the property under test is that a provider with only ONE half of its
-// credentials does not become a route. Three ways to be incomplete are checked —
-// neither half, and each half alone — because the code tests
-// `p.ClientID == "" || p.ClientSecret == ""` and a test that only supplied the
-// empty-empty case would pass against an implementation that had inverted the
-// condition to `&&`.
 func TestNewRegistryDropsAProviderWithNoCredentials(t *testing.T) {
 	t.Parallel()
 
@@ -202,18 +125,6 @@ func TestNewRegistryDropsAProviderWithNoCredentials(t *testing.T) {
 	}
 }
 
-// TestNewRegistryRejectsAnUnusableBase covers the one error NewRegistry has.
-//
-// The returned error is only ever about baseURL — providers with no credentials
-// are dropped, not rejected — so this is the single failure mode of the
-// constructor, and a test that only checked the happy path would leave the
-// constructor's error return unexercised.
-//
-// The three cases are the three things validateRedirectBase refuses for three
-// different reasons, and the reason they are named rather than table-driven over
-// a list of strings is that a list of invalid bases is a second copy of the rule
-// in validateRedirectBase's comment that goes stale silently. Each case here
-// corresponds to a distinct branch in that function.
 func TestNewRegistryRejectsAnUnusableBase(t *testing.T) {
 	t.Parallel()
 
@@ -243,15 +154,6 @@ func TestNewRegistryRejectsAnUnusableBase(t *testing.T) {
 	}
 }
 
-// TestNewRegistryAcceptsABaseWithATrailingSlash covers the one normalisation the
-// constructor performs.
-//
-// `Provider.RedirectURI` does `strings.TrimSuffix(baseURL, "/")`, and the reason
-// it has to is that the callback is appended as a path: a base ending in "/" plus
-// an untrimmed append produces `https://identity.test//v1/auth/oauth/github/callback`,
-// which the provider refuses to match against the registered redirect_uri without
-// saying which of the two URLs was wrong. The trimming is verified here against
-// the real function rather than by asserting on the base.
 func TestNewRegistryAcceptsABaseWithATrailingSlash(t *testing.T) {
 	t.Parallel()
 
@@ -272,45 +174,7 @@ func TestNewRegistryAcceptsABaseWithATrailingSlash(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Lookup
-// ---------------------------------------------------------------------------
 
-// TestLookupRefusesAnUnconfiguredProviderAndAnAbsentOneAlike is the property
-// `Lookup`'s own comment claims and the security reason the method exists.
-//
-// Two names are asked for: "netflix", which this service has never heard of, and
-// "google" on a registry configured with only GitHub. Both must be
-// ErrUnknownProvider, and — the half that is easy to get wrong and the half an
-// attacker wants — both must be the same ERROR apart from the name the caller
-// themselves supplied.
-//
-// # WHAT "THE SAME ERROR" HAS TO MEAN HERE, PRECISELY
-//
-// `Lookup` wraps the sentinel with the requested name: `fmt.Errorf("%w: %q",
-// ErrUnknownProvider, name)`. So the two strings are NOT byte-identical, and the
-// first version of this test asserted they were — which was wrong, and worth
-// recording why. It was asserting that the error carry no diagnostic at all,
-// which is a different and worse requirement than this repository holds anywhere
-// else, and following it would have meant deleting the one useful thing about the
-// message.
-//
-// The requested name is not deployment state. It is the caller's own URL segment,
-// which the caller already knows. What must not vary is whether the REGISTRY knew
-// the name. So the check below substitutes the requested name out of both messages
-// and requires what remains to be identical, which is precisely the part an
-// attacker cannot already supply.
-//
-// # WHY errors.Is ALONE IS NOT ENOUGH
-//
-// A `Lookup` that returned a bare ErrUnknownProvider for a name it has never heard
-// of and a wrapped "provider google is not configured on this deployment" for one
-// it holds would satisfy every `errors.Is(err, ErrUnknownProvider)` assertion in
-// this repository — and would still enumerate the deployment's configuration,
-// because an unauthenticated caller can ask for every name in the closed set and
-// read which ones come back with the extra sentence. The router renders both as a
-// constant 404, so the difference is invisible in a response and fully visible in
-// a log the caller does not have.
 func TestLookupRefusesAnUnconfiguredProviderAndAnAbsentOneAlike(t *testing.T) {
 	t.Parallel()
 
@@ -329,9 +193,6 @@ func TestLookupRefusesAnUnconfiguredProviderAndAnAbsentOneAlike(t *testing.T) {
 		}
 	}
 
-	// The comparison errors.Is does NOT cover. `google` is a real provider this
-	// deployment lacks; `netflix` is not a provider at all. With the caller's own
-	// name substituted out, nothing else may differ.
 	const substituted = "PROVIDER"
 	strippedUnconfigured := strings.Replace(unconfiguredErr.Error(), ProviderGoogle, substituted, 1)
 	strippedUnknown := strings.Replace(unknownErr.Error(), "netflix", substituted, 1)
@@ -345,9 +206,6 @@ func TestLookupRefusesAnUnconfiguredProviderAndAnAbsentOneAlike(t *testing.T) {
 			ProviderGoogle, strippedUnconfigured, "netflix", strippedUnknown)
 	}
 
-	// Both misses still quote what was asked for, because that string never reaches a
-	// caller — the router renders a constant 404 — and it is the difference between a
-	// 404 an operator can debug and one they cannot.
 	for name, err := range map[string]error{
 		"netflix": unknownErr,
 		"google":  unconfiguredErr,
@@ -357,12 +215,6 @@ func TestLookupRefusesAnUnconfiguredProviderAndAnAbsentOneAlike(t *testing.T) {
 		}
 	}
 
-	// And the precondition the miss comparison above depends on: a provider this
-	// deployment DOES hold must resolve. If configured and unconfigured were the same
-	// answer, the distinction from the unknown-name case would be gone too, and no
-	// caller — including a legitimate user — could tell a configured deployment from
-	// an unconfigured one. This is the direction that would break sign-in rather than
-	// leak, which is why it is asserted alongside the leak.
 	held := newTestRegistry(t, "https://identity.test", ProviderGoogle)
 	if _, err := held.Lookup(ProviderGoogle); err != nil {
 		t.Errorf("Lookup(%q) on a registry that holds it = %v", ProviderGoogle, err)
@@ -374,14 +226,6 @@ func TestLookupRefusesAnUnconfiguredProviderAndAnAbsentOneAlike(t *testing.T) {
 	}
 }
 
-// TestLookupReturnsTheConfiguredProvider is the positive case, and it asserts the
-// CREDENTIALS come back rather than just the name.
-//
-// The name alone would pass against a registry that stored definitions without
-// operator credentials, which is the shape a "build the redirect from the
-// definition and the secret from elsewhere" implementation takes — and that shape
-// cannot exchange a code, so it fails at the provider with an error a person sees
-// as a broken login.
 func TestLookupReturnsTheConfiguredProvider(t *testing.T) {
 	t.Parallel()
 
@@ -406,13 +250,6 @@ func TestLookupReturnsTheConfiguredProvider(t *testing.T) {
 	}
 }
 
-// TestLookupIsCaseSensitive guards a decision the map makes implicitly.
-//
-// `byName` is keyed on the exact enum value, so "GitHub" and "GITHUB" are both
-// misses. That is the right direction — the enum is lowercase, the migration's
-// CHECK constraint is lowercase, and a case-insensitive lookup would resolve a
-// name the database would then refuse to store — but it is a decision, and a
-// future switch to `strings.ToLower` here would change it silently.
 func TestLookupIsCaseSensitive(t *testing.T) {
 	t.Parallel()
 
@@ -428,14 +265,6 @@ func TestLookupIsCaseSensitive(t *testing.T) {
 	}
 }
 
-// TestLookupOnAnEmptyRegistryRefusesEverything closes the shape a nil-guard
-// would take.
-//
-// A registry over no providers answers ErrUnknownProvider for every name, which is
-// what makes `Empty()` a sufficient flag for the mount rather than one case of a
-// decision the mount still has to make. If this ever answered something else, the
-// absence rule in WithSocial would have a hole in it that only a configured
-// deployment would notice.
 func TestLookupOnAnEmptyRegistryRefusesEverything(t *testing.T) {
 	t.Parallel()
 
@@ -451,22 +280,7 @@ func TestLookupOnAnEmptyRegistryRefusesEverything(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Names and Empty
-// ---------------------------------------------------------------------------
 
-// TestNamesIsSortedAndIndependentOfConfigurationOrder covers the two properties
-// `Names`'s comment states: sorted, and stable between restarts.
-//
-// The stability claim is about a startup log line, so the assertion is that two
-// registries built from the SAME configuration in OPPOSITE orders produce the same
-// slice. Without it, `Names` could depend on map iteration order and an operator
-// diffing two restarts' logs would see a provider added and removed.
-//
-// The returned slice is also required not to alias the registry's own state: a
-// caller that sorts or truncates it must not be able to change what a later call
-// reports. That is the kind of property a test is the only cheap way to hold,
-// because the map is unexported and nothing else would notice.
 func TestNamesIsSortedAndIndependentOfConfigurationOrder(t *testing.T) {
 	t.Parallel()
 
@@ -496,7 +310,6 @@ func TestNamesIsSortedAndIndependentOfConfigurationOrder(t *testing.T) {
 		}
 	}
 
-	// Mutating the caller's copy must not reach the registry.
 	first[0] = "mutated"
 	if again := googleThenGitHub.Names(); again[0] == "mutated" {
 		t.Error("Names() returned a slice aliasing the registry's state: writing to it changed what " +
@@ -504,17 +317,6 @@ func TestNamesIsSortedAndIndependentOfConfigurationOrder(t *testing.T) {
 	}
 }
 
-// TestNamesIsEmptyAndEmptyIsTrueOnABareRegistry is the flag the mount consults.
-//
-// `Empty` is described as the thing "the process mounts the OAuth routes only when
-// this is false", which makes it a ROUTING decision: get it wrong in one
-// direction and a credential-less deployment mounts a flow that cannot complete,
-// in the other and a configured deployment serves 404s for a feature it has.
-//
-// The negative direction matters equally. `len(r.byName) == 0` is the whole of
-// `Empty`, so a registry holding exactly one provider must answer false, and a
-// test that only checked the bare case would pass against an implementation that
-// ignored the map entirely and always returned true.
 func TestNamesIsEmptyAndEmptyIsTrueOnABareRegistry(t *testing.T) {
 	t.Parallel()
 
@@ -542,19 +344,6 @@ func TestNamesIsEmptyAndEmptyIsTrueOnABareRegistry(t *testing.T) {
 	}
 }
 
-// TestKnownProvidersMatchesTheNamesTheEnumAccepts holds the closed set against
-// what the rest of the service can actually store.
-//
-// `knownProviders` is declared at the top of this file as "the closed set, in the
-// order they are logged", and its own comment says the two names are the values of
-// the `oauth_provider` enum in migrations/00008_connected_accounts.sql. Nothing in
-// Go ties the two together: a provider added to the enum and not to this slice is
-// a provider `Settings.Providers` will never offer, and one added here and not to
-// the enum is an insert the database refuses.
-//
-// The migration is read rather than restated, so this cannot go stale the way a
-// duplicated list of two strings would — which is the whole reason to read a file
-// in a test at all.
 func TestKnownProvidersMatchesTheNamesTheEnumAccepts(t *testing.T) {
 	t.Parallel()
 

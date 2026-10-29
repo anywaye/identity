@@ -9,15 +9,6 @@ import (
 	"github.com/anywaye/identity/internal/platform/id"
 )
 
-// The api key events: a scoped machine credential was issued, and it stopped
-// working.
-//
-// These tests assert three things and the third is the one that matters: the
-// envelope satisfies core's schema, the payload carries the GRANT (so a consumer
-// can audit who holds what), and no field of it is a usable credential. The last
-// is the same assertion TestOIDCEventsCarryNoClientSecret makes, and it is here
-// because an api key is the longest-lived credential this service issues and the
-// envelope is the widest pipe it goes down.
 
 func TestAPIKeyEventsValidateAgainstCoreSchema(t *testing.T) {
 	t.Parallel()
@@ -58,8 +49,6 @@ func TestAPIKeyEventsValidateAgainstCoreSchema(t *testing.T) {
 			if got.Source != SourceIdentity {
 				t.Errorf("source = %q, want %q", got.Source, SourceIdentity)
 			}
-			// core's catalog names both types, and the prefix check is what would
-			// catch a typo in either constant that still satisfies the schema.
 			if !strings.HasPrefix(got.Type, SourceIdentity+".api_key.") {
 				t.Errorf("type = %q, want the %q prefix on a catalog name", got.Type, SourceIdentity)
 			}
@@ -73,8 +62,6 @@ func TestAPIKeyEventsValidateAgainstCoreSchema(t *testing.T) {
 	}
 }
 
-// The event types are core's published vocabulary, and this asserts the two
-// strings rather than trusting a comment in apikeys.go about them.
 func TestAPIKeyEventTypesAreCoreNames(t *testing.T) {
 	t.Parallel()
 
@@ -87,10 +74,6 @@ func TestAPIKeyEventTypesAreCoreNames(t *testing.T) {
 	}
 }
 
-// The created payload is the grant. A consumer auditing "who holds a credential
-// into which account, for what" cannot answer that from an announcement that
-// carries ids and nothing else, so the name and the scopes are in here and this
-// test is what holds them there.
 func TestAPIKeyCreatedPayloadIsTheGrant(t *testing.T) {
 	t.Parallel()
 
@@ -132,22 +115,11 @@ func TestAPIKeyCreatedPayloadIsTheGrant(t *testing.T) {
 			t.Errorf("scopes[%d] = %q, want %q", i, data.Scopes[i], want)
 		}
 	}
-	// RFC 3339 in UTC, and not Go's default rendering: this string is read by
-	// consumers in other languages and a nanosecond-precision Go timestamp is a
-	// parsing bug waiting to happen.
 	if data.ExpiresAt != "2026-12-30T04:19:00Z" {
 		t.Errorf("expires_at = %q, want RFC 3339 in UTC", data.ExpiresAt)
 	}
 }
 
-// NO EVENT CARRIES A USABLE CREDENTIAL. The envelope reaches every subscriber on
-// the platform, the plaintext exists exactly once in the 201 body, and the row
-// holds a SHA-256 of a 256-bit value which is not a credential either.
-//
-// The forbidden list includes the words as well as the values, because a log line
-// or a payload that mentions "token_digest" is a pointer to where the sensitive
-// column is, and a payload that grew a `digest` field to save somebody a join
-// would be the regression this catches.
 func TestAPIKeyEventsCarryNoCredential(t *testing.T) {
 	t.Parallel()
 

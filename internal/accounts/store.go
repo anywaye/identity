@@ -20,13 +20,8 @@ import (
 	"github.com/anywaye/identity/internal/tenancy"
 )
 
-// Postgres SQLSTATE 23505, unique_violation. Every mapping in this file is off
-// that one code, and each maps it only for the statement where it is the
-// obvious cause — see the comment on each isX method.
 const uniqueViolation = "23505"
 
-// errNoRows is pgx's "the query matched nothing", aliased so the intent reads at
-// the call site.
 var errNoRows = pgx.ErrNoRows
 
 // InvitationTTL is how long an invitation stays redeemable.
@@ -37,8 +32,6 @@ var errNoRows = pgx.ErrNoRows
 // dead before somebody clicks it.
 const InvitationTTL = 7 * 24 * time.Hour
 
-// tokenBytes is the entropy of an invitation token: 32 bytes, 256 bits, the same
-// as a session token and for the same reason.
 const tokenBytes = 32
 
 // NewToken mints an invitation token and the digest stored in its place.
@@ -50,9 +43,6 @@ const tokenBytes = 32
 func NewToken() (token, digest string, err error) {
 	raw := make([]byte, tokenBytes)
 	if _, err := io.ReadFull(rand.Reader, raw); err != nil {
-		// A failure of crypto/rand means there is no trustworthy entropy, and
-		// minting a credential from a degraded source is not something to
-		// discover later.
 		return "", "", fmt.Errorf("reading random bytes for an invitation token: %w", err)
 	}
 
@@ -93,18 +83,6 @@ type NewInvitation struct {
 	AccountID id.UUID
 	Email     string
 	Role      Role
-	// CreatedAt is the SERVICE's clock, not the database's now(), and it is
-	// passed rather than defaulted for the reason api_keys and recovery_tokens
-	// pass theirs: the row and the event announcing it have to agree, and only
-	// one of the two is under test control. The table still carries
-	// `DEFAULT now()`, but the caller always supplies this, so the default is
-	// never what a real row gets.
-	//
-	// It is also the reference the account_invitations_expires_after_creation
-	// CHECK measures ExpiresAt against. Leaving it to now() made the CHECK
-	// compare the caller's clock (ExpiresAt, derived from the service clock)
-	// with the server's — a comparison that a fake test clock parked in the past
-	// fails, and that a production host with a lagging clock would fail too.
 	CreatedAt   time.Time
 	TokenDigest string
 	ExpiresAt   time.Time
@@ -130,11 +108,7 @@ type NewInvitation struct {
 type MemberSummary struct {
 	Account Account
 	Role    Role
-	// UserID is who holds Role. For `ListMine` it is the caller, every time.
 	UserID id.UUID
-	// JoinedAt is when that membership was created — NOT the account's, which is
-	// on Account.CreatedAt and is a different fact. The two are both called
-	// `created_at` on their own rows and mixing them up is a plausible bug.
 	JoinedAt time.Time
 }
 
@@ -146,41 +120,14 @@ type Store struct {
 // NewStore returns a Store backed by pool.
 func NewStore(pool db.Pool) *Store { return &Store{pool: pool} }
 
-// accountColumns is the select list, in the order scanAccount expects. One
-// constant, so a column added here cannot be forgotten in one query and present
-// in another.
 const accountColumns = `id, name, slug, personal, created_at, updated_at`
 
-// accountColumnsQualified is accountColumns with the `a.` prefix, for the two
-// queries above that join `accounts` against `account_users`.
-//
-// IT EXISTS BECAUSE THE BARE LIST IS AMBIGUOUS IN A JOIN, and the ambiguity is
-// not confined to the select list: `ORDER BY created_at` beside a join resolves
-// against whichever table the planner reaches for, so the ordering could silently
-// become "when the membership was created". Naming the alias is what makes both
-// the projection and the sort say which table they mean.
 const accountColumnsQualified = `a.id, a.name, a.slug, a.personal, a.created_at, a.updated_at`
 
 const membershipColumns = `account_id, user_id, role, created_at, updated_at`
 
-// revoked_at is in this list, and its absence was identity-30's bug: the
-// redemption path read a row, saw AcceptedAt nil and not expired, and redeemed a
-// token an admin had already withdrawn — because the column that records the
-// withdrawal was not one this statement could return.
 const invitationColumns = `id, account_id, email, role, token_digest, expires_at, accepted_at, revoked_at, invited_by, created_at, updated_at`
 
-// membersSelectList is the accounts column list qualified with the `a` alias plus
-// the membership's own three columns, for the two statements that join
-// account_users to accounts.
-//
-// It is a var rather than a const because it is built from prefixed() at run
-// time: the point of the helper is that a column added to accountColumns cannot
-// be forgotten here, and a constant cannot call a function.
-//
-// The three are qualified rather than taken from membershipColumns, because that
-// list opens with `account_id` and this query already has the account's own
-// columns — selecting it twice under two names is how a scan ends up reading one
-// row's account_id into another's.
 var membersSelectList = prefixed("a", accountColumns) + `, au.role, au.user_id, au.created_at`
 
 // Create inserts an account and returns the stored row.
@@ -286,8 +233,6 @@ func (s *Store) AddMember(ctx context.Context, q db.Querier, m Membership) (Memb
 
 	out, err := scanMembership(row)
 	if err != nil {
-		// The primary key is the only unique constraint on this table, so a 23505
-		// here can only mean the membership already exists.
 		if isUniqueViolation(err) {
 			return Membership{}, ErrAlreadyAMember
 		}
@@ -374,8 +319,6 @@ func (s *Store) CountOwners(ctx context.Context, q db.Querier, accountID id.UUID
 		return 0, nil
 	}
 
-	// The subquery with FOR UPDATE is what takes the lock on the owner rows.
-	// Without it the count is a plain read and the check is advisory.
 	const query = `
 		SELECT count(*)
 		FROM (SELECT user_id FROM account_users WHERE account_id = $1 AND role = 'owner' FOR UPDATE) AS owners`
@@ -419,109 +362,8 @@ func (s *Store) RemoveMember(ctx context.Context, q db.Querier, accountID, userI
 	return nil
 }
 
-// ListForUser returns every account a user belongs to, with their role in each.
-//
-// Ordered personal first, then name — the order a sidebar wants, and the same
-// one jumpstart's `sorted` scope produces. The slice is never nil, so a JSON
-// encoder renders `[]` rather than `null` for a user with no accounts.
-// # THE TWO DELETION-ADJACENT READS
-//
-// PersonalAccounts and SolelyOwnedTeamAccounts exist for one caller — the
-// self-service deletion in `internal/deletion` — and they are on this Store
-// rather than in that package because both are queries about the MEMBERSHIP
-// TABLE, and membership is what this store is. A second package growing its own
-// SQL against `account_users` would be a second answer to "what accounts does
-// this person hold", and the two would disagree the moment a column changed.
-//
-// Both read `account_users`, which is policy-protected, and BOTH therefore
-// require `tenancy.BeginUser` on the caller's transaction — see
-// `Service.ListMine`, which is the reasoning in full. Under the real policies an
-// unadmitted read returns zero rows rather than an error, so a caller that
-// forgets the identity gets an empty list and a deletion that proceeds without
-// ever asking about team accounts. `internal/deletion`'s boundary tests are what
-// hold that line: they run against the real policies precisely so that a dropped
-// `begin_user` is a failure rather than a silent success.
 
-// PersonalAccounts returns the accounts the SYSTEM created for this user — the
-// ones a registration provisions — and never a team account.
-//
-// The distinction is the `personal` column and nothing else, and it is the
-// distinction a deletion turns on: a personal account holds nothing but its own
-// user's membership, so removing it destroys nobody else's data, whereas a team
-// account with other members in it is other people's workspace.
-//
-// # WHY THIS IS NOT "the first personal account"
-//
-// There is no unique index making `personal` mean "at most one per user", and
-// `migrations/00005_accounts.sql` says so: the column is what lets a later packet
-// SAY "you always have exactly one personal account" without inventing a second
-// table. Until a constraint makes that a database guarantee, a query that took
-// the first one would silently orphan any second. So this returns all of them
-// and the caller deletes all of them, which is correct whether the invariant holds
-// or not.
 
-// SolelyOwnedTeamAccounts returns the TEAM accounts where this user is the only
-// OWNER — the set that makes a self-service deletion impossible rather than
-// merely complicated.
-//
-// # WHY OWNERSHIP AND NOT MEMBERSHIP IS THE BAR
-//
-// An account with other members in it loses one membership when its owner leaves,
-// and the account carries on with the members it already had: that is what an
-// account is. An account whose only OWNER is leaving would be left with nobody
-// who can invite, remove, change a role, or delete it — every owner-only route
-// in `internal/httpapi` keys on the owner role — and the account would be
-// unreachable rather than emptied. So the bar is the owner role specifically, and
-// an account with a second owner is NOT in this set even if that second owner has
-// never logged in.
-//
-// The subquery counts owners OTHER THAN this user, which is what makes the
-// comparison work for a user who is the only owner: `NOT EXISTS` over the empty
-// set is true, and the account is reported. An equality count against the total
-// would need the user's own row excluded in a second place, and there is one way
-// to write it.
-//
-// # WHY IT IS A LOOP AND NOT ONE QUERY
-//
-// The obvious SQL is a single statement with a `NOT EXISTS` over the other
-// owners, and it is WRONG UNDER THE REAL POLICIES in a way no clone would catch.
-// `dbtest.Schema` copies the tables without their row-level security, so the
-// query passes there and fails in production.
-//
-// Here is the failure. `migrations/00018` admits a caller to `account_users` for
-// SELECT through `account_users_anywaye_members`, whose predicate is
-// `user_id = anywaye.current_user_id()`. So standing in as the user, the caller sees
-// its OWN membership rows and nothing else. The `NOT EXISTS (SELECT 1 FROM
-// account_users other WHERE other.account_id = a.id AND other.role = 'owner'
-// AND other.user_id <> $1)` subquery is filtered to the empty set by that policy
-// before PostgreSQL evaluates it — every other owner's row is invisible — so
-// `NOT EXISTS` is vacuously true for every account, and EVERY account the user
-// owns is reported as one they solely own.
-//
-// The observable consequence is not a subtle wrong answer: a user who is one of
-// two co-owners of a team account is told they cannot delete their account at
-// all, and no amount of transferring ownership fixes it because the second owner
-// is not counted. It is measured by
-// `internal/deletion/deletion_rls_test.go`'s
-// `TestAMembershipGoesAndTheOtherMembersAccountSurvives`, which is the test that
-// found it.
-//
-// So the count has to happen standing in the ACCOUNT, where
-// `account_users_anywaye_select` (`account_id = anywaye.current_account_id()`) does
-// admit the rows — one account per transaction-local identity, which is why this
-// is a loop rather than a join. `CountOwners` is the query, and it already takes
-// `FOR UPDATE` on the owner rows, so the answer is a lock rather than a
-// snapshot and the TOCTOU window this method's header describes is closed by the
-// same statement that reads it.
-//
-// # IT LEAVES THE TRANSACTION STANDING IN THE LAST ACCOUNT IT VISITED
-//
-// `anywaye.begin_account` and `anywaye.begin_user` set the SAME GUC, so the last
-// call wins and there is no way to hold both. A caller that needs to read as the
-// USER after this must call `tenancy.BeginUser` again. `internal/deletion` does
-// exactly that and says so at the call site; the alternative would be a getter
-// that silently restores an identity on its way out, which is a much worse thing
-// to have in a store.
 
 // SolelyOwnedTeamAccounts returns the non-personal accounts where userID holds
 // the only owner role.
@@ -530,10 +372,6 @@ func (s *Store) SolelyOwnedTeamAccounts(ctx context.Context, q db.Querier, userI
 		return nil, nil
 	}
 
-	// Step 1, standing in as the user: the team accounts this user owns at all.
-	// Every row this matches is the caller's OWN membership row, so
-	// `account_users_anywaye_members` admits all of them and none of the filtering
-	// above applies to this statement.
 	const candidates = `
 		SELECT ` + accountColumnsQualified + `
 		FROM account_users mine
@@ -551,7 +389,6 @@ func (s *Store) SolelyOwnedTeamAccounts(ctx context.Context, q db.Querier, userI
 		return nil, nil
 	}
 
-	// Step 2, standing in each account in turn.
 	out := make([]Account, 0, len(owned))
 	for _, account := range owned {
 		if err := tenancy.BeginAccount(ctx, q, account.ID); err != nil {
@@ -561,10 +398,6 @@ func (s *Store) SolelyOwnedTeamAccounts(ctx context.Context, q db.Querier, userI
 		if err != nil {
 			return nil, fmt.Errorf("counting the owners of %q: %w", account.Slug, err)
 		}
-		// `<= 1` rather than `== 1`: the caller's own row is the one being
-		// counted, and a count of zero would mean the membership disappeared
-		// between step 1 and here, in which case reporting the account is the
-		// safe answer rather than silently proceeding.
 		if owners <= 1 {
 			out = append(out, account)
 		}
@@ -582,13 +415,6 @@ func (s *Store) PersonalAccounts(ctx context.Context, q db.Querier, userID id.UU
 		return nil, nil
 	}
 
-	// QUALIFIED, and the reason is a mistake this query made first: `accountColumns`
-	// is bare, and joined against `account_users` every one of `id`, `name`,
-	// `personal`, `created_at` and `updated_at` is a column on BOTH tables. The
-	// database refuses it as ambiguous, which is the good outcome — a silent
-	// resolution would have meant `ORDER BY created_at` silently meaning
-	// `account_users.created_at`, ordering the answer by when somebody JOINED
-	// rather than when the account was made.
 	const query = `
 		SELECT ` + accountColumnsQualified + `
 		FROM account_users au
@@ -599,11 +425,6 @@ func (s *Store) PersonalAccounts(ctx context.Context, q db.Querier, userID id.UU
 	return s.scanAccounts(ctx, q, query, "listing a user's personal accounts", userID)
 }
 
-// scanAccounts is the shared reader for the two queries above, and it exists so
-// "never nil" is a property of the helper rather than a sentence repeated in two
-// callers: a JSON encoder renders a nil slice as `null` and an empty one as `[]`,
-// and a caller deciding whether a deletion is refused must see `[]` for "no team
-// accounts" rather than have to ask whether the nil is an answer.
 func (s *Store) scanAccounts(ctx context.Context, q db.Querier, query, what string, userID id.UUID) ([]Account, error) {
 	rows, err := q.Query(ctx, query, userID)
 	if err != nil {
@@ -761,19 +582,12 @@ func (s *Store) MarkInvitationAccepted(ctx context.Context, q db.Querier, invita
 		return fmt.Errorf("marking an invitation accepted: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		// Zero rows now has three causes and they answer differently, so it is
-		// worth the primary-key lookup to tell them apart: the row is gone,
-		// somebody else redeemed it first, or an admin withdrew it while this
-		// transaction was open. Collapsing the third into the first two would
-		// answer 410 "already accepted" for an invitation nobody accepted.
 		var revoked bool
 		row := q.QueryRow(ctx,
 			`SELECT revoked_at IS NOT NULL FROM account_invitations WHERE id = $1`,
 			invitationID)
 		if err := row.Scan(&revoked); err != nil {
 			if errors.Is(err, errNoRows) {
-				// Gone. The same answer as a redemption that lost the race, and
-				// the service maps both to the same status.
 				return ErrInvitationUsed
 			}
 			return fmt.Errorf("distinguishing a failed acceptance: %w", err)
@@ -859,18 +673,6 @@ func (s *Store) RevokePendingInvitations(ctx context.Context, q db.Querier, acco
 	return int(tag.RowsAffected()), nil
 }
 
-// classifyUnrevocable turns "the UPDATE changed nothing" into the one of three
-// answers that are actually distinguishable, and it is a read rather than three
-// more UPDATEs because the point of the conditional statement above is that it
-// touches no row it should not.
-//
-// A row that exists and is NOT revocable is reported as revoked-or-used, and a
-// row that does not exist is ErrInvitationNotFound — which is also what another
-// account's invitation looks like, because the lookup is scoped to accountID and
-// a row in somebody else's account is a row this query cannot see. That is the
-// same conflation accountIDFrom makes in the path, and it is deliberate: a caller
-// who could distinguish "no such invitation" from "an invitation in an account you
-// are not in" would have a tenant-probe.
 func (s *Store) classifyUnrevocable(ctx context.Context, q db.Querier, accountID, invitationID id.UUID) error {
 	const query = `
 		SELECT accepted_at IS NOT NULL, revoked_at IS NOT NULL
@@ -887,12 +689,9 @@ func (s *Store) classifyUnrevocable(ctx context.Context, q db.Querier, accountID
 	if accepted {
 		return ErrInvitationUsed
 	}
-	// revoked is true here, and an invitation with neither accepted nor revoked
-	// cannot reach this branch: the UPDATE would have matched it.
 	return ErrInvitationRevoked
 }
 
-// scanMembership reads one membership row.
 func scanMembership(row interface{ Scan(...any) error }) (Membership, error) {
 	var m Membership
 	err := row.Scan(&m.AccountID, &m.UserID, &m.Role, &m.CreatedAt, &m.UpdatedAt)
@@ -905,7 +704,6 @@ func scanMembership(row interface{ Scan(...any) error }) (Membership, error) {
 	return m, nil
 }
 
-// scanInvitation reads one invitation row.
 func scanInvitation(row interface{ Scan(...any) error }) (Invitation, error) {
 	var inv Invitation
 	err := row.Scan(&inv.ID, &inv.AccountID, &inv.Email, &inv.Role, &inv.TokenDigest,
@@ -920,8 +718,6 @@ func scanInvitation(row interface{ Scan(...any) error }) (Invitation, error) {
 	return inv, nil
 }
 
-// prefixed qualifies a bare column list with a table alias, so the two list
-// queries that join can share the one column constant.
 func prefixed(alias, columns string) string {
 	out := make([]byte, 0, len(columns)+16)
 	start := 0
@@ -939,15 +735,6 @@ func prefixed(alias, columns string) string {
 	return string(out)
 }
 
-// isUniqueViolation reports whether err is a unique_violation.
-//
-// It matches on the SQLSTATE alone, which is load-bearing rather than lazy: each
-// caller uses it for a statement whose only unique constraint is the one it is
-// looking for. Matching the constraint *name* instead would be more precise in
-// principle and is in practice brittle — Postgres renames an index when a table
-// is cloned with LIKE ... INCLUDING INDEXES, which is exactly what the
-// integration tests do, and a future migration could rename one legitimately. A
-// silently mis-detected duplicate turns a 409 into a 500.
 func isUniqueViolation(err error) bool {
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) {

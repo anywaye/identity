@@ -9,9 +9,6 @@ import (
 	"testing"
 )
 
-// Every assertion here comes from anywaye/core docs/openapi-conventions.md,
-// "Error envelope". The document says no service invents its own error body, so
-// this file is the service's half of that rule.
 
 func TestProblemMatchesTheCoreEnvelope(t *testing.T) {
 	t.Parallel()
@@ -31,11 +28,9 @@ func TestProblemMatchesTheCoreEnvelope(t *testing.T) {
 		t.Fatalf("the body is not JSON: %v\n%s", err, rec.Body)
 	}
 
-	// type is the machine-readable contract: a stable docs.anywaye.com/errors URI.
 	if want := "https://docs.anywaye.com/errors/unauthorized"; p.Type != want {
 		t.Errorf("type = %q, want %q", p.Type, want)
 	}
-	// code is the same slug as the last segment of type.
 	if slug := strings.TrimPrefix(p.Type, "https://docs.anywaye.com/errors/"); p.Code != slug {
 		t.Errorf("code = %q, want the last segment of type (%q)", p.Code, slug)
 	}
@@ -45,26 +40,20 @@ func TestProblemMatchesTheCoreEnvelope(t *testing.T) {
 	if p.Title == "" {
 		t.Error("title is empty; it is the human-readable summary clients log")
 	}
-	// instance is the request path. The query string is not part of it: it can
-	// carry an email address, and this body is rendered to anonymous callers.
 	if p.Instance != "/v1/users" {
 		t.Errorf("instance = %q, want /v1/users with no query string", p.Instance)
 	}
-	// trace_id is always present and always matches the header.
 	if p.TraceID != "0af7651916cd43dd8448eb211c80319c" {
 		t.Errorf("trace_id = %q, want the request's trace id", p.TraceID)
 	}
 	if got := rec.Header().Get(TraceHeader); got != p.TraceID {
 		t.Errorf("%s = %q but trace_id in the body is %q; core requires them to match", TraceHeader, got, p.TraceID)
 	}
-	// errors[] appears only for 422.
 	if p.Errors != nil {
 		t.Errorf("errors = %v on a %d, want it omitted outside 422", p.Errors, p.Status)
 	}
 }
 
-// errors[] exists so a client can point at the field that was wrong. Without it a
-// 422 is a string and a form can only say "something was invalid".
 func TestProblemCarriesFieldErrorsForValidation(t *testing.T) {
 	t.Parallel()
 
@@ -93,7 +82,6 @@ func TestProblemCarriesFieldErrorsForValidation(t *testing.T) {
 	if got.Errors[1].Field != "password" || got.Errors[1].Code != "too_short" {
 		t.Errorf("errors[1] = %+v, want password/too_short", got.Errors[1])
 	}
-	// The field errors must not invent attributes core does not define.
 	for _, fe := range got.Errors {
 		encoded, err := json.Marshal(fe)
 		if err != nil {
@@ -105,10 +93,6 @@ func TestProblemCarriesFieldErrorsForValidation(t *testing.T) {
 	}
 }
 
-// The title is fixed per code. A client that switched on it would break if the
-// wording drifted, and core says it may be reworded only without a version bump —
-// which is exactly why it is a constant here rather than something assembled from
-// the detail.
 func TestProblemTitlesAreStablePerCode(t *testing.T) {
 	t.Parallel()
 
@@ -122,10 +106,6 @@ func TestProblemTitlesAreStablePerCode(t *testing.T) {
 		CodeMethodNotAllowed: "Method not allowed",
 		CodeInvalidJSON:      "Malformed request body",
 		CodePayloadTooLarge:  "Request body too large",
-		// Declared here rather than only at the call site, because a code absent
-		// from this map renders "Request failed" — and a deletion refusal whose
-		// title says nothing about ownership is a refusal that has to be read
-		// rather than acted on.
 		CodeAccountOwnershipConflict: "Account ownership conflict",
 	}
 
@@ -140,8 +120,6 @@ func TestProblemTitlesAreStablePerCode(t *testing.T) {
 	}
 }
 
-// The status and the code must agree. core lists the reserved codes with their
-// statuses, and a 401 with code "conflict" is a contract that lies.
 func TestProblemStatusAndCodeAgree(t *testing.T) {
 	t.Parallel()
 
@@ -183,8 +161,6 @@ func TestProblemStatusAndCodeAgree(t *testing.T) {
 	}
 }
 
-// An unknown code must still produce a well-formed problem. Falling through to an
-// empty type would emit a document every client rejects.
 func TestProblemFallsBackForAnUnknownCode(t *testing.T) {
 	t.Parallel()
 
@@ -201,10 +177,6 @@ func TestProblemFallsBackForAnUnknownCode(t *testing.T) {
 	}
 }
 
-// The body must never carry internal detail. core's rule is that `detail` is
-// specific to the occurrence and not parsed, and this service applies it strictly:
-// a database error goes to the log with the trace id, and the caller gets a
-// generic 500.
 func TestProblemDetailIsNotFilledFromAnInternalError(t *testing.T) {
 	t.Parallel()
 
@@ -225,15 +197,9 @@ func TestProblemDetailIsNotFilledFromAnInternalError(t *testing.T) {
 	}
 }
 
-// A 204 has no body, so it cannot be a problem document. This asserts the writer
-// would not add one if a handler asked for a bodiless status by mistake.
 func TestProblemIsNeverWrittenForASuccessStatus(t *testing.T) {
 	t.Parallel()
 
-	// The handler decides the status; the writer's job is only to render a
-	// problem. Asserting the shape rather than a guard here, because the guard
-	// would be defending against a programmer error that the type system cannot
-	// catch and that no test would ever produce.
 	p := newProblem(http.StatusNoContent, CodeInternal)
 	if p.Status != http.StatusNoContent {
 		t.Errorf("status = %d, want 204 carried through unchanged", p.Status)

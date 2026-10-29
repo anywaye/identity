@@ -1,8 +1,3 @@
-// Package users owns the user aggregate: the row, the credential, and the rules
-// about what a valid email and password are.
-//
-// It knows nothing about HTTP. Handlers translate domain errors into the anywaye
-// error envelope; they do not define the rules.
 package users
 
 import (
@@ -15,21 +10,11 @@ import (
 	"github.com/anywaye/identity/internal/platform/id"
 )
 
-// Errors returned by the store and the validators. Callers match them with
-// errors.Is; nothing here is compared by string.
 var (
-	// ErrNotFound means no such user. It is deliberately indistinguishable from
-	// "no such user" in every other sense: the HTTP layer renders it as a
-	// generic 401 so the response cannot be used to enumerate accounts.
 	ErrNotFound = errors.New("user not found")
-	// ErrEmailTaken means the address is already registered. A registration
-	// endpoint is the one place this is safe to reveal, and it maps to 409.
 	ErrEmailTaken = errors.New("email already registered")
 )
 
-// Field validation codes. These land verbatim in the `errors[]` array of the
-// anywaye error envelope (core: docs/openapi-conventions.md), so they are part of
-// the contract and clients may switch on them.
 const (
 	CodeRequired      = "required"
 	CodeInvalidFormat = "invalid_format"
@@ -80,59 +65,14 @@ func fieldErr(field, code string) error {
 // response body.
 type User struct {
 	ID id.UUID
-	// Email is stored normalized: lower case and trimmed. See NormalizeEmail.
 	Email string
-	// DisplayName is what the person is called, and nil means nobody has set
-	// one. A POINTER WITH NO `false`, for the reason EmailVerifiedAt and
-	// DisabledAt have one: "no name" and "a name that is the empty string" are
-	// the same state, and the column is NULL for both — a second way to say it
-	// is a second thing to disagree with this one.
 	DisplayName *string
-	// Preferences is the profile's settings document (00027). A struct value
-	// rather than a pointer because the column is NOT NULL DEFAULT '{}'::jsonb:
-	// every row has a document, and "no preferences" is the empty document
-	// rather than a NULL. See Preferences for the one key it carries and why.
 	Preferences Preferences
-	// PasswordDigest is an argon2id encoded digest, never a plaintext password.
 	PasswordDigest      string
 	FailedLoginAttempts int
-	// LockedUntil is nil when the account is not locked. A pointer, not a zero
-	// time, because "never locked" and "locked until 1970" are different answers
-	// and only one of them is true.
 	LockedUntil *time.Time
-	// EmailVerifiedAt is when somebody proved they can read the address on this
-	// row, by following a link delivered to it. nil means nobody has.
-	//
-	// A POINTER WITH NO `false`, and the absence is the whole of the design: there
-	// is no state in which an address is "known to be bad", because the only thing
-	// a verification proves is that somebody read a message at this address at this
-	// instant. The way to stop trusting it is to change the address, and
-	// Store.SetEmail clears this in the same transaction that moves it.
 	EmailVerifiedAt *time.Time
-	// DisabledAt is when somebody deliberately turned this account off. nil means
-	// nobody ever has.
-	//
-	// IT IS NOT LockedUntil AND THE TWO MUST NOT BE MERGED, which is the whole of
-	// migrations/00021's first three lines. A lock is automatic, temporary and
-	// expires by itself; a disable is a person's decision with no expiry. So there
-	// is no `now` parameter here and no expiry to check: an account disabled in
-	// 2019 is disabled today, and the only thing that changes that is somebody
-	// calling Store.Enable.
-	//
-	// A POINTER WITH NO `false`, for the reason EmailVerifiedAt has one: null is
-	// the positive statement "nobody has decided this", and a second way to say
-	// "active" is a second thing to disagree with this one.
 	DisabledAt *time.Time
-	// IsStaff marks a platform operator: a human who may use the staff surface
-	// (`/v1/operator/*`).
-	//
-	// IT IS NOT A ROLE, and the difference is the whole of DECISIONS.md D17. A
-	// role is re-read per account on every request and answers "what may this
-	// person do HERE"; this answers "is this person staff anywhere", and no
-	// tenant-admin API may write it — the only writer is `Store.SetStaff`, which
-	// the `identity-staff` operator command calls and no HTTP route does. False
-	// on every row until an operator grants it (migrations/00030), and a session
-	// carries it because `Authenticate` returns the row.
 	IsStaff   bool
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -218,11 +158,6 @@ func NormalizeEmail(email string) string {
 	return strings.ToLower(strings.TrimSpace(email))
 }
 
-// emailPattern is deliberately stricter than RFC 5322. It requires at least one
-// dot in the domain, rejects empty adjacent labels, and rejects domains whose
-// labels start or end with a hyphen. The goal is not "any string mail clients
-// accept" — it is "an address that could be delivered to by a real MTA", which
-// rules out the shapes that make header injection and typo-typos useful.
 var emailPattern = regexp.MustCompile(`^[a-z0-9!#$%&'*+/=?^_` + "`" + `{|}~.-]{1,64}@(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
 
 // ValidateEmail checks an already-normalized address. Passing a raw address is a

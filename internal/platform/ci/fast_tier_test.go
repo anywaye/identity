@@ -1,46 +1,5 @@
 package ci
 
-// The declaration behind `bin/prime --fast`, and the check that keeps it from
-// rotting.
-//
-// # WHY THE TIER IS DECLARED RATHER THAN COMPUTED
-//
-// `--fast` runs the COMPLEMENT of the database tier, so the tier has to be
-// written down somewhere both the shell and this file can read. It lives in
-// gate.yml as `#   db-tier: ` marker lines, because core's gate.schema.json
-// forbids a new key (`additionalProperties: false`) — the declaration rides in
-// the file's existing comment structure, and the marker is the contract
-// between gate.yml, bin/prime and this file.
-//
-// # WHY THE CHECK IS THE POINT, NOT THE SPEED
-//
-// The lazy `--fast` — unset TEST_DATABASE_URL and let the db packages skip —
-// is a green gate over tests that never ran, which is the exact false green
-// this fleet has been burned by before. So the tier is not merely declared:
-// a package whose test binary links internal/platform/dbtest but is NOT in
-// the declared tier fails the gate, naming the package. Without that, the
-// first packet that adds a db package gets a fast tier that silently excludes
-// it — a green inner loop over a tier that drifted into lying.
-//
-// The derivation is the same one bin/prime's shell pipeline performs:
-//
-//   go list -test -f '{{.ImportPath}} {{range .Deps}}{{.}} {{end}}' ./... |
-//     awk '{deps=substr($0, length($1)+2); if (deps ~ /internal\/platform\/dbtest/) print $1}'
-//
-// keep the lines whose deps contain dbtest, normalise `P [P.test]` / `P.test`
-// / `P_test` back to `P`. `internal/platform/dbtest` itself is not listed: it
-// has no tests, and a package does not import itself.
-//
-// # WHAT THIS FILE PROVES, AND IN WHICH DIRECTION
-//
-// The comparison fails in BOTH directions, because a declaration that has
-// never been shown to disagree is indistinguishable from one that cannot:
-// a pool package missing from the list (the fast tier would silently skip it)
-// and a listed package that opens no pool (the fast tier skips a package it
-// does not need to) are both errors. And the shell-level refusal in bin/prime
-// is proven red by a stubbed `go` that lies about one package's deps — a stub
-// that is shadowed by a real go would let the refusal pass vacuously, so the
-// test asserts the stub was actually invoked.
 
 import (
 	"fmt"
@@ -51,23 +10,10 @@ import (
 	"testing"
 )
 
-// dbtestImportPath is the package whose linkage marks a test binary as a pool
-// opener. It is the only pool constructor the tests use: db.Open is called
-// from cmd/identity and from dbtest itself, so a test that opens a pool
-// reaches it through here.
 const dbtestImportPath = "github.com/anywaye/identity/internal/platform/dbtest"
 
-// dbTierMarker is the line prefix that declares the db tier in gate.yml.
-// bin/prime's sed and this file's parser both read exactly these lines.
 const dbTierMarker = "#   db-tier: "
 
-// dbTierDeclaration reads the declared db tier out of a gate.yml document.
-//
-// It refuses a document with no marker lines: an empty declaration is not a
-// smaller tier, it is the false-green trap — `--fast` would run every package
-// including the ones that open a pool, and the anti-rot check in bin/prime
-// would refuse, but a reader that found nothing here would report the
-// declaration as vacuously fine.
 func dbTierDeclaration(source string) ([]string, error) {
 	var declared []string
 	for i, line := range strings.Split(source, "\n") {
@@ -85,8 +31,6 @@ func dbTierDeclaration(source string) ([]string, error) {
 	return declared, nil
 }
 
-// goListPackages returns every package in the module, the way bin/prime's
-// `go list ./...` does.
 func goListPackages(t *testing.T) []string {
 	t.Helper()
 	out, err := goList(t, "./...")
@@ -102,8 +46,6 @@ func goListPackages(t *testing.T) []string {
 	return pkgs
 }
 
-// poolOpeningPackages returns the packages whose test binaries link dbtest,
-// derived the same way bin/prime derives them.
 func poolOpeningPackages(t *testing.T) []string {
 	t.Helper()
 	out, err := goList(t, "-test", "-f", "{{.ImportPath}} {{range .Deps}}{{.}} {{end}}", "./...")
@@ -130,10 +72,6 @@ func poolOpeningPackages(t *testing.T) []string {
 	return pkgs
 }
 
-// normalisePackage maps the three spellings `go list -test` emits for one
-// package back to the package itself: the test variant `P [P.test]` (whose
-// first field is already `P`), the test main `P.test`, and the external test
-// variant `P_test`. It mirrors the sed in bin/prime.
 func normalisePackage(pkg string) string {
 	pkg = strings.TrimSuffix(pkg, ".test")
 	pkg = strings.TrimSuffix(pkg, "_test")
@@ -147,10 +85,6 @@ func goList(t *testing.T, args ...string) ([]byte, error) {
 	return cmd.Output()
 }
 
-// tierDisagreement returns the ways a declared db tier disagrees with the
-// packages that actually open a pool. It is a pure function of its inputs so
-// the tripwire below can prove it fires; the real test feeds it the real
-// gate.yml and the real derivation.
 func tierDisagreement(declared, opens, all []string) []string {
 	var problems []string
 
@@ -172,8 +106,6 @@ func tierDisagreement(declared, opens, all []string) []string {
 			problems = append(problems, fmt.Sprintf("%s is declared in gate.yml's db tier but is not a package in this module", d))
 		}
 	}
-	// The direction the whole flag exists for: a pool opener that is not
-	// declared is silently excluded from the fast tier.
 	for _, p := range opens {
 		if !declaredSet[p] {
 			problems = append(problems, fmt.Sprintf("%s opens a pool but is not declared in gate.yml's db tier", p))
@@ -187,9 +119,6 @@ func tierDisagreement(declared, opens, all []string) []string {
 	return problems
 }
 
-// TestTheDeclaredDbTierMatchesThePackagesThatOpenAPool is the declaration
-// check. It reads the real gate.yml, derives the real pool-opening packages
-// with `go list`, and asserts the two agree in both directions.
 func TestTheDeclaredDbTierMatchesThePackagesThatOpenAPool(t *testing.T) {
 	declared, err := dbTierDeclaration(readRepoFile(t, "gate.yml"))
 	if err != nil {
@@ -202,12 +131,6 @@ func TestTheDeclaredDbTierMatchesThePackagesThatOpenAPool(t *testing.T) {
 	}
 }
 
-// TestTheTierDisagreementCheckFailsOnAnInjectedPackage is the tripwire's own
-// tripwire. The comparison above can be shown to hold on the committed files,
-// and a comparison that has never fired is indistinguishable from one that
-// cannot — so this removes a pool package from the declaration and adds a
-// non-pool package to it, and asserts the check reports both rather than
-// agreeing with itself.
 func TestTheTierDisagreementCheckFailsOnAnInjectedPackage(t *testing.T) {
 	all := goListPackages(t)
 	opens := poolOpeningPackages(t)
@@ -220,13 +143,11 @@ func TestTheTierDisagreementCheckFailsOnAnInjectedPackage(t *testing.T) {
 		opensSet[p] = true
 	}
 
-	// A pool package the declaration has dropped — the exact false green.
 	var undeclaredPool string
 	for _, p := range opens {
 		undeclaredPool = p
 		break
 	}
-	// A package that opens no pool but is declared as if it did.
 	var nonPool string
 	for _, p := range all {
 		if !opensSet[p] {
@@ -262,19 +183,6 @@ func TestTheTierDisagreementCheckFailsOnAnInjectedPackage(t *testing.T) {
 	}
 }
 
-// TestTheFastTierRefusesAnUndeclaredPoolPackage proves the shell-level
-// anti-rot check red, end to end through bin/prime.
-//
-// A stub `go` is put first on PATH. It answers `go mod download` and
-// `go build` with success, answers `go list ./...` by deferring to the real go,
-// and answers `go list -test` with a LIE: it claims one fast-tier package's
-// test binary links dbtest. bin/prime --fast must refuse, naming that package
-// — the safe state is a red gate, never a quiet green over a skipped tier.
-//
-// The stub records every invocation, and the test asserts the record contains
-// the steps bin/prime actually took. A stub that was shadowed by a real go
-// would let the refusal pass vacuously, so the record is the evidence the
-// refusal was earned.
 func TestTheFastTierRefusesAnUndeclaredPoolPackage(t *testing.T) {
 	root := repoRoot(t)
 
@@ -287,8 +195,6 @@ func TestTheFastTierRefusesAnUndeclaredPoolPackage(t *testing.T) {
 		declaredSet[d] = true
 	}
 
-	// The victim: a real package that is NOT in the declared tier, so the lie
-	// makes it an undeclared pool opener.
 	var victim string
 	for _, pkg := range goListPackages(t) {
 		if !declaredSet[pkg] {
@@ -308,9 +214,6 @@ func TestTheFastTierRefusesAnUndeclaredPoolPackage(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "invocations.log")
 
-	// The stub. It logs every invocation, defers `go list ./...` to the real
-	// go (found by absolute path, because `command -v go` from inside the stub
-	// would find the stub itself), and lies about the victim's deps.
 	stub := "#!/usr/bin/env bash\n" +
 		"echo \"go $*\" >> '" + logPath + "'\n" +
 		"case \"$1\" in\n" +
@@ -337,7 +240,6 @@ func TestTheFastTierRefusesAnUndeclaredPoolPackage(t *testing.T) {
 	)
 	out, err := cmd.CombinedOutput()
 
-	// The refusal is the assertion: a non-zero exit naming the victim.
 	if err == nil {
 		t.Fatalf("bin/prime --fast accepted a pool-opening package that is not declared in gate.yml's db tier.\n"+
 			"The stub claimed %s links dbtest; the fast tier must refuse, not run.\nOutput:\n%s", victim, out)
@@ -347,8 +249,6 @@ func TestTheFastTierRefusesAnUndeclaredPoolPackage(t *testing.T) {
 			"It should name %s. Output:\n%s", victim, out)
 	}
 
-	// The stub was actually invoked for each step, so the refusal was earned
-	// rather than vacuous.
 	log := readAll(t, logPath)
 	for _, want := range []string{"go mod download", "go build", "go list ./...", "go list -test"} {
 		if !strings.Contains(log, want) {

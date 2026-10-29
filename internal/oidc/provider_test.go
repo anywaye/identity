@@ -12,10 +12,6 @@ import (
 	"github.com/zitadel/oidc/v3/pkg/op"
 )
 
-// The discovery document. This is the first thing any OIDC client fetches and
-// the only thing it reads before deciding what this provider supports, so a
-// field that is wrong here is a product configured against a capability that
-// does not exist.
 
 func newTestProvider(t *testing.T) *Provider {
 	t.Helper()
@@ -43,10 +39,6 @@ func TestDiscoveryCarriesEveryRequiredField(t *testing.T) {
 
 	doc := newTestProvider(t).DiscoveryFor(contextWithIssuer(t, "https://identity.test"))
 
-	// OpenID Connect Discovery 1.0 section 3 lists these as REQUIRED, and RFC 8414
-	// section 2 adds grant_types_supported and response_modes. Each is asserted by
-	// name, because a document missing one of them is a document a conformant
-	// client refuses.
 	required := []string{
 		"issuer",
 		"authorization_endpoint",
@@ -78,8 +70,6 @@ func TestDiscoveryCarriesEveryRequiredField(t *testing.T) {
 	}
 }
 
-// The issuer is the one string a verifier compares for equality, and the
-// document's has to be the same value the tokens carry.
 func TestDiscoveryIssuerMatchesTheConfiguredOne(t *testing.T) {
 	t.Parallel()
 
@@ -101,10 +91,6 @@ func TestDiscoveryIssuerMatchesTheConfiguredOne(t *testing.T) {
 	}
 }
 
-// The jwks_uri is the one path that is not a choice. gateway's verifier hardcodes
-// `{issuer}/.well-known/jwks.json` and appends it to its configured issuer
-// without asking this document, so a document advertising /keys would be correct
-// and useless.
 func TestDiscoveryPointsAtThePathGatewayHardcodes(t *testing.T) {
 	t.Parallel()
 
@@ -116,16 +102,6 @@ func TestDiscoveryPointsAtThePathGatewayHardcodes(t *testing.T) {
 	}
 }
 
-// Everything this service does not serve is absent rather than advertised. An
-// endpoint in the menu that answers 404 is a product configured against a route
-// that does not exist, and they find out at their outage.
-//
-// The `*_auth_methods_supported` fields are in this table and NOT an afterthought:
-// the first live run of this provider served a document that blanked
-// introspection_endpoint and revocation_endpoint and still advertised how to
-// authenticate to both of them, because blanking an endpoint does not touch the
-// field beside it. The first version of this test asserted the endpoints alone
-// and passed against the broken document. It asserts the whole set now.
 func TestDiscoveryOmitsWhatThisServiceDoesNotServe(t *testing.T) {
 	t.Parallel()
 
@@ -160,9 +136,6 @@ func TestDiscoveryOmitsWhatThisServiceDoesNotServe(t *testing.T) {
 	}
 }
 
-// joinMethods and joinAlgs render the two list types into the one string the
-// table above holds, so that a failure names the offending FIELD and not just
-// "something is wrong somewhere in the document".
 func joinMethods(methods []oidc.AuthMethod) string {
 	out := make([]string, 0, len(methods))
 	for _, m := range methods {
@@ -204,8 +177,6 @@ func TestDiscoveryAdvertisesOnlyWhatIsImplemented(t *testing.T) {
 	}
 }
 
-// The claims list is a promise to a product's rendering code, and this service
-// has no column for half of what the library would advertise by default.
 func TestDiscoveryClaimsAreClaimsThisServiceAsserts(t *testing.T) {
 	t.Parallel()
 
@@ -215,14 +186,11 @@ func TestDiscoveryClaimsAreClaimsThisServiceAsserts(t *testing.T) {
 	for _, claim := range doc.ClaimsSupported {
 		advertised[claim] = true
 	}
-	// The ones the brief names, plus the protocol's own required set.
 	for _, want := range []string{"sub", ScopeEmail, ClaimEmailVerified, "name", ClaimAccounts, "nonce", "iss", "aud", "exp", "iat", "jti"} {
 		if !advertised[want] {
 			t.Errorf("claims_supported does not advertise %q", want)
 		}
 	}
-	// The ones identity has no column for. A claim in this list is a claim a
-	// product will render and find empty.
 	for _, unwanted := range []string{"address", "phone_number", "phone_number_verified", "picture", "website", "birthdate", "gender", "zoneinfo", "locale", "family_name", "given_name", "preferred_username"} {
 		if advertised[unwanted] {
 			t.Errorf("claims_supported advertises %q, and this service has no column for it", unwanted)
@@ -262,10 +230,6 @@ func TestNewProviderRefusesAnIssuerItCannotBeVerifiedAgainst(t *testing.T) {
 	}
 }
 
-// A trailing slash is the one issuer spelling difference that is harmless, and it
-// is harmless because the library's endpoint helper trims it. Pinning it says so,
-// because "why is this one accepted when the other four are not" is a fair
-// question about the validator above.
 func TestNewProviderAcceptsATrailingSlash(t *testing.T) {
 	t.Parallel()
 
@@ -294,9 +258,6 @@ func TestNewProviderRefusesToBuildWithoutASigningKey(t *testing.T) {
 	}
 }
 
-// The encryption key is derived from the signing key, so there is one configured
-// secret rather than two — and the two values are not equal, which is the point
-// of the domain separation.
 func TestDerivedEncryptionKeyIsNotTheSigningKey(t *testing.T) {
 	t.Parallel()
 
@@ -331,16 +292,10 @@ func TestDerivedEncryptionKeyIsNotTheSigningKey(t *testing.T) {
 	}
 }
 
-// testClock is a fixed instant, so anything derived from a clock is the same on
-// every run. The discovery document does not read one, and the adapter methods
-// that do are exercised in storage_test.go over the same value.
 type testClock struct{}
 
 func (testClock) Now() time.Time { return time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC) }
 
-// contextWithIssuer returns a context carrying the issuer, which is how the
-// library's discovery handler learns it. The interceptor that would normally do
-// this is inside the library's own router.
 func contextWithIssuer(t *testing.T, issuer string) context.Context {
 	t.Helper()
 	return op.ContextWithIssuer(context.Background(), issuer)

@@ -26,26 +26,14 @@ var ErrIncompleteSettings = errors.New("oauth settings are incomplete")
 type ProviderSettings struct {
 	ClientID     string
 	ClientSecret string
-	// Endpoints are this provider's endpoint overrides. Empty fields keep the
-	// defaults in endpoints.go, which is what an untouched deployment gets.
 	Endpoints ProviderEndpoints
 }
 
-// namedProvider is one provider's settings paired with the name they belong to,
-// which is what lets Validate and Providers both walk every provider knowing which
-// one they are on.
 type namedProvider struct {
 	name     string
 	settings ProviderSettings
 }
 
-// providers is the per-provider table: every provider this service knows, in the
-// order they are logged.
-//
-// IT IS THE COMPLETE SET, and `TestEveryProviderThisServiceOffersIsInTheTable` holds
-// `knownProviders` against it in both directions. Nothing about a struct literal
-// that configures a check looks like a completeness obligation, which is why this
-// one is walked rather than trusted.
 func (s Settings) providers() []namedProvider {
 	return []namedProvider{
 		{name: ProviderGoogle, settings: s.Google},
@@ -55,14 +43,10 @@ func (s Settings) providers() []namedProvider {
 	}
 }
 
-// configured reports whether both halves are present. A caller must have run
-// Validate before trusting a false here to mean "leave it out".
 func (p ProviderSettings) configured() bool {
 	return p.ClientID != "" && p.ClientSecret != ""
 }
 
-// halfConfigured reports whether exactly one half is present, which is always a
-// mistake and never an intention.
 func (p ProviderSettings) halfConfigured() bool {
 	return (p.ClientID == "") != (p.ClientSecret == "")
 }
@@ -82,19 +66,8 @@ func (p ProviderSettings) halfConfigured() bool {
 // — which is the same class of defect as a README describing an endpoint that
 // answers 404, and the record of it belongs here rather than in the history.
 type Settings struct {
-	// RedirectBaseURL is this service's public base URL. Callback URLs are built
-	// from it and from nothing else — never from a Host header.
 	RedirectBaseURL string
-	// EncryptionKey is standard base64 of 32 bytes, which is what
-	// `head -c 32 /dev/urandom | base64` prints.
 	EncryptionKey string
-	// Google, GitHub, Microsoft and Apple are per provider: credentials and
-	// endpoint overrides.
-	//
-	// Apple's ClientSecret is not read from the environment — it is minted at
-	// startup from the four OAUTH_APPLE_* inputs (see MintAppleClientSecret) and
-	// written here by internal/config's loadOAuth. So a deployment configures
-	// the four inputs, and this field carries the derived secret.
 	Google    ProviderSettings
 	GitHub    ProviderSettings
 	Microsoft ProviderSettings
@@ -113,17 +86,11 @@ func (s Settings) Validate() error {
 			return fmt.Errorf("%w: set both the client id and the client secret, or neither", ErrIncompleteProvider)
 		}
 
-		// Whether or not this provider has credentials: an endpoint that is set to
-		// something undialable is a deployment that should find out now, and the
-		// deployer is the only person who can fix it.
 		if err := np.settings.Endpoints.validate(np.name); err != nil {
 			return err
 		}
 	}
 
-	// Checked whenever present, independently of whether anything reads it: a key
-	// that is wrong today is wrong the day a provider is added, and the deployer
-	// is the only person who can fix it.
 	if _, err := s.Key(); err != nil {
 		return err
 	}
@@ -194,10 +161,6 @@ func (s Settings) Providers() []Provider {
 		}
 		definition, known := providerByName(np.name)
 		if !known {
-			// Unreachable through providers(), which holds only known names, and
-			// Validate refuses one that is not. Skipped rather than appended as a
-			// zero Provider, because a provider with no endpoints is a provider
-			// whose sign-in redirects to "".
 			continue
 		}
 		np.settings.Endpoints.applyTo(&definition)

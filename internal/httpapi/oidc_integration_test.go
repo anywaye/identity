@@ -31,37 +31,16 @@ import (
 	"github.com/anywaye/identity/internal/platform/id"
 )
 
-// THE OIDC SUITE.
-//
-// The real router, the real use cases, the real SQL, over a private schema, with
-// a real RSA key. Every test here is a thing a product would do and a thing an
-// attacker would try, driven through the same handler the process serves.
-//
-// The clock is the SYSTEM clock, not the fake one the auth and tenancy suites
-// use, and the reason is the library rather than taste: an id_token's expiry is
-// `time.Now() + validity` and the validity is computed against the library's own
-// `time.Now()`. A fixed 2026 instant on one side of that and the real clock on
-// the other produces a token whose `exp` is in the past before it is signed. The
-// flow's own windows — a sixty-second code, a fifteen-minute token — are far
-// longer than the milliseconds a test takes, so nothing here has to sleep.
 
 const (
 	oidcTestIssuer   = "https://identity.test"
 	oidcTestKeyID    = "anywaye-test-key"
 	oidcTestRedirect = "https://app.example.com/cb"
 	oidcTestPassword = "correct horse battery staple"
-	// oidcTestUserAgent is the client identity internal/auth records an attempt
-	// under, so a lockout test can tell which attempt it is looking at.
 	oidcTestUserAgent = "identity-oidc-test/1"
-	// oidcTestLoginUI is the configured login UI: a DIFFERENT ORIGIN from
-	// oidcTestIssuer, because that is the deployment this packet is about. A
-	// same-origin login UI would hide every question the interaction cookies and
-	// the escaping of client_name exist to answer, and a suite that only ever ran
-	// against a same-origin one would be green for a configuration nobody deploys.
 	oidcTestLoginUI = "https://login.example.com/sign-in/oidc"
 )
 
-// oidcFixture is the world the OIDC suite runs in.
 type oidcFixture struct {
 	handler  http.Handler
 	pool     *pgxpool.Pool
@@ -71,22 +50,10 @@ type oidcFixture struct {
 	account  id.UUID
 	owner    id.UUID
 	email    string
-	// tenancy is the account service, kept so a test can build a second account
-	// without reaching for the whole wiring again.
 	tenancy *accounts.Service
-	// jar is the cookie store. The login page is a browser flow and the test has
-	// to behave like the browser: a state cookie set on the GET and presented on
-	// the POST, and a session cookie set on the POST.
 	jar *cookieJar
 }
 
-// signOut drops the owner's session from the jar.
-//
-// The fixture signs the owner in because the ADMIN routes need a caller, and the
-// login page then has to be reached signed out or it skips the form entirely and
-// the state check and the password check are never exercised. This is the same
-// line a browser is on when a user opens a second product in a new tab, so the
-// case is real rather than a contrivance of the harness.
 func (f *oidcFixture) signOut() {
 	delete(f.jar.cookies, SessionCookieName)
 }
@@ -95,11 +62,8 @@ func newOIDCFixture(t *testing.T) *oidcFixture {
 	t.Helper()
 
 	pool := dbtest.Schema(t)
-	// A throwaway key per test. It is generated rather than read from a fixture
-	// file so no PEM in this repository is a private key, even a dead one.
 	key := generateTestKey(t)
 
-	// The real clock; see the comment at the top of this file.
 	clk := clock.System{}
 
 	store := oidc.NewStore(pool)
@@ -134,8 +98,6 @@ func newOIDCFixture(t *testing.T) *oidcFixture {
 	f.clients = clients
 	f.jar = &cookieJar{}
 
-	// A user, with the personal account a registration creates, is the owner of
-	// the account the client will be registered under.
 	email := dbtest.UniqueEmail(t)
 	rec := f.do(t, http.MethodPost, "/v1/users", `{"email":"`+email+`","password":"`+oidcTestPassword+`"}`, nil)
 	if rec.Code != http.StatusCreated {
@@ -144,10 +106,6 @@ func newOIDCFixture(t *testing.T) *oidcFixture {
 	var created userResponse
 	mustJSON(t, rec.Body.Bytes(), &created)
 
-	// A session, so the admin routes have a caller. This is the ONLY reason the
-	// owner is signed in before the flow: the login page below is driven with the
-	// credentials directly, so that the state check and the password check are
-	// both exercised rather than short-circuited by an existing session.
 	login := f.do(t, http.MethodPost, "/v1/session", `{"email":"`+email+`","password":"`+oidcTestPassword+`"}`, nil)
 	if login.Code != http.StatusOK {
 		t.Fatalf("signing in: %d; body: %s", login.Code, login.Body)
@@ -175,9 +133,6 @@ func newOIDCFixture(t *testing.T) *oidcFixture {
 	return f
 }
 
-// tenantAccount creates an extra account owned by owner, for the cross-account
-// cases. It goes through the tenancy service rather than a direct insert so the
-// account is one the service would have made.
 func (f *oidcFixture) tenantAccount(t *testing.T, owner id.UUID) (id.UUID, error) {
 	t.Helper()
 
@@ -216,7 +171,6 @@ func mustPKCS8(t *testing.T, priv *rsa.PrivateKey) []byte {
 	return der
 }
 
-// registered is a client this fixture registered, with the one-time secret.
 type registered struct {
 	ID           string
 	ClientID     string
@@ -225,8 +179,6 @@ type registered struct {
 	Password     string
 }
 
-// registerClient registers a relying party for the account, through the real
-// route, as the owner.
 func (f *oidcFixture) registerClient(t *testing.T) registered {
 	t.Helper()
 
@@ -256,7 +208,6 @@ func (f *oidcFixture) registerClient(t *testing.T) registered {
 	}
 }
 
-// codeVerifier is a fresh PKCE verifier and its S256 challenge.
 func codeVerifier(t *testing.T) (verifier, challenge string) {
 	t.Helper()
 
@@ -269,8 +220,6 @@ func codeVerifier(t *testing.T) (verifier, challenge string) {
 	return verifier, base64.RawURLEncoding.EncodeToString(sum[:])
 }
 
-// authorize drives GET /oidc/authorize and returns the login URL the browser was
-// sent to.
 func (f *oidcFixture) authorize(t *testing.T, client registered, challenge, state, nonce string, extra url.Values) string {
 	t.Helper()
 
@@ -299,14 +248,6 @@ func (f *oidcFixture) authorize(t *testing.T, client registered, challenge, stat
 	return location
 }
 
-// login drives the login interaction the way a browser with a form on another
-// origin would: GET the endpoint, follow the redirect to the login UI, take the
-// state out of the query it carries, and POST it back with the credentials.
-//
-// The GET is still a GET against this service and the POST is still a POST
-// against this service, because that is the whole design — the login UI is a
-// renderer, not a participant. What changed is where the state is read from, and
-// `interactionState` says why.
 func (f *oidcFixture) login(t *testing.T, loginURL, email, password string) *oidcResponse {
 	t.Helper()
 
@@ -332,7 +273,6 @@ func (f *oidcFixture) login(t *testing.T, loginURL, email, password string) *oid
 	return rec
 }
 
-// exchange trades a code for tokens.
 func (f *oidcFixture) exchange(t *testing.T, client registered, code, verifier, redirectURI string) *oidcResponse {
 	t.Helper()
 
@@ -351,7 +291,6 @@ func (f *oidcFixture) exchange(t *testing.T, client registered, code, verifier, 
 	return newResponse(rec)
 }
 
-// roundTrip runs authorize -> login -> token and returns the token response.
 func (f *oidcFixture) roundTrip(t *testing.T, client registered) map[string]any {
 	t.Helper()
 
@@ -390,8 +329,6 @@ func (f *oidcFixture) roundTrip(t *testing.T, client registered) map[string]any 
 	return body
 }
 
-// verify checks a token's signature against the PUBLISHED key set, which is the
-// same thing gateway does and the only check worth making about an RS256 token.
 func (f *oidcFixture) verify(t *testing.T, token string) map[string]any {
 	t.Helper()
 
@@ -418,15 +355,12 @@ func (f *oidcFixture) verify(t *testing.T, token string) map[string]any {
 	return claims
 }
 
-// do issues a request through the fixture's handler, with the cookie jar.
 func (f *oidcFixture) do(t *testing.T, method, target, body string, form url.Values) *oidcResponse {
 	t.Helper()
 
 	return f.doWithSession(t, "", method, target, body, form)
 }
 
-// doWithSession is do with the credential stated rather than taken from the jar,
-// for the cases where using the owner's session would be the whole answer.
 func (f *oidcFixture) doWithSession(t *testing.T, session, method, target, body string, form url.Values) *oidcResponse {
 	t.Helper()
 
@@ -459,10 +393,6 @@ func (f *oidcFixture) doWithSession(t *testing.T, session, method, target, body 
 	return newResponse(rec)
 }
 
-// cookieJar is the browser's cookie store, minus the parts of it this flow does
-// not use. It is here because the login page's state check reads a cookie the GET
-// set, and a test that passed one cookie and not the other would be testing a
-// flow no browser can complete.
 type cookieJar struct {
 	cookies map[string]*http.Cookie
 }
@@ -492,8 +422,6 @@ func (j *cookieJar) header() string {
 	for name := range j.cookies {
 		names = append(names, name)
 	}
-	// Sorted, so the header is the same on every request and a failure is not a
-	// function of map order.
 	sortStrings(names)
 
 	parts := make([]string, 0, len(names))
@@ -515,18 +443,6 @@ func basicAuth(user, password string) string {
 	return base64.StdEncoding.EncodeToString([]byte(url.QueryEscape(user) + ":" + url.QueryEscape(password)))
 }
 
-// interactionState pulls the CSRF state out of a redirect to the login UI.
-//
-// IT READS THE `Location` AND NOT A BODY, and that is the whole of what this
-// packet changed about the test harness: the state this service mints now travels
-// in a query string to a page on another origin, and a test that parsed a
-// `<input name="state">` out of a rendered form would be testing markup that no
-// longer exists. The value is the same value — the test asserts on the CONTRAT'T,
-// and the contract moved from a hidden field to a query parameter.
-//
-// A redirect that is not a redirect, or a redirect to somewhere that carries no
-// state, is a test failure rather than an empty string, because "the page did not
-// carry a state" used to be a failure too and it should stay one.
 func interactionState(t *testing.T, rec *oidcResponse) string {
 	t.Helper()
 
@@ -545,8 +461,6 @@ func interactionState(t *testing.T, rec *oidcResponse) string {
 	return state
 }
 
-// interactionParams is the parsed query of a redirect to the login UI, for the
-// assertions that are about what travels rather than about one field.
 func interactionParams(t *testing.T, rec *oidcResponse) url.Values {
 	t.Helper()
 
@@ -561,10 +475,6 @@ func interactionParams(t *testing.T, rec *oidcResponse) url.Values {
 	return parsed.Query()
 }
 
-// mustRedirect asserts that a response is a redirect to the login UI and returns
-// where. Every assertion about the interaction goes through it, so "is this
-// actually a redirect to the login UI" is one question answered in one place
-// rather than restated in a dozen tests.
 func mustRedirectToLoginUI(t *testing.T, rec *oidcResponse) *url.URL {
 	t.Helper()
 
@@ -589,8 +499,6 @@ func mustJSON(t *testing.T, data []byte, into any) {
 	}
 }
 
-// marshalPKCS8Key is x509.MarshalPKCS8PrivateKey, named so the test file does
-// not import crypto/x509 for one call.
 func marshalPKCS8Key(priv *rsa.PrivateKey) ([]byte, error) {
 	return x509.MarshalPKCS8PrivateKey(priv)
 }

@@ -8,9 +8,6 @@ import (
 	"testing"
 )
 
-// A trace id has to exist on every response, or support cannot correlate a
-// customer's report with a log line. That includes the responses nobody thought
-// about: the 404, the 405, the panic-free 200.
 func TestTraceHeaderIsAlwaysPresent(t *testing.T) {
 	t.Parallel()
 
@@ -43,7 +40,6 @@ func TestTraceHeaderIsAlwaysPresent(t *testing.T) {
 	}
 }
 
-// An inbound id is reused so a trace crosses a proxy hop intact.
 func TestInboundTraceIDIsReused(t *testing.T) {
 	t.Parallel()
 
@@ -60,9 +56,6 @@ func TestInboundTraceIDIsReused(t *testing.T) {
 	}
 }
 
-// A hostile or untidy inbound value is replaced rather than reflected. The value
-// lands in a response header and a log line, so anything that is not a
-// conservative identifier is refused.
 func TestUnusableInboundTraceIDIsReplaced(t *testing.T) {
 	t.Parallel()
 
@@ -95,7 +88,6 @@ func TestUnusableInboundTraceIDIsReplaced(t *testing.T) {
 			if got == "" {
 				t.Error("no trace id was set at all")
 			}
-			// The forged header must not have materialized.
 			if rec.Header().Get("X-Admin") != "" {
 				t.Error("the injected header reached the response")
 			}
@@ -103,9 +95,6 @@ func TestUnusableInboundTraceIDIsReplaced(t *testing.T) {
 	}
 }
 
-// The body's trace_id and the header's are the same value, which is the property
-// core states explicitly. A handler that minted its own would break support's
-// ability to find the log line.
 func TestProblemTraceIDMatchesTheResponseHeader(t *testing.T) {
 	t.Parallel()
 

@@ -12,9 +12,6 @@ import (
 	"github.com/anywaye/identity/internal/platform/id"
 )
 
-// errNoRows is pgx's "the query matched nothing", aliased so the intent reads at
-// the call site — the same alias internal/sessions and internal/apikeys keep for
-// the same reason.
 var errNoRows = pgx.ErrNoRows
 
 // Token is a row in the recovery_tokens table.
@@ -36,17 +33,8 @@ type Token struct {
 	UserID  id.UUID
 	Purpose Purpose
 	Email   string
-	// TargetEmail is the address an email change is moving to, and it is empty for
-	// every other purpose. The schema says so with a CHECK.
 	TargetEmail string
-	// TargetMinted says whether the second token of an email change exists yet.
-	// It is NOT the digest: the target token's digest is written and read inside
-	// this package's own transaction and never travels, so there is no field that
-	// could hold it after the fact.
 	TargetMinted bool
-	// TokenConsumedAt and TargetConsumedAt are the two halves of the single-use
-	// property. Pointers, because "never confirmed" and "confirmed at the epoch"
-	// are different answers and only the first is ever true.
 	TokenConsumedAt  *time.Time
 	TargetConsumedAt *time.Time
 	CreatedAt        time.Time
@@ -80,8 +68,6 @@ type Store struct {
 // NewStore returns a Store backed by pool.
 func NewStore(pool db.Pool) *Store { return &Store{pool: pool} }
 
-// tokenColumns is the select list, in the order scanToken expects. One constant,
-// so a column added here cannot be forgotten in one query and present in another.
 const tokenColumns = `id, user_id, purpose, target_email, created_at, expires_at, ` +
 	`token_consumed_at, target_consumed_at, (target_token_digest IS NOT NULL)`
 
@@ -120,10 +106,6 @@ func (s *Store) Create(ctx context.Context, q db.Querier, n NewToken) (Token, er
 // Clock, and a token that expires mid-request has to be judged against the same
 // instant the response is timestamped with.
 func (s *Store) Live(ctx context.Context, q db.Querier, digest string, purpose Purpose, now time.Time) (Token, error) {
-	// An empty digest never reaches the database. It is not a security boundary —
-	// an empty string hashes to a well-formed digest like any other value, which is
-	// the timing story — it is that the query has one shape and no caller can change
-	// it.
 	if digest == "" {
 		return Token{}, ErrTokenNotFound
 	}
@@ -292,11 +274,6 @@ func (s *Store) MintTarget(ctx context.Context, q db.Querier, tokenID id.UUID, d
 		return Token{}, ErrTokenNotFound
 	}
 
-	// THE ARGUMENT ORDER IS (id, at, digest) AND IT IS WORTH READING TWICE, because
-	// the two values are both opaque 64-character hex strings and a swap here is a
-	// runtime error rather than a compile-time one. The instant is $2 because it
-	// appears twice in the statement — once as the value written and once in the
-	// expiry filter — and Postgres numbers by first appearance.
 	const query = `
 		UPDATE recovery_tokens
 		SET token_consumed_at = $2, target_token_digest = $3
@@ -313,9 +290,6 @@ func (s *Store) MintTarget(ctx context.Context, q db.Querier, tokenID id.UUID, d
 	return out, nil
 }
 
-// nullString turns an empty target address into SQL NULL. The CHECK on the column
-// makes an empty string a constraint violation rather than a row with no target,
-// and this is where that is turned into the right thing at the boundary.
 func nullString(s string) any {
 	if s == "" {
 		return nil
@@ -323,15 +297,6 @@ func nullString(s string) any {
 	return s
 }
 
-// scanToken reads one token row.
-//
-// target_email is nullable — it is NULL for every purpose but an email change — and
-// it is scanned through a pointer for the reason internal/sessions does the same
-// for user_agent: pgx refuses to put a NULL into a string, and the alternative
-// (making the column NOT NULL and storing "") would assert that "an address is
-// being moved to" and "this flow does not move addresses" are the same fact. The
-// domain's zero value already renders both as "no target", and one of them really
-// is a target that happens to be empty.
 func scanToken(row pgx.Row) (Token, error) {
 	var (
 		t           Token

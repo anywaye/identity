@@ -12,28 +12,12 @@ import (
 	"github.com/anywaye/identity/internal/platform/id"
 )
 
-// The authorization request: one row per /oidc/authorize, from the moment the
-// request is validated to the moment its code is spent.
-//
-// It is a domain type AND the library's op.AuthRequest, because the two are the
-// same object seen from two ends. Splitting them would mean a translation layer
-// whose only content is field assignment, and every field would then be a place
-// where the two could disagree.
 
 // AuthRequest is a validated authorization request, waiting for a user.
 type AuthRequest struct {
-	// ID is the row's uuid and the value the login UI carries in its URL. It is
-	// not a credential: it names a request, and a request is only worth anything
-	// to a user who then authenticates against it.
 	ID          id.UUID
 	ClientRowID id.UUID
-	// ClientID is the public handle, carried so the login page can say which
-	// product is asking without a second query.
 	ClientID string
-	// ClientName is the product's registration name. Purely for display, and
-	// load-bearing for that: a login page that cannot name the thing asking is a
-	// login page a user types their password into on faith, which is the setup
-	// for a phishing page on this service's own domain.
 	ClientName string
 
 	RedirectURI         string
@@ -46,19 +30,12 @@ type AuthRequest struct {
 	CodeChallengeMethod string
 	LoginHint           string
 
-	// Subject is the user who will own the resulting tokens, and AuthTime is when
-	// they authenticated. They are set together and Done() reads the second, so
-	// a request that knows who is expected without anyone having logged in yet is
-	// representable — which is what an `id_token_hint` pre-fill is.
 	Subject  *id.UUID
 	AuthTime *time.Time
 
 	CreatedAt  time.Time
 	ExpiresAt  time.Time
 	CodeDigest *string
-	// CodeConsumedAt is set by the single UPDATE that redeems the code, which is
-	// what makes a code single-use under concurrency rather than merely in
-	// sequence.
 	CodeConsumedAt *time.Time
 }
 
@@ -114,10 +91,6 @@ func (s *Store) CreateAuthRequest(ctx context.Context, q db.Querier, n NewAuthRe
 	).Scan(&rowID); err != nil {
 		return AuthRequest{}, fmt.Errorf("oidc: creating an auth request: %w", err)
 	}
-	// n.CreatedAt is the reference instant rather than a separately supplied
-	// "now": the row was written at that time, so a request is live at its own
-	// creation by construction and anything else would be the caller's clock and
-	// this package's disagreeing.
 	return s.AuthRequestByID(ctx, q, rowID, n.CreatedAt)
 }
 
@@ -185,10 +158,6 @@ func (s *Store) SaveAuthCode(ctx context.Context, q db.Querier, rowID id.UUID, d
 		return fmt.Errorf("oidc: saving an authorization code: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		// Either the request is gone or a code is already on it. The second is
-		// the interesting one: two callbacks for one request would otherwise
-		// leave the second code's holder holding a code that is not the one the
-		// row knows about.
 		return ErrNoAuthCode
 	}
 	return nil
@@ -253,9 +222,6 @@ func scanAuthRequest(row rowScanner) (AuthRequest, error) {
 		return AuthRequest{}, err
 	}
 	if clientName != nil {
-		// The registration's name, for the login page to render. It is nullable
-		// here only because the column is NOT NULL and a pointer is how pgx
-		// reports "present"; there is no state in which it is nil.
 		r.ClientName = *clientName
 	}
 	return r, nil

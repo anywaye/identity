@@ -8,50 +8,15 @@ import (
 	"testing"
 )
 
-// THE LOCAL, PROD-SHAPED PROFILE, held to what a real `Load` produces from it.
-//
-// `config/local.env` is the file the local loop sources. It is an operator input
-// and no code path reads it — which means nothing but this test connects it to
-// the configuration rules in this package, and a profile that drifted (an issuer
-// that stopped matching PLAN §1, a callback that stopped being built from
-// `OAUTH_REDIRECT_BASE_URL`, a social endpoint that stopped pointing at the
-// stub) would keep running perfectly until somebody tried to sign in.
-//
-// So the assertions here are about RELATIONSHIPS between values, not about
-// values being present:
-//
-//   - the issuer is https and is the `.test` projection of the production name;
-//   - the JWKS document is derived from the issuer rather than configured
-//     separately (a second place to set it is a second place to get it wrong);
-//   - every social endpoint points at oauth-stub, and the two authorize URLs are
-//     the ones a browser can reach;
-//   - the callback base and the issuer are the SAME origin, which is the whole
-//     property the social round trip exists to measure.
-//
-// And the negative control matters more than the positives: the file as
-// committed is INVALID, because it carries no key material. That is asserted
-// first, with the sentinel the refusal must name, because a profile that loaded
-// fine without a signing key would be a profile that had quietly stopped being
-// all-or-nothing.
 
-// localEnvPath is where the committed profile lives, relative to this package.
 const localEnvPath = "../../config/local.env"
 
-// localIssuer, localCallbackBase and localStubHost are the four values the
-// profile's whole argument is about, named once so the assertions below say what
-// they mean.
 const (
 	localIssuer       = "https://auth.anywaye.test"
 	localCallbackBase = "https://auth.anywaye.test"
 	localStubHost     = "localhost"
 )
 
-// parseLocalEnv reads a `KEY=VALUE` file the way a shell `source` would, minus
-// the shell: no expansion, no quoting rules beyond the obvious, comments and
-// blank lines dropped. That is the whole subset this profile uses, and the test
-// fails if it meets a line it does not understand rather than skipping it —
-// a reader that silently drops a line is a reader that agrees with a file that
-// has stopped saying anything.
 func parseLocalEnv(t *testing.T, path string) map[string]string {
 	t.Helper()
 
@@ -87,15 +52,6 @@ func parseLocalEnv(t *testing.T, path string) map[string]string {
 	return values
 }
 
-// TestTheCommittedLocalProfileIsInvalidWithoutKeyMaterial is the negative
-// control for everything below it.
-//
-// It is the first assertion because it is the one that makes the rest meaningful:
-// a profile that loaded cleanly with no signing key would be a profile whose
-// all-or-nothing rule had been quietly relaxed for the local run, and the local
-// run is the one place a developer would never notice — the surface would mount
-// and sign nothing, and every locally minted token would be a 500 at the first
-// sign-in.
 func TestTheCommittedLocalProfileIsInvalidWithoutKeyMaterial(t *testing.T) {
 	t.Parallel()
 
@@ -106,18 +62,11 @@ func TestTheCommittedLocalProfileIsInvalidWithoutKeyMaterial(t *testing.T) {
 	}
 }
 
-// TestTheLocalProfileIsProdShaped is the positive half: with key material
-// supplied the way `bin/local-idp` supplies it, the profile produces the
-// configuration PLAN §3 L7 describes.
 func TestTheLocalProfileIsProdShaped(t *testing.T) {
 	t.Parallel()
 
 	values := parseLocalEnv(t, localEnvPath)
 
-	// What `bin/local-idp keygen` puts in the gitignored companion file. The
-	// contents are not parsed here — that is internal/oidc's job and its own
-	// tests — but they must be non-empty for the all-or-nothing count to reach
-	// three.
 	values["SIGNUP_SIGNING_KEY"] = signupTestKey
 	values["OAUTH_ENCRYPTION_KEY"] = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
 	values["OIDC_SIGNING_KEY"] = "-----BEGIN PRIVATE KEY-----\nlocal\n-----END PRIVATE KEY-----\n"
@@ -142,20 +91,11 @@ func TestTheLocalProfileIsProdShaped(t *testing.T) {
 		t.Error("OIDCLoginUIURL is empty; a provider with no login UI refuses to start (internal/oidc)")
 	}
 
-	// The callback base is built from configuration and never from the request's
-	// Host. That the two are the same origin here is the property the whole
-	// profile turns on: set them apart and the social round trip completes
-	// against the stub and delivers the code to an origin the browser is not
-	// signed in on.
 	if cfg.OAuth.RedirectBaseURL != localCallbackBase {
 		t.Errorf("OAuthRedirectBaseURL = %q, want %q (the identity face, where the browser returns to)",
 			cfg.OAuth.RedirectBaseURL, localCallbackBase)
 	}
 
-	// Every social endpoint must point at the stub, and the two authorize URLs
-	// are the ones a browser is sent to — so they are the ones that have to be
-	// reachable from the browser's resolver, which is why they are spelled
-	// `localhost` and not a `.test` name.
 	for _, tc := range []struct{ name, got, want string }{
 		{"google authorize", cfg.OAuth.Google.Endpoints.AuthorizeURL, "http://" + localStubHost + ":19081/google/authorize"},
 		{"google token", cfg.OAuth.Google.Endpoints.TokenURL, "http://" + localStubHost + ":19081/google/token"},
@@ -171,22 +111,12 @@ func TestTheLocalProfileIsProdShaped(t *testing.T) {
 		}
 	}
 
-	// Two stub instances, one client pair each: the Google pair and the GitHub
-	// pair must not be the same credentials, because oauth-stub refuses a client
-	// id it was not configured with and a shared pair would make one of the two
-	// providers fail with `invalid_client` for a reason nobody could read off the
-	// configuration.
 	if cfg.OAuth.Google.ClientID == cfg.OAuth.GitHub.ClientID {
 		t.Errorf("the Google and GitHub client ids are both %q; oauth-stub holds one pair per instance",
 			cfg.OAuth.Google.ClientID)
 	}
 }
 
-// TestTheLocalProfileCoversEveryProviderItCredentialises walks the other
-// direction: a client pair with no endpoint override is a provider that would
-// reach the real thing from a local run, which is the failure the profile exists
-// to prevent — and it is invisible, because the sign-in would simply appear to
-// hang or fail at Google rather than at the stub.
 func TestTheLocalProfileCoversEveryProviderItCredentialises(t *testing.T) {
 	t.Parallel()
 

@@ -1,12 +1,5 @@
 package oauth
 
-// TESTS FOR APPLE'S TWO MECHANISMS: the client_secret this service signs, and
-// the id_token it verifies.
-//
-// The minting tests are the safe half of the packet and are self-contained: the
-// helper is pure (four strings in, one string out) and everything it produces
-// can be asserted by parsing the JWT. The id_token verification tests live in
-// client_test.go, because they need the fake provider to stand in for Apple.
 
 import (
 	"crypto/ecdsa"
@@ -24,8 +17,6 @@ import (
 	"github.com/go-jose/go-jose/v4"
 )
 
-// appleTestKey returns a P-256 key and its .p8 PEM — the shape of
-// OAUTH_APPLE_PRIVATE_KEY.
 func appleTestKey(t *testing.T) (*ecdsa.PrivateKey, string) {
 	t.Helper()
 
@@ -40,9 +31,6 @@ func appleTestKey(t *testing.T) (*ecdsa.PrivateKey, string) {
 	return key, string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: raw}))
 }
 
-// decodeCompactJWS splits a compact JWS and decodes its header and payload as
-// JSON, WITHOUT verifying the signature: the shape under test here is what was
-// minted, not whether it verifies.
 func decodeCompactJWS(t *testing.T, token string) (header, payload map[string]any) {
 	t.Helper()
 
@@ -64,13 +52,6 @@ func decodeCompactJWS(t *testing.T, token string) (header, payload map[string]an
 	return decode(parts[0]), decode(parts[1])
 }
 
-// TestMintAppleClientSecret pins the minted secret's shape: the header Apple's
-// token endpoint requires, the claims Apple checks, and the exp bound.
-//
-// The exp bound is the assertion that matters most. Apple accepts a secret valid
-// for up to six months, and this service mints ONE at startup and caches it —
-// there is no rotation machinery — so the lifetime is the maximum. A secret that
-// expires sooner is a sign-in flow that breaks at 3am with nothing to renew it.
 func TestMintAppleClientSecret(t *testing.T) {
 	t.Parallel()
 
@@ -90,7 +71,6 @@ func TestMintAppleClientSecret(t *testing.T) {
 
 	header, payload := decodeCompactJWS(t, secret)
 
-	// The header Apple's token endpoint requires.
 	if header["alg"] != "ES256" {
 		t.Errorf("header alg = %v, want ES256", header["alg"])
 	}
@@ -98,7 +78,6 @@ func TestMintAppleClientSecret(t *testing.T) {
 		t.Errorf("header kid = %v, want KEYID12345", header["kid"])
 	}
 
-	// The claims.
 	if payload["iss"] != "ABCDE12345" {
 		t.Errorf("iss = %v, want the team id ABCDE12345", payload["iss"])
 	}
@@ -109,7 +88,6 @@ func TestMintAppleClientSecret(t *testing.T) {
 		t.Errorf("aud = %v, want https://appleid.apple.com", payload["aud"])
 	}
 
-	// The exp bound: in the future, and no further out than Apple's maximum.
 	exp, ok := payload["exp"].(float64)
 	if !ok {
 		t.Fatalf("exp = %v, want a number", payload["exp"])
@@ -122,7 +100,6 @@ func TestMintAppleClientSecret(t *testing.T) {
 		t.Errorf("exp = %d, want it no further out than the %s lifetime (%d)", int64(exp), appleClientSecretLifetime, max)
 	}
 
-	// iat is now.
 	iat, ok := payload["iat"].(float64)
 	if !ok {
 		t.Fatalf("iat = %v, want a number", payload["iat"])
@@ -131,8 +108,6 @@ func TestMintAppleClientSecret(t *testing.T) {
 		t.Errorf("iat = %d, want about now (%d)", int64(iat), now)
 	}
 
-	// And the signature verifies against the public key: the minted secret is a
-	// real ES256 JWT, not just a well-shaped string.
 	jws, err := jose.ParseSigned(secret, []jose.SignatureAlgorithm{jose.ES256})
 	if err != nil {
 		t.Fatalf("the minted secret does not parse as an ES256 JWS: %v", err)
@@ -142,13 +117,6 @@ func TestMintAppleClientSecret(t *testing.T) {
 	}
 }
 
-// TestMintAppleClientSecretRefusesAHalfConfiguredInput holds the fourth provider
-// to the existing rule: some of the four inputs and not all is a mistake and
-// never an intention, and the refusal is ErrIncompleteProvider — the same
-// sentinel the other three providers' half-configured credentials produce.
-//
-// Each of the four is missing in turn, because a test that only omitted the
-// private key would pass against an implementation that only checked that one.
 func TestMintAppleClientSecretRefusesAHalfConfiguredInput(t *testing.T) {
 	t.Parallel()
 
@@ -179,8 +147,6 @@ func TestMintAppleClientSecretRefusesAHalfConfiguredInput(t *testing.T) {
 	}
 }
 
-// An empty input means Apple is not configured, which is the supported absent
-// state — not an error and not a secret.
 func TestMintAppleClientSecretWithNoInputs(t *testing.T) {
 	t.Parallel()
 
@@ -193,10 +159,6 @@ func TestMintAppleClientSecretWithNoInputs(t *testing.T) {
 	}
 }
 
-// A private key that does not parse is a startup failure, not a silently
-// skipped provider: a deployment that believes it has Apple credentials and has
-// a broken key is a failed deploy, and the alternative is a sign-in button
-// that 404s.
 func TestMintAppleClientSecretRefusesABadPrivateKey(t *testing.T) {
 	t.Parallel()
 

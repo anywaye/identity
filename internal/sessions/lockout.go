@@ -1,5 +1,3 @@
-// Package sessions owns the session row, the token that addresses it, and the
-// brute-force policy that decides when an account stops accepting passwords.
 package sessions
 
 import (
@@ -8,19 +6,8 @@ import (
 )
 
 const (
-	// MaxFailedAttempts is the number of consecutive wrong passwords that locks
-	// an account.
 	MaxFailedAttempts = 5
 
-	// LockoutDuration is how long a lock lasts.
-	//
-	// The trade-off, stated because it is a real one: this policy is per account
-	// and not per source address, so an attacker who knows a victim's address
-	// can lock them out on a schedule. Per-address throttling is what stops
-	// that, and it belongs to the edge (gateway), not to a service that cannot see
-	// the address history. Fifteen minutes is long enough that guessing 256-bit
-	// tokens or a dictionary attack is hopeless, and short enough that a locked
-	// out user waits out one coffee.
 	LockoutDuration = 15 * time.Minute
 )
 
@@ -38,7 +25,6 @@ const (
 // exists — which is why the 423 is the one place login is allowed to leak that
 // much.
 type LockedError struct {
-	// RetryAfter is how much longer the caller must wait. Never negative.
 	RetryAfter time.Duration
 }
 
@@ -65,10 +51,7 @@ func (e *LockedError) Error() string {
 // wrong number of minutes. TestTheFactorLockoutIsThisLockout runs one table
 // through both.
 type Lockout struct {
-	// FailedAttempts counts wrong passwords since the last success or the last
-	// lock. It is not a lifetime total.
 	FailedAttempts int `json:"failed_attempts"`
-	// LockedUntil is nil when the account is not locked.
 	LockedUntil *time.Time `json:"locked_until,omitempty"`
 }
 
@@ -107,8 +90,6 @@ func (l Lockout) Failed(now time.Time) Lockout {
 		return l
 	}
 
-	// An expired lock means the previous window is over. Without this reset the
-	// count would still be at the threshold and the next mistake would re-lock.
 	if l.LockedUntil != nil {
 		l.FailedAttempts = 0
 		l.LockedUntil = nil

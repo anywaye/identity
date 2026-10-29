@@ -20,8 +20,6 @@ var ErrEmptyPassword = errors.New("password must not be empty")
 // explicit constructor call.
 type Hasher struct {
 	params *argon2id.Params
-	// dummy is a real argon2id digest of a value nobody knows. Verifying against
-	// it is what makes "no such account" cost the same as "wrong password".
 	dummy string
 }
 
@@ -52,20 +50,10 @@ func NewHasherWithParams(params *argon2id.Params) *Hasher {
 		params = DefaultParams()
 	}
 	h := &Hasher{params: params}
-	// Derived once, eagerly. A lazy digest would make the first attempt against
-	// an unknown address cost two argon2id operations instead of one, which is
-	// a one-request timing tell in exactly the direction this is meant to
-	// eliminate. The cost is paid once at startup instead.
 	h.dummy = h.hashUnchecked(randomDummySecret)
 	return h
 }
 
-// randomDummySecret is not a secret. It is the plaintext behind the dummy
-// digest, and it is a constant so that constructing two Hashers produces
-// identical dummy digests — which is fine, because the digest is never a
-// credential for anything. What matters is only that no submitted password can
-// verify against it, which is guaranteed by the value being 32 bytes of
-// high-entropy data that no caller can guess.
 const randomDummySecret = "identity-login-timing-equalizer-not-a-credential"
 
 // Hash returns an encoded argon2id digest of plain. The plaintext is not
@@ -80,10 +68,6 @@ func (h *Hasher) Hash(plain string) (string, error) {
 func (h *Hasher) hashUnchecked(plain string) string {
 	digest, err := argon2id.CreateHash(plain, h.params)
 	if err != nil {
-		// CreateHash only fails on a negative parameter or a rand failure. Both
-		// are unrecoverable and neither should be papered over with a digest
-		// that verifies against nothing. The hasher is constructed with valid
-		// parameters, so reaching here means the process is already failing.
 		panic("users: argon2id CreateHash failed: " + err.Error())
 	}
 	return digest
@@ -116,9 +100,6 @@ func (h *Hasher) VerifyDummy(plain string) {
 	_, _ = argon2id.ComparePasswordAndHash(plain, h.dummy)
 }
 
-// dummyDigest exposes the derived digest for assertions about its well-formedness.
-// It exists so the test can check the timing guarantee's premise — that the dummy
-// really is a parseable argon2id digest, so VerifyDummy really does the work.
 func (h *Hasher) dummyDigest() string { return h.dummy }
 
 // IsArgon2idDigest reports whether s looks like an encoded argon2id digest. It is

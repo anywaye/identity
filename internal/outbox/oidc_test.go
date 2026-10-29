@@ -9,15 +9,6 @@ import (
 	"github.com/anywaye/identity/internal/platform/id"
 )
 
-// The OIDC events: a product registered itself as a relying party, and one was
-// revoked.
-//
-// The subject is the OIDC client, not the account it was registered under and
-// certainly not the human who registered it. core's rule is that the subject is
-// "the entity the event is about, not the actor", and the entity here is the
-// credential: a consumer that has to stop trusting a client correlates on the
-// client, and a consumer watching an account's registrations correlates on the
-// account. Both questions are real; this event answers the first.
 
 func TestOIDCClientEventsValidateAgainstCoreSchema(t *testing.T) {
 	t.Parallel()
@@ -107,8 +98,6 @@ func TestOIDCClientCreatedPayload(t *testing.T) {
 	if data.RegisteredBy != actor.String() {
 		t.Errorf("registered_by = %q, want %q", data.RegisteredBy, actor)
 	}
-	// The redirect list is in the payload because it is the fact a consumer
-	// auditing trust needs: which origins this credential can be delivered to.
 	if len(data.RedirectURIs) != 1 || data.RedirectURIs[0] != redirects[0] {
 		t.Errorf("redirect_uris = %v, want %v", data.RedirectURIs, redirects)
 	}
@@ -117,10 +106,6 @@ func TestOIDCClientCreatedPayload(t *testing.T) {
 	}
 }
 
-// No event on the platform carries a usable credential, so no OIDC event may
-// carry the client secret. This is the assertion that keeps that true: the
-// envelope goes to every subscriber, and the secret exists exactly once, in the
-// 201 response to whoever registered the client.
 func TestOIDCEventsCarryNoClientSecret(t *testing.T) {
 	t.Parallel()
 

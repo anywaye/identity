@@ -11,48 +11,13 @@ import (
 	"github.com/anywaye/identity/internal/platform/id"
 )
 
-// THE AGENT TOKEN LIFECYCLE: create, list, revoke, rotate — the routes `caf agent
-// token …` calls to manage the credentials its principal holds.
-//
-// # WHY THIS IS A PARALLEL OF api_keys AND NOT A CALL INTO IT
-//
-// Same hashing, same introspection argument, a DIFFERENT lifetime and a different
-// owner: an agent token is held by a principal that may be unclaimed, minted by
-// the agent for itself rather than by a signed-in owner for an account. So it is
-// a parallel lifecycle over the same digest machinery, exactly as Register is a
-// parallel of a signup. Nothing here reaches into internal/apikeys, and nothing
-// there is asked about a value that begins with the shared `anywaye_` prefix: each
-// surface resolves its own table, which is the one thing that prefix is FOR (see
-// the agents package header).
-//
-// # WHAT THE SCOPES ARE, AND ARE NOT
-//
-// NOTHING in this file grants a scope. Migration 00031 left `scopes` out of
-// agent_tokens by name and said W1-P2 would declare the vocabulary "one name at a
-// time against a route that exists". The routes an agent token would gate — box
-// enrollment, conductor capabilities — do not exist yet (they are W1-P3/W2), so
-// there is no vocabulary to fill a column with, and inventing one now would be a
-// promise about the future rather than a control over the present. Until then
-// these credentials authenticate the agent to its OWN management surface and
-// resolve via the plain introspected principal once claimed (W2-P2 mints the
-// first scoped token against that vocabulary). "Scoped" here means "held by one
-// principal and revocable on it", which is the property the table already has.
 
 // TokenInput is what issuing a token needs.
 type TokenInput struct {
-	// Agent is the principal the credential belongs to, resolved from the
-	// presented token by Authenticate and passed down — never read from a path or
-	// a body, so a handler cannot mint a credential for an agent it was not
-	// authenticated as.
 	Agent id.UUID
-	// Name labels the credential, 1..80, unique among the agent's LIVE tokens.
 	Name string
-	// ExpiresIn, when non-nil, is the requested lifetime; nil uses DefaultTokenTTL.
-	// A duration is capped at maxTokenLifetime and floored at one second.
 	ExpiresIn *time.Duration
-	// TraceID joins the mint event to the request's log line.
 	TraceID string
-	// Now is the service's clock.
 	Now time.Time
 }
 
@@ -66,8 +31,6 @@ type IssuedToken struct {
 type Owner struct {
 	Agent Agent
 	Token Token
-	// ActorID names the credential that authenticated the request, for the event
-	// row's actor_token_id. It is Token.ID — the ROW id — and never the value.
 	ActorID id.UUID
 }
 
@@ -118,9 +81,6 @@ func (s *Service) Authenticate(ctx context.Context, presented string, now time.T
 			return ErrNotFound
 		}
 		if resolved.AgentStatus == StatusDisabled || !IsKnownStatus(resolved.AgentStatus) {
-			// Disabled, or a status this build has never seen. Both are refused,
-			// and refused identically — the unknown-status case is the fail-closed
-			// direction UsableAt states for the same reason.
 			return ErrNotFound
 		}
 		agent, err := s.store.ByID(ctx, tx, resolved.AgentID)
@@ -284,8 +244,6 @@ func (s *Service) RotateToken(ctx context.Context, agent, tokenID id.UUID, expir
 		return IssuedToken{}, err
 	}
 
-	// Resolve the requested expiry ONCE, before the transaction, so the mint and
-	// any refusal about it agree without re-parsing inside.
 	expiresAt := now.Add(DefaultTokenTTL)
 	if expiresIn != nil {
 		if *expiresIn <= 0 || *expiresIn > maxTokenLifetime {
@@ -349,12 +307,8 @@ func (s *Service) RotateToken(ctx context.Context, agent, tokenID id.UUID, expir
 	return IssuedToken{Token: out, Plaintext: value}, nil
 }
 
-// rotationReason is written on the old token when a rotation revokes it, so the
-// audit row and the credential row agree that this revocation was not an incident.
 const rotationReason = "rotated"
 
-// Errors the token use cases return. They are values the HTTP layer renders
-// distinctly, for the same reasons apikeys' are.
 var (
 	ErrInvalidTokenName = errors.New("a token name is required and must be between 1 and 80 characters")
 	ErrInvalidLifetime  = errors.New("the requested lifetime must be positive and no more than a year")

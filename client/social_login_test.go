@@ -1,25 +1,5 @@
 package client
 
-// THE SOCIAL-LOGIN WRAPPER'S THREE SHAPES, AND WHY TWO OF THEM ARE NOT ONE.
-//
-// `StartSocialLogin` and `CompleteSocialLogin` are the only two operations in this
-// document with no request body and a success that is not one JSON shape, so they
-// are the two that cannot go through `call`. That is not a style preference: a
-// shared helper that assumed "success is one decode" would have to be bent for
-// each of them, and a helper bent four times is not shared any more.
-//
-// The three shapes the callback can answer are contract, not implementation:
-//
-//   - 200 `Session`      — a sign-in finished.
-//   - 202 `MFAChallenge` — no session exists; finish at POST /v1/session/mfa.
-//   - 200 `SocialLinked` — the LINK path; **nothing was minted**.
-//
-// The wrapper returns `(session, linked, error)` rather than one generated type
-// because a single return value would make the link path indistinguishable from a
-// sign-in with an empty token — which is the exact confusion the document's
-// `SocialLinked` schema says would be the bug. `Linked` is true with a nil
-// session, and there is no combination of the two that reports a completed
-// sign-in that did not happen.
 
 import (
 	"context"
@@ -35,9 +15,6 @@ const (
 	socialGoogle = generated.StartSocialLoginParamsProviderGoogle
 )
 
-// socialServer answers the two operations with whatever the case asks for, and
-// records the request so a test can assert what was sent rather than only what
-// came back.
 type socialServer struct {
 	*httptest.Server
 
@@ -68,9 +45,6 @@ func newSocialServer(t *testing.T, status int, body, location string) *socialSer
 	return s
 }
 
-// TestTheStartWrapperReturnsTheRedirectTargetAndNothingElse covers the 302, which
-// is a success in the 3xx range and therefore is not covered by the shared 2xx
-// check every other wrapper in this package uses.
 func TestTheStartWrapperReturnsTheRedirectTargetAndNothingElse(t *testing.T) {
 	const target = "https://accounts.google.com/o/oauth2/v2/auth?client_id=abc&state=xyz"
 
@@ -92,11 +66,6 @@ func TestTheStartWrapperReturnsTheRedirectTargetAndNothingElse(t *testing.T) {
 	}
 }
 
-// TestAStartRedirectWithNoLocationIsAFailureRatherThanAnEmptyString is the case
-// that decides the wrapper's signature.
-//
-// Returning "" with a nil error would be the shape of "there is nowhere to send the
-// browser", and a caller rendering a link from it would render a link to itself.
 func TestAStartRedirectWithNoLocationIsAFailureRatherThanAnEmptyString(t *testing.T) {
 	server := newSocialServer(t, http.StatusFound, "", "")
 	client := newTestClient(t, server.URL, fakeSessionToken)
@@ -117,15 +86,6 @@ func TestAStartRedirectWithNoLocationIsAFailureRatherThanAnEmptyString(t *testin
 	}
 }
 
-// TestAnUnconfiguredProviderIsTheSame404AsOneThatDoesNotExist is the property the
-// document states, asserted on the client's own output.
-//
-// The two must not be tellable apart, because telling them apart is a way to
-// enumerate a deployment's configuration. The fixture cannot produce a genuinely
-// different body for the second case — the service does not emit one — so the
-// assertion is over the STATUS and the typed error, which is what a caller acts
-// on, and the reason is written here rather than left as a comment that claims
-// more than the test checks.
 func TestAnUnconfiguredProviderIsTheSame404AsOneThatDoesNotExist(t *testing.T) {
 	const body = `{"type":"https://anywaye.com/problems/not_found","title":"Not found",` +
 		`"status":404,"code":"not_found","detail":"no route","trace_id":"3f1c9a2e-7b4d-4c8e-9a1b-2d5e6f708192"}`
@@ -149,27 +109,7 @@ func TestAnUnconfiguredProviderIsTheSame404AsOneThatDoesNotExist(t *testing.T) {
 	}
 }
 
-// TestTheClientDoesNotFollowARedirect is the red proof for the transport's
-// redirect policy, and it is here because that policy is a property of EVERY
-// operation rather than of this one.
-//
-// `net/http`'s default follows up to ten 3xx hops. Before the policy, a 302 from
-// this fixture was FOLLOWED: the test above failed with the transport having made
-// a request to `accounts.google.com`, which is a request this client was never
-// asked to make and would have replayed its credential across. That is the
-// failure, it was observed rather than predicted, and it is what
-// `newTransport`'s `CheckRedirect` exists to prevent.
-//
-// The negative control is the second request: without it, a policy that returned
-// the response would pass and a policy that followed it would fail — but only
-// because the follow-up happened to error. A server that answered the hop would
-// make the difference silent, which is why the counter below has to stay at one.
 func TestTheClientDoesNotFollowARedirect(t *testing.T) {
-	// ONE counter for the whole test, and the assertion is that it equals the
-	// number of CALLS rather than the number of requests — two calls, two
-	// requests, zero hops. A client that followed would make three, and saying it
-	// that way keeps the counter honest: a policy that followed would have to make
-	// the counter go up, not merely change what the second call returned.
 	var requests int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
@@ -180,8 +120,6 @@ func TestTheClientDoesNotFollowARedirect(t *testing.T) {
 
 	client := newTestClient(t, server.URL, fakeSessionToken)
 
-	// The start path returns the redirect as data, which is the shape a caller
-	// renders a sign-in button from.
 	location, err := client.StartSocialLogin(context.Background(), socialGoogle)
 	if err != nil {
 		t.Fatalf("a 302 with a Location is this operation's success: %v", err)
@@ -190,9 +128,6 @@ func TestTheClientDoesNotFollowARedirect(t *testing.T) {
 		t.Errorf("the wrapper returned %q, want the redirect target", location)
 	}
 
-	// And the generic path, because the policy is on the transport rather than on
-	// the one method. A 302 on an operation whose success is JSON is not a shape
-	// this build knows, and it must not become a second request.
 	if _, err := client.GetCurrentUser(context.Background()); err == nil {
 		t.Error("a 302 answered as a success on an operation whose success is JSON")
 	}
@@ -204,9 +139,6 @@ func TestTheClientDoesNotFollowARedirect(t *testing.T) {
 	}
 }
 
-// TestTheCallbackWrapperTellsTheThreeSuccessShapesApart is the reason this file
-// exists. Each case is one shape the document promises, and the assertion is on
-// the (session, linked, error) triple the wrapper returns.
 func TestTheCallbackWrapperTellsTheThreeSuccessShapesApart(t *testing.T) {
 	const token = "0dN3aQ2vF8kLmXpR7sT1uWzYb4cE6hJ9gK2mP5rS8tV"
 
@@ -225,9 +157,6 @@ func TestTheCallbackWrapperTellsTheThreeSuccessShapesApart(t *testing.T) {
 			wantToken: token,
 		},
 		{
-			// THE LINK PATH, and the case a one-value signature would get wrong. There
-			// is no `token` field at all — a client that read one would find nothing
-			// rather than an empty string, which is the honest signal.
 			name:       "a provider identity linked, no session minted",
 			status:     http.StatusOK,
 			body:       `{"linked_provider":"google"}`,
@@ -290,14 +219,6 @@ func TestTheCallbackWrapperTellsTheThreeSuccessShapesApart(t *testing.T) {
 	}
 }
 
-// TestTheCallbackWrapperRefusesToGuessAtAShapeItDoesNotRecognise is the negative
-// control on the test above.
-//
-// A 200 carrying NEITHER a token nor a linked_provider is a response this build
-// does not understand. Decoding it into a zero Session and returning it would hand
-// a caller a credential-shaped struct with no credential in it — which is the
-// failure `MFARequiredError` exists to make impossible for the 202 and which would
-// be reintroduced here by a plain unmarshal.
 func TestTheCallbackWrapperRefusesToGuessAtAShapeItDoesNotRecognise(t *testing.T) {
 	server := newSocialServer(t, http.StatusOK, `{"expires_at":"2026-10-30T12:00:00Z"}`, "")
 	client := newTestClient(t, server.URL, fakeSessionToken)
@@ -320,14 +241,6 @@ func TestTheCallbackWrapperRefusesToGuessAtAShapeItDoesNotRecognise(t *testing.T
 	}
 }
 
-// TestAnEmailCollisionComesBackAsA409AndNotASession is the security property the
-// whole surface is built around, asserted on the client's own behavior.
-//
-// The service refuses the sign-in when a provider returns an address a local
-// account already holds, and says so with a 409. The wrapper's obligation is
-// narrow and worth stating: it must NOT turn that into a session, and it must not
-// swallow it. A caller that gets a nil error and an empty session here has been
-// told a sign-in happened when the service refused one.
 func TestAnEmailCollisionComesBackAsA409AndNotASession(t *testing.T) {
 	const body = `{"type":"https://anywaye.com/problems/conflict","title":"Conflict","status":409,` +
 		`"code":"conflict","detail":"an account already exists for the email address that ` +
