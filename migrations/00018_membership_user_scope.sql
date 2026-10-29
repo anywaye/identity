@@ -1,4 +1,6 @@
 
+-- +goose Up
+-- +goose StatementBegin
 create or replace function anywaye.current_user_id()
 returns uuid
 language plpgsql
@@ -21,7 +23,9 @@ exception
                    'authenticated it, and this is the cheapest place to find it.';
 end
 $caf$;
+-- +goose StatementEnd
 
+-- +goose StatementBegin
 create or replace function anywaye.begin_user(p_user uuid)
 returns void
 language plpgsql
@@ -34,7 +38,9 @@ begin
   perform set_config('anywaye.user_id', p_user::text, true);
 end
 $caf$;
+-- +goose StatementEnd
 
+-- +goose StatementBegin
 create or replace function anywaye.protect_membership_table(
   p_table regclass,
   p_user_column text,
@@ -82,7 +88,9 @@ begin
   end if;
 end
 $caf$;
+-- +goose StatementEnd
 
+-- +goose StatementBegin
 create or replace function anywaye.membership_tables()
 returns table (table_schema text, table_name text, user_column text)
 language sql
@@ -136,15 +144,63 @@ as $caf$
     join pg_namespace n on n.oid = c.relnamespace
    order by n.nspname, c.relname
 $caf$;
+-- +goose StatementEnd
 
+-- +goose StatementBegin
+-- WHO BELONGS TO WHAT, and who belongs where. The one call.
+--
+-- It replaces nothing: `protect_membership_table` calls `protect_table` on the
+-- same table first, so the four account policies, ENABLE, FORCE, the
+-- `account_id` index and the `identity_app` grants are all re-issued exactly as
+-- 00016 issued them. The only difference is the fifth policy, whose USING clause
+-- is the caller rather than an account:
+--
+--   using (user_id = (select anywaye.current_user_id()))
+--
+-- `for select` and nothing else, so a caller who can see where it belongs cannot
+-- add itself anywhere: an insert still meets the ordinary `with check`, which
+-- demands an account identity. Discovery is not authorisation, and the assertion
+-- that holds them apart is `membership/discovery-cannot-write` in kit's
+-- isolation.sql, which runs against this table's shape.
+--
+-- `user_id` is the column 00006 built and every account_users query already keys
+-- by. Named here rather than derived, because a substrate that guessed which
+-- column holds the member would be guessing at the adopter's vocabulary.
 select anywaye.protect_membership_table('account_users', 'user_id');
+-- +goose StatementEnd
 
+-- +goose Down
 
+-- UNDO THE CALLER SCOPE AND NOTHING ELSE. The four account policies, ENABLE,
+-- FORCE, the `account_id` index and the `identity_app` grants were all there
+-- before this migration and are left there, exactly as 00016's own Down leaves the
+-- grants: `protect_table` re-issued nothing and changed no privilege, so a Down
+-- that revoked them would be undoing 00016 rather than this migration.
+--
+-- THE DISCOVER POLICY IS NAMED, NOT `cascade`d, for the reason 00016's Down gives
+-- and which got worse with this migration: `anywaye.membership_tables()` READS THE
+-- POLICIES, so a policy that outlived the capability it describes would keep
+-- answering "this table can be read with no account because of who is asking" on a
+-- database where it no longer can. An audit that has gone stale is worse than no
+-- audit.
+-- +goose StatementBegin
 drop policy if exists account_users_anywaye_members on account_users;
+-- +goose StatementEnd
 
+-- +goose StatementBegin
 drop index if exists account_users_anywaye_user_id_idx;
+-- +goose StatementEnd
 
+-- THE FOUR FUNCTIONS, NAMED, AND IN THE ORDER THAT LETS THEM GO. `protect_membership_table`
+-- calls `protect_table`, and the policy dropped above depends on `current_user_id()`, so
+-- the only ordering constraint this list actually carries is: the audit first (it READS
+-- the policy), the policy before the function that could recreate it, and the rest in
+-- the order they read. Nothing here drops the `anywaye` schema — 00016 created it and
+-- 00016's Down removes it, and a migration that dropped it here would take
+-- `protect_table` with it and leave 00016's Down unable to finish.
+-- +goose StatementBegin
 drop function if exists anywaye.membership_tables();
 drop function if exists anywaye.protect_membership_table(regclass, text, text);
 drop function if exists anywaye.begin_user(uuid);
 drop function if exists anywaye.current_user_id();
+-- +goose StatementEnd

@@ -1,4 +1,5 @@
 
+-- +goose Up
 
 ALTER TABLE agents ADD COLUMN username text;
 
@@ -13,6 +14,7 @@ ALTER TABLE agents ADD CONSTRAINT agents_username_shape CHECK (
 CREATE UNIQUE INDEX agents_username_key
     ON agents (lower(username)) WHERE username IS NOT NULL;
 
+-- +goose Down
 
 DROP INDEX agents_username_key;
 ALTER TABLE agents DROP CONSTRAINT agents_username_shape;

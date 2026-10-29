@@ -1,4 +1,5 @@
 
+-- +goose Up
 
 CREATE TABLE outbox_events (
     id          uuid        PRIMARY KEY,
@@ -34,5 +35,6 @@ CREATE TABLE outbox_events (
 
 CREATE INDEX outbox_events_unpublished_idx ON outbox_events (created_at, id) WHERE published_at IS NULL;
 
+-- +goose Down
 
 DROP TABLE outbox_events;

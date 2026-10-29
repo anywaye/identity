@@ -86,9 +86,20 @@
 -- it drops and recreates its policies and uses `create … if not exists` for the index
 -- — so a re-run converges rather than failing on a duplicate name.
 
+-- +goose Up
+--
+-- RE-SYNCED `anywaye.protect_table` FROM kit's substrate (registry-identity-down-05).
+-- The copy had drifted: kit's version grants USAGE ON SEQUENCES to the login role
+-- (a protected table with a bigserial column was uninsertable without it) and this
+-- file predated that change, which `TestTheOtherSixSubstrateFunctionsAreKitsBytes`
+-- held as a byte comparison and reported by name. identity is pre-release with no
+-- deployed database, so the copy is corrected in place rather than re-copied in a
+-- migration on top; the test reads THIS file's bytes, which is what makes the
+-- in-place correction the honest one.
 
 
 
+-- +goose StatementBegin
 
 
 create schema if not exists anywaye;
@@ -343,6 +354,56 @@ as $caf$
   order by n.nspname, c.relname
 $caf$;
 
+-- ---------------------------------------------------------------------------
+-- A login role that OWNS an account-scoped table can switch that table's
+-- policies off, and no amount of FORCE stops it: FORCE is about the owner being
+-- SUBJECT to policies, not about the owner being unable to REMOVE them. So the
+-- second half of the design is a role that owns nothing, and that claim has
+-- nothing to sweep — it is a fact about one role and one table, so it is asserted
+-- about the role the application actually logs in as rather than generalised into
+-- a query that would have to guess which role that is. `isolation.sql` asserts
+-- it three ways, and the two that matter are the ones no catalog reports: the
+-- login role is refused `ALTER TABLE ... DISABLE ROW LEVEL SECURITY`, and it is
+-- refused `DROP POLICY`.
+--
+-- WHAT THIS FILE DOES NOT PROVE, because every item below is a way the boundary
+-- can be right in the database and absent from the service.
+--
+--   * That the service SETS the identity. `begin_account/1` is one call in one
+--     place, and nothing here can tell a service that never calls it from one
+--     that calls it in every request. A service that forgets reads zero rows,
+--     which is safe and extremely visible, so this is a diagnosis rather than a
+--     leak.
+--
+--   * That the service's QUERIES still carry their own `where account_id = ?`.
+--     They should. RLS is defence in depth, not a licence to delete the
+--     predicate: the predicate is what makes the query indexable, and it is what
+--     a mistake in the policy expression gets caught by. core's
+--     `schemas/tenant-isolation.schema.json` still requires the predicate and this
+--     file does not change that.
+--
+--   * That the login role is not a MEMBER of the owner role. The cluster grants
+--     `<service>_app` TO `<service>` so a migration and `tests/isolation_test.sh`
+--     can impersonate the weaker role; the reverse membership would undo the
+--     entire design and is worth asserting in the services that adopt this.
+--
+--   * That a TABLE is account-scoped. The sweep defines that as "has an
+--     `account_id` column", which is the fleet's own vocabulary (D7), and it
+--     misses a service that spells it `tenant_id` and protects it by hand. A
+--     service with no account-scoped tables at all is the honest zero, and
+--     core's `tenancy.honest-zero` finding is what says so out loud.
+--
+--   * That a SCHEMA the substrate was never applied to holds no account-scoped
+--     table. The sweep's scope is the schemas it protected, plus its own and
+--     `pg_temp`, so customer rows kept in a schema no `protect_table` call ever
+--     named are outside it. That is the trade, and it is a deliberate one: the
+--     alternative reports every other session's test fixture, which is how a
+--     correct database ends up with a red proof and how an adopter ends up
+--     carrying a workaround for a bug that was upstream. A service whose account
+--     tables span schemas the substrate has not met is a service that has not
+--     protected them, and `protect_table` is one call per table.
+-- ---------------------------------------------------------------------------
+-- +goose StatementEnd
 
 
 select anywaye.protect_table('account_users');
@@ -355,6 +416,7 @@ select anywaye.protect_table('oidc_clients');
 
 select anywaye.protect_table('account_audit_log');
 
+-- +goose Down
 
 alter table account_users     disable row level security;
 alter table account_invitations disable row level security;

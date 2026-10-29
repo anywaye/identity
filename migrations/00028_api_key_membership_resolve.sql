@@ -1,4 +1,6 @@
 
+-- +goose Up
+-- +goose StatementBegin
 DO $$
 BEGIN
   EXECUTE format('DROP POLICY IF EXISTS %I ON account_users', 'account_users_anywaye_resolve');
@@ -13,6 +15,8 @@ BEGIN
     'account_users_anywaye_resolve', current_user, current_user || '_app');
 END
 $$;
+-- +goose StatementEnd
 
+-- +goose Down
 
 DROP POLICY IF EXISTS account_users_anywaye_resolve ON account_users;

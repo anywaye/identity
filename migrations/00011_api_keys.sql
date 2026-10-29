@@ -1,4 +1,5 @@
 
+-- +goose Up
 
 CREATE TABLE api_keys (
     id              uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -52,5 +53,6 @@ CREATE UNIQUE INDEX api_keys_one_live_name_per_account
 
 CREATE INDEX api_keys_expires_at_idx ON api_keys (expires_at);
 
+-- +goose Down
 
 DROP TABLE api_keys;

@@ -1,4 +1,6 @@
 
+-- +goose Up
+-- +goose StatementBegin
 grant select, insert, update, delete on
   table users,
         sessions,
@@ -13,8 +15,11 @@ grant select, insert, update, delete on
         outbox_events,
         recovery_tokens
   to identity_app;
+-- +goose StatementEnd
 
+-- +goose Down
 
+-- +goose StatementBegin
 revoke select, insert, update, delete on
   table users,
         sessions,
@@ -29,3 +34,4 @@ revoke select, insert, update, delete on
         outbox_events,
         recovery_tokens
   from identity_app;
+-- +goose StatementEnd

@@ -1,6 +1,8 @@
 
+-- +goose Up
 ALTER TYPE oauth_provider ADD VALUE 'apple';
 
+-- +goose Down
 
 ALTER TYPE oauth_provider RENAME TO oauth_provider_retired;
 

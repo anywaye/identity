@@ -1,4 +1,5 @@
 
+-- +goose Up
 
 CREATE TABLE recovery_tokens (
     id              uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -57,5 +58,6 @@ CREATE INDEX recovery_tokens_user_purpose_idx
 CREATE INDEX recovery_tokens_expires_at_idx
     ON recovery_tokens (expires_at);
 
+-- +goose Down
 
 DROP TABLE recovery_tokens;

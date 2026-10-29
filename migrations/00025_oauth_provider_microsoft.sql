@@ -1,6 +1,8 @@
 
+-- +goose Up
 ALTER TYPE oauth_provider ADD VALUE 'microsoft';
 
+-- +goose Down
 
 ALTER TYPE oauth_provider RENAME TO oauth_provider_retired;
 
