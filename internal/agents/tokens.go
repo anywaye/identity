@@ -29,9 +29,10 @@ type IssuedToken struct {
 
 // Owner is a presented credential resolved to the principal that holds it.
 type Owner struct {
-	Agent Agent
-	Token Token
-	ActorID id.UUID
+	Agent             Agent
+	Token             Token
+	ActorID           id.UUID
+	ClaimedByHasStaff bool
 }
 
 // RequireClaimed is the D4 gate on a resolved credential, and it is a method on
@@ -87,7 +88,21 @@ func (s *Service) Authenticate(ctx context.Context, presented string, now time.T
 		if err != nil {
 			return err
 		}
-		owner = Owner{Agent: agent, Token: resolved.Token, ActorID: resolved.ID}
+		hasStaff := false
+		if agent.ClaimedByAccountID != nil {
+			// Set RLS context so the account_users query is not filtered out.
+			_, _ = tx.Exec(ctx, `select anywaye.begin_account($1)`, *agent.ClaimedByAccountID)
+			// Check if any user in the claiming account is staff.
+			var count int
+			err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM account_users au JOIN users u ON u.id = au.user_id WHERE au.account_id = $1 AND u.is_staff = true`, *agent.ClaimedByAccountID).Scan(&count)
+			if err != nil {
+				} else {
+				}
+			if err == nil && count > 0 {
+				hasStaff = true
+			}
+		}
+		owner = Owner{Agent: agent, Token: resolved.Token, ActorID: resolved.ID, ClaimedByHasStaff: hasStaff}
 		return nil
 	})
 	if err != nil {

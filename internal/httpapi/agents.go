@@ -421,8 +421,9 @@ type agentHomeResponse struct {
 	Name     string `json:"name"`
 	Username string `json:"username"`
 	Status string `json:"status"`
-	Claimed bool `json:"claimed"`
+	Claimed            bool    `json:"claimed"`
 	ClaimedByAccountID *string `json:"claimed_by_account_id,omitempty"`
+	ClaimedByHasStaff  *bool   `json:"claimed_by_has_staff,omitempty"`
 	ClaimedAt *string `json:"claimed_at,omitempty"`
 }
 
@@ -439,6 +440,10 @@ func (o options) handleAgentHome(w http.ResponseWriter, r *http.Request) {
 		Username: owner.Agent.Username,
 		Status:   owner.Agent.Status,
 		Claimed:  owner.Agent.IsClaimed(),
+	}
+	if owner.Agent.IsClaimed() {
+		b := owner.ClaimedByHasStaff
+		out.ClaimedByHasStaff = &b
 	}
 	if owner.Agent.ClaimedByAccountID != nil {
 		account := owner.Agent.ClaimedByAccountID.String()
