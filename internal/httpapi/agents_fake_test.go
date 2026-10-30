@@ -159,3 +159,7 @@ func (f *fakeAgents) RotateToken(_ context.Context, agentID, tokenID id.UUID, _ 
 		Plaintext: agents.Prefix + "fake-rotated-token",
 	}, nil
 }
+
+func (f *fakeAgents) ListAgents(_ context.Context, _ id.UUID) ([]agents.Agent, error) {
+	return nil, nil
+}

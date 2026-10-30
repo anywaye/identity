@@ -44,6 +44,8 @@ type Agents interface {
 	ListTokens(ctx context.Context, agentID id.UUID) ([]agents.Token, error)
 	RevokeToken(ctx context.Context, agent, tokenID id.UUID, reason, traceID string, now time.Time) (agents.Token, error)
 	RotateToken(ctx context.Context, agent, tokenID id.UUID, expiresIn *time.Duration, traceID string, now time.Time) (agents.IssuedToken, error)
+
+	ListAgents(ctx context.Context, accountID id.UUID) ([]agents.Agent, error)
 }
 
 // WithAgents mounts the agent routes.
@@ -155,6 +157,29 @@ type agentClaimPreviewResponse struct {
 	ClaimExpiresAt string `json:"claim_expires_at"`
 }
 
+func (o options) handleListAgents(w http.ResponseWriter, r *http.Request) {
+	accountID, ok := accountIDFrom(r)
+	if !ok {
+		notFound(w, r)
+		return
+	}
+	agents, err := o.agents.ListAgents(r.Context(), accountID)
+	if err != nil {
+		problemFor(w, r, http.StatusInternalServerError, CodeInternal, "internal error")
+		return
+	}
+	out := make([]map[string]any, 0, len(agents))
+	for _, a := range agents {
+		out = append(out, map[string]any{
+			"id":       a.ID.String(),
+			"name":     a.Name,
+			"username": a.Username,
+			"status":   a.Status,
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 func (o options) handleAgentClaimPreview(w http.ResponseWriter, r *http.Request) {
 	preview, err := o.agents.PreviewClaim(r.Context(), agents.PreviewInput{
 		Token:   chi.URLParam(r, agentClaimTokenParam),
@@ -196,6 +221,9 @@ func (o options) registerAgentPublicRoutes(r chiRouter) {
 
 	r.Get("/v1/agents/claim/{token}",
 		o.rateLimit("/v1/agents/claim/{token}", o.handleAgentClaimPreview))
+
+	r.Get("/v1/accounts/{accountID}/agents",
+		o.requireAccountRole(accounts.RoleMember, o.handleListAgents))
 
 	r.Get("/v1/agents/home", o.agentCredentialOnly(o.handleAgentHome))
 

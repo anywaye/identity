@@ -30,6 +30,12 @@ func NewService(pool db.Pool, opts ...ServiceOpt) *Service {
 
 // ClaimInput is what a claim needs, and every field is a decision about who
 // supplied it.
+
+// ListAgents returns all agents claimed by an account.
+func (s *Service) ListAgents(ctx context.Context, accountID id.UUID) ([]Agent, error) {
+	return s.store.ListForAccount(ctx, s.pool, accountID)
+}
+
 type ClaimInput struct {
 	Token string
 	Account id.UUID
