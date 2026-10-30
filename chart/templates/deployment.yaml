@@ -54,9 +54,11 @@ spec:
             - name: http
               containerPort: 8080
               protocol: TCP
+          {{- if .Values.secretName }}
           envFrom:
             - secretRef:
                 name: {{ .Values.secretName }}
+          {{- end }}
           env:
             {{- range $name, $value := .Values.env }}
             - name: {{ $name }}

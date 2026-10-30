@@ -53,7 +53,7 @@ image:
   # is REFUSED by the template rather than rendered — see
   # templates/deployment.yaml, and kit's step, which refuses it at the
   # write.
-  digest: "sha256:7f63d2907b042ecfaf5444bbc707f12650161cf139480b704e7c02c2a3e35c6a"
+  digest: "sha256:9ee90dc79260fe94411ce14c0d831c565ac3ada320fa6e4271f6403ed87e9005"
   pullPolicy: IfNotPresent
 
 # The read-only pull secret on the box, created once, out of band:
@@ -163,6 +163,7 @@ ingress:
   enabled: true
   className: traefik
   host: "auth.anywaye.com"
+  hostname: ""
   clusterIssuer: letsencrypt-prod
   tls: true
   path: /

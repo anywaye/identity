@@ -5,7 +5,7 @@
 # that file for why it is off, and for the issuer the chart names
 # and never creates.
 {{- if .Values.ingress.enabled }}
-{{- if not .Values.ingress.host }}
+{{- if and (not .Values.ingress.hostname) (not .Values.ingress.host) }}
 {{- fail "caf gen chart: ingress.enabled is true and ingress.host is empty — an Ingress with no host is a silent misroute; set ingress.host in values.yaml" }}
 {{- end }}
 apiVersion: networking.k8s.io/v1
@@ -26,11 +26,11 @@ spec:
   {{- if and .Values.ingress.tls .Values.ingress.clusterIssuer }}
   tls:
     - hosts:
-        - {{ .Values.ingress.host }}
+        - {{ .Values.ingress.hostname | default .Values.ingress.host }}
       secretName: identity-tls
   {{- end }}
   rules:
-    - host: {{ .Values.ingress.host }}
+    - host: {{ .Values.ingress.hostname | default .Values.ingress.host }}
       http:
         paths:
           - path: {{ .Values.ingress.path }}
