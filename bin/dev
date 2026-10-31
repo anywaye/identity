@@ -225,7 +225,8 @@ resolve_stack() {
      git -C $vendor checkout $ref
      git -C $vendor rev-parse HEAD > $vendor/.kit-stack-ref
      KIT_STACK_DIR=/path/to/a/kit/checkout bin/dev
-  fi
+   fi"
+   fi
   info "fetching kit@$ref from $(stack_url) (first run only)"
   fetch_stack "$ref" "$cached"
   STACK_DIR="$cached"
