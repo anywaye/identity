@@ -20,8 +20,9 @@ const uniqueViolation = "23505"
 // email and an already-hashed digest: this package does not decide what a valid
 // address is or how to hash a password, and the store does not try to help.
 type CreateParams struct {
-	Email          string
-	PasswordDigest string
+	Email               string
+	PasswordDigest      string
+	ApplicationID       *id.UUID
 }
 
 // Store is the users table.
@@ -33,7 +34,7 @@ type Store struct {
 func NewStore(pool db.Pool) *Store { return &Store{pool: pool} }
 
 const userColumns = `id, email, display_name, preferences, password_digest, failed_login_attempts, locked_until, ` +
-	`email_verified_at, disabled_at, is_staff, created_at, updated_at`
+	`email_verified_at, disabled_at, is_staff, signup_application_id, created_at, updated_at`
 
 // Create inserts a user and returns the stored row.
 //
@@ -42,14 +43,14 @@ const userColumns = `id, email, display_name, preferences, password_digest, fail
 // are one transaction or neither. See internal/outbox.
 func (s *Store) Create(ctx context.Context, q db.Querier, p CreateParams) (User, error) {
 	const query = `
-		INSERT INTO users (email, password_digest)
-		VALUES ($1, $2)
+		INSERT INTO users (email, password_digest, signup_application_id)
+		VALUES ($1, $2, $3)
 		RETURNING ` + userColumns
 
 	var u User
-	err := q.QueryRow(ctx, query, p.Email, p.PasswordDigest).Scan(
+	err := q.QueryRow(ctx, query, p.Email, p.PasswordDigest, p.ApplicationID).Scan(
 		&u.ID, &u.Email, &u.DisplayName, &u.Preferences, &u.PasswordDigest, &u.FailedLoginAttempts, &u.LockedUntil,
-		&u.EmailVerifiedAt, &u.DisabledAt, &u.IsStaff, &u.CreatedAt, &u.UpdatedAt,
+		&u.EmailVerifiedAt, &u.DisabledAt, &u.IsStaff, &u.SignupApplicationID, &u.CreatedAt, &u.UpdatedAt,
 	)
 	if err != nil {
 		if isEmailTaken(err) {

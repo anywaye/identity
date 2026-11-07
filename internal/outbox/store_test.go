@@ -19,7 +19,7 @@ var at = time.Date(2026, 9, 30, 4, 19, 0, 0, time.UTC)
 func mustUserCreated(t *testing.T, email string) Envelope {
 	t.Helper()
 
-	e, err := NewUserCreated(at, id.MustNew(), email)
+	e, err := NewUserCreated(at, id.MustNew(), email, "")
 	if err != nil {
 		t.Fatalf("NewUserCreated: %v", err)
 	}

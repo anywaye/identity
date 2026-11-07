@@ -223,7 +223,7 @@ func TestUserCreatedEnvelope(t *testing.T) {
 	now := time.Date(2026, 9, 30, 4, 19, 0, 0, time.UTC)
 	userID := id.MustNew()
 
-	e, err := NewUserCreated(now, userID, "kaka@example.com")
+	e, err := NewUserCreated(now, userID, "kaka@example.com", "")
 	if err != nil {
 		t.Fatalf("NewUserCreated: %v", err)
 	}
@@ -273,11 +273,11 @@ func TestNewUserCreatedIsUniquePerCall(t *testing.T) {
 
 	now := time.Now().UTC()
 
-	first, err := NewUserCreated(now, id.MustNew(), "a@example.com")
+	first, err := NewUserCreated(now, id.MustNew(), "a@example.com", "")
 	if err != nil {
 		t.Fatalf("NewUserCreated: %v", err)
 	}
-	second, err := NewUserCreated(now, id.MustNew(), "b@example.com")
+	second, err := NewUserCreated(now, id.MustNew(), "b@example.com", "")
 	if err != nil {
 		t.Fatalf("NewUserCreated: %v", err)
 	}
@@ -292,7 +292,7 @@ func TestUserCreatedDataIsStable(t *testing.T) {
 
 	userID := id.MustNew()
 
-	e, err := NewUserCreated(time.Now().UTC(), userID, "kaka@example.com")
+	e, err := NewUserCreated(time.Now().UTC(), userID, "kaka@example.com", "")
 	if err != nil {
 		t.Fatalf("NewUserCreated: %v", err)
 	}

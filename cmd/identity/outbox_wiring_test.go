@@ -153,7 +153,7 @@ func TestNewAppWithNATSURLButNoStreamLeavesTheRowUnpublished(t *testing.T) {
 	}
 
 	pool := dbtest.Pool(t)
-	e, err := outbox.NewUserCreated(time.Now(), id.MustNew(), "nobody@example.com")
+	e, err := outbox.NewUserCreated(time.Now(), id.MustNew(), "nobody@example.com", "")
 	if err != nil {
 		t.Fatalf("building the envelope: %v", err)
 	}

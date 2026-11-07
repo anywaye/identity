@@ -56,6 +56,7 @@ func authServiceWithSessionTTL(pool *pgxpool.Pool, clk clock.Clock, sessionTTL t
 		clk,
 		sessionTTL,
 		false,
+		nil,
 	)
 }
 
@@ -500,6 +501,7 @@ func TestEndToEndWriteFailureIs500AndLeaksNothing(t *testing.T) {
 		clk,
 		24*time.Hour,
 		false,
+		nil,
 	)
 	h := New(nil, WithAuth(svc), WithTenancy(realTenancy(pool, clk)), WithLogger(slogLogger(logs)))
 

@@ -174,6 +174,10 @@ func (f *fakeUsers) Search(_ context.Context, _ db.Querier, query string, limit 
 	return out, nil
 }
 
+func (f *fakeUsers) Counts(_ context.Context, _ db.Querier) (users.UserCounts, error) {
+	return users.UserCounts{}, nil
+}
+
 type fakeSessions struct {
 	minted []sessions.NewSession
 	live   map[string]id.UUID
@@ -397,6 +401,7 @@ func newFixture() *fixture {
 		f.clock,
 		24*time.Hour,
 		false,
+		nil,
 	)
 	return f
 }
@@ -420,6 +425,7 @@ func newFixtureWithoutAccessRevoker() *fixture {
 		f.clock,
 		24*time.Hour,
 		false,
+		nil,
 	)
 	return f
 }
@@ -442,6 +448,7 @@ func newFixtureWithoutAuditRecorder() *fixture {
 		f.clock,
 		24*time.Hour,
 		false,
+		nil,
 	)
 	return f
 }

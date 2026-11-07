@@ -20,6 +20,7 @@ import (
 	acctboundary "github.com/anywaye/identity/internal/tenancy"
 
 	"github.com/anywaye/identity/internal/accounts"
+	"github.com/anywaye/identity/internal/applications"
 	"github.com/anywaye/identity/internal/agents"
 	"github.com/anywaye/identity/internal/apikeys"
 	"github.com/anywaye/identity/internal/auth"
@@ -461,6 +462,7 @@ func buildAuth(
 		clock.System{},
 		auth.DefaultSessionTTL,
 		cfg.RequireEmailVerification,
+		applications.NewService(pool),
 	)
 
 	return authSvc, tenancy, secondFactor, deletionSvc, mfaUsable, nil

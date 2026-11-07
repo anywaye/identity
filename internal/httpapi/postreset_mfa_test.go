@@ -56,6 +56,7 @@ func newPostresetMFAFixture(t *testing.T) *postresetMFAFixture {
 		clk,
 		24*time.Hour,
 		false,
+		nil,
 	)
 
 	links := recovery.NewService(

@@ -90,7 +90,8 @@ type challengeResponse struct {
 type registerRequest struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
-	Website string `json:"website"`
+	Website     string `json:"website"`
+	Application string `json:"application,omitempty"`
 	Timestamp int64  `json:"timestamp"`
 	Signature string `json:"signature"`
 }
@@ -214,8 +215,9 @@ func (o options) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 
 	created, err := o.auth.Register(r.Context(), auth.RegisterInput{
-		Email:    body.Email,
-		Password: body.Password,
+		Email:       body.Email,
+		Password:    body.Password,
+		Application: body.Application,
 	})
 	if err != nil {
 		o.writeAuthError(w, r, err)
