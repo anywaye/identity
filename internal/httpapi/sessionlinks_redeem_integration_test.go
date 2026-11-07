@@ -62,6 +62,7 @@ func newRedeemFixture(t *testing.T) *redeemFixture {
 		clk,
 		recovery.RedeemedSessionTTL,
 		false,
+		nil,
 	)
 
 	links := recovery.NewService(

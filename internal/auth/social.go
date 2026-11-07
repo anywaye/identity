@@ -234,7 +234,7 @@ func (s *SocialService) createAndSignIn(
 		if err := s.auth.provisionTenancy(ctx, q, u); err != nil {
 			return err
 		}
-		event, err := outbox.NewUserCreated(now, u.ID, u.Email)
+		event, err := outbox.NewUserCreated(now, u.ID, u.Email, "")
 		if err != nil {
 			return err
 		}

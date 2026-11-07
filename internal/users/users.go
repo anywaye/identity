@@ -73,7 +73,8 @@ type User struct {
 	LockedUntil *time.Time
 	EmailVerifiedAt *time.Time
 	DisabledAt *time.Time
-	IsStaff   bool
+	IsStaff                bool
+	SignupApplicationID    *id.UUID
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }

@@ -54,6 +54,7 @@ func newDisabledIntegrationFixture(t *testing.T) integrationFixture {
 		clk,
 		24*time.Hour,
 		false,
+		nil,
 	)
 
 	ctx := context.Background()

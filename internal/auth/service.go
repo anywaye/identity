@@ -192,6 +192,18 @@ type EventAppender interface {
 	Append(ctx context.Context, q db.Querier, e outbox.Envelope) error
 }
 
+// ApplicationResolver resolves an application key to its id at registration time.
+//
+// It is an interface declared here, at the consumer, for the same reason
+// PersonalAccountProvisioner is: the rule (attribute the signup to an
+// application when one is named) lives in this package, and the table lives in
+// internal/applications. A nil resolver is supported and means "do not resolve":
+// the signup proceeds with no application attributed, which is the shape legacy
+// callers and tests without a database rely on.
+type ApplicationResolver interface {
+	Resolve(ctx context.Context, q db.Querier, key string) (id.UUID, error)
+}
+
 // PersonalAccountProvisioner is the part of the accounts service that
 // registration needs: the personal account a new user gets, and the ownership
 // that makes it theirs.
@@ -221,8 +233,9 @@ type Service struct {
 	tenancy    PersonalAccountProvisioner
 	mfa        SecondFactor
 	access     AccessTokenRevoker
-	auditor    UserAuditRecorder
-	hasher     *users.Hasher
+	auditor              UserAuditRecorder
+	applicationResolver  ApplicationResolver
+	hasher               *users.Hasher
 	clock      clock.Clock
 	sessionTTL time.Duration
 	requireEmailVerification bool
@@ -280,6 +293,7 @@ func NewService(
 	clk clock.Clock,
 	sessionTTL time.Duration,
 	requireEmailVerification bool,
+	applicationResolver ApplicationResolver,
 ) *Service {
 	if sessionTTL <= 0 {
 		sessionTTL = DefaultSessionTTL
@@ -298,13 +312,15 @@ func NewService(
 		clock:                    clk,
 		sessionTTL:               sessionTTL,
 		requireEmailVerification: requireEmailVerification,
+		applicationResolver:      applicationResolver,
 	}
 }
 
 // RegisterInput is a registration request.
 type RegisterInput struct {
-	Email    string
-	Password string
+	Email        string
+	Password     string
+	Application  string
 }
 
 // RegisteredUser is what a successful registration returns: the public projection
@@ -342,7 +358,18 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (RegisteredUse
 
 	var created users.User
 	err = s.uow.Do(ctx, func(ctx context.Context, q db.Querier) error {
-		u, err := s.users.Create(ctx, q, users.CreateParams{Email: email, PasswordDigest: digest})
+		var applicationID *id.UUID
+		if s.applicationResolver != nil && in.Application != "" {
+			if resolved, err := s.applicationResolver.Resolve(ctx, q, in.Application); err == nil && !resolved.IsZero() {
+				applicationID = &resolved
+			}
+		}
+
+		u, err := s.users.Create(ctx, q, users.CreateParams{
+			Email:           email,
+			PasswordDigest:  digest,
+			ApplicationID:   applicationID,
+		})
 		if err != nil {
 			return err
 		}
@@ -351,7 +378,7 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (RegisteredUse
 			return err
 		}
 
-		event, err := outbox.NewUserCreated(now, u.ID, u.Email)
+		event, err := outbox.NewUserCreated(now, u.ID, u.Email, in.Application)
 		if err != nil {
 			return err
 		}

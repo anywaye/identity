@@ -32,6 +32,7 @@ func newFixtureWithEmailVerificationRequired() *fixture {
 		f.clock,
 		24*time.Hour,
 		true,
+		nil,
 	)
 	return f
 }

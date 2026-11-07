@@ -96,16 +96,17 @@ func (e Envelope) Validate() error {
 // The payload carries the user id and email and nothing else. In particular no
 // password digest and no lockout state: the envelope goes to every subscriber on
 // the platform, and this is the only place where that boundary is enforced.
-func NewUserCreated(now time.Time, userID id.UUID, email string) (Envelope, error) {
+func NewUserCreated(now time.Time, userID id.UUID, email string, application string) (Envelope, error) {
 	eventID, err := id.New()
 	if err != nil {
 		return Envelope{}, fmt.Errorf("outbox: minting an envelope id: %w", err)
 	}
 
 	payload, err := json.Marshal(struct {
-		UserID string `json:"user_id"`
-		Email  string `json:"email"`
-	}{UserID: userID.String(), Email: email})
+		UserID       string `json:"user_id"`
+		Email        string `json:"email"`
+		Application  string `json:"application,omitempty"`
+	}{UserID: userID.String(), Email: email, Application: application})
 	if err != nil {
 		return Envelope{}, fmt.Errorf("outbox: building the user.created payload: %w", err)
 	}
