@@ -28,7 +28,8 @@ func walkOptions() options {
 		recovery:     newFakeRecovery(),
 		social: newFakeSocial(),
 		signup: newFakeSignup(),
-		agents: newFakeAgents(),
+		agents:        newFakeAgents(),
+		applications:  newFakeApplications(),
 	}
 }
 

@@ -44,7 +44,8 @@ type options struct {
 	signup Signup
 	social Social
 
-	agents Agents
+	agents        Agents
+	applications  Applications
 
 	rateLimiter *ratelimit.Limiter
 

@@ -299,6 +299,7 @@ func newApp(ctx context.Context, cfg config.Config, logger *slog.Logger) (*app, 
 			httpapi.WithTenancy(tenancy),
 			httpapi.WithDeletion(deletionSvc),
 			httpapi.WithAgents(agents.NewService(pool, agents.WithClaimUI(cfg.AgentClaimUIURL))),
+			httpapi.WithApplications(applications.NewService(pool)),
 		)
 		if mfaUsable {
 			opts = append(opts, httpapi.WithMFA(secondFactor))

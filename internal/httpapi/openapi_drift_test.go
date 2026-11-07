@@ -85,7 +85,8 @@ func servedRoutes(t *testing.T) map[operationKey]string {
 		recovery: newFakeRecovery(),
 		social: newFakeSocial(),
 		signup: newFakeSignup(),
-		agents: newFakeAgents(),
+		agents:        newFakeAgents(),
+		applications:  newFakeApplications(),
 	}
 
 	served := map[operationKey]string{}

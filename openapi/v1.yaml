@@ -6368,6 +6368,63 @@ paths:
                 status: unavailable
                 deps: postgres
 
+  /v1/applications:
+    get:
+      tags: [applications]
+      operationId: listApplications
+      summary: List the registered applications
+      description: |
+        Returns every application registered with this identity instance. The
+        list is public: it carries no secret and no user data, and it exists so
+        other services can validate an `application` key they were given before
+        storing it as attribution metadata.
+      security: []
+      responses:
+        '200':
+          description: The registered applications.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Application'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /v1/applications/{key}:
+    get:
+      tags: [applications]
+      operationId: getApplication
+      summary: Look up one application by key
+      description: |
+        Returns the application registered under `key`, or 404 when no such
+        application exists. Used by other services to validate an attribution
+        key before storing it.
+      security: []
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The application.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Application'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
 components:
   securitySchemes:
     sessionCookie:
@@ -6494,6 +6551,32 @@ components:
       example: '__Host-session=; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=0'
 
   schemas:
+    Application:
+      type: object
+      description: |
+        A platform-owned application that consumes identity, such as anywaye.com
+        or boat.dev. The registry is public and carries no secret: it exists so
+        other services can validate an `application` key before storing it as
+        attribution metadata on their own rows.
+      required: [id, key, name, kind, domain]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: The application's primary key.
+        key:
+          type: string
+          description: The stable slug other services store as attribution metadata.
+        name:
+          type: string
+          description: The human-readable name.
+        kind:
+          type: string
+          description: The kind of application (web, native, m2m, service).
+        domain:
+          type: string
+          description: The application's primary domain.
     AccountRole:
       type: string
       description: |

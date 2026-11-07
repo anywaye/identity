@@ -148,6 +148,8 @@ func (o options) registerRoutes(r chiRouter) {
 
 	o.registerSessionLinkRoutes(r)
 
+	o.registerApplicationRoutes(r)
+
 	o.registerOperatorRoutes(r)
 
 	o.registerStaffRoutes(r)

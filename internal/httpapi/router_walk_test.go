@@ -14,6 +14,7 @@ var conditionalSurfaces = []string{
 	"deletion",
 
 	"agents",
+	"applications",
 }
 
 func TestEveryConditionalSurfaceIsVisibleToTheWalk(t *testing.T) {

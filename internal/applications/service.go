@@ -9,6 +9,8 @@ import (
 
 // Service is the application registry use case.
 type Service struct {
+	pool db.Pool
+	read db.QuerierSource
 	store *Store
 }
 
@@ -17,7 +19,11 @@ func NewService(pool db.Pool) *Service {
 	if pool == nil {
 		return &Service{}
 	}
-	return &Service{store: NewStore(pool)}
+	return &Service{
+		pool:  pool,
+		read:  db.Direct{Pool: pool},
+		store: NewStore(pool),
+	}
 }
 
 // Resolve maps an application key to its id.
@@ -33,6 +39,22 @@ func (s *Service) Resolve(ctx context.Context, q db.Querier, key string) (id.UUI
 		return id.UUID{}, err
 	}
 	return app.ID, nil
+}
+
+// List returns all applications.
+func (s *Service) List(ctx context.Context) ([]Application, error) {
+	if s == nil || s.store == nil || s.read == nil {
+		return nil, ErrNotFound
+	}
+	return s.store.List(ctx, s.read.Queryer())
+}
+
+// Get returns one application by key.
+func (s *Service) Get(ctx context.Context, key string) (Application, error) {
+	if s == nil || s.store == nil || s.read == nil {
+		return Application{}, ErrNotFound
+	}
+	return s.store.ByKey(ctx, s.read.Queryer(), key)
 }
 
 // ListKeys returns all registered application keys.
