@@ -10,7 +10,7 @@ spec:
   source:
     repoURL: oci://ghcr.io/anywaye/charts/identity
     chart: identity
-    targetRevision: 0.1.9
+    targetRevision: 0.1.10
   destination:
     server: https://kubernetes.default.svc
     namespace: identity
