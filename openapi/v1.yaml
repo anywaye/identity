@@ -6394,6 +6394,36 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+    post:
+      tags: [applications]
+      operationId: createApplication
+      summary: Create a registered application
+      description: |
+        Platform-staff only. Creates a new application in the registry.
+      security:
+        - sessionCookie: []
+        - bearerToken: []
+      responses:
+        '201':
+          description: The created application.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Application'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
   /v1/applications/{key}:
     get:
       tags: [applications]
@@ -6420,6 +6450,69 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Application'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+    patch:
+      tags: [applications]
+      operationId: updateApplication
+      summary: Update a registered application
+      description: |
+        Platform-staff only.
+      security:
+        - sessionCookie: []
+        - bearerToken: []
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The updated application.
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/TraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Application'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+    delete:
+      tags: [applications]
+      operationId: deleteApplication
+      summary: Delete a registered application
+      description: |
+        Platform-staff only.
+      security:
+        - sessionCookie: []
+        - bearerToken: []
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Deleted.
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
         '500':
