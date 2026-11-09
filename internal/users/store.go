@@ -514,7 +514,7 @@ func scanOne(row interface{ Scan(...any) error }) (User, error) {
 	var u User
 
 	err := row.Scan(&u.ID, &u.Email, &u.DisplayName, &u.Preferences, &u.PasswordDigest, &u.FailedLoginAttempts, &u.LockedUntil,
-		&u.EmailVerifiedAt, &u.DisabledAt, &u.IsStaff, &u.CreatedAt, &u.UpdatedAt)
+		&u.EmailVerifiedAt, &u.DisabledAt, &u.IsStaff, &u.SignupApplicationID, &u.CreatedAt, &u.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return User{}, ErrNotFound
 	}

@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"strings"
 	"time"
 
@@ -196,6 +197,18 @@ func (t *tracedRouter) Delete(pattern string, h http.HandlerFunc) {
 	t.chiRouter.Delete(pattern, traced(h))
 }
 
+// originHost extracts the hostname from an Origin header value. It returns "" when
+// the value cannot be parsed, so callers treat an unparseable Origin as "no
+// check" rather than as a hard refusal.
+func originHost(origin string) string {
+	u, err := url.Parse(origin)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	host := u.Hostname()
+	return host
+}
+
 func (o options) handleRegister(w http.ResponseWriter, r *http.Request) {
 	var body *registerRequest
 	if !decodeBody(w, r, &body) {
@@ -213,6 +226,26 @@ func (o options) handleRegister(w http.ResponseWriter, r *http.Request) {
 			problemFor(w, r, http.StatusUnprocessableEntity, CodeValidationFailed,
 				"the request has an invalid field")
 			return
+		}
+	}
+
+	// Origin enforcement: when an application key is declared and an Origin
+	// header is present, the Origin's host must match the application's domain.
+	// A missing Origin is allowed for backward compatibility (non-browser clients
+	// such as the box installer). A mismatch is refused, so an application key
+	// cannot be spoofed from another origin.
+	if body.Application != "" && o.applications != nil {
+		app, err := o.applications.Get(r.Context(), body.Application)
+		if err == nil && app.Domain != "" {
+			origin := r.Header.Get("Origin")
+			if origin != "" {
+				host := originHost(origin)
+				if host != "" && host != app.Domain {
+					problemFor(w, r, http.StatusUnprocessableEntity, CodeValidationFailed,
+						"the request has an invalid field")
+					return
+				}
+			}
 		}
 	}
 
