@@ -183,7 +183,7 @@ ingress:
 # wired) are left to the secret if a deployment wants to set them.
 env:
   PORT: "8080"
-  IDENTITY_ERROR_REPORTING_DSN: "http://c5342cbf-5a88-464e-9576-cc8b40d0730b@glitchtip.default.svc.cluster.local:8095/1"
+  IDENTITY_ERROR_REPORTING_DSN: "http://db1e8eef-a780-4d72-9a42-1d8a1619bdc9@glitchtip.default.svc.cluster.local:8095/1"
   IDENTITY_RELEASE: "0.1.0"
   OTEL_EXPORTER_OTLP_ENDPOINT: "http://alloy.observability:4318"
   OTEL_SERVICE_NAME: "identity"
